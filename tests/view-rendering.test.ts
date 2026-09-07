@@ -9,6 +9,7 @@ import { drawInkStroke } from "../src/rendering";
 function view(): any {
   const v = Object.create(InkView.prototype);
   Object.assign(v, {
+    root: { querySelector: vi.fn(() => null) },
     ctx: {}, previewCtx: { clearRect: vi.fn() }, previewCanvas: { width: 800, height: 1000 },
     canvasLogicalWidth: 800, canvasLogicalHeight: 1000, renderFrame: null, resizeRequested: false,
     currentPage: () => ({ strokes: [] }),

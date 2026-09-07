@@ -30,10 +30,10 @@ interface EditCommand {
 
 const INK_COLORS = [
   { value: "#1b1b1b", label: "Black" },
-  { value: "#2563eb", label: "Blue" },
-  { value: "#dc2626", label: "Red" },
-  { value: "#15803d", label: "Green" },
-  { value: "#ca8a04", label: "Yellow" },
+  { value: "#195bff", label: "Blue" },
+  { value: "#f23c42", label: "Red" },
+  { value: "#42c449", label: "Green" },
+  { value: "#ffffff", label: "White" },
 ];
 
 export class InkView extends FileView {
@@ -104,8 +104,11 @@ export class InkView extends FileView {
     this.root = this.containerEl.children[1] as HTMLElement;
     this.root.empty();
     this.root.addClass("ink-notes-view");
+    this.root.addClass("ink-rail-hidden");
     this.root.setAttribute("aria-label", "Ink Notes");
+    this.root.createDiv({ cls: "ink-document-bar" });
     this.root.createDiv({ cls: "ink-toolbar", attr: { role: "toolbar", "aria-label": "Ink tools" } });
+    this.root.createDiv({ cls: "ink-brush-bar" });
     this.renderToolbar();
     this.renderCanvas();
     this.viewReady = true;
@@ -153,17 +156,26 @@ export class InkView extends FileView {
   }
 
   private renderToolbar(): void {
+    const documentBar = this.root.querySelector<HTMLElement>(".ink-document-bar")!;
+    documentBar.empty();
+    setIcon(documentBar.createSpan({ cls: "ink-brand", attr: { "aria-label": "Ink Notes" } }), "notebook-pen");
+    const tab = documentBar.createDiv({ cls: "ink-document-tab" });
+    tab.createSpan({ cls: "ink-document-title", text: this.getDisplayText() });
+    this.addIconButton(tab, "chevron-down", "Document options", (event) => this.openPageMenu(event));
+    documentBar.createSpan({ cls: "ink-current-page-title", text: this.currentPage().title });
     const toolbar = this.root.querySelector<HTMLElement>(".ink-toolbar")!;
     toolbar.empty();
-    const group = toolbar.createDiv({ cls: "ink-toolbar-group" });
+    const group = toolbar;
     const navigation = this.addToolbarSection(group, "Pages");
+    const toggle = this.addIconButton(navigation, "panel-left", "Pages", () => {
+      const hidden = !this.root.hasClass("ink-rail-hidden");
+      this.root.toggleClass("ink-rail-hidden", hidden);
+      toggle.setAttribute("aria-pressed", String(!hidden));
+      this.resizeCanvas();
+    });
+    toggle.setAttribute("aria-pressed", String(!this.root.hasClass("ink-rail-hidden")));
     this.addIconButton(navigation, "arrow-left", "Previous", () => this.changePage(-1));
     this.addIconButton(navigation, "arrow-right", "Next", () => this.changePage(1));
-    this.addIconButton(navigation, "panel-left-open", "Pages", () => this.root.toggleClass("ink-rail-hidden", !this.root.hasClass("ink-rail-hidden")));
-
-    const history = this.addToolbarSection(group, "History");
-    this.addIconButton(history, "undo-2", "Undo", () => this.undo(), this.undoStack.length === 0);
-    this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
 
     const tools = this.addToolbarSection(group, "Draw");
     this.addToolButton(tools, "pen-line", "Pen", "pen");
@@ -171,14 +183,32 @@ export class InkView extends FileView {
     this.addToolButton(tools, "eraser", "Erase", "eraser");
     this.addToolButton(tools, "lasso-select", "Select", "lasso");
 
-    const brush = this.addToolbarSection(group, "Style");
+    const pages = this.addToolbarSection(group, "Document");
+    this.addIconButton(pages, "file-plus-2", "Add page", () => this.addPage());
+    this.addIconButton(pages, "more-horizontal", "Options", (event) => this.openPageMenu(event));
+    this.renderBrushBar();
+    this.updateToolButtons();
+  }
+
+  private renderBrushBar(): void {
+    const bar = this.root.querySelector<HTMLElement>(".ink-brush-bar")!;
+    bar.empty();
+    const history = this.addToolbarSection(bar, "History");
+    this.addIconButton(history, "undo-2", "Undo", () => this.undo(), this.undoStack.length === 0);
+    this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
+    const brush = bar.createDiv({ cls: "ink-brush-palette", attr: { role: "toolbar", "aria-label": "Brush settings" } });
+    const tips = this.addToolbarSection(brush, "Tips");
+    this.addToolButton(tips, "pen-tool", "Pen tip", "pen");
+    this.addToolButton(tips, "highlighter", "Highlighter tip", "highlighter");
+    this.addToolButton(tips, "eraser", "Eraser tip", "eraser");
+    const widths = this.addToolbarSection(brush, "Widths");
+    for (const width of [2, 4, 8]) {
+      const button = widths.createEl("button", { cls: "ink-width-preset", attr: { type: "button", title: width + " px", "aria-label": width + " px", "data-width": String(width), "aria-pressed": String(this.state.width === width) } });
+      button.createSpan({ cls: "ink-width-line" }).style.height = width + "px";
+      button.addEventListener("click", () => { this.state.width = width; this.updateBrushControls(); });
+    }
     this.addColorPicker(brush);
     this.addSizePopover(brush);
-    this.addRange(brush, "Opacity", 0.1, 1, 0.05, this.state.opacity, (value) => { this.state.opacity = value; });
-
-    const pages = this.addToolbarSection(group, "Document");
-    this.addIconButton(pages, "plus", "Add", () => this.addPage());
-    this.addIconButton(pages, "more-horizontal", "Options", (event) => this.openPageMenu(event));
   }
 
   private addSizePopover(parent: HTMLElement): void {
@@ -193,9 +223,8 @@ export class InkView extends FileView {
       },
     });
     const icon = button.createSpan({ cls: "ink-button-icon" });
-    setIcon(icon, "circle-dot");
-    const text = button.createSpan({ cls: "ink-button-text", text: "Size" });
-    const valueText = button.createSpan({ cls: "ink-size-button-value", text: formatControlValue("Size", this.state.width) });
+    setIcon(icon, "sliders-horizontal");
+    button.title = "Brush size and opacity";
 
     const popover = container.createDiv({
       cls: "ink-size-popover",
@@ -203,7 +232,7 @@ export class InkView extends FileView {
     });
     const header = popover.createDiv({ cls: "ink-size-popover-header" });
     header.createSpan({ cls: "ink-size-popover-title", text: "Brush size" });
-    const popoverValue = header.createSpan({ cls: "ink-control-value", text: formatControlValue("Size", this.state.width) });
+    header.createSpan({ cls: "ink-control-value", text: formatControlValue("Size", this.state.width) });
     const input = popover.createEl("input", {
       attr: {
         type: "range",
@@ -214,7 +243,7 @@ export class InkView extends FileView {
         "aria-label": "Brush size",
       },
     });
-    popover.createDiv({ cls: "ink-size-popover-hint", text: "1–24 px" });
+    this.addRange(popover, "Opacity", 0.1, 1, 0.05, this.state.opacity, (value) => { this.state.opacity = value; });
 
     const close = (): void => this.setSizePopoverOpen(false);
     button.addEventListener("click", (event) => {
@@ -224,9 +253,7 @@ export class InkView extends FileView {
     input.addEventListener("input", () => {
       const next = Number(input.value);
       this.state.width = next;
-      const formatted = formatControlValue("Size", next);
-      valueText.textContent = formatted;
-      popoverValue.textContent = formatted;
+      this.updateBrushControls();
     });
     this.registerDomEvent(document, "pointerdown", (event) => {
       if (this.sizePopoverOpen && !container.contains(event.target as Node)) close();
@@ -273,12 +300,24 @@ export class InkView extends FileView {
   private addToolbarSection(parent: HTMLElement, label: string): HTMLElement {
     const section = parent.createDiv({ cls: "ink-toolbar-section" });
     section.addClass(`ink-toolbar-section-${label.toLowerCase()}`);
-    section.createSpan({ cls: "ink-toolbar-section-label", text: label });
+    section.setAttribute("role", "group");
+    section.setAttribute("aria-label", label);
     return section.createDiv({ cls: "ink-toolbar-section-controls" });
+  }
+
+  private updateBrushControls(): void {
+    this.root.querySelectorAll<HTMLElement>(".ink-width-preset").forEach((button) => {
+      button.setAttribute("aria-pressed", String(Number(button.dataset.width) === this.state.width));
+    });
+    const input = this.sizePopover?.querySelector<HTMLInputElement>("input[aria-label='Brush size']");
+    if (input) input.value = String(this.state.width);
+    const value = this.sizePopover?.querySelector<HTMLElement>(".ink-size-popover-header .ink-control-value");
+    if (value) value.textContent = formatControlValue("Size", this.state.width);
   }
 
   private renderCanvas(): void {
     const workspace = this.root.createDiv({ cls: "ink-workspace" });
+    workspace.createDiv({ cls: "ink-page-rail", attr: { "aria-label": "Notebook pages" } });
     this.pageScroller = workspace.createDiv({ cls: "ink-page-scroller" });
     this.pageExtent = this.pageScroller.createDiv({ cls: "ink-page-extent" });
     this.pageElement = this.pageExtent.createDiv({ cls: "ink-page" });
@@ -287,6 +326,14 @@ export class InkView extends FileView {
     this.tiles = new TileRenderer(tileHost);
     this.canvas = this.pageElement.createEl("canvas", { cls: "ink-canvas" });
     this.ctx = this.canvas.getContext("2d")!;
+    this.canvas.setAttribute("aria-label", "Handwriting canvas");
+    const footer = this.root.createDiv({ cls: "ink-statusbar" });
+    footer.createSpan({ cls: "ink-page-status", attr: { "aria-live": "polite" } });
+    const zoom = footer.createDiv({ cls: "ink-zoom-controls", attr: { role: "group", "aria-label": "Zoom" } });
+    this.addIconButton(zoom, "minus", "Zoom out", () => this.setZoom(this.zoom - 0.1));
+    const reset = zoom.createEl("button", { cls: "ink-zoom-value", text: "100%", attr: { type: "button", title: "Reset zoom", "aria-label": "Reset zoom" } });
+    reset.addEventListener("click", () => this.setZoom(1));
+    this.addIconButton(zoom, "plus", "Zoom in", () => this.setZoom(this.zoom + 0.1));
     this.previewCanvas = this.pageElement.createEl("canvas", { cls: "ink-canvas ink-preview-canvas" });
     this.previewCanvas.style.pointerEvents = "none";
     this.previewCtx = this.previewCanvas.getContext("2d")!;
@@ -310,13 +357,17 @@ export class InkView extends FileView {
 
   private renderPageRail(): void {
     let rail = this.root.querySelector<HTMLElement>(".ink-page-rail");
-    if (!rail) rail = this.root.createDiv({ cls: "ink-page-rail" });
+    if (!rail) return;
     rail.empty();
+    rail.createDiv({ cls: "ink-rail-heading", text: "Pages" });
     this.notebook.pages.forEach((page, index) => {
       const button = rail!.createEl("button", { cls: "ink-page-thumb", attr: { type: "button", title: page.title } });
       if (index === this.pageIndex) button.addClass("is-active");
+      button.setAttribute("aria-label", String(index + 1) + ": " + page.title);
+      button.setAttribute("aria-current", String(index === this.pageIndex));
       button.createDiv({ cls: `ink-page-thumb-paper ink-paper-${page.paper}` });
       button.createSpan({ text: String(index + 1), cls: "ink-page-thumb-number" });
+      button.createSpan({ text: page.title, cls: "ink-page-thumb-title" });
       button.addEventListener("click", () => { this.pageIndex = index; this.renderPageRail(); this.renderPage(); });
     });
   }
@@ -324,6 +375,11 @@ export class InkView extends FileView {
   private renderPage(): void {
     if (!this.viewReady || this.notebook.pages.length === 0) return;
     const page = this.currentPage();
+    this.root.querySelector<HTMLElement>(".ink-document-title")!.textContent = this.getDisplayText();
+    this.root.querySelector<HTMLElement>(".ink-current-page-title")!.textContent = page.title;
+    this.root.querySelector<HTMLElement>(".ink-page-status")!.textContent = (this.pageIndex + 1) + " / " + this.notebook.pages.length;
+    this.root.querySelector<HTMLButtonElement>("[aria-label='Previous']")!.disabled = this.pageIndex === 0;
+    this.root.querySelector<HTMLButtonElement>("[aria-label='Next']")!.disabled = this.pageIndex === this.notebook.pages.length - 1;
     this.pageElement.className = `ink-page ink-paper-${page.paper}`;
     this.pageElement.style.aspectRatio = `${this.notebook.pageWidth} / ${this.notebook.pageHeight}`;
     this.resizeCanvas();
@@ -704,6 +760,7 @@ export class InkView extends FileView {
     this.currentPage().title = title;
     this.currentPage().updatedAt = Date.now();
     this.renderPageRail();
+    this.renderPage();
     this.scheduleSave();
   }
 
@@ -720,18 +777,18 @@ export class InkView extends FileView {
     });
   }
 
-  private addIconButton(parent: HTMLElement, icon: string, label: string, callback: (event: MouseEvent) => void, disabled = false): void {
+  private addIconButton(parent: HTMLElement, icon: string, label: string, callback: (event: MouseEvent) => void, disabled = false): HTMLButtonElement {
     const button = parent.createEl("button", { cls: "ink-icon-button", attr: { type: "button", title: label, "aria-label": label } });
     button.disabled = disabled;
     const iconHolder = button.createSpan({ cls: "ink-button-icon" });
     setIcon(iconHolder, icon);
     button.createSpan({ cls: "ink-button-text", text: label });
     button.addEventListener("click", callback);
+    return button;
   }
 
   private addColorPicker(parent: HTMLElement): void {
     const control = parent.createDiv({ cls: "ink-color-control" });
-    control.createSpan({ cls: "ink-control-name", text: "Color" });
     const swatches = control.createDiv({ cls: "ink-color-swatches" });
     for (const color of INK_COLORS) {
       const swatch = swatches.createEl("button", { cls: "ink-color-swatch", attr: { type: "button", title: color.label, "aria-label": color.label, "aria-pressed": String(this.state.color.toLowerCase() === color.value), "data-color": color.value } });
@@ -743,11 +800,11 @@ export class InkView extends FileView {
       });
     }
     const custom = control.createEl("label", { cls: "ink-custom-color", attr: { title: "Custom color" } });
-    custom.createSpan({ cls: "ink-button-text", text: "Custom" });
+    setIcon(custom.createSpan({ cls: "ink-button-icon" }), "plus");
     const input = custom.createEl("input", { attr: { type: "color", value: this.state.color, "aria-label": "Custom color" } });
     input.addEventListener("input", () => {
       this.state.color = input.value;
-      swatches.querySelectorAll<HTMLElement>(".ink-color-swatch").forEach((swatch) => swatch.toggleClass("is-active", swatch.dataset.color === this.state.color.toLowerCase()));
+      this.updateColorSwatches();
     });
   }
 
@@ -766,7 +823,7 @@ export class InkView extends FileView {
 
   private layoutPage(): void {
     const style = getComputedStyle(this.pageScroller);
-    const width = Math.max(1, Math.min(820, this.pageScroller.clientWidth
+    const width = Math.max(1, Math.min(980, this.pageScroller.clientWidth
       - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)));
     const height = width * this.notebook.pageHeight / this.notebook.pageWidth;
     this.pageElement.style.width = width + "px";
@@ -791,6 +848,12 @@ export class InkView extends FileView {
     const after = this.pageElement.getBoundingClientRect();
     this.pageScroller.scrollLeft += after.left + anchor.x * after.width - target.x;
     this.pageScroller.scrollTop += after.top + anchor.y * after.height - target.y;
+    const readout = this.root.querySelector<HTMLElement>(".ink-zoom-value");
+    if (readout) readout.textContent = Math.round(this.zoom * 100) + "%";
+    const zoomOut = this.root.querySelector<HTMLButtonElement>("[aria-label='Zoom out']");
+    const zoomIn = this.root.querySelector<HTMLButtonElement>("[aria-label='Zoom in']");
+    if (zoomOut) zoomOut.disabled = this.zoom <= 0.5;
+    if (zoomIn) zoomIn.disabled = this.zoom >= 3;
     this.onViewportMotion();
   }
 
@@ -878,6 +941,8 @@ export class InkView extends FileView {
   }
 
   private updateColorSwatches(): void {
+    const custom = this.root.querySelector<HTMLInputElement>('input[type="color"]');
+    if (custom) custom.value = this.state.color;
     this.root.querySelectorAll<HTMLElement>(".ink-color-swatch").forEach((swatch) => {
       const active = swatch.dataset.color === this.state.color.toLowerCase();
       swatch.toggleClass("is-active", active);
@@ -1012,6 +1077,7 @@ export class InkView extends FileView {
     if (!this.viewReady) return;
     this.renderPageRail();
     this.renderPage();
+    this.updateHistoryButtons();
   }
 
   private pageById(id: string): InkPage | undefined { return this.notebook.pages.find((page) => page.id === id); }

@@ -13,6 +13,15 @@ function setup(viewportWidth = 800) {
   let left = 0;
   let top = 0;
   Object.assign(view, { zoom: 1, activePointerId: null, touchGesture: null });
+  const zoomReadout = { textContent: "100%" };
+  const zoomOut = { disabled: false };
+  const zoomIn = { disabled: false };
+  view.root = { querySelector: (selector: string) => {
+    if (selector === ".ink-zoom-value") return zoomReadout;
+    if (selector.includes("Zoom out")) return zoomOut;
+    if (selector.includes("Zoom in")) return zoomIn;
+    return null;
+  } };
   view.pageScroller = {
     clientWidth: viewportWidth,
     clientHeight: viewportHeight,
@@ -37,7 +46,7 @@ function setup(viewportWidth = 800) {
     const rect = view.pageElement.getBoundingClientRect();
     return { x: (x - rect.left) / rect.width, y: (y - rect.top) / rect.height };
   };
-  return { view, point };
+  return { view, point, zoomReadout, zoomOut, zoomIn };
 }
 
 function touchEvent(points: number[][]) {
@@ -46,6 +55,16 @@ function touchEvent(points: number[][]) {
 }
 
 describe("page touch navigation", () => {
+  it("updates the toolbar readout and limits after gesture zoom", () => {
+    const { view, zoomReadout, zoomOut, zoomIn } = setup();
+    view.setZoom(3);
+    expect(zoomReadout.textContent).toBe("300%");
+    expect(zoomIn.disabled).toBe(true);
+    view.setZoom(0.5);
+    expect(zoomReadout.textContent).toBe("50%");
+    expect(zoomOut.disabled).toBe(true);
+    expect(zoomIn.disabled).toBe(false);
+  });
   it.each([800, 340])("keeps an off-center pinch anchor under the moving midpoint at width %i", (width) => {
     const { view, point } = setup(width);
     const anchor = point(250, 420);
