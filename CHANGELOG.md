@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.0-beta.2 - 2026-09-07
+
+- Clarify the drawing toolbar with labeled controls, grouped actions, visible color swatches, and live brush values.
+- Improve iPad touch targets and selected-tool contrast.
+
+## Unreleased
+
 ## 0.1.0-beta.1 - 2026-09-07
 
 First public test release of Ink Notes for Obsidian.

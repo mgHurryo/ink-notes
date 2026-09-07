@@ -11,20 +11,36 @@
   min-height: var(--ink-toolbar-height);
   display: flex;
   align-items: center;
-  padding: 6px 10px;
+  padding: 6px 10px 7px;
   border-bottom: 1px solid var(--background-modifier-border);
   overflow-x: auto;
+  overflow-y: hidden;
   scrollbar-width: none;
 }
 
 .ink-toolbar::-webkit-scrollbar { display: none; }
-.ink-toolbar-group { display: flex; align-items: center; gap: 4px; min-width: max-content; }
-.ink-toolbar-divider { width: 1px; height: 24px; margin: 0 5px; background: var(--background-modifier-border); }
-.ink-icon-button, .ink-tool-button { width: 32px; height: 32px; padding: 0; display: inline-flex; align-items: center; justify-content: center; }
-.ink-tool-button.is-active { color: var(--interactive-accent); background: var(--background-modifier-hover); }
-.ink-color-control { display: inline-flex; align-items: center; padding: 0 4px; }
-.ink-color-control input { width: 26px; height: 26px; padding: 0; border: 0; background: transparent; }
-.ink-range-control { display: inline-flex; align-items: center; width: 76px; padding: 0 4px; }
+.ink-toolbar-group { display: flex; align-items: stretch; gap: 8px; min-width: max-content; }
+.ink-toolbar-section { display: flex; flex-direction: column; gap: 3px; padding: 0 7px; border-right: 1px solid var(--background-modifier-border); }
+.ink-toolbar-section:last-child { border-right: 0; }
+.ink-toolbar-section-label { color: var(--text-muted); font-size: 9px; font-weight: 700; letter-spacing: .08em; line-height: 12px; text-transform: uppercase; }
+.ink-toolbar-section-controls { display: flex; align-items: center; gap: 4px; min-height: 38px; }
+.ink-icon-button, .ink-tool-button { min-width: 38px; min-height: 38px; padding: 4px 7px; display: inline-flex; align-items: center; justify-content: center; gap: 5px; white-space: nowrap; }
+.ink-button-icon { width: 17px; height: 17px; display: inline-flex; align-items: center; justify-content: center; flex: 0 0 17px; }
+.ink-button-icon svg { width: 17px; height: 17px; stroke-width: 2.2; }
+.ink-button-text { font-size: 11px; line-height: 14px; }
+.ink-tool-button.is-active { color: var(--text-on-accent, #fff); background: var(--interactive-accent); box-shadow: 0 0 0 2px var(--interactive-accent-hover, var(--interactive-accent)); }
+.ink-tool-button.is-active .ink-button-text { font-weight: 700; }
+.ink-icon-button:disabled { opacity: .38; cursor: not-allowed; }
+.ink-color-control { display: flex; flex-direction: column; gap: 3px; padding: 0 2px; }
+.ink-control-name { color: var(--text-muted); font-size: 10px; line-height: 12px; }
+.ink-color-swatches { display: flex; align-items: center; gap: 4px; }
+.ink-color-swatch { width: 24px; height: 24px; padding: 0; border: 2px solid var(--background-modifier-border); border-radius: 50%; box-shadow: inset 0 0 0 1px rgb(255 255 255 / 45%); cursor: pointer; }
+.ink-color-swatch.is-active { border-color: var(--text-normal); box-shadow: 0 0 0 2px var(--interactive-accent); }
+.ink-custom-color { display: inline-flex; align-items: center; gap: 3px; padding-left: 3px; color: var(--text-muted); cursor: pointer; }
+.ink-custom-color input { width: 24px; height: 24px; padding: 0; border: 0; background: transparent; cursor: pointer; }
+.ink-range-control { display: flex; flex-direction: column; gap: 3px; width: 94px; padding: 0 3px; }
+.ink-range-header { display: flex; justify-content: space-between; color: var(--text-muted); font-size: 10px; line-height: 12px; }
+.ink-control-value { color: var(--text-normal); font-variant-numeric: tabular-nums; }
 .ink-range-control input { width: 100%; }
 
 .ink-workspace { display: flex; min-height: 0; flex: 1; }
@@ -45,9 +61,12 @@
 .ink-page-thumb-number { position: absolute; bottom: 3px; right: 5px; color: #333; font-size: 10px; background: rgb(255 255 255 / 75%); }
 
 @media (max-width: 600px) {
-  .ink-toolbar { padding-inline: 6px; }
+  .ink-toolbar { padding: 6px 4px 7px; }
+  .ink-toolbar-group { gap: 4px; }
+  .ink-toolbar-section { padding-inline: 5px; }
+  .ink-button-text { font-size: 10px; }
+  .ink-range-control { width: 82px; }
   .ink-page-scroller { padding: 10px; }
   .ink-page-rail { width: 64px; flex-basis: 64px; padding-inline: 6px; }
   .ink-page-thumb { width: 52px; }
-  .ink-range-control { width: 58px; }
 }
