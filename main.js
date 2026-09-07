@@ -171,6 +171,7 @@ var InkView = class extends import_obsidian.FileView {
     this.state = { tool: "pen", color: "#1b1b1b", width: 3, opacity: 1 };
     this.canvasLogicalWidth = 1;
     this.canvasLogicalHeight = 1;
+    this.canvasRenderScale = 1;
     this.syncing = false;
     this.saveRequested = false;
     this.activeSave = null;
@@ -340,13 +341,17 @@ var InkView = class extends import_obsidian.FileView {
     const logicalWidth = Math.max(1, this.pageElement.offsetWidth || Math.round(rect.width / this.zoom));
     const logicalHeight = Math.max(1, this.pageElement.offsetHeight || Math.round(rect.height / this.zoom));
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    const zoomDensity = Math.max(1, Math.min(this.zoom, 2));
+    const renderScale = Math.min(4, dpr * zoomDensity);
     this.canvasLogicalWidth = logicalWidth;
     this.canvasLogicalHeight = logicalHeight;
-    this.canvas.width = Math.max(1, Math.round(logicalWidth * dpr));
-    this.canvas.height = Math.max(1, Math.round(logicalHeight * dpr));
+    this.canvasRenderScale = renderScale;
+    this.canvas.width = Math.max(1, Math.round(logicalWidth * renderScale));
+    this.canvas.height = Math.max(1, Math.round(logicalHeight * renderScale));
     this.canvas.style.width = `${logicalWidth}px`;
     this.canvas.style.height = `${logicalHeight}px`;
-    this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    this.ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
+    this.ctx.imageSmoothingEnabled = true;
     this.drawStrokes(this.currentPage().strokes);
   }
   drawStrokes(strokes) {
@@ -364,20 +369,33 @@ var InkView = class extends import_obsidian.FileView {
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     if (stroke.tool === "highlighter") ctx.globalCompositeOperation = "multiply";
-    ctx.beginPath();
-    let previous = stroke.points[0];
-    ctx.moveTo(previous.x * width, previous.y * height);
-    for (let i = 1; i < stroke.points.length; i++) {
-      const point = stroke.points[i];
-      const pressureWidth = stroke.tool === "highlighter" ? stroke.width : stroke.width * (0.55 + point.pressure * 0.75);
-      ctx.lineWidth = pressureWidth;
-      const midX = (previous.x + point.x) / 2 * width;
-      const midY = (previous.y + point.y) / 2 * height;
-      ctx.quadraticCurveTo(previous.x * width, previous.y * height, midX, midY);
-      previous = point;
+    if (stroke.points.length === 1) {
+      const point = stroke.points[0];
+      ctx.fillStyle = stroke.color;
+      ctx.beginPath();
+      ctx.arc(point.x * width, point.y * height, strokeWidth(stroke, point.pressure) / 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+      return;
     }
-    ctx.lineTo(previous.x * width, previous.y * height);
-    ctx.stroke();
+    if (stroke.tool === "highlighter") {
+      ctx.lineWidth = stroke.width;
+      drawSmoothPath(ctx, stroke.points, width, height);
+      ctx.stroke();
+      ctx.restore();
+      return;
+    }
+    for (let index = 1; index < stroke.points.length; index++) {
+      const previous = stroke.points[index - 1];
+      const point = stroke.points[index];
+      const start = index === 1 ? previous : midpoint(stroke.points[index - 2], previous);
+      const end = index === stroke.points.length - 1 ? point : midpoint(previous, point);
+      ctx.lineWidth = (strokeWidth(stroke, previous.pressure) + strokeWidth(stroke, point.pressure)) / 2;
+      ctx.beginPath();
+      ctx.moveTo(start.x * width, start.y * height);
+      ctx.quadraticCurveTo(previous.x * width, previous.y * height, end.x * width, end.y * height);
+      ctx.stroke();
+    }
     ctx.restore();
   }
   drawSelection(width, height) {
@@ -657,7 +675,7 @@ var InkView = class extends import_obsidian.FileView {
   setZoom(value) {
     this.zoom = Math.max(0.5, Math.min(3, value));
     this.pageElement.style.transform = `scale(${this.zoom})`;
-    this.drawStrokes(this.currentPage().strokes);
+    this.resizeCanvas();
   }
   scheduleSave() {
     if (this.saveTimer !== void 0) window.clearTimeout(this.saveTimer);
@@ -922,6 +940,30 @@ function constrainDelta(delta, minimum, maximum) {
 }
 function formatControlValue(name, value) {
   return name === "Opacity" ? `${Math.round(value * 100)}%` : `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(1)} px`;
+}
+function strokeWidth(stroke, pressure) {
+  return stroke.tool === "highlighter" ? stroke.width : stroke.width * (0.55 + pressure * 0.75);
+}
+function midpoint(a, b) {
+  return {
+    x: (a.x + b.x) / 2,
+    y: (a.y + b.y) / 2,
+    pressure: (a.pressure + b.pressure) / 2,
+    t: (a.t + b.t) / 2
+  };
+}
+function drawSmoothPath(ctx, points, width, height) {
+  const first = points[0];
+  ctx.beginPath();
+  ctx.moveTo(first.x * width, first.y * height);
+  for (let index = 1; index < points.length; index++) {
+    const previous = points[index - 1];
+    const point = points[index];
+    const end = index === points.length - 1 ? point : midpoint(previous, point);
+    ctx.quadraticCurveTo(previous.x * width, previous.y * height, end.x * width, end.y * height);
+  }
+  const last = points[points.length - 1];
+  ctx.lineTo(last.x * width, last.y * height);
 }
 
 // src/storage.ts
