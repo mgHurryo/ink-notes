@@ -169,6 +169,8 @@ var InkView = class extends import_obsidian.FileView {
     this.notebook = createNotebook();
     this.pageIndex = 0;
     this.state = { tool: "pen", color: "#1b1b1b", width: 3, opacity: 1 };
+    this.canvasLogicalWidth = 1;
+    this.canvasLogicalHeight = 1;
     this.syncing = false;
     this.saveRequested = false;
     this.activeSave = null;
@@ -293,6 +295,7 @@ var InkView = class extends import_obsidian.FileView {
     this.registerDomEvent(this.canvas, "pointermove", (event) => this.onPointerMove(event));
     this.registerDomEvent(this.canvas, "pointerup", (event) => this.onPointerUp(event));
     this.registerDomEvent(this.canvas, "pointercancel", (event) => this.onPointerUp(event));
+    this.registerDomEvent(this.canvas, "lostpointercapture", (event) => this.onLostPointerCapture(event));
     this.registerDomEvent(this.canvas, "wheel", (event) => this.onWheel(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchstart", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
@@ -333,20 +336,23 @@ var InkView = class extends import_obsidian.FileView {
   resizeCanvas() {
     if (!this.canvas || !this.pageElement) return;
     const rect = this.pageElement.getBoundingClientRect();
+    const logicalWidth = Math.max(1, this.pageElement.offsetWidth || Math.round(rect.width / this.zoom));
+    const logicalHeight = Math.max(1, this.pageElement.offsetHeight || Math.round(rect.height / this.zoom));
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    this.canvas.width = Math.max(1, Math.round(rect.width * dpr));
-    this.canvas.height = Math.max(1, Math.round(rect.height * dpr));
-    this.canvas.style.width = `${rect.width}px`;
-    this.canvas.style.height = `${rect.height}px`;
+    this.canvasLogicalWidth = logicalWidth;
+    this.canvasLogicalHeight = logicalHeight;
+    this.canvas.width = Math.max(1, Math.round(logicalWidth * dpr));
+    this.canvas.height = Math.max(1, Math.round(logicalHeight * dpr));
+    this.canvas.style.width = `${logicalWidth}px`;
+    this.canvas.style.height = `${logicalHeight}px`;
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.drawStrokes(this.currentPage().strokes);
   }
   drawStrokes(strokes) {
     if (!this.ctx || !this.pageElement) return;
-    const rect = this.pageElement.getBoundingClientRect();
-    this.ctx.clearRect(0, 0, rect.width, rect.height);
-    for (const stroke of strokes) this.drawStroke(stroke, rect.width, rect.height);
-    this.drawSelection(rect.width, rect.height);
+    this.ctx.clearRect(0, 0, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    for (const stroke of strokes) this.drawStroke(stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
   drawStroke(stroke, width, height) {
     if (stroke.points.length === 0) return;
@@ -392,6 +398,7 @@ var InkView = class extends import_obsidian.FileView {
   }
   onPointerDown(event) {
     if (event.pointerType === "touch") return;
+    if (this.activePointerId !== null) this.finishPointerInput();
     this.activePointerId = event.pointerId;
     this.canvas.setPointerCapture(event.pointerId);
     const point = this.toPoint(event);
@@ -461,6 +468,10 @@ var InkView = class extends import_obsidian.FileView {
   }
   onPointerUp(event) {
     if (this.activePointerId !== event.pointerId) return;
+    this.finishPointerInput();
+    if (this.canvas.hasPointerCapture(event.pointerId)) this.canvas.releasePointerCapture(event.pointerId);
+  }
+  finishPointerInput() {
     const page = this.currentPage();
     if (this.state.tool === "lasso") {
       this.finishLasso(page);
@@ -477,6 +488,10 @@ var InkView = class extends import_obsidian.FileView {
     this.activeStroke = null;
     this.lastPoint = null;
     this.scheduleSave();
+  }
+  onLostPointerCapture(event) {
+    if (this.activePointerId !== event.pointerId) return;
+    this.finishPointerInput();
   }
   onWheel(event) {
     if (!event.ctrlKey && !event.metaKey) return;
@@ -567,7 +582,7 @@ var InkView = class extends import_obsidian.FileView {
     button.addEventListener("click", () => {
       this.state.tool = tool;
       if (tool !== "lasso") this.clearSelection();
-      this.renderToolbar();
+      this.updateToolButtons();
       this.renderPage();
     });
   }
@@ -589,7 +604,7 @@ var InkView = class extends import_obsidian.FileView {
       if (this.state.color.toLowerCase() === color.value) swatch.addClass("is-active");
       swatch.addEventListener("click", () => {
         this.state.color = color.value;
-        this.renderToolbar();
+        this.updateColorSwatches();
       });
     }
     const custom = control.createEl("label", { cls: "ink-custom-color", attr: { title: "Custom color" } });
@@ -615,6 +630,7 @@ var InkView = class extends import_obsidian.FileView {
   setZoom(value) {
     this.zoom = Math.max(0.5, Math.min(3, value));
     this.pageElement.style.transform = `scale(${this.zoom})`;
+    this.drawStrokes(this.currentPage().strokes);
   }
   scheduleSave() {
     if (this.saveTimer !== void 0) window.clearTimeout(this.saveTimer);
@@ -670,13 +686,33 @@ var InkView = class extends import_obsidian.FileView {
   pushCommand(command) {
     this.undoStack.push(command);
     this.redoStack = [];
-    this.renderToolbar();
+    this.updateHistoryButtons();
   }
   afterCommand() {
     this.clearSelection();
-    this.renderToolbar();
+    this.updateHistoryButtons();
     this.renderPage();
     this.scheduleSave();
+  }
+  updateHistoryButtons() {
+    const undo = this.root.querySelector("[aria-label='Undo']");
+    const redo = this.root.querySelector("[aria-label='Redo']");
+    if (undo) undo.disabled = this.undoStack.length === 0;
+    if (redo) redo.disabled = this.redoStack.length === 0;
+  }
+  updateToolButtons() {
+    this.root.querySelectorAll(".ink-tool-button").forEach((el) => {
+      const active = el.getAttribute("data-tool") === this.state.tool;
+      el.toggleClass("is-active", active);
+      el.setAttribute("aria-pressed", String(active));
+    });
+  }
+  updateColorSwatches() {
+    this.root.querySelectorAll(".ink-color-swatch").forEach((swatch) => {
+      const active = swatch.dataset.color === this.state.color.toLowerCase();
+      swatch.toggleClass("is-active", active);
+      swatch.setAttribute("aria-pressed", String(active));
+    });
   }
   addedStrokeCommand(pageId, original) {
     let currentId = original.id;

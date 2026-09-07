@@ -5,6 +5,12 @@
 - Clarify the drawing toolbar with labeled controls, grouped actions, visible color swatches, and live brush values.
 - Improve iPad touch targets and selected-tool contrast.
 
+## 0.1.0-beta.3 - 2026-09-07
+
+- Fix zoomed canvas sizing so strokes remain correctly aligned after zoom.
+- Recover lost pointer capture to allow immediate consecutive Apple Pencil strokes.
+- Stop rebuilding the toolbar after each stroke, tool change, or color change to remove flicker.
+
 ## Unreleased
 
 ## 0.1.0-beta.1 - 2026-09-07
