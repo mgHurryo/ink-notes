@@ -59,7 +59,10 @@ it("updates composited tiles for highlighters", () => {
 
 it("debounces expensive zoom rasterization while updating the displayed scale immediately", () => {
   const v = view();
-  v.pageElement = { style: {} };
+  v.pageElement = { style: {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 800 * v.zoom, height: 1000 * v.zoom }) };
+  v.pageScroller = { clientWidth: 800, clientHeight: 600, scrollLeft: 0, scrollTop: 0,
+    getBoundingClientRect: () => ({ left: 0, top: 0 }) };
+  v.layoutPage = vi.fn(() => { v.pageElement.style.transform = `scale(${v.zoom})`; });
   v.requestRender = vi.fn();
   v.updateViewport = vi.fn();
   v.setZoom(2); v.setZoom(3);

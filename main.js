@@ -700,7 +700,7 @@ var InkView = class extends import_obsidian.FileView {
     this.activeStroke = null;
     this.activePointerId = null;
     this.lastPoint = null;
-    this.pinchStart = null;
+    this.touchGesture = null;
     this.zoom = 1;
     this.viewReady = false;
     this.undoStack = [];
@@ -900,7 +900,8 @@ var InkView = class extends import_obsidian.FileView {
   renderCanvas() {
     const workspace = this.root.createDiv({ cls: "ink-workspace" });
     this.pageScroller = workspace.createDiv({ cls: "ink-page-scroller" });
-    this.pageElement = this.pageScroller.createDiv({ cls: "ink-page" });
+    this.pageExtent = this.pageScroller.createDiv({ cls: "ink-page-extent" });
+    this.pageElement = this.pageExtent.createDiv({ cls: "ink-page" });
     const tileHost = this.pageElement.createDiv({ cls: "ink-tile-layer" });
     tileHost.style.cssText = "position:absolute;inset:0;pointer-events:none;overflow:hidden";
     this.tiles = new TileRenderer(tileHost);
@@ -920,10 +921,13 @@ var InkView = class extends import_obsidian.FileView {
     this.registerDomEvent(this.pageScroller, "scroll", () => this.onViewportMotion(), { passive: true });
     this.registerDomEvent(this.pageScroller, "touchstart", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
-    this.registerDomEvent(this.pageScroller, "touchend", () => {
-      this.pinchStart = null;
+    this.registerDomEvent(this.pageScroller, "touchend", (event) => this.onTouchStart(event));
+    this.registerDomEvent(this.pageScroller, "touchcancel", () => {
+      this.touchGesture = null;
     });
-    this.registerDomEvent(window, "resize", () => this.resizeCanvas());
+    const observer = new ResizeObserver(() => this.resizeCanvas());
+    observer.observe(this.pageScroller);
+    this.register(() => observer.disconnect());
   }
   renderPageRail() {
     let rail = this.root.querySelector(".ink-page-rail");
@@ -955,6 +959,7 @@ var InkView = class extends import_obsidian.FileView {
   }
   resizeCanvas() {
     if (!this.canvas || !this.pageElement) return;
+    this.layoutPage();
     const rect = this.pageElement.getBoundingClientRect();
     this.canvasLogicalWidth = Math.max(1, Math.round(rect.width / this.zoom * 64) / 64);
     this.canvasLogicalHeight = Math.max(1, Math.round(rect.height / this.zoom * 64) / 64);
@@ -1206,24 +1211,60 @@ var InkView = class extends import_obsidian.FileView {
   onWheel(event) {
     if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
-    this.setZoom(this.zoom * (event.deltaY > 0 ? 0.92 : 1.08));
+    this.setZoom(this.zoom * (event.deltaY > 0 ? 0.92 : 1.08), { x: event.clientX, y: event.clientY });
   }
   onTouchStart(event) {
-    if (event.touches.length !== 2) return;
+    this.touchGesture = null;
+    if (this.activePointerId !== null || event.touches.length < 1 || event.touches.length > 2) return;
     event.preventDefault();
     const a2 = event.touches.item(0);
     const b2 = event.touches.item(1);
-    if (!a2 || !b2) return;
-    this.pinchStart = { distance: Math.hypot(a2.clientX - b2.clientX, a2.clientY - b2.clientY), zoom: this.zoom, x: (a2.clientX + b2.clientX) / 2, y: (a2.clientY + b2.clientY) / 2 };
+    if (!a2) return;
+    const x2 = b2 ? (a2.clientX + b2.clientX) / 2 : a2.clientX;
+    const y2 = b2 ? (a2.clientY + b2.clientY) / 2 : a2.clientY;
+    const rect = this.pageElement.getBoundingClientRect();
+    this.touchGesture = {
+      ids: b2 ? [a2.identifier, b2.identifier] : [a2.identifier],
+      distance: b2 ? Math.hypot(a2.clientX - b2.clientX, a2.clientY - b2.clientY) : 0,
+      zoom: this.zoom,
+      x: x2,
+      y: y2,
+      pageX: (x2 - rect.left) / rect.width,
+      pageY: (y2 - rect.top) / rect.height
+    };
   }
   onTouchMove(event) {
-    if (event.touches.length !== 2 || !this.pinchStart) return;
+    if (this.activePointerId !== null) {
+      this.touchGesture = null;
+      return;
+    }
+    const gesture = this.touchGesture;
+    if (!gesture) return;
+    const touches = Array.from(event.touches);
+    const a2 = touches.find((touch) => touch.identifier === gesture.ids[0]);
+    const b2 = touches.find((touch) => touch.identifier === gesture.ids[1]);
+    if (touches.length !== gesture.ids.length || !a2 || gesture.ids.length === 2 && !b2) {
+      this.onTouchStart(event);
+      return;
+    }
     event.preventDefault();
-    const a2 = event.touches.item(0);
-    const b2 = event.touches.item(1);
-    if (!a2 || !b2) return;
+    if (!b2) {
+      this.pageScroller.scrollLeft += gesture.x - a2.clientX;
+      this.pageScroller.scrollTop += gesture.y - a2.clientY;
+      gesture.x = a2.clientX;
+      gesture.y = a2.clientY;
+      return;
+    }
+    if (gesture.distance < 1) {
+      this.onTouchStart(event);
+      return;
+    }
     const distanceNow = Math.hypot(a2.clientX - b2.clientX, a2.clientY - b2.clientY);
-    this.setZoom(this.pinchStart.zoom * distanceNow / this.pinchStart.distance);
+    this.setZoom(
+      gesture.zoom * distanceNow / gesture.distance,
+      { x: (a2.clientX + b2.clientX) / 2, y: (a2.clientY + b2.clientY) / 2 },
+      { x: gesture.pageX, y: gesture.pageY }
+    );
   }
   toPoint(event) {
     const rect = this.pageElement.getBoundingClientRect();
@@ -1337,9 +1378,30 @@ var InkView = class extends import_obsidian.FileView {
       valueText.textContent = formatControlValue(name, next);
     });
   }
-  setZoom(value) {
-    this.zoom = Math.max(0.5, Math.min(3, value));
-    this.pageElement.style.transform = `scale(${this.zoom})`;
+  layoutPage() {
+    const style = getComputedStyle(this.pageScroller);
+    const width = Math.max(1, Math.min(820, this.pageScroller.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)));
+    const height = width * this.notebook.pageHeight / this.notebook.pageWidth;
+    this.pageElement.style.width = width + "px";
+    this.pageElement.style.height = height + "px";
+    this.pageElement.style.transform = "scale(" + this.zoom + ")";
+    this.pageExtent.style.width = width * this.zoom + "px";
+    this.pageExtent.style.height = height * this.zoom + "px";
+  }
+  setZoom(value, target, anchor) {
+    if (!Number.isFinite(value)) return;
+    const viewport = this.pageScroller.getBoundingClientRect();
+    target != null ? target : target = { x: viewport.left + this.pageScroller.clientWidth / 2, y: viewport.top + this.pageScroller.clientHeight / 2 };
+    const before = this.pageElement.getBoundingClientRect();
+    anchor != null ? anchor : anchor = { x: (target.x - before.left) / before.width, y: (target.y - before.top) / before.height };
+    const nextZoom = Math.max(0.5, Math.min(3, value));
+    if (nextZoom !== this.zoom) {
+      this.zoom = nextZoom;
+      this.layoutPage();
+    }
+    const after = this.pageElement.getBoundingClientRect();
+    this.pageScroller.scrollLeft += after.left + anchor.x * after.width - target.x;
+    this.pageScroller.scrollTop += after.top + anchor.y * after.height - target.y;
     this.onViewportMotion();
   }
   scheduleSave() {
@@ -1527,6 +1589,7 @@ var InkView = class extends import_obsidian.FileView {
   }
   resetInteraction() {
     if (this.previewCanvas) this.previewCanvas.width = this.previewCanvas.height = 1;
+    this.touchGesture = null;
     this.pendingMergedNotebook = null;
     this.activeStroke = null;
     this.activePointerId = null;
