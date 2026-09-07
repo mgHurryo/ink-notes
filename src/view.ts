@@ -49,6 +49,7 @@ export class InkView extends FileView {
   private syncing = false;
   private saveRequested = false;
   private activeSave: Promise<void> | null = null;
+  private pendingMergedNotebook: InkNotebook | null = null;
   private saveTimer: number | undefined;
   private activeStroke: InkStroke | null = null;
   private activePointerId: number | null = null;
@@ -275,6 +276,10 @@ export class InkView extends FileView {
   private onPointerDown(event: PointerEvent): void {
     if (event.pointerType === "touch") return;
     if (this.activePointerId !== null) this.finishPointerInput();
+    if (this.saveTimer !== undefined) {
+      window.clearTimeout(this.saveTimer);
+      this.saveTimer = undefined;
+    }
     this.activePointerId = event.pointerId;
     this.canvas.setPointerCapture(event.pointerId);
     const point = this.toPoint(event);
@@ -370,6 +375,7 @@ export class InkView extends FileView {
     if (this.state.tool === "lasso") {
       this.finishLasso(page);
       this.activePointerId = null;
+      this.applyPendingMergedNotebook();
       return;
     }
     if (this.state.tool === "eraser" && this.erasedStrokes.length > 0) {
@@ -381,7 +387,15 @@ export class InkView extends FileView {
     this.activePointerId = null;
     this.activeStroke = null;
     this.lastPoint = null;
+    this.applyPendingMergedNotebook();
     this.scheduleSave();
+  }
+
+  private applyPendingMergedNotebook(): void {
+    if (!this.pendingMergedNotebook) return;
+    this.notebook = mergeNotebooks(this.pendingMergedNotebook, this.notebook);
+    this.pendingMergedNotebook = null;
+    this.renderAll();
   }
 
   private onLostPointerCapture(event: PointerEvent): void {
@@ -568,8 +582,12 @@ export class InkView extends FileView {
         this.saveRequested = false;
         const snapshot = cloneNotebook(this.notebook);
         const merged = await this.store.save(file, snapshot);
-        this.notebook = mergeNotebooks(merged, this.notebook);
-        this.renderAll();
+        if (this.activePointerId !== null) {
+          this.pendingMergedNotebook = merged;
+        } else {
+          this.notebook = mergeNotebooks(merged, this.notebook);
+          this.renderAll();
+        }
       } while (this.saveRequested);
     } finally {
       this.syncing = false;

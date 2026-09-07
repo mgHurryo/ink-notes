@@ -174,6 +174,7 @@ var InkView = class extends import_obsidian.FileView {
     this.syncing = false;
     this.saveRequested = false;
     this.activeSave = null;
+    this.pendingMergedNotebook = null;
     this.activeStroke = null;
     this.activePointerId = null;
     this.lastPoint = null;
@@ -399,6 +400,10 @@ var InkView = class extends import_obsidian.FileView {
   onPointerDown(event) {
     if (event.pointerType === "touch") return;
     if (this.activePointerId !== null) this.finishPointerInput();
+    if (this.saveTimer !== void 0) {
+      window.clearTimeout(this.saveTimer);
+      this.saveTimer = void 0;
+    }
     this.activePointerId = event.pointerId;
     this.canvas.setPointerCapture(event.pointerId);
     const point = this.toPoint(event);
@@ -489,6 +494,7 @@ var InkView = class extends import_obsidian.FileView {
     if (this.state.tool === "lasso") {
       this.finishLasso(page);
       this.activePointerId = null;
+      this.applyPendingMergedNotebook();
       return;
     }
     if (this.state.tool === "eraser" && this.erasedStrokes.length > 0) {
@@ -500,7 +506,14 @@ var InkView = class extends import_obsidian.FileView {
     this.activePointerId = null;
     this.activeStroke = null;
     this.lastPoint = null;
+    this.applyPendingMergedNotebook();
     this.scheduleSave();
+  }
+  applyPendingMergedNotebook() {
+    if (!this.pendingMergedNotebook) return;
+    this.notebook = mergeNotebooks(this.pendingMergedNotebook, this.notebook);
+    this.pendingMergedNotebook = null;
+    this.renderAll();
   }
   onLostPointerCapture(event) {
     if (this.activePointerId !== event.pointerId) return;
@@ -676,8 +689,12 @@ var InkView = class extends import_obsidian.FileView {
         this.saveRequested = false;
         const snapshot = cloneNotebook(this.notebook);
         const merged = await this.store.save(file, snapshot);
-        this.notebook = mergeNotebooks(merged, this.notebook);
-        this.renderAll();
+        if (this.activePointerId !== null) {
+          this.pendingMergedNotebook = merged;
+        } else {
+          this.notebook = mergeNotebooks(merged, this.notebook);
+          this.renderAll();
+        }
       } while (this.saveRequested);
     } finally {
       this.syncing = false;

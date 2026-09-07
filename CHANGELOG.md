@@ -15,6 +15,7 @@
 
 - Preserve Apple Pencil coalesced and final pointer samples so stroke tails are not lost when lifting the pencil.
 - Ignore disk refreshes while a pointer is active to prevent an in-progress stroke from being redrawn from stale data.
+- Defer asynchronous save merges until the active pointer finishes so the next stroke appears immediately.
 
 ## 0.1.0-beta.1 - 2026-09-07
 
