@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Clarify the drawing toolbar with labeled controls, grouped actions, visible color swatches, and live brush values.
+
 ## 0.1.0-beta.1 - 2026-09-07
 
 First public test release of Ink Notes for Obsidian.

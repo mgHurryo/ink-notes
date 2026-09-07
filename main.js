@@ -156,6 +156,13 @@ function isPaperStyle(value) {
 
 // src/view.ts
 var VIEW_TYPE_INK = "ink-notes-view";
+var INK_COLORS = [
+  { value: "#1b1b1b", label: "Black" },
+  { value: "#2563eb", label: "Blue" },
+  { value: "#dc2626", label: "Red" },
+  { value: "#15803d", label: "Green" },
+  { value: "#ca8a04", label: "Yellow" }
+];
 var InkView = class extends import_obsidian.FileView {
   constructor(leaf, store) {
     super(leaf);
@@ -246,26 +253,34 @@ var InkView = class extends import_obsidian.FileView {
     const toolbar = this.root.querySelector(".ink-toolbar");
     toolbar.empty();
     const group = toolbar.createDiv({ cls: "ink-toolbar-group" });
-    this.addIconButton(group, "arrow-left", "Previous page", () => this.changePage(-1));
-    this.addIconButton(group, "arrow-right", "Next page", () => this.changePage(1));
-    this.addIconButton(group, "panel-left", "Show pages", () => this.root.toggleClass("ink-rail-hidden", !this.root.hasClass("ink-rail-hidden")));
-    this.addIconButton(group, "undo-2", "Undo", () => this.undo(), this.undoStack.length === 0);
-    this.addIconButton(group, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
-    const divider = group.createSpan({ cls: "ink-toolbar-divider" });
-    divider.setAttribute("aria-hidden", "true");
-    this.addToolButton(group, "pen-line", "Pen", "pen");
-    this.addToolButton(group, "highlighter", "Highlighter", "highlighter");
-    this.addToolButton(group, "eraser", "Eraser", "eraser");
-    this.addToolButton(group, "lasso", "Lasso", "lasso");
-    this.addColorPicker(group);
-    this.addRange(group, "Width", 1, 24, 0.5, this.state.width, (value) => {
+    const navigation = this.addToolbarSection(group, "Navigate");
+    this.addIconButton(navigation, "arrow-left", "Previous", () => this.changePage(-1));
+    this.addIconButton(navigation, "arrow-right", "Next", () => this.changePage(1));
+    this.addIconButton(navigation, "panel-left-open", "Pages", () => this.root.toggleClass("ink-rail-hidden", !this.root.hasClass("ink-rail-hidden")));
+    const history = this.addToolbarSection(group, "Edit");
+    this.addIconButton(history, "undo-2", "Undo", () => this.undo(), this.undoStack.length === 0);
+    this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
+    const tools = this.addToolbarSection(group, "Tool");
+    this.addToolButton(tools, "pen-line", "Pen", "pen");
+    this.addToolButton(tools, "highlighter", "Highlight", "highlighter");
+    this.addToolButton(tools, "eraser", "Erase", "eraser");
+    this.addToolButton(tools, "lasso-select", "Select", "lasso");
+    const brush = this.addToolbarSection(group, "Brush");
+    this.addColorPicker(brush);
+    this.addRange(brush, "Size", 1, 24, 0.5, this.state.width, (value) => {
       this.state.width = value;
     });
-    this.addRange(group, "Opacity", 0.1, 1, 0.05, this.state.opacity, (value) => {
+    this.addRange(brush, "Opacity", 0.1, 1, 0.05, this.state.opacity, (value) => {
       this.state.opacity = value;
     });
-    this.addIconButton(group, "plus", "Add page", () => this.addPage());
-    this.addIconButton(group, "more-horizontal", "Page options", (event) => this.openPageMenu(event));
+    const pages = this.addToolbarSection(group, "Page");
+    this.addIconButton(pages, "plus", "Add", () => this.addPage());
+    this.addIconButton(pages, "more-horizontal", "Options", (event) => this.openPageMenu(event));
+  }
+  addToolbarSection(parent, label) {
+    const section = parent.createDiv({ cls: "ink-toolbar-section" });
+    section.createSpan({ cls: "ink-toolbar-section-label", text: label });
+    return section.createDiv({ cls: "ink-toolbar-section-controls" });
   }
   renderCanvas() {
     const workspace = this.root.createDiv({ cls: "ink-workspace" });
@@ -309,7 +324,11 @@ var InkView = class extends import_obsidian.FileView {
     this.pageElement.style.aspectRatio = `${this.notebook.pageWidth} / ${this.notebook.pageHeight}`;
     this.resizeCanvas();
     this.drawStrokes(page.strokes);
-    this.root.querySelectorAll(".ink-tool-button").forEach((el) => el.toggleClass("is-active", el.getAttribute("data-tool") === this.state.tool));
+    this.root.querySelectorAll(".ink-tool-button").forEach((el) => {
+      const active = el.getAttribute("data-tool") === this.state.tool;
+      el.toggleClass("is-active", active);
+      el.setAttribute("aria-pressed", String(active));
+    });
   }
   resizeCanvas() {
     if (!this.canvas || !this.pageElement) return;
@@ -541,8 +560,10 @@ var InkView = class extends import_obsidian.FileView {
     this.scheduleSave();
   }
   addToolButton(parent, icon, label, tool) {
-    const button = parent.createEl("button", { cls: "ink-tool-button", attr: { type: "button", title: label, "aria-label": label, "data-tool": tool } });
-    (0, import_obsidian.setIcon)(button, icon);
+    const button = parent.createEl("button", { cls: "ink-tool-button", attr: { type: "button", title: label, "aria-label": label, "aria-pressed": String(this.state.tool === tool), "data-tool": tool } });
+    const iconHolder = button.createSpan({ cls: "ink-button-icon" });
+    (0, import_obsidian.setIcon)(iconHolder, icon);
+    button.createSpan({ cls: "ink-button-text", text: label });
     button.addEventListener("click", () => {
       this.state.tool = tool;
       if (tool !== "lasso") this.clearSelection();
@@ -553,20 +574,43 @@ var InkView = class extends import_obsidian.FileView {
   addIconButton(parent, icon, label, callback, disabled = false) {
     const button = parent.createEl("button", { cls: "ink-icon-button", attr: { type: "button", title: label, "aria-label": label } });
     button.disabled = disabled;
-    (0, import_obsidian.setIcon)(button, icon);
+    const iconHolder = button.createSpan({ cls: "ink-button-icon" });
+    (0, import_obsidian.setIcon)(iconHolder, icon);
+    button.createSpan({ cls: "ink-button-text", text: label });
     button.addEventListener("click", callback);
   }
   addColorPicker(parent) {
-    const label = parent.createEl("label", { cls: "ink-color-control", attr: { title: "Ink color" } });
-    const input = label.createEl("input", { attr: { type: "color", value: this.state.color, "aria-label": "Ink color" } });
+    const control = parent.createDiv({ cls: "ink-color-control" });
+    control.createSpan({ cls: "ink-control-name", text: "Color" });
+    const swatches = control.createDiv({ cls: "ink-color-swatches" });
+    for (const color of INK_COLORS) {
+      const swatch = swatches.createEl("button", { cls: "ink-color-swatch", attr: { type: "button", title: color.label, "aria-label": color.label, "aria-pressed": String(this.state.color.toLowerCase() === color.value), "data-color": color.value } });
+      swatch.style.backgroundColor = color.value;
+      if (this.state.color.toLowerCase() === color.value) swatch.addClass("is-active");
+      swatch.addEventListener("click", () => {
+        this.state.color = color.value;
+        this.renderToolbar();
+      });
+    }
+    const custom = control.createEl("label", { cls: "ink-custom-color", attr: { title: "Custom color" } });
+    custom.createSpan({ cls: "ink-button-text", text: "Custom" });
+    const input = custom.createEl("input", { attr: { type: "color", value: this.state.color, "aria-label": "Custom color" } });
     input.addEventListener("input", () => {
       this.state.color = input.value;
+      swatches.querySelectorAll(".ink-color-swatch").forEach((swatch) => swatch.toggleClass("is-active", swatch.dataset.color === this.state.color.toLowerCase()));
     });
   }
   addRange(parent, name, min, max, step, value, onChange) {
     const label = parent.createEl("label", { cls: "ink-range-control", attr: { title: name } });
+    const header = label.createDiv({ cls: "ink-range-header" });
+    header.createSpan({ text: name });
+    const valueText = header.createSpan({ cls: "ink-control-value", text: formatControlValue(name, value) });
     const input = label.createEl("input", { attr: { type: "range", min: String(min), max: String(max), step: String(step), value: String(value), "aria-label": name } });
-    input.addEventListener("input", () => onChange(Number(input.value)));
+    input.addEventListener("input", () => {
+      const next = Number(input.value);
+      onChange(next);
+      valueText.textContent = formatControlValue(name, next);
+    });
   }
   setZoom(value) {
     this.zoom = Math.max(0.5, Math.min(3, value));
@@ -808,6 +852,9 @@ function samePoints(left, right) {
 }
 function constrainDelta(delta, minimum, maximum) {
   return Math.max(-minimum, Math.min(1 - maximum, delta));
+}
+function formatControlValue(name, value) {
+  return name === "Opacity" ? `${Math.round(value * 100)}%` : `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(1)} px`;
 }
 
 // src/storage.ts
