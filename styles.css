@@ -71,8 +71,9 @@
 .ink-range-control { display: block; margin-top: 18px; }
 .ink-range-header { font-size: 12px; }
 .ink-workspace { position: relative; display: flex; min-height: 0; min-width: 0; flex: 1; }
-.ink-page-scroller { display: flex; flex: 1; min-width: 0; min-height: 0; overflow: auto; justify-content: center; align-items: flex-start; padding: 0 28px 32px; overscroll-behavior: contain; background: var(--ink-workspace); }
-.ink-page { position: relative; flex: 0 0 auto; width: min(100%, 980px); background-color: #fff; box-shadow: 0 2px 16px rgb(0 0 0 / 20%); transform-origin: top center; color-scheme: light; }
+.ink-page-scroller { flex: 1; min-width: 0; min-height: 0; overflow: auto; padding: 0 28px 32px; touch-action: none; overscroll-behavior: contain; overflow-anchor: none; scrollbar-gutter: stable; background: var(--ink-workspace); }
+.ink-page-extent { position: relative; margin-inline: auto; overflow: hidden; box-shadow: 0 2px 16px rgb(0 0 0 / 20%); }
+.ink-page { position: absolute; left: 0; top: 0; background-color: #fff; transform-origin: top left; color-scheme: light; }
 .ink-paper-blank { background-image: none; }
 .ink-paper-ruled { background-image: repeating-linear-gradient(to bottom, transparent 0, transparent 31px, var(--ink-rule) 32px); }
 .ink-paper-grid { background-image: linear-gradient(to right, var(--ink-rule) 1px, transparent 1px), linear-gradient(to bottom, var(--ink-rule) 1px, transparent 1px); background-size: 32px 32px; }
