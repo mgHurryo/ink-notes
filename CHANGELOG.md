@@ -11,7 +11,15 @@
 - Recover lost pointer capture to allow immediate consecutive Apple Pencil strokes.
 - Stop rebuilding the toolbar after each stroke, tool change, or color change to remove flicker.
 
-## Unreleased
+## 0.1.0-beta.4 - 2026-09-08
+
+- Preserve Apple Pencil coalesced and final pointer samples so stroke tails are not lost when lifting the pencil.
+- Ignore disk refreshes while a pointer is active to prevent an in-progress stroke from being redrawn from stale data.
+- Defer asynchronous save merges until the active pointer finishes so the next stroke appears immediately.
+- Improve stroke rendering with zoom-aware supersampling, pressure-segment smoothing, and round caps for short strokes.
+- Group toolbar actions, clarify selected tools and colors, and increase primary touch targets.
+- Replace the inline brush-size slider with a larger, viewport-positioned popover.
+- Real iPad drawing performance, visual quality, theme contrast, and split-screen layout remain unverified.
 
 ## 0.1.0-beta.1 - 2026-09-07
 
