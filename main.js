@@ -254,10 +254,10 @@ var InkView = class extends import_obsidian.FileView {
   }
   async reloadFromDisk() {
     if (this.syncing || this.activePointerId !== null || !this.file) return;
-    const latest = await this.store.read(this.file);
-    this.notebook = mergeNotebooks(latest, this.notebook);
-    this.pageIndex = Math.max(0, Math.min(this.pageIndex, this.notebook.pages.length - 1));
-    this.renderAll();
+    const file = this.file;
+    const latest = await this.store.read(file);
+    if (this.file !== file) return;
+    this.receiveMergedNotebook(latest);
   }
   renderToolbar() {
     const documentBar = this.root.querySelector(".ink-document-bar");
@@ -674,13 +674,19 @@ var InkView = class extends import_obsidian.FileView {
   }
   applyPendingMergedNotebook() {
     if (!this.pendingMergedNotebook) return;
+    const pageId = this.currentPage().id;
     this.notebook = mergeNotebooks(this.pendingMergedNotebook, this.notebook);
     this.pendingMergedNotebook = null;
+    this.pageIndex = Math.max(0, this.notebook.pages.findIndex((page) => page.id === pageId));
     this.renderAll();
+  }
+  receiveMergedNotebook(notebook) {
+    this.pendingMergedNotebook = this.pendingMergedNotebook ? mergeNotebooks(this.pendingMergedNotebook, notebook) : notebook;
+    if (this.activePointerId === null) this.applyPendingMergedNotebook();
   }
   onLostPointerCapture(event) {
     if (this.activePointerId !== event.pointerId) return;
-    this.applyPointerSamples(event);
+    if (this.canvas.hasPointerCapture(event.pointerId)) return;
     this.finishPointerInput();
   }
   onWheel(event) {
@@ -856,12 +862,7 @@ var InkView = class extends import_obsidian.FileView {
         this.saveRequested = false;
         const snapshot = cloneNotebook(this.notebook);
         const merged = await this.store.save(file, snapshot);
-        if (this.activePointerId !== null) {
-          this.pendingMergedNotebook = merged;
-        } else {
-          this.notebook = mergeNotebooks(merged, this.notebook);
-          this.renderAll();
-        }
+        if (this.file === file) this.receiveMergedNotebook(merged);
       } while (this.saveRequested);
     } finally {
       this.syncing = false;
@@ -1015,6 +1016,7 @@ var InkView = class extends import_obsidian.FileView {
     this.lassoDrag = null;
   }
   resetInteraction() {
+    this.pendingMergedNotebook = null;
     this.activeStroke = null;
     this.activePointerId = null;
     this.lastPoint = null;
