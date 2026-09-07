@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Ink Notes UI Preview</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    html, body { margin: 0; height: 100%; background: #1b1c1d; }
+    #host { height: 100%; }
+    .preview-menu { position: fixed; z-index: 1100; width: 180px; padding: 6px; background: #282a2c; border: 1px solid #45484b; border-radius: 8px; color: #edf2fa; font: 13px system-ui; }
+    .preview-menu button { display: block; padding: 10px; width: 100%; border: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
+    .preview-menu button:hover, .preview-menu button[aria-pressed="true"] { background: #3d515f; }
+  </style>
+</head>
+<body><div id="host"><div hidden></div><main></main></div><script src="/preview.js"></script></body>
+</html>

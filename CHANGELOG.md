@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+## 0.1.0-beta.5 - 2026-09-08
+
+- Ignore delayed capture-loss events from the previous stroke once the pen has been recaptured, so consecutive strokes are not cut short.
+- Do not append capture-loss event coordinates as ink points.
+- Defer disk reads that finish during handwriting until the pointer finishes, using the same merge queue as saves.
+- Preserve the selected page during background merges and discard read results for a file that is no longer open.
+- Add regression coverage for rapid consecutive strokes and overlapping background reads and saves. Real-device Apple Pencil verification is still required.
+- Anchor pinch and modifier-wheel zoom to the input position, support touch panning, and keep zoom within 50% to 300%.
+- Improve ink clarity with cached stroke outlines, viewport tile rendering, and a separate live-pen overlay; refine tiles after viewport motion stops.
+- Redesign the notebook editor with document and tool bars, a floating brush palette, a collapsible page rail, and responsive pane layouts.
+- Add repository CI for type checking, tests, dependency auditing, and reproducible build checks; update development tooling to address known audit findings.
+- Keep the Obsidian 1.5.0 minimum version and existing notebook format. Real iPad input latency, memory pressure, Apple Pencil behavior, and cross-device synchronization remain unverified for this release.
+
 ## 0.1.0-beta.2 - 2026-09-07
 
 - Clarify the drawing toolbar with labeled controls, grouped actions, visible color swatches, and live brush values.

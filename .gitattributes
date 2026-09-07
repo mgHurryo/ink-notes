@@ -1,0 +1,4 @@
+*.ts text eol=lf
+*.mts text eol=lf
+*.js text eol=lf
+*.map text eol=lf

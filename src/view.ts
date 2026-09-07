@@ -11,6 +11,8 @@ import {
   newId,
 } from "./model";
 import { NotebookStore } from "./storage";
+import { canvasResolution, drawInkStroke } from "./rendering";
+import { Rect, TileRenderer } from "./tiles";
 
 export const VIEW_TYPE_INK = "ink-notes-view";
 
@@ -28,10 +30,10 @@ interface EditCommand {
 
 const INK_COLORS = [
   { value: "#1b1b1b", label: "Black" },
-  { value: "#2563eb", label: "Blue" },
-  { value: "#dc2626", label: "Red" },
-  { value: "#15803d", label: "Green" },
-  { value: "#ca8a04", label: "Yellow" },
+  { value: "#195bff", label: "Blue" },
+  { value: "#f23c42", label: "Red" },
+  { value: "#42c449", label: "Green" },
+  { value: "#ffffff", label: "White" },
 ];
 
 export class InkView extends FileView {
@@ -42,10 +44,16 @@ export class InkView extends FileView {
   private root!: HTMLElement;
   private canvas!: HTMLCanvasElement;
   private ctx!: CanvasRenderingContext2D;
+  private previewCanvas!: HTMLCanvasElement;
+  private previewCtx!: CanvasRenderingContext2D;
+  private tiles!: TileRenderer;
+  private viewport: Rect = { x: 0, y: 0, width: 1, height: 1 };
+  private overlayScaleX = 1;
+  private overlayScaleY = 1;
   private canvasLogicalWidth = 1;
   private canvasLogicalHeight = 1;
-  private canvasRenderScale = 1;
   private pageElement!: HTMLElement;
+  private pageExtent!: HTMLElement;
   private pageScroller!: HTMLElement;
   private syncing = false;
   private saveRequested = false;
@@ -55,7 +63,15 @@ export class InkView extends FileView {
   private activeStroke: InkStroke | null = null;
   private activePointerId: number | null = null;
   private lastPoint: InkPoint | null = null;
-  private pinchStart: { distance: number; zoom: number; x: number; y: number } | null = null;
+  private touchGesture: {
+    ids: number[];
+    distance: number;
+    zoom: number;
+    x: number;
+    y: number;
+    pageX: number;
+    pageY: number;
+  } | null = null;
   private zoom = 1;
   private viewReady = false;
   private undoStack: EditCommand[] = [];
@@ -68,6 +84,9 @@ export class InkView extends FileView {
   private sizePopover: HTMLElement | null = null;
   private sizePopoverButton: HTMLButtonElement | null = null;
   private sizePopoverOpen = false;
+  private renderFrame: number | null = null;
+  private resizeRequested = false;
+  private zoomRenderTimer: number | undefined;
 
   constructor(leaf: WorkspaceLeaf, store: NotebookStore) {
     super(leaf);
@@ -85,8 +104,11 @@ export class InkView extends FileView {
     this.root = this.containerEl.children[1] as HTMLElement;
     this.root.empty();
     this.root.addClass("ink-notes-view");
+    this.root.addClass("ink-rail-hidden");
     this.root.setAttribute("aria-label", "Ink Notes");
+    this.root.createDiv({ cls: "ink-document-bar" });
     this.root.createDiv({ cls: "ink-toolbar", attr: { role: "toolbar", "aria-label": "Ink tools" } });
+    this.root.createDiv({ cls: "ink-brush-bar" });
     this.renderToolbar();
     this.renderCanvas();
     this.viewReady = true;
@@ -94,6 +116,10 @@ export class InkView extends FileView {
   }
 
   async onClose(): Promise<void> {
+    if (this.renderFrame !== null) window.cancelAnimationFrame(this.renderFrame);
+    this.renderFrame = null;
+    if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
+    this.tiles?.dispose();
     if (this.saveTimer !== undefined && this.file) {
       window.clearTimeout(this.saveTimer);
       this.saveTimer = undefined;
@@ -123,24 +149,33 @@ export class InkView extends FileView {
 
   async reloadFromDisk(): Promise<void> {
     if (this.syncing || this.activePointerId !== null || !this.file) return;
-    const latest = await this.store.read(this.file);
-    this.notebook = mergeNotebooks(latest, this.notebook);
-    this.pageIndex = Math.max(0, Math.min(this.pageIndex, this.notebook.pages.length - 1));
-    this.renderAll();
+    const file = this.file;
+    const latest = await this.store.read(file);
+    if (this.file !== file) return;
+    this.receiveMergedNotebook(latest);
   }
 
   private renderToolbar(): void {
+    const documentBar = this.root.querySelector<HTMLElement>(".ink-document-bar")!;
+    documentBar.empty();
+    setIcon(documentBar.createSpan({ cls: "ink-brand", attr: { "aria-label": "Ink Notes" } }), "notebook-pen");
+    const tab = documentBar.createDiv({ cls: "ink-document-tab" });
+    tab.createSpan({ cls: "ink-document-title", text: this.getDisplayText() });
+    this.addIconButton(tab, "chevron-down", "Document options", (event) => this.openPageMenu(event));
+    documentBar.createSpan({ cls: "ink-current-page-title", text: this.currentPage().title });
     const toolbar = this.root.querySelector<HTMLElement>(".ink-toolbar")!;
     toolbar.empty();
-    const group = toolbar.createDiv({ cls: "ink-toolbar-group" });
+    const group = toolbar;
     const navigation = this.addToolbarSection(group, "Pages");
+    const toggle = this.addIconButton(navigation, "panel-left", "Pages", () => {
+      const hidden = !this.root.hasClass("ink-rail-hidden");
+      this.root.toggleClass("ink-rail-hidden", hidden);
+      toggle.setAttribute("aria-pressed", String(!hidden));
+      this.resizeCanvas();
+    });
+    toggle.setAttribute("aria-pressed", String(!this.root.hasClass("ink-rail-hidden")));
     this.addIconButton(navigation, "arrow-left", "Previous", () => this.changePage(-1));
     this.addIconButton(navigation, "arrow-right", "Next", () => this.changePage(1));
-    this.addIconButton(navigation, "panel-left-open", "Pages", () => this.root.toggleClass("ink-rail-hidden", !this.root.hasClass("ink-rail-hidden")));
-
-    const history = this.addToolbarSection(group, "History");
-    this.addIconButton(history, "undo-2", "Undo", () => this.undo(), this.undoStack.length === 0);
-    this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
 
     const tools = this.addToolbarSection(group, "Draw");
     this.addToolButton(tools, "pen-line", "Pen", "pen");
@@ -148,14 +183,32 @@ export class InkView extends FileView {
     this.addToolButton(tools, "eraser", "Erase", "eraser");
     this.addToolButton(tools, "lasso-select", "Select", "lasso");
 
-    const brush = this.addToolbarSection(group, "Style");
+    const pages = this.addToolbarSection(group, "Document");
+    this.addIconButton(pages, "file-plus-2", "Add page", () => this.addPage());
+    this.addIconButton(pages, "more-horizontal", "Options", (event) => this.openPageMenu(event));
+    this.renderBrushBar();
+    this.updateToolButtons();
+  }
+
+  private renderBrushBar(): void {
+    const bar = this.root.querySelector<HTMLElement>(".ink-brush-bar")!;
+    bar.empty();
+    const history = this.addToolbarSection(bar, "History");
+    this.addIconButton(history, "undo-2", "Undo", () => this.undo(), this.undoStack.length === 0);
+    this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
+    const brush = bar.createDiv({ cls: "ink-brush-palette", attr: { role: "toolbar", "aria-label": "Brush settings" } });
+    const tips = this.addToolbarSection(brush, "Tips");
+    this.addToolButton(tips, "pen-tool", "Pen tip", "pen");
+    this.addToolButton(tips, "highlighter", "Highlighter tip", "highlighter");
+    this.addToolButton(tips, "eraser", "Eraser tip", "eraser");
+    const widths = this.addToolbarSection(brush, "Widths");
+    for (const width of [2, 4, 8]) {
+      const button = widths.createEl("button", { cls: "ink-width-preset", attr: { type: "button", title: width + " px", "aria-label": width + " px", "data-width": String(width), "aria-pressed": String(this.state.width === width) } });
+      button.createSpan({ cls: "ink-width-line" }).style.height = width + "px";
+      button.addEventListener("click", () => { this.state.width = width; this.updateBrushControls(); });
+    }
     this.addColorPicker(brush);
     this.addSizePopover(brush);
-    this.addRange(brush, "Opacity", 0.1, 1, 0.05, this.state.opacity, (value) => { this.state.opacity = value; });
-
-    const pages = this.addToolbarSection(group, "Document");
-    this.addIconButton(pages, "plus", "Add", () => this.addPage());
-    this.addIconButton(pages, "more-horizontal", "Options", (event) => this.openPageMenu(event));
   }
 
   private addSizePopover(parent: HTMLElement): void {
@@ -170,9 +223,8 @@ export class InkView extends FileView {
       },
     });
     const icon = button.createSpan({ cls: "ink-button-icon" });
-    setIcon(icon, "circle-dot");
-    const text = button.createSpan({ cls: "ink-button-text", text: "Size" });
-    const valueText = button.createSpan({ cls: "ink-size-button-value", text: formatControlValue("Size", this.state.width) });
+    setIcon(icon, "sliders-horizontal");
+    button.title = "Brush size and opacity";
 
     const popover = container.createDiv({
       cls: "ink-size-popover",
@@ -180,7 +232,7 @@ export class InkView extends FileView {
     });
     const header = popover.createDiv({ cls: "ink-size-popover-header" });
     header.createSpan({ cls: "ink-size-popover-title", text: "Brush size" });
-    const popoverValue = header.createSpan({ cls: "ink-control-value", text: formatControlValue("Size", this.state.width) });
+    header.createSpan({ cls: "ink-control-value", text: formatControlValue("Size", this.state.width) });
     const input = popover.createEl("input", {
       attr: {
         type: "range",
@@ -191,7 +243,7 @@ export class InkView extends FileView {
         "aria-label": "Brush size",
       },
     });
-    popover.createDiv({ cls: "ink-size-popover-hint", text: "1–24 px" });
+    this.addRange(popover, "Opacity", 0.1, 1, 0.05, this.state.opacity, (value) => { this.state.opacity = value; });
 
     const close = (): void => this.setSizePopoverOpen(false);
     button.addEventListener("click", (event) => {
@@ -201,9 +253,7 @@ export class InkView extends FileView {
     input.addEventListener("input", () => {
       const next = Number(input.value);
       this.state.width = next;
-      const formatted = formatControlValue("Size", next);
-      valueText.textContent = formatted;
-      popoverValue.textContent = formatted;
+      this.updateBrushControls();
     });
     this.registerDomEvent(document, "pointerdown", (event) => {
       if (this.sizePopoverOpen && !container.contains(event.target as Node)) close();
@@ -250,38 +300,74 @@ export class InkView extends FileView {
   private addToolbarSection(parent: HTMLElement, label: string): HTMLElement {
     const section = parent.createDiv({ cls: "ink-toolbar-section" });
     section.addClass(`ink-toolbar-section-${label.toLowerCase()}`);
-    section.createSpan({ cls: "ink-toolbar-section-label", text: label });
+    section.setAttribute("role", "group");
+    section.setAttribute("aria-label", label);
     return section.createDiv({ cls: "ink-toolbar-section-controls" });
+  }
+
+  private updateBrushControls(): void {
+    this.root.querySelectorAll<HTMLElement>(".ink-width-preset").forEach((button) => {
+      button.setAttribute("aria-pressed", String(Number(button.dataset.width) === this.state.width));
+    });
+    const input = this.sizePopover?.querySelector<HTMLInputElement>("input[aria-label='Brush size']");
+    if (input) input.value = String(this.state.width);
+    const value = this.sizePopover?.querySelector<HTMLElement>(".ink-size-popover-header .ink-control-value");
+    if (value) value.textContent = formatControlValue("Size", this.state.width);
   }
 
   private renderCanvas(): void {
     const workspace = this.root.createDiv({ cls: "ink-workspace" });
+    workspace.createDiv({ cls: "ink-page-rail", attr: { "aria-label": "Notebook pages" } });
     this.pageScroller = workspace.createDiv({ cls: "ink-page-scroller" });
-    this.pageElement = this.pageScroller.createDiv({ cls: "ink-page" });
+    this.pageExtent = this.pageScroller.createDiv({ cls: "ink-page-extent" });
+    this.pageElement = this.pageExtent.createDiv({ cls: "ink-page" });
+    const tileHost = this.pageElement.createDiv({ cls: "ink-tile-layer" });
+    tileHost.style.cssText = "position:absolute;inset:0;pointer-events:none;overflow:hidden";
+    this.tiles = new TileRenderer(tileHost);
     this.canvas = this.pageElement.createEl("canvas", { cls: "ink-canvas" });
     this.ctx = this.canvas.getContext("2d")!;
-    this.canvas.style.touchAction = "none";
-    this.registerDomEvent(this.canvas, "pointerdown", (event) => this.onPointerDown(event));
-    this.registerDomEvent(this.canvas, "pointermove", (event) => this.onPointerMove(event));
-    this.registerDomEvent(this.canvas, "pointerup", (event) => this.onPointerUp(event));
-    this.registerDomEvent(this.canvas, "pointercancel", (event) => this.onPointerUp(event));
-    this.registerDomEvent(this.canvas, "lostpointercapture", (event) => this.onLostPointerCapture(event));
-    this.registerDomEvent(this.canvas, "wheel", (event) => this.onWheel(event), { passive: false });
+    this.canvas.setAttribute("aria-label", "Handwriting canvas");
+    const footer = this.root.createDiv({ cls: "ink-statusbar" });
+    footer.createSpan({ cls: "ink-page-status", attr: { "aria-live": "polite" } });
+    const zoom = footer.createDiv({ cls: "ink-zoom-controls", attr: { role: "group", "aria-label": "Zoom" } });
+    this.addIconButton(zoom, "minus", "Zoom out", () => this.setZoom(this.zoom - 0.1));
+    const reset = zoom.createEl("button", { cls: "ink-zoom-value", text: "100%", attr: { type: "button", title: "Reset zoom", "aria-label": "Reset zoom" } });
+    reset.addEventListener("click", () => this.setZoom(1));
+    this.addIconButton(zoom, "plus", "Zoom in", () => this.setZoom(this.zoom + 0.1));
+    this.previewCanvas = this.pageElement.createEl("canvas", { cls: "ink-canvas ink-preview-canvas" });
+    this.previewCanvas.style.pointerEvents = "none";
+    this.previewCtx = this.previewCanvas.getContext("2d")!;
+    this.canvas.style.pointerEvents = "none";
+    this.pageElement.style.touchAction = "none";
+    this.registerDomEvent(this.pageElement, "pointerdown", (event) => this.onPointerDown(event));
+    this.registerDomEvent(this.pageElement, "pointermove", (event) => this.onPointerMove(event));
+    this.registerDomEvent(this.pageElement, "pointerup", (event) => this.onPointerUp(event));
+    this.registerDomEvent(this.pageElement, "pointercancel", (event) => this.onPointerUp(event));
+    this.registerDomEvent(this.pageElement, "lostpointercapture", (event) => this.onLostPointerCapture(event));
+    this.registerDomEvent(this.pageElement, "wheel", (event) => this.onWheel(event), { passive: false });
+    this.registerDomEvent(this.pageScroller, "scroll", () => this.onViewportMotion(), { passive: true });
     this.registerDomEvent(this.pageScroller, "touchstart", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
-    this.registerDomEvent(this.pageScroller, "touchend", () => { this.pinchStart = null; });
-    this.registerDomEvent(window, "resize", () => this.resizeCanvas());
+    this.registerDomEvent(this.pageScroller, "touchend", (event) => this.onTouchStart(event));
+    this.registerDomEvent(this.pageScroller, "touchcancel", () => { this.touchGesture = null; });
+    const observer = new ResizeObserver(() => this.resizeCanvas());
+    observer.observe(this.pageScroller);
+    this.register(() => observer.disconnect());
   }
 
   private renderPageRail(): void {
     let rail = this.root.querySelector<HTMLElement>(".ink-page-rail");
-    if (!rail) rail = this.root.createDiv({ cls: "ink-page-rail" });
+    if (!rail) return;
     rail.empty();
+    rail.createDiv({ cls: "ink-rail-heading", text: "Pages" });
     this.notebook.pages.forEach((page, index) => {
       const button = rail!.createEl("button", { cls: "ink-page-thumb", attr: { type: "button", title: page.title } });
       if (index === this.pageIndex) button.addClass("is-active");
+      button.setAttribute("aria-label", String(index + 1) + ": " + page.title);
+      button.setAttribute("aria-current", String(index === this.pageIndex));
       button.createDiv({ cls: `ink-page-thumb-paper ink-paper-${page.paper}` });
       button.createSpan({ text: String(index + 1), cls: "ink-page-thumb-number" });
+      button.createSpan({ text: page.title, cls: "ink-page-thumb-title" });
       button.addEventListener("click", () => { this.pageIndex = index; this.renderPageRail(); this.renderPage(); });
     });
   }
@@ -289,10 +375,14 @@ export class InkView extends FileView {
   private renderPage(): void {
     if (!this.viewReady || this.notebook.pages.length === 0) return;
     const page = this.currentPage();
+    this.root.querySelector<HTMLElement>(".ink-document-title")!.textContent = this.getDisplayText();
+    this.root.querySelector<HTMLElement>(".ink-current-page-title")!.textContent = page.title;
+    this.root.querySelector<HTMLElement>(".ink-page-status")!.textContent = (this.pageIndex + 1) + " / " + this.notebook.pages.length;
+    this.root.querySelector<HTMLButtonElement>("[aria-label='Previous']")!.disabled = this.pageIndex === 0;
+    this.root.querySelector<HTMLButtonElement>("[aria-label='Next']")!.disabled = this.pageIndex === this.notebook.pages.length - 1;
     this.pageElement.className = `ink-page ink-paper-${page.paper}`;
     this.pageElement.style.aspectRatio = `${this.notebook.pageWidth} / ${this.notebook.pageHeight}`;
     this.resizeCanvas();
-    this.drawStrokes(page.strokes);
     this.root.querySelectorAll<HTMLElement>(".ink-tool-button").forEach((el) => {
       const active = el.getAttribute("data-tool") === this.state.tool;
       el.toggleClass("is-active", active);
@@ -302,68 +392,91 @@ export class InkView extends FileView {
 
   private resizeCanvas(): void {
     if (!this.canvas || !this.pageElement) return;
+    this.layoutPage();
     const rect = this.pageElement.getBoundingClientRect();
-    const logicalWidth = Math.max(1, this.pageElement.offsetWidth || Math.round(rect.width / this.zoom));
-    const logicalHeight = Math.max(1, this.pageElement.offsetHeight || Math.round(rect.height / this.zoom));
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    const zoomDensity = Math.max(1, Math.min(this.zoom, 2));
-    const renderScale = Math.min(4, dpr * zoomDensity);
-    this.canvasLogicalWidth = logicalWidth;
-    this.canvasLogicalHeight = logicalHeight;
-    this.canvasRenderScale = renderScale;
-    this.canvas.width = Math.max(1, Math.round(logicalWidth * renderScale));
-    this.canvas.height = Math.max(1, Math.round(logicalHeight * renderScale));
-    this.canvas.style.width = `${logicalWidth}px`;
-    this.canvas.style.height = `${logicalHeight}px`;
-    this.ctx.setTransform(renderScale, 0, 0, renderScale, 0, 0);
-    this.ctx.imageSmoothingEnabled = true;
-    this.drawStrokes(this.currentPage().strokes);
+    this.canvasLogicalWidth = Math.max(1, Math.round(rect.width / this.zoom * 64) / 64);
+    this.canvasLogicalHeight = Math.max(1, Math.round(rect.height / this.zoom * 64) / 64);
+    this.tiles.setPage(this.currentPage(), this.canvasLogicalWidth, this.canvasLogicalHeight, this.activeStroke);
+    this.updateViewport(true);
+  }
+
+  private updateViewport(refine: boolean): void {
+    const page = this.pageElement.getBoundingClientRect();
+    const screen = this.pageScroller.getBoundingClientRect();
+    const x = Math.max(0, (screen.left - page.left) / this.zoom);
+    const y = Math.max(0, (screen.top - page.top) / this.zoom);
+    this.viewport = { x, y,
+      width: Math.max(1, Math.min(this.canvasLogicalWidth - x, (screen.right - page.left) / this.zoom - x)),
+      height: Math.max(1, Math.min(this.canvasLogicalHeight - y, (screen.bottom - page.top) / this.zoom - y)) };
+    this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine);
+    if (refine || this.activeStroke) {
+      this.resizeOverlay(this.canvas, this.ctx);
+      this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
+      this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+      if (this.activeStroke?.tool === "pen") { this.resizePreview(); this.drawPreview(); }
+    }
+    if (refine) this.tiles.prewarm(this.notebook.pages.filter((_, index) => Math.abs(index - this.pageIndex) === 1));
   }
 
   private drawStrokes(strokes: InkStroke[]): void {
     if (!this.ctx || !this.pageElement) return;
-    this.ctx.clearRect(0, 0, this.canvasLogicalWidth, this.canvasLogicalHeight);
-    for (const stroke of strokes) this.drawStroke(stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    this.tiles.sync(strokes, this.activeStroke?.tool === "pen" ? this.activeStroke : null);
+    this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
+    this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
     this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+    this.drawPreview();
   }
 
-  private drawStroke(stroke: InkStroke, width: number, height: number): void {
-    if (stroke.points.length === 0) return;
-    const ctx = this.ctx;
-    ctx.save();
-    ctx.globalAlpha = stroke.opacity;
-    ctx.strokeStyle = stroke.color;
-    ctx.lineCap = "round";
-    ctx.lineJoin = "round";
-    if (stroke.tool === "highlighter") ctx.globalCompositeOperation = "multiply";
-    if (stroke.points.length === 1) {
-      const point = stroke.points[0];
-      ctx.fillStyle = stroke.color;
-      ctx.beginPath();
-      ctx.arc(point.x * width, point.y * height, strokeWidth(stroke, point.pressure) / 2, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.restore();
-      return;
-    }
-    if (stroke.tool === "highlighter") {
-      ctx.lineWidth = stroke.width;
-      drawSmoothPath(ctx, stroke.points, width, height);
-      ctx.stroke();
-      ctx.restore();
-      return;
-    }
-    for (let index = 1; index < stroke.points.length; index++) {
-      const previous = stroke.points[index - 1];
-      const point = stroke.points[index];
-      const start = index === 1 ? previous : midpoint(stroke.points[index - 2], previous);
-      const end = index === stroke.points.length - 1 ? point : midpoint(previous, point);
-      ctx.lineWidth = (strokeWidth(stroke, previous.pressure) + strokeWidth(stroke, point.pressure)) / 2;
-      ctx.beginPath();
-      ctx.moveTo(start.x * width, start.y * height);
-      ctx.quadraticCurveTo(previous.x * width, previous.y * height, end.x * width, end.y * height);
-      ctx.stroke();
-    }
-    ctx.restore();
+  private onViewportMotion(): void {
+    this.updateViewport(false);
+    if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
+    this.zoomRenderTimer = window.setTimeout(() => {
+      this.zoomRenderTimer = undefined;
+      this.updateViewport(true);
+    }, 100);
+  }
+
+
+  private requestRender(resize = false): void {
+    this.resizeRequested ||= resize;
+    if (this.renderFrame !== null) return;
+    this.renderFrame = window.requestAnimationFrame(() => {
+      this.renderFrame = null;
+      const shouldResize = this.resizeRequested;
+      this.resizeRequested = false;
+      if (shouldResize) this.resizeCanvas();
+      else if (this.activeStroke?.tool === "pen") this.drawPreview();
+      else this.drawStrokes(this.currentPage().strokes);
+    });
+  }
+
+  private resizeOverlay(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void {
+    const { x, y, width, height } = this.viewport;
+    const resolution = canvasResolution(width, height, window.devicePixelRatio || 1, this.zoom, 4_000_000);
+    if (canvas.width !== resolution.width) canvas.width = resolution.width;
+    if (canvas.height !== resolution.height) canvas.height = resolution.height;
+    canvas.style.left = x + "px"; canvas.style.top = y + "px";
+    canvas.style.width = width + "px"; canvas.style.height = height + "px";
+    canvas.style.right = "auto"; canvas.style.bottom = "auto";
+    this.overlayScaleX = resolution.width / width; this.overlayScaleY = resolution.height / height;
+    ctx.setTransform(this.overlayScaleX, 0, 0, this.overlayScaleY, -x * this.overlayScaleX, -y * this.overlayScaleY);
+  }
+
+  private resizePreview(): void { this.resizeOverlay(this.previewCanvas, this.previewCtx); }
+
+  private drawPreview(): void {
+    if (this.activeStroke?.tool !== "pen") return;
+    this.previewCtx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
+    drawInkStroke(this.previewCtx, this.activeStroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
+  }
+
+  private commitPreview(): void {
+    if (this.activeStroke?.tool !== "pen") return;
+    this.tiles.sync(this.currentPage().strokes);
+    this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
+    // Resolve dirty visible tiles before dropping the transient stroke, avoiding a pen-up flash.
+    this.tiles.flushVisible();
+    this.previewCanvas.width = this.previewCanvas.height = 1;
   }
 
   private drawSelection(width: number, height: number): void {
@@ -387,12 +500,13 @@ export class InkView extends FileView {
   private onPointerDown(event: PointerEvent): void {
     if (event.pointerType === "touch") return;
     if (this.activePointerId !== null) this.finishPointerInput();
+    this.updateViewport(true);
     if (this.saveTimer !== undefined) {
       window.clearTimeout(this.saveTimer);
       this.saveTimer = undefined;
     }
     this.activePointerId = event.pointerId;
-    this.canvas.setPointerCapture(event.pointerId);
+    this.pageElement.setPointerCapture(event.pointerId);
     const point = this.toPoint(event);
     this.erasedStrokeIds.clear();
     this.erasedStrokes = [];
@@ -426,7 +540,10 @@ export class InkView extends FileView {
     };
     this.lastPoint = point;
     this.currentPage().strokes.push(this.activeStroke);
-    this.drawStrokes(this.currentPage().strokes);
+    if (this.activeStroke.tool === "pen") {
+      this.resizePreview();
+      this.drawPreview();
+    } else this.drawStrokes(this.currentPage().strokes);
   }
 
   private onPointerMove(event: PointerEvent): void {
@@ -438,7 +555,7 @@ export class InkView extends FileView {
     if (this.activePointerId !== event.pointerId) return;
     this.applyPointerSamples(event);
     this.finishPointerInput();
-    if (this.canvas.hasPointerCapture(event.pointerId)) this.canvas.releasePointerCapture(event.pointerId);
+    if (this.pageElement.hasPointerCapture(event.pointerId)) this.pageElement.releasePointerCapture(event.pointerId);
   }
 
   private applyPointerSamples(event: PointerEvent): void {
@@ -456,7 +573,7 @@ export class InkView extends FileView {
         changed = true;
       }
     }
-    if (changed) this.drawStrokes(this.currentPage().strokes);
+    if (changed) this.requestRender();
   }
 
   private pointerSamples(event: PointerEvent): PointerEvent[] {
@@ -483,6 +600,11 @@ export class InkView extends FileView {
 
   private finishPointerInput(): void {
     const page = this.currentPage();
+    this.commitPreview();
+    if (this.activeStroke?.tool === "pen" && this.renderFrame !== null && !this.resizeRequested) {
+      window.cancelAnimationFrame(this.renderFrame);
+      this.renderFrame = null;
+    }
     if (this.state.tool === "lasso") {
       this.finishLasso(page);
       this.activePointerId = null;
@@ -504,44 +626,87 @@ export class InkView extends FileView {
 
   private applyPendingMergedNotebook(): void {
     if (!this.pendingMergedNotebook) return;
+    const pageId = this.currentPage().id;
     this.notebook = mergeNotebooks(this.pendingMergedNotebook, this.notebook);
     this.pendingMergedNotebook = null;
+    this.pageIndex = Math.max(0, this.notebook.pages.findIndex((page) => page.id === pageId));
     this.renderAll();
+  }
+
+  private receiveMergedNotebook(notebook: InkNotebook): void {
+    this.pendingMergedNotebook = this.pendingMergedNotebook
+      ? mergeNotebooks(this.pendingMergedNotebook, notebook)
+      : notebook;
+    // Reads and saves can finish after the next pointerdown. Apply only between strokes.
+    if (this.activePointerId === null) this.applyPendingMergedNotebook();
   }
 
   private onLostPointerCapture(event: PointerEvent): void {
     if (this.activePointerId !== event.pointerId) return;
-    this.applyPointerSamples(event);
+    // A delayed release from the previous stroke must not finish a recaptured pen.
+    if (this.pageElement.hasPointerCapture(event.pointerId)) return;
     this.finishPointerInput();
   }
 
   private onWheel(event: WheelEvent): void {
     if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
-    this.setZoom(this.zoom * (event.deltaY > 0 ? 0.92 : 1.08));
+    this.setZoom(this.zoom * (event.deltaY > 0 ? 0.92 : 1.08), { x: event.clientX, y: event.clientY });
   }
 
   private onTouchStart(event: TouchEvent): void {
-    if (event.touches.length !== 2) return;
+    this.touchGesture = null;
+    if (this.activePointerId !== null || event.touches.length < 1 || event.touches.length > 2) return;
     event.preventDefault();
     const a = event.touches.item(0);
     const b = event.touches.item(1);
-    if (!a || !b) return;
-    this.pinchStart = { distance: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY), zoom: this.zoom, x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 };
+    if (!a) return;
+    const x = b ? (a.clientX + b.clientX) / 2 : a.clientX;
+    const y = b ? (a.clientY + b.clientY) / 2 : a.clientY;
+    const rect = this.pageElement.getBoundingClientRect();
+    this.touchGesture = {
+      ids: b ? [a.identifier, b.identifier] : [a.identifier],
+      distance: b ? Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) : 0,
+      zoom: this.zoom, x, y,
+      pageX: (x - rect.left) / rect.width,
+      pageY: (y - rect.top) / rect.height,
+    };
   }
 
   private onTouchMove(event: TouchEvent): void {
-    if (event.touches.length !== 2 || !this.pinchStart) return;
+    if (this.activePointerId !== null) {
+      this.touchGesture = null;
+      return;
+    }
+    const gesture = this.touchGesture;
+    if (!gesture) return;
+    const touches = Array.from(event.touches);
+    const a = touches.find((touch) => touch.identifier === gesture.ids[0]);
+    const b = touches.find((touch) => touch.identifier === gesture.ids[1]);
+    if (touches.length !== gesture.ids.length || !a || (gesture.ids.length === 2 && !b)) {
+      this.onTouchStart(event);
+      return;
+    }
     event.preventDefault();
-    const a = event.touches.item(0);
-    const b = event.touches.item(1);
-    if (!a || !b) return;
+    if (!b) {
+      this.pageScroller.scrollLeft += gesture.x - a.clientX;
+      this.pageScroller.scrollTop += gesture.y - a.clientY;
+      gesture.x = a.clientX;
+      gesture.y = a.clientY;
+      return;
+    }
+    if (gesture.distance < 1) {
+      this.onTouchStart(event);
+      return;
+    }
     const distanceNow = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-    this.setZoom(this.pinchStart.zoom * distanceNow / this.pinchStart.distance);
+    this.setZoom(gesture.zoom * distanceNow / gesture.distance,
+      { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 },
+      { x: gesture.pageX, y: gesture.pageY });
   }
 
   private toPoint(event: PointerEvent): InkPoint {
-    const rect = this.canvas.getBoundingClientRect();
+    const rect = this.pageElement.getBoundingClientRect();
     return {
       x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
       y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
@@ -595,6 +760,7 @@ export class InkView extends FileView {
     this.currentPage().title = title;
     this.currentPage().updatedAt = Date.now();
     this.renderPageRail();
+    this.renderPage();
     this.scheduleSave();
   }
 
@@ -611,18 +777,18 @@ export class InkView extends FileView {
     });
   }
 
-  private addIconButton(parent: HTMLElement, icon: string, label: string, callback: (event: MouseEvent) => void, disabled = false): void {
+  private addIconButton(parent: HTMLElement, icon: string, label: string, callback: (event: MouseEvent) => void, disabled = false): HTMLButtonElement {
     const button = parent.createEl("button", { cls: "ink-icon-button", attr: { type: "button", title: label, "aria-label": label } });
     button.disabled = disabled;
     const iconHolder = button.createSpan({ cls: "ink-button-icon" });
     setIcon(iconHolder, icon);
     button.createSpan({ cls: "ink-button-text", text: label });
     button.addEventListener("click", callback);
+    return button;
   }
 
   private addColorPicker(parent: HTMLElement): void {
     const control = parent.createDiv({ cls: "ink-color-control" });
-    control.createSpan({ cls: "ink-control-name", text: "Color" });
     const swatches = control.createDiv({ cls: "ink-color-swatches" });
     for (const color of INK_COLORS) {
       const swatch = swatches.createEl("button", { cls: "ink-color-swatch", attr: { type: "button", title: color.label, "aria-label": color.label, "aria-pressed": String(this.state.color.toLowerCase() === color.value), "data-color": color.value } });
@@ -634,11 +800,11 @@ export class InkView extends FileView {
       });
     }
     const custom = control.createEl("label", { cls: "ink-custom-color", attr: { title: "Custom color" } });
-    custom.createSpan({ cls: "ink-button-text", text: "Custom" });
+    setIcon(custom.createSpan({ cls: "ink-button-icon" }), "plus");
     const input = custom.createEl("input", { attr: { type: "color", value: this.state.color, "aria-label": "Custom color" } });
     input.addEventListener("input", () => {
       this.state.color = input.value;
-      swatches.querySelectorAll<HTMLElement>(".ink-color-swatch").forEach((swatch) => swatch.toggleClass("is-active", swatch.dataset.color === this.state.color.toLowerCase()));
+      this.updateColorSwatches();
     });
   }
 
@@ -655,10 +821,40 @@ export class InkView extends FileView {
     });
   }
 
-  private setZoom(value: number): void {
-    this.zoom = Math.max(0.5, Math.min(3, value));
-    this.pageElement.style.transform = `scale(${this.zoom})`;
-    this.resizeCanvas();
+  private layoutPage(): void {
+    const style = getComputedStyle(this.pageScroller);
+    const width = Math.max(1, Math.min(980, this.pageScroller.clientWidth
+      - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)));
+    const height = width * this.notebook.pageHeight / this.notebook.pageWidth;
+    this.pageElement.style.width = width + "px";
+    this.pageElement.style.height = height + "px";
+    this.pageElement.style.transform = "scale(" + this.zoom + ")";
+    // Transforms do not grow layout boxes. Reserve the full scaled page for scrolling.
+    this.pageExtent.style.width = width * this.zoom + "px";
+    this.pageExtent.style.height = height * this.zoom + "px";
+  }
+
+  private setZoom(value: number, target?: { x: number; y: number }, anchor?: { x: number; y: number }): void {
+    if (!Number.isFinite(value)) return;
+    const viewport = this.pageScroller.getBoundingClientRect();
+    target ??= { x: viewport.left + this.pageScroller.clientWidth / 2, y: viewport.top + this.pageScroller.clientHeight / 2 };
+    const before = this.pageElement.getBoundingClientRect();
+    anchor ??= { x: (target.x - before.left) / before.width, y: (target.y - before.top) / before.height };
+    const nextZoom = Math.max(0.5, Math.min(3, value));
+    if (nextZoom !== this.zoom) {
+      this.zoom = nextZoom;
+      this.layoutPage();
+    }
+    const after = this.pageElement.getBoundingClientRect();
+    this.pageScroller.scrollLeft += after.left + anchor.x * after.width - target.x;
+    this.pageScroller.scrollTop += after.top + anchor.y * after.height - target.y;
+    const readout = this.root.querySelector<HTMLElement>(".ink-zoom-value");
+    if (readout) readout.textContent = Math.round(this.zoom * 100) + "%";
+    const zoomOut = this.root.querySelector<HTMLButtonElement>("[aria-label='Zoom out']");
+    const zoomIn = this.root.querySelector<HTMLButtonElement>("[aria-label='Zoom in']");
+    if (zoomOut) zoomOut.disabled = this.zoom <= 0.5;
+    if (zoomIn) zoomIn.disabled = this.zoom >= 3;
+    this.onViewportMotion();
   }
 
   private scheduleSave(): void {
@@ -693,12 +889,7 @@ export class InkView extends FileView {
         this.saveRequested = false;
         const snapshot = cloneNotebook(this.notebook);
         const merged = await this.store.save(file, snapshot);
-        if (this.activePointerId !== null) {
-          this.pendingMergedNotebook = merged;
-        } else {
-          this.notebook = mergeNotebooks(merged, this.notebook);
-          this.renderAll();
-        }
+        if (this.file === file) this.receiveMergedNotebook(merged);
       } while (this.saveRequested);
     } finally {
       this.syncing = false;
@@ -750,6 +941,8 @@ export class InkView extends FileView {
   }
 
   private updateColorSwatches(): void {
+    const custom = this.root.querySelector<HTMLInputElement>('input[type="color"]');
+    if (custom) custom.value = this.state.color;
     this.root.querySelectorAll<HTMLElement>(".ink-color-swatch").forEach((swatch) => {
       const active = swatch.dataset.color === this.state.color.toLowerCase();
       swatch.toggleClass("is-active", active);
@@ -848,6 +1041,7 @@ export class InkView extends FileView {
     const now = Date.now();
     page.updatedAt = now;
     this.notebook.updatedAt = now;
+    if (page === this.currentPage()) this.tiles?.sync(page.strokes);
   }
 
   private selectedStrokes(): InkStroke[] {
@@ -868,6 +1062,9 @@ export class InkView extends FileView {
   }
 
   private resetInteraction(): void {
+    if (this.previewCanvas) this.previewCanvas.width = this.previewCanvas.height = 1;
+    this.touchGesture = null;
+    this.pendingMergedNotebook = null;
     this.activeStroke = null;
     this.activePointerId = null;
     this.lastPoint = null;
@@ -880,6 +1077,7 @@ export class InkView extends FileView {
     if (!this.viewReady) return;
     this.renderPageRail();
     this.renderPage();
+    this.updateHistoryButtons();
   }
 
   private pageById(id: string): InkPage | undefined { return this.notebook.pages.find((page) => page.id === id); }
@@ -956,31 +1154,4 @@ function constrainDelta(delta: number, minimum: number, maximum: number): number
 
 function formatControlValue(name: string, value: number): string {
   return name === "Opacity" ? `${Math.round(value * 100)}%` : `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(1)} px`;
-}
-
-function strokeWidth(stroke: InkStroke, pressure: number): number {
-  return stroke.tool === "highlighter" ? stroke.width : stroke.width * (0.55 + pressure * 0.75);
-}
-
-function midpoint(a: InkPoint, b: InkPoint): InkPoint {
-  return {
-    x: (a.x + b.x) / 2,
-    y: (a.y + b.y) / 2,
-    pressure: (a.pressure + b.pressure) / 2,
-    t: (a.t + b.t) / 2,
-  };
-}
-
-function drawSmoothPath(ctx: CanvasRenderingContext2D, points: InkPoint[], width: number, height: number): void {
-  const first = points[0];
-  ctx.beginPath();
-  ctx.moveTo(first.x * width, first.y * height);
-  for (let index = 1; index < points.length; index++) {
-    const previous = points[index - 1];
-    const point = points[index];
-    const end = index === points.length - 1 ? point : midpoint(previous, point);
-    ctx.quadraticCurveTo(previous.x * width, previous.y * height, end.x * width, end.y * height);
-  }
-  const last = points[points.length - 1];
-  ctx.lineTo(last.x * width, last.y * height);
 }
