@@ -137,10 +137,10 @@ export class InkView extends FileView {
 
   async reloadFromDisk(): Promise<void> {
     if (this.syncing || this.activePointerId !== null || !this.file) return;
-    const latest = await this.store.read(this.file);
-    this.notebook = mergeNotebooks(latest, this.notebook);
-    this.pageIndex = Math.max(0, Math.min(this.pageIndex, this.notebook.pages.length - 1));
-    this.renderAll();
+    const file = this.file;
+    const latest = await this.store.read(file);
+    if (this.file !== file) return;
+    this.receiveMergedNotebook(latest);
   }
 
   private renderToolbar(): void {
@@ -556,14 +556,25 @@ export class InkView extends FileView {
 
   private applyPendingMergedNotebook(): void {
     if (!this.pendingMergedNotebook) return;
+    const pageId = this.currentPage().id;
     this.notebook = mergeNotebooks(this.pendingMergedNotebook, this.notebook);
     this.pendingMergedNotebook = null;
+    this.pageIndex = Math.max(0, this.notebook.pages.findIndex((page) => page.id === pageId));
     this.renderAll();
+  }
+
+  private receiveMergedNotebook(notebook: InkNotebook): void {
+    this.pendingMergedNotebook = this.pendingMergedNotebook
+      ? mergeNotebooks(this.pendingMergedNotebook, notebook)
+      : notebook;
+    // Reads and saves can finish after the next pointerdown. Apply only between strokes.
+    if (this.activePointerId === null) this.applyPendingMergedNotebook();
   }
 
   private onLostPointerCapture(event: PointerEvent): void {
     if (this.activePointerId !== event.pointerId) return;
-    this.applyPointerSamples(event);
+    // A delayed release from the previous stroke must not finish a recaptured pen.
+    if (this.pageElement.hasPointerCapture(event.pointerId)) return;
     this.finishPointerInput();
   }
 
@@ -745,12 +756,7 @@ export class InkView extends FileView {
         this.saveRequested = false;
         const snapshot = cloneNotebook(this.notebook);
         const merged = await this.store.save(file, snapshot);
-        if (this.activePointerId !== null) {
-          this.pendingMergedNotebook = merged;
-        } else {
-          this.notebook = mergeNotebooks(merged, this.notebook);
-          this.renderAll();
-        }
+        if (this.file === file) this.receiveMergedNotebook(merged);
       } while (this.saveRequested);
     } finally {
       this.syncing = false;
@@ -922,6 +928,7 @@ export class InkView extends FileView {
 
   private resetInteraction(): void {
     if (this.previewCanvas) this.previewCanvas.width = this.previewCanvas.height = 1;
+    this.pendingMergedNotebook = null;
     this.activeStroke = null;
     this.activePointerId = null;
     this.lastPoint = null;
