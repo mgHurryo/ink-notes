@@ -117,7 +117,7 @@ export class InkView extends FileView {
   }
 
   async reloadFromDisk(): Promise<void> {
-    if (this.syncing || !this.file) return;
+    if (this.syncing || this.activePointerId !== null || !this.file) return;
     const latest = await this.store.read(this.file);
     this.notebook = mergeNotebooks(latest, this.notebook);
     this.pageIndex = Math.max(0, Math.min(this.pageIndex, this.notebook.pages.length - 1));
@@ -315,35 +315,54 @@ export class InkView extends FileView {
 
   private onPointerMove(event: PointerEvent): void {
     if (this.activePointerId !== event.pointerId || event.pointerType === "touch") return;
-    const point = this.toPoint(event);
-    if (this.state.tool === "eraser") { this.eraseAt(point); return; }
-    if (this.state.tool === "lasso") {
-      if (this.lassoDrag) {
-        const bounds = boundsForPointSets([...this.lassoDrag.before.values()]);
-        const dx = constrainDelta(point.x - this.lassoDrag.start.x, bounds?.minX ?? 0, bounds?.maxX ?? 1);
-        const dy = constrainDelta(point.y - this.lassoDrag.start.y, bounds?.minY ?? 0, bounds?.maxY ?? 1);
-        for (const stroke of this.selectedStrokes()) {
-          const original = this.lassoDrag.before.get(stroke.id);
-          if (original) stroke.points = translatePoints(original, dx, dy);
-        }
-      } else if (distance(point, this.lassoPath[this.lassoPath.length - 1]) >= 0.002) {
-        this.lassoPath.push(point);
-      }
-      this.drawStrokes(this.currentPage().strokes);
-      return;
-    }
-    if (!this.activeStroke || !this.lastPoint) return;
-    if (distance(point, this.lastPoint) < 0.001) return;
-    this.activeStroke.points.push(point);
-    this.activeStroke.updatedAt = Date.now();
-    this.lastPoint = point;
-    this.drawStrokes(this.currentPage().strokes);
+    this.applyPointerSamples(event);
   }
 
   private onPointerUp(event: PointerEvent): void {
     if (this.activePointerId !== event.pointerId) return;
+    this.applyPointerSamples(event);
     this.finishPointerInput();
     if (this.canvas.hasPointerCapture(event.pointerId)) this.canvas.releasePointerCapture(event.pointerId);
+  }
+
+  private applyPointerSamples(event: PointerEvent): void {
+    let changed = false;
+    for (const sample of this.pointerSamples(event)) {
+      const point = this.toPoint(sample);
+      if (this.state.tool === "eraser") {
+        changed = this.eraseAt(point) || changed;
+      } else if (this.state.tool === "lasso") {
+        changed = this.applyLassoPoint(point) || changed;
+      } else if (this.activeStroke && this.lastPoint && distance(point, this.lastPoint) >= 0.0002) {
+        this.activeStroke.points.push(point);
+        this.activeStroke.updatedAt = Date.now();
+        this.lastPoint = point;
+        changed = true;
+      }
+    }
+    if (changed) this.drawStrokes(this.currentPage().strokes);
+  }
+
+  private pointerSamples(event: PointerEvent): PointerEvent[] {
+    const coalesced = typeof event.getCoalescedEvents === "function" ? event.getCoalescedEvents() : [];
+    return coalesced.length > 0 ? [...coalesced, event] : [event];
+  }
+
+  private applyLassoPoint(point: InkPoint): boolean {
+    if (this.lassoDrag) {
+      const bounds = boundsForPointSets([...this.lassoDrag.before.values()]);
+      const dx = constrainDelta(point.x - this.lassoDrag.start.x, bounds?.minX ?? 0, bounds?.maxX ?? 1);
+      const dy = constrainDelta(point.y - this.lassoDrag.start.y, bounds?.minY ?? 0, bounds?.maxY ?? 1);
+      for (const stroke of this.selectedStrokes()) {
+        const original = this.lassoDrag.before.get(stroke.id);
+        if (original) stroke.points = translatePoints(original, dx, dy);
+      }
+      return true;
+    }
+    const previous = this.lassoPath[this.lassoPath.length - 1];
+    if (!previous || distance(point, previous) < 0.001) return false;
+    this.lassoPath.push(point);
+    return true;
   }
 
   private finishPointerInput(): void {
@@ -367,6 +386,7 @@ export class InkView extends FileView {
 
   private onLostPointerCapture(event: PointerEvent): void {
     if (this.activePointerId !== event.pointerId) return;
+    this.applyPointerSamples(event);
     this.finishPointerInput();
   }
 
@@ -407,17 +427,17 @@ export class InkView extends FileView {
     };
   }
 
-  private eraseAt(point: InkPoint): void {
+  private eraseAt(point: InkPoint): boolean {
     const page = this.currentPage();
     const removed = page.strokes.filter((stroke) => !this.erasedStrokeIds.has(stroke.id) && stroke.points.some((candidate) => distance(candidate, point) < this.state.width / 500));
-    if (removed.length === 0) return;
+    if (removed.length === 0) return false;
     for (const stroke of removed) {
       this.erasedStrokeIds.add(stroke.id);
       this.erasedStrokes.push(cloneStroke(stroke));
     }
     this.deleteStrokes(page, removed.map((stroke) => stroke.id));
     this.markChanged(page);
-    this.drawStrokes(page.strokes);
+    return true;
   }
 
   private addPage(): void {

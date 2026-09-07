@@ -245,7 +245,7 @@ var InkView = class extends import_obsidian.FileView {
     if (this.activeSave) await this.activeSave;
   }
   async reloadFromDisk() {
-    if (this.syncing || !this.file) return;
+    if (this.syncing || this.activePointerId !== null || !this.file) return;
     const latest = await this.store.read(this.file);
     this.notebook = mergeNotebooks(latest, this.notebook);
     this.pageIndex = Math.max(0, Math.min(this.pageIndex, this.notebook.pages.length - 1));
@@ -437,39 +437,52 @@ var InkView = class extends import_obsidian.FileView {
     this.drawStrokes(this.currentPage().strokes);
   }
   onPointerMove(event) {
-    var _a, _b, _c, _d;
     if (this.activePointerId !== event.pointerId || event.pointerType === "touch") return;
-    const point = this.toPoint(event);
-    if (this.state.tool === "eraser") {
-      this.eraseAt(point);
-      return;
-    }
-    if (this.state.tool === "lasso") {
-      if (this.lassoDrag) {
-        const bounds = boundsForPointSets([...this.lassoDrag.before.values()]);
-        const dx = constrainDelta(point.x - this.lassoDrag.start.x, (_a = bounds == null ? void 0 : bounds.minX) != null ? _a : 0, (_b = bounds == null ? void 0 : bounds.maxX) != null ? _b : 1);
-        const dy = constrainDelta(point.y - this.lassoDrag.start.y, (_c = bounds == null ? void 0 : bounds.minY) != null ? _c : 0, (_d = bounds == null ? void 0 : bounds.maxY) != null ? _d : 1);
-        for (const stroke of this.selectedStrokes()) {
-          const original = this.lassoDrag.before.get(stroke.id);
-          if (original) stroke.points = translatePoints(original, dx, dy);
-        }
-      } else if (distance(point, this.lassoPath[this.lassoPath.length - 1]) >= 2e-3) {
-        this.lassoPath.push(point);
-      }
-      this.drawStrokes(this.currentPage().strokes);
-      return;
-    }
-    if (!this.activeStroke || !this.lastPoint) return;
-    if (distance(point, this.lastPoint) < 1e-3) return;
-    this.activeStroke.points.push(point);
-    this.activeStroke.updatedAt = Date.now();
-    this.lastPoint = point;
-    this.drawStrokes(this.currentPage().strokes);
+    this.applyPointerSamples(event);
   }
   onPointerUp(event) {
     if (this.activePointerId !== event.pointerId) return;
+    this.applyPointerSamples(event);
     this.finishPointerInput();
     if (this.canvas.hasPointerCapture(event.pointerId)) this.canvas.releasePointerCapture(event.pointerId);
+  }
+  applyPointerSamples(event) {
+    let changed = false;
+    for (const sample of this.pointerSamples(event)) {
+      const point = this.toPoint(sample);
+      if (this.state.tool === "eraser") {
+        changed = this.eraseAt(point) || changed;
+      } else if (this.state.tool === "lasso") {
+        changed = this.applyLassoPoint(point) || changed;
+      } else if (this.activeStroke && this.lastPoint && distance(point, this.lastPoint) >= 2e-4) {
+        this.activeStroke.points.push(point);
+        this.activeStroke.updatedAt = Date.now();
+        this.lastPoint = point;
+        changed = true;
+      }
+    }
+    if (changed) this.drawStrokes(this.currentPage().strokes);
+  }
+  pointerSamples(event) {
+    const coalesced = typeof event.getCoalescedEvents === "function" ? event.getCoalescedEvents() : [];
+    return coalesced.length > 0 ? [...coalesced, event] : [event];
+  }
+  applyLassoPoint(point) {
+    var _a, _b, _c, _d;
+    if (this.lassoDrag) {
+      const bounds = boundsForPointSets([...this.lassoDrag.before.values()]);
+      const dx = constrainDelta(point.x - this.lassoDrag.start.x, (_a = bounds == null ? void 0 : bounds.minX) != null ? _a : 0, (_b = bounds == null ? void 0 : bounds.maxX) != null ? _b : 1);
+      const dy = constrainDelta(point.y - this.lassoDrag.start.y, (_c = bounds == null ? void 0 : bounds.minY) != null ? _c : 0, (_d = bounds == null ? void 0 : bounds.maxY) != null ? _d : 1);
+      for (const stroke of this.selectedStrokes()) {
+        const original = this.lassoDrag.before.get(stroke.id);
+        if (original) stroke.points = translatePoints(original, dx, dy);
+      }
+      return true;
+    }
+    const previous = this.lassoPath[this.lassoPath.length - 1];
+    if (!previous || distance(point, previous) < 1e-3) return false;
+    this.lassoPath.push(point);
+    return true;
   }
   finishPointerInput() {
     const page = this.currentPage();
@@ -491,6 +504,7 @@ var InkView = class extends import_obsidian.FileView {
   }
   onLostPointerCapture(event) {
     if (this.activePointerId !== event.pointerId) return;
+    this.applyPointerSamples(event);
     this.finishPointerInput();
   }
   onWheel(event) {
@@ -529,14 +543,14 @@ var InkView = class extends import_obsidian.FileView {
   eraseAt(point) {
     const page = this.currentPage();
     const removed = page.strokes.filter((stroke) => !this.erasedStrokeIds.has(stroke.id) && stroke.points.some((candidate) => distance(candidate, point) < this.state.width / 500));
-    if (removed.length === 0) return;
+    if (removed.length === 0) return false;
     for (const stroke of removed) {
       this.erasedStrokeIds.add(stroke.id);
       this.erasedStrokes.push(cloneStroke(stroke));
     }
     this.deleteStrokes(page, removed.map((stroke) => stroke.id));
     this.markChanged(page);
-    this.drawStrokes(page.strokes);
+    return true;
   }
   addPage() {
     const now = Date.now();
