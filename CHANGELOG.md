@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Ignore delayed capture-loss events from the previous stroke once the pen has been recaptured, so consecutive strokes are not cut short.
+- Do not append capture-loss event coordinates as ink points.
+- Defer disk reads that finish during handwriting until the pointer finishes, using the same merge queue as saves.
+- Preserve the selected page during background merges and discard read results for a file that is no longer open.
+- Add regression coverage for rapid consecutive strokes and overlapping background reads and saves. Real-device Apple Pencil verification is still required.
+
 ## 0.1.0-beta.2 - 2026-09-07
 
 - Clarify the drawing toolbar with labeled controls, grouped actions, visible color swatches, and live brush values.
