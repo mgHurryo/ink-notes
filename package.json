@@ -5,6 +5,7 @@
   "description": "Cross-platform handwritten notes for Obsidian.",
   "main": "main.js",
   "scripts": {
+    "preview": "node dev/serve.mjs",
     "build": "esbuild src/main.ts --bundle --external:obsidian --format=cjs --platform=node --target=es2018 --outdir=. --sourcemap",
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
@@ -13,6 +14,8 @@
     "@playwright/test": "^1.63.0",
     "@types/node": "^22.10.2",
     "esbuild": "^0.24.2",
+    "jsdom": "^26.1.0",
+    "lucide": "^1.42.0",
     "obsidian": "^1.7.2",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
