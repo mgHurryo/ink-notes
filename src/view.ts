@@ -42,6 +42,8 @@ export class InkView extends FileView {
   private root!: HTMLElement;
   private canvas!: HTMLCanvasElement;
   private ctx!: CanvasRenderingContext2D;
+  private canvasLogicalWidth = 1;
+  private canvasLogicalHeight = 1;
   private pageElement!: HTMLElement;
   private pageScroller!: HTMLElement;
   private syncing = false;
@@ -168,6 +170,7 @@ export class InkView extends FileView {
     this.registerDomEvent(this.canvas, "pointermove", (event) => this.onPointerMove(event));
     this.registerDomEvent(this.canvas, "pointerup", (event) => this.onPointerUp(event));
     this.registerDomEvent(this.canvas, "pointercancel", (event) => this.onPointerUp(event));
+    this.registerDomEvent(this.canvas, "lostpointercapture", (event) => this.onLostPointerCapture(event));
     this.registerDomEvent(this.canvas, "wheel", (event) => this.onWheel(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchstart", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
@@ -205,21 +208,24 @@ export class InkView extends FileView {
   private resizeCanvas(): void {
     if (!this.canvas || !this.pageElement) return;
     const rect = this.pageElement.getBoundingClientRect();
+    const logicalWidth = Math.max(1, this.pageElement.offsetWidth || Math.round(rect.width / this.zoom));
+    const logicalHeight = Math.max(1, this.pageElement.offsetHeight || Math.round(rect.height / this.zoom));
     const dpr = Math.min(window.devicePixelRatio || 1, 2);
-    this.canvas.width = Math.max(1, Math.round(rect.width * dpr));
-    this.canvas.height = Math.max(1, Math.round(rect.height * dpr));
-    this.canvas.style.width = `${rect.width}px`;
-    this.canvas.style.height = `${rect.height}px`;
+    this.canvasLogicalWidth = logicalWidth;
+    this.canvasLogicalHeight = logicalHeight;
+    this.canvas.width = Math.max(1, Math.round(logicalWidth * dpr));
+    this.canvas.height = Math.max(1, Math.round(logicalHeight * dpr));
+    this.canvas.style.width = `${logicalWidth}px`;
+    this.canvas.style.height = `${logicalHeight}px`;
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     this.drawStrokes(this.currentPage().strokes);
   }
 
   private drawStrokes(strokes: InkStroke[]): void {
     if (!this.ctx || !this.pageElement) return;
-    const rect = this.pageElement.getBoundingClientRect();
-    this.ctx.clearRect(0, 0, rect.width, rect.height);
-    for (const stroke of strokes) this.drawStroke(stroke, rect.width, rect.height);
-    this.drawSelection(rect.width, rect.height);
+    this.ctx.clearRect(0, 0, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    for (const stroke of strokes) this.drawStroke(stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
 
   private drawStroke(stroke: InkStroke, width: number, height: number): void {
@@ -268,6 +274,7 @@ export class InkView extends FileView {
 
   private onPointerDown(event: PointerEvent): void {
     if (event.pointerType === "touch") return;
+    if (this.activePointerId !== null) this.finishPointerInput();
     this.activePointerId = event.pointerId;
     this.canvas.setPointerCapture(event.pointerId);
     const point = this.toPoint(event);
@@ -335,6 +342,11 @@ export class InkView extends FileView {
 
   private onPointerUp(event: PointerEvent): void {
     if (this.activePointerId !== event.pointerId) return;
+    this.finishPointerInput();
+    if (this.canvas.hasPointerCapture(event.pointerId)) this.canvas.releasePointerCapture(event.pointerId);
+  }
+
+  private finishPointerInput(): void {
     const page = this.currentPage();
     if (this.state.tool === "lasso") {
       this.finishLasso(page);
@@ -351,6 +363,11 @@ export class InkView extends FileView {
     this.activeStroke = null;
     this.lastPoint = null;
     this.scheduleSave();
+  }
+
+  private onLostPointerCapture(event: PointerEvent): void {
+    if (this.activePointerId !== event.pointerId) return;
+    this.finishPointerInput();
   }
 
   private onWheel(event: WheelEvent): void {
@@ -444,7 +461,7 @@ export class InkView extends FileView {
     button.addEventListener("click", () => {
       this.state.tool = tool;
       if (tool !== "lasso") this.clearSelection();
-      this.renderToolbar();
+      this.updateToolButtons();
       this.renderPage();
     });
   }
@@ -468,7 +485,7 @@ export class InkView extends FileView {
       if (this.state.color.toLowerCase() === color.value) swatch.addClass("is-active");
       swatch.addEventListener("click", () => {
         this.state.color = color.value;
-        this.renderToolbar();
+        this.updateColorSwatches();
       });
     }
     const custom = control.createEl("label", { cls: "ink-custom-color", attr: { title: "Custom color" } });
@@ -496,6 +513,7 @@ export class InkView extends FileView {
   private setZoom(value: number): void {
     this.zoom = Math.max(0.5, Math.min(3, value));
     this.pageElement.style.transform = `scale(${this.zoom})`;
+    this.drawStrokes(this.currentPage().strokes);
   }
 
   private scheduleSave(): void {
@@ -557,14 +575,37 @@ export class InkView extends FileView {
   private pushCommand(command: EditCommand): void {
     this.undoStack.push(command);
     this.redoStack = [];
-    this.renderToolbar();
+    this.updateHistoryButtons();
   }
 
   private afterCommand(): void {
     this.clearSelection();
-    this.renderToolbar();
+    this.updateHistoryButtons();
     this.renderPage();
     this.scheduleSave();
+  }
+
+  private updateHistoryButtons(): void {
+    const undo = this.root.querySelector<HTMLButtonElement>("[aria-label='Undo']");
+    const redo = this.root.querySelector<HTMLButtonElement>("[aria-label='Redo']");
+    if (undo) undo.disabled = this.undoStack.length === 0;
+    if (redo) redo.disabled = this.redoStack.length === 0;
+  }
+
+  private updateToolButtons(): void {
+    this.root.querySelectorAll<HTMLElement>(".ink-tool-button").forEach((el) => {
+      const active = el.getAttribute("data-tool") === this.state.tool;
+      el.toggleClass("is-active", active);
+      el.setAttribute("aria-pressed", String(active));
+    });
+  }
+
+  private updateColorSwatches(): void {
+    this.root.querySelectorAll<HTMLElement>(".ink-color-swatch").forEach((swatch) => {
+      const active = swatch.dataset.color === this.state.color.toLowerCase();
+      swatch.toggleClass("is-active", active);
+      swatch.setAttribute("aria-pressed", String(active));
+    });
   }
 
   private addedStrokeCommand(pageId: string, original: InkStroke): EditCommand {
