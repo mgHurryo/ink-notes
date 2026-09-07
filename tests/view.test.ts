@@ -48,6 +48,15 @@ function setup() {
     releasePointerCapture: (id: number) => { captured.delete(id); },
   } as HTMLCanvasElement;
   internal.drawStrokes = vi.fn();
+  Object.assign(internal, {
+    pageElement: internal.canvas,
+    updateViewport: vi.fn(),
+    resizePreview: vi.fn(),
+    drawPreview: vi.fn(),
+    commitPreview: vi.fn(),
+    requestRender: vi.fn(),
+    tiles: { sync: vi.fn() },
+  });
   internal.renderAll = vi.fn();
   internal.updateHistoryButtons = vi.fn();
   return { store, view, internal, captured };

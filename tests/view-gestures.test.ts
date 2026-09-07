@@ -40,6 +40,8 @@ function setup(viewportWidth = 800) {
     }),
   };
   view.resizeCanvas = vi.fn();
+  view.layoutPage = vi.fn();
+  view.onViewportMotion = vi.fn();
   const point = (x: number, y: number) => {
     const rect = view.pageElement.getBoundingClientRect();
     return { x: (x - rect.left) / rect.width, y: (y - rect.top) / rect.height };
@@ -121,6 +123,9 @@ describe("page touch navigation", () => {
     const event = { ctrlKey: true, metaKey: false, deltaY: -20, clientX: 320, clientY: 430, preventDefault: vi.fn() };
     view.onWheel(event);
     expect(view.zoom).toBeCloseTo(1.08);
+    expect(view.layoutPage).toHaveBeenCalledOnce();
+    expect(view.onViewportMotion).toHaveBeenCalledOnce();
+    expect(view.resizeCanvas).not.toHaveBeenCalled();
     expect(point(320, 430).x).toBeCloseTo(anchor.x);
     expect(point(320, 430).y).toBeCloseTo(anchor.y);
     event.ctrlKey = false;
