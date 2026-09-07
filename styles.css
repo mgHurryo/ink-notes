@@ -58,8 +58,9 @@
 .ink-range-control input { width: 100%; min-height: 24px; accent-color: var(--interactive-accent); }
 
 .ink-workspace { display: flex; min-height: 0; flex: 1; }
-.ink-page-scroller { flex: 1; min-width: 0; min-height: 0; overflow: auto; display: flex; justify-content: center; align-items: flex-start; padding: 24px; background: var(--background-secondary); }
-.ink-page { position: relative; width: min(100%, 820px); min-width: 280px; flex: 0 0 auto; background-color: #fffdf7; box-shadow: 0 2px 14px rgb(0 0 0 / 18%); transform-origin: top center; }
+.ink-page-scroller { flex: 1; min-width: 0; min-height: 0; overflow: auto; padding: 24px; background: var(--background-secondary); touch-action: none; overscroll-behavior: contain; overflow-anchor: none; scrollbar-gutter: stable; }
+.ink-page-extent { position: relative; margin-inline: auto; overflow: hidden; box-shadow: 0 2px 14px rgb(0 0 0 / 18%); }
+.ink-page { position: absolute; left: 0; top: 0; background-color: #fffdf7; transform-origin: top left; }
 .ink-page-scroller { --ink-rule: rgb(90 145 205 / 22%); }
 .ink-paper-blank { background-image: none; }
 .ink-paper-ruled { background-image: repeating-linear-gradient(to bottom, transparent 0, transparent 31px, var(--ink-rule) 32px); }
