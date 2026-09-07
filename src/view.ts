@@ -65,6 +65,9 @@ export class InkView extends FileView {
   private lassoPath: InkPoint[] = [];
   private selectedStrokeIds = new Set<string>();
   private lassoDrag: { start: InkPoint; before: Map<string, InkPoint[]> } | null = null;
+  private sizePopover: HTMLElement | null = null;
+  private sizePopoverButton: HTMLButtonElement | null = null;
+  private sizePopoverOpen = false;
 
   constructor(leaf: WorkspaceLeaf, store: NotebookStore) {
     super(leaf);
@@ -130,33 +133,123 @@ export class InkView extends FileView {
     const toolbar = this.root.querySelector<HTMLElement>(".ink-toolbar")!;
     toolbar.empty();
     const group = toolbar.createDiv({ cls: "ink-toolbar-group" });
-    const navigation = this.addToolbarSection(group, "Navigate");
+    const navigation = this.addToolbarSection(group, "Pages");
     this.addIconButton(navigation, "arrow-left", "Previous", () => this.changePage(-1));
     this.addIconButton(navigation, "arrow-right", "Next", () => this.changePage(1));
     this.addIconButton(navigation, "panel-left-open", "Pages", () => this.root.toggleClass("ink-rail-hidden", !this.root.hasClass("ink-rail-hidden")));
 
-    const history = this.addToolbarSection(group, "Edit");
+    const history = this.addToolbarSection(group, "History");
     this.addIconButton(history, "undo-2", "Undo", () => this.undo(), this.undoStack.length === 0);
     this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
 
-    const tools = this.addToolbarSection(group, "Tool");
+    const tools = this.addToolbarSection(group, "Draw");
     this.addToolButton(tools, "pen-line", "Pen", "pen");
     this.addToolButton(tools, "highlighter", "Highlight", "highlighter");
     this.addToolButton(tools, "eraser", "Erase", "eraser");
     this.addToolButton(tools, "lasso-select", "Select", "lasso");
 
-    const brush = this.addToolbarSection(group, "Brush");
+    const brush = this.addToolbarSection(group, "Style");
     this.addColorPicker(brush);
-    this.addRange(brush, "Size", 1, 24, 0.5, this.state.width, (value) => { this.state.width = value; });
+    this.addSizePopover(brush);
     this.addRange(brush, "Opacity", 0.1, 1, 0.05, this.state.opacity, (value) => { this.state.opacity = value; });
 
-    const pages = this.addToolbarSection(group, "Page");
+    const pages = this.addToolbarSection(group, "Document");
     this.addIconButton(pages, "plus", "Add", () => this.addPage());
     this.addIconButton(pages, "more-horizontal", "Options", (event) => this.openPageMenu(event));
   }
 
+  private addSizePopover(parent: HTMLElement): void {
+    const container = parent.createDiv({ cls: "ink-size-popover-control" });
+    const button = container.createEl("button", {
+      cls: "ink-size-button",
+      attr: {
+        type: "button",
+        "aria-label": "Brush size",
+        "aria-haspopup": "dialog",
+        "aria-expanded": "false",
+      },
+    });
+    const icon = button.createSpan({ cls: "ink-button-icon" });
+    setIcon(icon, "circle-dot");
+    const text = button.createSpan({ cls: "ink-button-text", text: "Size" });
+    const valueText = button.createSpan({ cls: "ink-size-button-value", text: formatControlValue("Size", this.state.width) });
+
+    const popover = container.createDiv({
+      cls: "ink-size-popover",
+      attr: { role: "dialog", "aria-label": "Brush size", "aria-hidden": "true" },
+    });
+    const header = popover.createDiv({ cls: "ink-size-popover-header" });
+    header.createSpan({ cls: "ink-size-popover-title", text: "Brush size" });
+    const popoverValue = header.createSpan({ cls: "ink-control-value", text: formatControlValue("Size", this.state.width) });
+    const input = popover.createEl("input", {
+      attr: {
+        type: "range",
+        min: "1",
+        max: "24",
+        step: "0.5",
+        value: String(this.state.width),
+        "aria-label": "Brush size",
+      },
+    });
+    popover.createDiv({ cls: "ink-size-popover-hint", text: "1–24 px" });
+
+    const close = (): void => this.setSizePopoverOpen(false);
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      this.setSizePopoverOpen(!this.sizePopoverOpen);
+    });
+    input.addEventListener("input", () => {
+      const next = Number(input.value);
+      this.state.width = next;
+      const formatted = formatControlValue("Size", next);
+      valueText.textContent = formatted;
+      popoverValue.textContent = formatted;
+    });
+    this.registerDomEvent(document, "pointerdown", (event) => {
+      if (this.sizePopoverOpen && !container.contains(event.target as Node)) close();
+    });
+    this.registerDomEvent(document, "keydown", (event) => {
+      if (event.key === "Escape" && this.sizePopoverOpen) {
+        close();
+        button.focus();
+      }
+    });
+    this.registerDomEvent(window, "resize", () => this.positionSizePopover());
+    this.registerDomEvent(window, "scroll", () => this.positionSizePopover(), true);
+
+    this.sizePopover = popover;
+    this.sizePopoverButton = button;
+  }
+
+  private setSizePopoverOpen(open: boolean): void {
+    if (!this.sizePopover || !this.sizePopoverButton) return;
+    this.sizePopoverOpen = open;
+    this.sizePopover.toggleClass("is-open", open);
+    this.sizePopover.setAttribute("aria-hidden", String(!open));
+    this.sizePopoverButton.setAttribute("aria-expanded", String(open));
+    if (open) {
+      this.positionSizePopover();
+      window.requestAnimationFrame(() => this.positionSizePopover());
+    }
+  }
+
+  private positionSizePopover(): void {
+    if (!this.sizePopoverOpen || !this.sizePopover || !this.sizePopoverButton) return;
+    const buttonRect = this.sizePopoverButton.getBoundingClientRect();
+    const popoverRect = this.sizePopover.getBoundingClientRect();
+    const margin = 12;
+    const left = Math.max(margin, Math.min(window.innerWidth - popoverRect.width - margin, buttonRect.left + buttonRect.width / 2 - popoverRect.width / 2));
+    const below = buttonRect.bottom + 10;
+    const top = below + popoverRect.height <= window.innerHeight - margin
+      ? below
+      : Math.max(margin, buttonRect.top - popoverRect.height - 10);
+    this.sizePopover.style.left = `${left}px`;
+    this.sizePopover.style.top = `${top}px`;
+  }
+
   private addToolbarSection(parent: HTMLElement, label: string): HTMLElement {
     const section = parent.createDiv({ cls: "ink-toolbar-section" });
+    section.addClass(`ink-toolbar-section-${label.toLowerCase()}`);
     section.createSpan({ cls: "ink-toolbar-section-label", text: label });
     return section.createDiv({ cls: "ink-toolbar-section-controls" });
   }
