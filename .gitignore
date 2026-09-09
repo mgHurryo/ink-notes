@@ -50,6 +50,7 @@ QWEN.md
 
 # Local completion logs
 plan/status/
+plan/reviews/
 
 # Local environment, credentials, and secrets
 .env

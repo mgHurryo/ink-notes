@@ -31,7 +31,12 @@ for (const value of [0.5, 1, 2, 3]) {
 }
 const remove = controls.appendChild(document.createElement("button"));
 remove.textContent = "Remove crossing stroke";
-remove.onclick = () => { data.strokes.pop(); renderer.sync(data.strokes); update(true); };
+remove.onclick = () => {
+  data.strokes.pop();
+  renderer.sync(data.strokes);
+  renderer.commitInteractive({ x: scroller.scrollLeft / zoom, y: scroller.scrollTop / zoom,
+    width: Math.min(820, scroller.clientWidth / zoom), height: Math.min(1180, scroller.clientHeight / zoom) }, devicePixelRatio * zoom);
+};
 let timer: ReturnType<typeof setTimeout>;
 scroller.onscroll = () => { update(false); clearTimeout(timer); timer = setTimeout(() => update(true), 100); };
 async function benchmark(): Promise<void> {
@@ -73,12 +78,12 @@ async function benchmark(): Promise<void> {
     [node.dataset.cell, node.querySelector("canvas")!.toDataURL()]));
   const before = snapshot();
   const crossing = data.strokes.pop()!;
-  renderer.sync(data.strokes); update(true); renderer.flushVisible();
+  renderer.sync(data.strokes); renderer.commitInteractive({ x: 0, y: 0, width: 820, height: 600 }, devicePixelRatio * zoom);
   const deleted = snapshot();
   let changedTiles = 0;
   for (const [cell, pixels] of deleted) if (before.get(cell) !== pixels) changedTiles++;
   data.strokes.push(crossing);
-  renderer.sync(data.strokes); update(true); renderer.flushVisible();
+  renderer.sync(data.strokes); renderer.commitInteractive({ x: 0, y: 0, width: 820, height: 600 }, devicePixelRatio * zoom);
   const restored = snapshot();
   const restoredExactly = [...before].every(([cell, pixels]) => restored.get(cell) === pixels);
   results.push({ deletionChangedTiles: changedTiles, undoRestoredExactly: restoredExactly });

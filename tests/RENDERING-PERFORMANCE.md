@@ -26,6 +26,18 @@ queries for painting do not scan the page. Pen motion only rebuilds the live pen
 Pen-up flushes dirty visible tiles synchronously to avoid double-composited ink
 or disappearing previews, so very long strokes can still cause a commit spike.
 
+Eraser changes use an atomic interactive commit: all visible dirty cells are
+first rasterized at no more than 1x density in the same JavaScript turn. The
+complete fallback remains visible while sharp device-density cells refine one
+per animation frame. Refinement is deferred during an active erase gesture so
+obsolete high-density work does not compete with pointer input.
+
+Lasso movement removes selected strokes from the tile index once, rasterizes
+them once into a bounded preview bitmap, and moves that bitmap with a CSS
+transform. Pointer frames update only the transform and selection outline. At
+release, geometry is committed once through the same atomic fallback path, so
+selected strokes do not move or reappear tile by tile.
+
 The dedicated tests/tiles-browser.ts harness uses 1001 strokes / about 80400
 points, includes a semi-transparent cross-tile stroke, and checks visible pixels,
 deletion invalidation and exact pixel restoration after undo. Synthetic data and
@@ -56,9 +68,10 @@ Each full-page case has two warmup frames and seven measured frames.
 | 1000 | 3x | 1840.4 | 158.9 |
 
 Full-page redraw is not an acceptable per-pointer-event strategy on dense pages.
-The pen now uses a separate preview canvas and appends the final stroke to the
-base canvas once. Highlighters retain full-page multiply rendering for correctness;
-eraser and lasso edits also retain full redraws.
+The pen uses a separate preview canvas and appends the final stroke to the base
+tiles once. Highlighters retain tiled multiply rendering for correctness;
+eraser and lasso edits use coherent low-density commits plus background
+refinement rather than per-sample full-page redraws.
 
 Growing single-stroke preview, 1000 to 1022 samples, twenty measured frames:
 

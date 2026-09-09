@@ -6,11 +6,21 @@
   <title>Ink Notes UI Preview</title>
   <link rel="stylesheet" href="/styles.css">
   <style>
-    html, body { margin: 0; height: 100%; background: #1b1c1d; }
+    :root {
+      --background-primary: #1b1c1d;
+      --background-secondary: #282a2c;
+      --background-modifier-border: #45484b;
+      --background-modifier-hover: #3a3d40;
+      --text-normal: #edf2fa;
+      --text-muted: #a8b0bc;
+      --text-on-accent: #fff;
+      --interactive-accent: #39889b;
+    }
+    html, body { margin: 0; height: 100%; color: var(--text-normal); background: var(--background-primary); }
     #host { height: 100%; }
-    .preview-menu { position: fixed; z-index: 1100; width: 180px; padding: 6px; background: #282a2c; border: 1px solid #45484b; border-radius: 8px; color: #edf2fa; font: 13px system-ui; }
+    .preview-menu { position: fixed; z-index: 1100; width: 180px; padding: 6px; background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: 8px; color: var(--text-normal); font: 13px system-ui; }
     .preview-menu button { display: block; padding: 10px; width: 100%; border: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
-    .preview-menu button:hover, .preview-menu button[aria-pressed="true"] { background: #3d515f; }
+    .preview-menu button:hover, .preview-menu button[aria-pressed="true"] { background: var(--background-modifier-hover); }
   </style>
 </head>
 <body><div id="host"><div hidden></div><main></main></div><script src="/preview.js"></script></body>

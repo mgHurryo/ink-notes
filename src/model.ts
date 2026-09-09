@@ -34,11 +34,14 @@ export interface InkPage {
 }
 
 export interface InkNotebook {
-  schema: 1;
+  schema: 2;
   title: string;
   pageWidth: number;
   pageHeight: number;
   pages: InkPage[];
+  pageOrder: string[];
+  deletedPages: Record<string, number>;
+  pageOrderUpdatedAt: number;
   updatedAt: number;
 }
 
@@ -52,12 +55,16 @@ export function newId(prefix: string): string {
 
 export function createNotebook(title = "Ink Notebook"): InkNotebook {
   const now = Date.now();
+  const page = createPage("Page 1", "ruled", now);
   return {
-    schema: 1,
+    schema: 2,
     title,
     pageWidth: DEFAULT_PAGE_WIDTH,
     pageHeight: DEFAULT_PAGE_HEIGHT,
-    pages: [createPage("Page 1", "ruled", now)],
+    pages: [page],
+    pageOrder: [page.id],
+    deletedPages: {},
+    pageOrderUpdatedAt: now,
     updatedAt: now,
   };
 }
@@ -70,12 +77,28 @@ export function normalizeNotebook(value: unknown): InkNotebook {
   if (!value || typeof value !== "object") return createNotebook();
   const raw = value as Partial<InkNotebook>;
   const pages = Array.isArray(raw.pages) ? raw.pages : [];
+  const normalizedPages = pages.map(normalizePage).filter((page): page is InkPage => page !== null);
+  const pageIds = new Set(normalizedPages.map((page) => page.id));
+  const legacyOrder = [...normalizedPages].sort((a, b) => a.createdAt - b.createdAt).map((page) => page.id);
+  const requestedOrder = Array.isArray(raw.pageOrder) ? raw.pageOrder.filter((id): id is string => typeof id === "string") : legacyOrder;
+  const pageOrder = [...new Set([...requestedOrder.filter((id) => pageIds.has(id)), ...legacyOrder.filter((id) => !requestedOrder.includes(id))])];
+  const deletedPages = raw.deletedPages && typeof raw.deletedPages === "object"
+    ? Object.fromEntries(Object.entries(raw.deletedPages).filter((entry): entry is [string, number] => typeof entry[0] === "string" && typeof entry[1] === "number" && Number.isFinite(entry[1])))
+    : {};
+  const visiblePages = normalizedPages.filter((page) => !(page.id in deletedPages));
+  const visibleIds = new Set(visiblePages.map((page) => page.id));
+  const byId = new Map(visiblePages.map((page) => [page.id, page]));
+  const orderedPages = pageOrder.map((id) => byId.get(id)).filter((page): page is InkPage => page !== undefined);
+  if (orderedPages.length === 0) orderedPages.push(createPage("Page 1"));
   return {
-    schema: 1,
+    schema: 2,
     title: typeof raw.title === "string" ? raw.title : "Ink Notebook",
     pageWidth: finitePositive(raw.pageWidth, DEFAULT_PAGE_WIDTH),
     pageHeight: finitePositive(raw.pageHeight, DEFAULT_PAGE_HEIGHT),
-    pages: pages.map(normalizePage).filter((page): page is InkPage => page !== null),
+    pages: orderedPages,
+    pageOrder: orderedPages.map((page) => page.id).filter((id) => visibleIds.has(id) || orderedPages.length === 1),
+    deletedPages,
+    pageOrderUpdatedAt: finitePositive(raw.pageOrderUpdatedAt, finitePositive(raw.updatedAt, Date.now())),
     updatedAt: finitePositive(raw.updatedAt, Date.now()),
   };
 }
@@ -87,15 +110,56 @@ export function mergeNotebooks(base: InkNotebook, incoming: InkNotebook): InkNot
     const existing = pages.get(page.id);
     pages.set(page.id, existing ? mergePages(existing, page) : page);
   }
-  const ordered = [...pages.values()].sort((a, b) => a.createdAt - b.createdAt);
+  const deletedPages: Record<string, number> = { ...(base.deletedPages ?? {}) };
+  for (const [id, timestamp] of Object.entries(incoming.deletedPages ?? {})) deletedPages[id] = Math.max(deletedPages[id] ?? 0, timestamp);
+  for (const id of Object.keys(deletedPages)) pages.delete(id);
+  const orderSource = incoming.pageOrderUpdatedAt > base.pageOrderUpdatedAt
+    || incoming.pageOrderUpdatedAt === base.pageOrderUpdatedAt && compareNotebookOrder(incoming, base) >= 0
+    ? incoming : base;
+  const preferred = orderSource.pageOrder ?? [];
+  const known = preferred.map((id) => pages.get(id)).filter((page): page is InkPage => page !== undefined);
+  const additions = [...pages.values()].filter((page) => !preferred.includes(page.id)).sort((a, b) => a.createdAt - b.createdAt);
+  const ordered = [...known];
+  for (const page of additions) {
+    const inBase = (base.pageOrder ?? []).includes(page.id);
+    const inIncoming = (incoming.pageOrder ?? []).includes(page.id);
+    const source = inBase && !inIncoming ? base : incoming;
+    const sourceOrder = source.pageOrder ?? source.pages.map((candidate) => candidate.id);
+    const sourceIndex = sourceOrder.indexOf(page.id);
+    let inserted = false;
+    for (let index = sourceIndex - 1; index >= 0; index--) {
+      const anchor = ordered.findIndex((candidate) => candidate.id === sourceOrder[index]);
+      if (anchor >= 0) { ordered.splice(anchor + 1, 0, page); inserted = true; break; }
+    }
+    if (!inserted) for (let index = sourceIndex + 1; index < sourceOrder.length; index++) {
+      const anchor = ordered.findIndex((candidate) => candidate.id === sourceOrder[index]);
+      if (anchor >= 0) { ordered.splice(anchor, 0, page); inserted = true; break; }
+    }
+    if (!inserted) {
+      const at = ordered.findIndex((candidate) => page.createdAt < candidate.createdAt);
+      ordered.splice(at < 0 ? ordered.length : at, 0, page);
+    }
+  }
+  const safePages = ordered.length ? ordered : [createPage("Page 1")];
+  const pageOrder = safePages.map((page) => page.id);
   return {
     ...incoming,
+    schema: 2,
     title: incoming.updatedAt >= base.updatedAt ? incoming.title : base.title,
     pageWidth: incoming.pageWidth || base.pageWidth,
     pageHeight: incoming.pageHeight || base.pageHeight,
-    pages: ordered.length ? ordered : [createPage("Page 1")],
+    pages: safePages,
+    pageOrder,
+    deletedPages,
+    pageOrderUpdatedAt: Math.max(base.pageOrderUpdatedAt, incoming.pageOrderUpdatedAt),
     updatedAt: Math.max(base.updatedAt, incoming.updatedAt),
   };
+}
+
+function compareNotebookOrder(left: InkNotebook, right: InkNotebook): number {
+  const leftOrder = JSON.stringify(left.pageOrder ?? []);
+  const rightOrder = JSON.stringify(right.pageOrder ?? []);
+  return leftOrder < rightOrder ? -1 : leftOrder > rightOrder ? 1 : 0;
 }
 
 function mergePages(base: InkPage, incoming: InkPage): InkPage {

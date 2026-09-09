@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { cellKeys, StrokeIndex } from "../src/tiles";
+import { describe, expect, it, vi } from "vitest";
+import { cellKeys, StrokeIndex, TileRenderer } from "../src/tiles";
 import type { InkStroke } from "../src/model";
 
 function stroke(id: string, x: number, y: number): InkStroke {
@@ -42,11 +42,53 @@ describe("tile spatial index", () => {
     a.updatedAt++; index.sync([a]);
     expect(index.revisions.get("0:0")).toBeGreaterThan(revision);
   });
-  it("excludes the live pen until committed", () => {
-    const index = new StrokeIndex(1000, 1000), a = stroke("a", 0.1, 0.1);
+  it.each(["pen", "highlighter"] as const)("excludes the live %s until committed", (tool) => {
+    const index = new StrokeIndex(1000, 1000), a = { ...stroke("a", 0.1, 0.1), tool };
     index.sync([a], a);
     expect(index.query({ x: 0, y: 0, width: 1000, height: 1000 })).toEqual([]);
     index.sync([a]);
     expect(index.query({ x: 0, y: 0, width: 1000, height: 1000 })).toEqual([a]);
+  });
+  it("does not invalidate unrelated later tiles after deleting an early stroke", () => {
+    const index = new StrokeIndex(1000, 1000);
+    const early = stroke("early", 0.1, 0.1), later = stroke("later", 0.8, 0.8);
+    index.sync([early, later]);
+    const laterRevision = index.revisions.get("6:6");
+    index.sync([later]);
+    expect(index.revisions.get("6:6")).toBe(laterRevision);
+    expect(index.queryNear({ x: 0.81, y: 0.81, pressure: 1, t: 1 }, 30)).toEqual([later]);
+  });
+});
+
+describe("interactive tile commits", () => {
+  it("flushes a bounded fallback before scheduling density refinement", () => {
+    const renderer = Object.create(TileRenderer.prototype) as {
+      update: ReturnType<typeof vi.fn>;
+      flushVisible: ReturnType<typeof vi.fn>;
+      commitInteractive(viewport: { x: number; y: number; width: number; height: number }, density: number): void;
+    };
+    renderer.update = vi.fn();
+    renderer.flushVisible = vi.fn();
+    const viewport = { x: 0, y: 0, width: 400, height: 600 };
+    renderer.commitInteractive(viewport, 3);
+    expect(renderer.update.mock.calls).toEqual([[viewport, 1, false], [viewport, 3, true]]);
+    expect(renderer.flushVisible).toHaveBeenCalledOnce();
+    expect(renderer.update.mock.invocationCallOrder[0]).toBeLessThan(renderer.flushVisible.mock.invocationCallOrder[0]);
+    expect(renderer.flushVisible.mock.invocationCallOrder[0]).toBeLessThan(renderer.update.mock.invocationCallOrder[1]);
+  });
+
+  it("does not spend work on density refinement during an active gesture", () => {
+    const renderer = Object.create(TileRenderer.prototype) as {
+      update: ReturnType<typeof vi.fn>;
+      flushVisible: ReturnType<typeof vi.fn>;
+      commitInteractive(viewport: { x: number; y: number; width: number; height: number }, density: number, refine: boolean): void;
+    };
+    renderer.update = vi.fn();
+    renderer.flushVisible = vi.fn();
+    const viewport = { x: 0, y: 0, width: 400, height: 600 };
+    renderer.commitInteractive(viewport, 3, false);
+    expect(renderer.update).toHaveBeenCalledOnce();
+    expect(renderer.update).toHaveBeenCalledWith(viewport, 1, false);
+    expect(renderer.flushVisible).toHaveBeenCalledOnce();
   });
 });

@@ -16,6 +16,12 @@ interface IndexedStroke {
   cells: string[];
 }
 
+type StrokeExclusion = InkStroke | ReadonlySet<string> | null | undefined;
+
+function isStrokeSet(exclusion: StrokeExclusion): exclusion is ReadonlySet<string> {
+  return exclusion instanceof Set;
+}
+
 // Uniform grid indexing matches the tiles and preserves compositing order.
 export class StrokeIndex {
   private entries = new Map<string, IndexedStroke>();
@@ -23,15 +29,20 @@ export class StrokeIndex {
   readonly revisions = new Map<string, number>();
   constructor(readonly width: number, readonly height: number) {}
 
-  sync(strokes: InkStroke[], exclude?: InkStroke | null): void {
+  sync(strokes: InkStroke[], exclude?: StrokeExclusion): void {
     const retained = new Set<string>();
     strokes.forEach((stroke, order) => {
-      if (stroke === exclude) return;
+      if (stroke === exclude || isStrokeSet(exclude) && exclude.has(stroke.id)) return;
       retained.add(stroke.id);
       const previous = this.entries.get(stroke.id);
       const style = [stroke.tool, stroke.color, stroke.width, stroke.opacity].join(":");
       if (previous?.stroke === stroke && previous.points === stroke.points && previous.count === stroke.points.length
-        && previous.revision === stroke.updatedAt && previous.order === order && previous.style === style) return;
+        && previous.revision === stroke.updatedAt && previous.style === style) {
+        // Compositing order is metadata, not geometry. Updating it must not
+        // invalidate every later tile when an early stroke is removed.
+        previous.order = order;
+        return;
+      }
       if (previous) this.remove(previous);
       const padding = stroke.width * 0.7 + BLEED / 0.5;
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -57,6 +68,15 @@ export class StrokeIndex {
       for (const entry of this.cells.get(key) ?? []) found.add(entry);
     }
     return [...found].sort((a, b) => a.order - b.order).map(entry => entry.stroke);
+  }
+
+  queryNear(point: InkPoint, radius: number): InkStroke[] {
+    return this.query({
+      x: point.x * this.width - radius,
+      y: point.y * this.height - radius,
+      width: radius * 2,
+      height: radius * 2,
+    });
   }
 
   private remove(entry: IndexedStroke): void {
@@ -100,18 +120,22 @@ export class TileRenderer {
 
   constructor(private host: HTMLElement) {}
 
-  setPage(page: InkPage, width: number, height: number, exclude?: InkStroke | null): void {
+  setPage(page: InkPage, width: number, height: number, exclude?: StrokeExclusion): void {
     const state = this.state(page, width, height);
     if (state !== this.active) {
       this.host.replaceChildren();
       this.active = state;
       this.jobs = [];
     }
-    state.index.sync(page.strokes, exclude?.tool === "pen" ? exclude : null);
+    state.index.sync(page.strokes, exclude);
   }
 
-  sync(strokes: InkStroke[], exclude?: InkStroke | null): void {
+  sync(strokes: InkStroke[], exclude?: StrokeExclusion): void {
     this.active?.index.sync(strokes, exclude);
+  }
+
+  queryNear(point: InkPoint, radius: number): InkStroke[] {
+    return this.active?.index.queryNear(point, radius) ?? [];
   }
 
   flushVisible(): void {
@@ -119,6 +143,15 @@ export class TileRenderer {
     this.jobs = this.jobs.filter(job => !jobs.includes(job));
     for (const job of jobs) this.attach(this.get(job.state, job.cell, job.density) ?? this.paint(job));
     this.evict();
+  }
+
+  commitInteractive(viewport: Rect, density: number, refine = true): void {
+    // Make all visible content changes coherent at a bounded 1x density. A
+    // second pass keeps that complete frame attached while high-density tiles
+    // are refined incrementally in the background.
+    this.update(viewport, Math.min(1, density), false);
+    this.flushVisible();
+    if (refine) this.update(viewport, density, true);
   }
 
   update(viewport: Rect, density: number, refine: boolean): void {
