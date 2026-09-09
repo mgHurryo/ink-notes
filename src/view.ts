@@ -21,31 +21,48 @@ interface ToolState {
   color: string;
   width: number;
   opacity: number;
+  eraserMode: EraserMode;
+  eraserSize: number;
 }
+
+type EraserMode = "stroke" | "circle" | "square";
 
 interface EditCommand {
   undo: () => void;
   redo: () => void;
 }
 
+interface InteractionContext {
+  generation: number;
+  pointerId: number;
+  pageId: string;
+  tool: InkTool;
+  eraserMode?: EraserMode;
+  eraserSize?: number;
+}
+
+const STROKE_ERASER_HIT_RADIUS = 10;
+
 const INK_COLORS = [
   { value: "#1b1b1b", label: "Black" },
   { value: "#195bff", label: "Blue" },
   { value: "#f23c42", label: "Red" },
   { value: "#42c449", label: "Green" },
-  { value: "#ffffff", label: "White" },
+  { value: "#f2c94c", label: "Yellow" },
 ];
 
 export class InkView extends FileView {
   private readonly store: NotebookStore;
   private notebook: InkNotebook = createNotebook();
   private pageIndex = 0;
-  private state: ToolState = { tool: "pen", color: "#1b1b1b", width: 3, opacity: 1 };
+  private state: ToolState = { tool: "pen", color: "#1b1b1b", width: 3, opacity: 1, eraserMode: "stroke", eraserSize: 32 };
   private root!: HTMLElement;
   private canvas!: HTMLCanvasElement;
   private ctx!: CanvasRenderingContext2D;
   private previewCanvas!: HTMLCanvasElement;
   private previewCtx!: CanvasRenderingContext2D;
+  private lassoCanvas!: HTMLCanvasElement;
+  private lassoCtx!: CanvasRenderingContext2D;
   private tiles!: TileRenderer;
   private viewport: Rect = { x: 0, y: 0, width: 1, height: 1 };
   private overlayScaleX = 1;
@@ -55,13 +72,19 @@ export class InkView extends FileView {
   private pageElement!: HTMLElement;
   private pageExtent!: HTMLElement;
   private pageScroller!: HTMLElement;
+  private eraserCursor!: HTMLElement;
   private syncing = false;
   private saveRequested = false;
   private activeSave: Promise<void> | null = null;
+  private dirtyRevision = 0;
+  private savedRevision = 0;
   private pendingMergedNotebook: InkNotebook | null = null;
+  private externalRefreshPending = false;
   private saveTimer: number | undefined;
   private activeStroke: InkStroke | null = null;
   private activePointerId: number | null = null;
+  private interaction: InteractionContext | null = null;
+  private interactionGeneration = 0;
   private lastPoint: InkPoint | null = null;
   private touchGesture: {
     ids: number[];
@@ -72,15 +95,27 @@ export class InkView extends FileView {
     pageX: number;
     pageY: number;
   } | null = null;
+  private pendingLassoPoint: InkPoint | null = null;
   private zoom = 1;
   private viewReady = false;
   private undoStack: EditCommand[] = [];
   private redoStack: EditCommand[] = [];
   private erasedStrokeIds = new Set<string>();
+  private erasedCandidateIds = new Set<string>();
   private erasedStrokes: InkStroke[] = [];
+  private eraserReplacementIds = new Set<string>();
+  private eraserReplacements: InkStroke[] = [];
   private lassoPath: InkPoint[] = [];
   private selectedStrokeIds = new Set<string>();
-  private lassoDrag: { start: InkPoint; before: Map<string, InkPoint[]> } | null = null;
+  private lassoDrag: {
+    start: InkPoint;
+    pageId: string;
+    bounds: { minX: number; minY: number; maxX: number; maxY: number } | null;
+    strokes: InkStroke[];
+    before: Map<string, InkPoint[]>;
+    dx: number;
+    dy: number;
+  } | null = null;
   private sizePopover: HTMLElement | null = null;
   private sizePopoverButton: HTMLButtonElement | null = null;
   private sizePopoverOpen = false;
@@ -99,6 +134,15 @@ export class InkView extends FileView {
   getViewType(): string { return VIEW_TYPE_INK; }
   getDisplayText(): string { return this.file?.basename ?? this.notebook.title; }
   getIcon(): string { return "pen-line"; }
+
+  revealPage(pageId: string): void {
+    this.finishPointerInput(false);
+    const index = this.notebook.pages.findIndex((page) => page.id === pageId);
+    if (index < 0) return;
+    this.pageIndex = index;
+    this.renderPageRail();
+    this.renderPage();
+  }
 
   async onOpen(): Promise<void> {
     this.root = this.containerEl.children[1] as HTMLElement;
@@ -119,13 +163,13 @@ export class InkView extends FileView {
     if (this.renderFrame !== null) window.cancelAnimationFrame(this.renderFrame);
     this.renderFrame = null;
     if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
-    this.tiles?.dispose();
-    if (this.saveTimer !== undefined && this.file) {
+    this.finishPointerInput(false);
+    if (this.saveTimer !== undefined) {
       window.clearTimeout(this.saveTimer);
       this.saveTimer = undefined;
-      await this.save(this.file);
     }
-    if (this.activeSave) await this.activeSave;
+    if (this.file && (this.dirtyRevision > this.savedRevision || this.activeSave)) await this.save(this.file);
+    this.tiles?.dispose();
     this.viewReady = false;
   }
 
@@ -135,23 +179,27 @@ export class InkView extends FileView {
     this.undoStack = [];
     this.redoStack = [];
     this.resetInteraction();
+    this.dirtyRevision = 0;
+    this.savedRevision = 0;
     this.renderAll();
   }
 
   async onUnloadFile(file: TFile): Promise<void> {
+    this.finishPointerInput(false);
     if (this.saveTimer !== undefined) {
       window.clearTimeout(this.saveTimer);
       this.saveTimer = undefined;
-      await this.save(file);
     }
-    if (this.activeSave) await this.activeSave;
+    if (this.dirtyRevision > this.savedRevision || this.activeSave) await this.save(file);
   }
 
   async reloadFromDisk(): Promise<void> {
-    if (this.syncing || this.activePointerId !== null || !this.file) return;
+    if (this.syncing || this.activePointerId !== null) { this.externalRefreshPending = true; return; }
+    if (!this.file) return;
     const file = this.file;
     const latest = await this.store.read(file);
     if (this.file !== file) return;
+    if (notebooksEqual(latest, this.notebook)) return;
     this.receiveMergedNotebook(latest);
   }
 
@@ -161,7 +209,6 @@ export class InkView extends FileView {
     setIcon(documentBar.createSpan({ cls: "ink-brand", attr: { "aria-label": "Ink Notes" } }), "notebook-pen");
     const tab = documentBar.createDiv({ cls: "ink-document-tab" });
     tab.createSpan({ cls: "ink-document-title", text: this.getDisplayText() });
-    this.addIconButton(tab, "chevron-down", "Document options", (event) => this.openPageMenu(event));
     documentBar.createSpan({ cls: "ink-current-page-title", text: this.currentPage().title });
     const toolbar = this.root.querySelector<HTMLElement>(".ink-toolbar")!;
     toolbar.empty();
@@ -174,8 +221,6 @@ export class InkView extends FileView {
       this.resizeCanvas();
     });
     toggle.setAttribute("aria-pressed", String(!this.root.hasClass("ink-rail-hidden")));
-    this.addIconButton(navigation, "arrow-left", "Previous", () => this.changePage(-1));
-    this.addIconButton(navigation, "arrow-right", "Next", () => this.changePage(1));
 
     const tools = this.addToolbarSection(group, "Draw");
     this.addToolButton(tools, "pen-line", "Pen", "pen");
@@ -183,9 +228,11 @@ export class InkView extends FileView {
     this.addToolButton(tools, "eraser", "Erase", "eraser");
     this.addToolButton(tools, "lasso-select", "Select", "lasso");
 
+    const history = this.addToolbarSection(group, "History");
+    this.addIconButton(history, "undo-2", "Undo", () => this.undo(), this.undoStack.length === 0);
+    this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
     const pages = this.addToolbarSection(group, "Document");
-    this.addIconButton(pages, "file-plus-2", "Add page", () => this.addPage());
-    this.addIconButton(pages, "more-horizontal", "Options", (event) => this.openPageMenu(event));
+    this.addIconButton(pages, "more-horizontal", "Page options", (event) => this.openPageMenu(event));
     this.renderBrushBar();
     this.updateToolButtons();
   }
@@ -193,21 +240,7 @@ export class InkView extends FileView {
   private renderBrushBar(): void {
     const bar = this.root.querySelector<HTMLElement>(".ink-brush-bar")!;
     bar.empty();
-    const history = this.addToolbarSection(bar, "History");
-    this.addIconButton(history, "undo-2", "Undo", () => this.undo(), this.undoStack.length === 0);
-    this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
-    const brush = bar.createDiv({ cls: "ink-brush-palette", attr: { role: "toolbar", "aria-label": "Brush settings" } });
-    const tips = this.addToolbarSection(brush, "Tips");
-    this.addToolButton(tips, "pen-tool", "Pen tip", "pen");
-    this.addToolButton(tips, "highlighter", "Highlighter tip", "highlighter");
-    this.addToolButton(tips, "eraser", "Eraser tip", "eraser");
-    const widths = this.addToolbarSection(brush, "Widths");
-    for (const width of [2, 4, 8]) {
-      const button = widths.createEl("button", { cls: "ink-width-preset", attr: { type: "button", title: width + " px", "aria-label": width + " px", "data-width": String(width), "aria-pressed": String(this.state.width === width) } });
-      button.createSpan({ cls: "ink-width-line" }).style.height = width + "px";
-      button.addEventListener("click", () => { this.state.width = width; this.updateBrushControls(); });
-    }
-    this.addColorPicker(brush);
+    const brush = bar.createDiv({ cls: "ink-brush-palette", attr: { role: "group", "aria-label": "Brush settings" } });
     this.addSizePopover(brush);
   }
 
@@ -218,8 +251,8 @@ export class InkView extends FileView {
       attr: {
         type: "button",
         "aria-label": "Brush size",
-        "aria-haspopup": "dialog",
-        "aria-expanded": "false",
+        "aria-hidden": "true",
+        tabindex: "-1",
       },
     });
     const icon = button.createSpan({ cls: "ink-button-icon" });
@@ -228,10 +261,10 @@ export class InkView extends FileView {
 
     const popover = container.createDiv({
       cls: "ink-size-popover",
-      attr: { role: "dialog", "aria-label": "Brush size", "aria-hidden": "true" },
+      attr: { role: "dialog", "aria-label": "Tool settings", "aria-hidden": "true" },
     });
     const header = popover.createDiv({ cls: "ink-size-popover-header" });
-    header.createSpan({ cls: "ink-size-popover-title", text: "Brush size" });
+    header.createSpan({ cls: "ink-size-popover-title", text: "Tool settings" });
     header.createSpan({ cls: "ink-control-value", text: formatControlValue("Size", this.state.width) });
     const input = popover.createEl("input", {
       attr: {
@@ -243,7 +276,30 @@ export class InkView extends FileView {
         "aria-label": "Brush size",
       },
     });
+    const widths = this.addToolbarSection(popover, "Widths");
+    for (const width of [2, 4, 8]) {
+      const preset = widths.createEl("button", { cls: "ink-width-preset", attr: { type: "button", title: width + " px", "aria-label": width + " px", "data-width": String(width), "aria-pressed": String(this.state.width === width) } });
+      preset.createSpan({ cls: "ink-width-line" }).style.height = width + "px";
+      preset.addEventListener("click", () => { this.state.width = width; this.updateBrushControls(); });
+    }
+    this.addColorPicker(popover);
     this.addRange(popover, "Opacity", 0.1, 1, 0.05, this.state.opacity, (value) => { this.state.opacity = value; });
+    const eraser = popover.createDiv({ cls: "ink-eraser-settings" });
+    eraser.createDiv({ cls: "ink-size-popover-title", text: "Eraser" });
+    const modes = eraser.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
+    for (const [mode, label, iconName] of [["stroke", "Stroke eraser", "eraser"], ["circle", "Circle eraser", "circle"], ["square", "Square eraser", "square"]] as const) {
+      const modeButton = modes.createEl("button", { cls: "ink-eraser-mode", attr: { type: "button", role: "radio", title: label, "aria-label": label, "aria-checked": String(this.state.eraserMode === mode), "data-eraser-mode": mode } });
+      setIcon(modeButton.createSpan({ cls: "ink-button-icon" }), iconName);
+      modeButton.addEventListener("click", () => {
+        this.state.eraserMode = mode;
+        this.updateEraserControls();
+      });
+    }
+    eraser.createDiv({ cls: "ink-stroke-eraser-hint", text: "Erases the entire touched stroke. Size is fixed." });
+    this.addRange(eraser, "Eraser size", 8, 160, 2, this.state.eraserSize, (value) => {
+      this.state.eraserSize = value;
+      this.updateEraserCursor(null, this.eraserCursor?.classList.contains("is-visible") ?? false);
+    });
 
     const close = (): void => this.setSizePopoverOpen(false);
     button.addEventListener("click", (event) => {
@@ -261,7 +317,7 @@ export class InkView extends FileView {
     this.registerDomEvent(document, "keydown", (event) => {
       if (event.key === "Escape" && this.sizePopoverOpen) {
         close();
-        button.focus();
+        this.activeToolButton()?.focus();
       }
     });
     this.registerDomEvent(window, "resize", () => this.positionSizePopover());
@@ -276,16 +332,20 @@ export class InkView extends FileView {
     this.sizePopoverOpen = open;
     this.sizePopover.toggleClass("is-open", open);
     this.sizePopover.setAttribute("aria-hidden", String(!open));
-    this.sizePopoverButton.setAttribute("aria-expanded", String(open));
+    this.root.querySelectorAll<HTMLElement>(".ink-tool-button[aria-haspopup='dialog']").forEach((button) => {
+      button.setAttribute("aria-expanded", String(open && button.dataset.tool === this.state.tool));
+    });
     if (open) {
       this.positionSizePopover();
       window.requestAnimationFrame(() => this.positionSizePopover());
+      window.requestAnimationFrame(() => this.sizePopover?.querySelector<HTMLElement>(this.state.tool === "eraser" ? ".ink-eraser-mode" : "input, button")?.focus());
     }
   }
 
   private positionSizePopover(): void {
     if (!this.sizePopoverOpen || !this.sizePopover || !this.sizePopoverButton) return;
-    const buttonRect = this.sizePopoverButton.getBoundingClientRect();
+    const anchor = this.activeToolButton() ?? this.sizePopoverButton;
+    const buttonRect = anchor.getBoundingClientRect();
     const popoverRect = this.sizePopover.getBoundingClientRect();
     const margin = 12;
     const left = Math.max(margin, Math.min(window.innerWidth - popoverRect.width - margin, buttonRect.left + buttonRect.width / 2 - popoverRect.width / 2));
@@ -295,6 +355,10 @@ export class InkView extends FileView {
       : Math.max(margin, buttonRect.top - popoverRect.height - 10);
     this.sizePopover.style.left = `${left}px`;
     this.sizePopover.style.top = `${top}px`;
+  }
+
+  private activeToolButton(): HTMLButtonElement | null {
+    return this.root.querySelector<HTMLButtonElement>(`.ink-toolbar [data-tool="${this.state.tool}"]`);
   }
 
   private addToolbarSection(parent: HTMLElement, label: string): HTMLElement {
@@ -312,7 +376,19 @@ export class InkView extends FileView {
     const input = this.sizePopover?.querySelector<HTMLInputElement>("input[aria-label='Brush size']");
     if (input) input.value = String(this.state.width);
     const value = this.sizePopover?.querySelector<HTMLElement>(".ink-size-popover-header .ink-control-value");
-    if (value) value.textContent = formatControlValue("Size", this.state.width);
+    if (value) value.textContent = this.state.tool === "eraser"
+      ? formatControlValue("Size", this.state.eraserSize)
+      : formatControlValue("Size", this.state.width);
+    this.updateEraserControls();
+  }
+
+  private updateEraserControls(): void {
+    if (!this.sizePopover) return;
+    this.sizePopover.toggleClass("is-stroke-eraser", this.state.eraserMode === "stroke");
+    this.sizePopover.querySelectorAll<HTMLElement>(".ink-eraser-mode").forEach((button) => {
+      button.setAttribute("aria-checked", String(button.dataset.eraserMode === this.state.eraserMode));
+    });
+    this.updateEraserCursor(null, this.eraserCursor?.classList.contains("is-visible") ?? false);
   }
 
   private renderCanvas(): void {
@@ -321,12 +397,18 @@ export class InkView extends FileView {
     this.pageScroller = workspace.createDiv({ cls: "ink-page-scroller" });
     this.pageExtent = this.pageScroller.createDiv({ cls: "ink-page-extent" });
     this.pageElement = this.pageExtent.createDiv({ cls: "ink-page" });
+    this.eraserCursor = this.pageElement.createDiv({ cls: "ink-eraser-cursor", attr: { "aria-hidden": "true" } });
+    this.eraserCursor.createSpan({ cls: "ink-eraser-reference-point" });
     const tileHost = this.pageElement.createDiv({ cls: "ink-tile-layer" });
     tileHost.style.cssText = "position:absolute;inset:0;pointer-events:none;overflow:hidden";
     this.tiles = new TileRenderer(tileHost);
-    this.canvas = this.pageElement.createEl("canvas", { cls: "ink-canvas" });
+    this.canvas = this.pageElement.createEl("canvas", { cls: "ink-canvas ink-selection-canvas" });
     this.ctx = this.canvas.getContext("2d")!;
     this.canvas.setAttribute("aria-label", "Handwriting canvas");
+    this.lassoCanvas = this.pageElement.createEl("canvas", { cls: "ink-canvas ink-lasso-preview-canvas" });
+    this.lassoCanvas.style.display = "none";
+    this.lassoCanvas.style.pointerEvents = "none";
+    this.lassoCtx = this.lassoCanvas.getContext("2d")!;
     const footer = this.root.createDiv({ cls: "ink-statusbar" });
     footer.createSpan({ cls: "ink-page-status", attr: { "aria-live": "polite" } });
     const zoom = footer.createDiv({ cls: "ink-zoom-controls", attr: { role: "group", "aria-label": "Zoom" } });
@@ -341,8 +423,11 @@ export class InkView extends FileView {
     this.pageElement.style.touchAction = "none";
     this.registerDomEvent(this.pageElement, "pointerdown", (event) => this.onPointerDown(event));
     this.registerDomEvent(this.pageElement, "pointermove", (event) => this.onPointerMove(event));
+    this.registerDomEvent(this.pageElement, "pointerleave", () => {
+      if (this.activePointerId === null) this.updateEraserCursor(null, false);
+    });
     this.registerDomEvent(this.pageElement, "pointerup", (event) => this.onPointerUp(event));
-    this.registerDomEvent(this.pageElement, "pointercancel", (event) => this.onPointerUp(event));
+    this.registerDomEvent(this.pageElement, "pointercancel", (event) => this.onPointerCancel(event));
     this.registerDomEvent(this.pageElement, "lostpointercapture", (event) => this.onLostPointerCapture(event));
     this.registerDomEvent(this.pageElement, "wheel", (event) => this.onWheel(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "scroll", () => this.onViewportMotion(), { passive: true });
@@ -368,7 +453,7 @@ export class InkView extends FileView {
       button.createDiv({ cls: `ink-page-thumb-paper ink-paper-${page.paper}` });
       button.createSpan({ text: String(index + 1), cls: "ink-page-thumb-number" });
       button.createSpan({ text: page.title, cls: "ink-page-thumb-title" });
-      button.addEventListener("click", () => { this.pageIndex = index; this.renderPageRail(); this.renderPage(); });
+      button.addEventListener("click", () => { this.finishPointerInput(false); this.pageIndex = index; this.renderPageRail(); this.renderPage(); });
     });
   }
 
@@ -378,8 +463,6 @@ export class InkView extends FileView {
     this.root.querySelector<HTMLElement>(".ink-document-title")!.textContent = this.getDisplayText();
     this.root.querySelector<HTMLElement>(".ink-current-page-title")!.textContent = page.title;
     this.root.querySelector<HTMLElement>(".ink-page-status")!.textContent = (this.pageIndex + 1) + " / " + this.notebook.pages.length;
-    this.root.querySelector<HTMLButtonElement>("[aria-label='Previous']")!.disabled = this.pageIndex === 0;
-    this.root.querySelector<HTMLButtonElement>("[aria-label='Next']")!.disabled = this.pageIndex === this.notebook.pages.length - 1;
     this.pageElement.className = `ink-page ink-paper-${page.paper}`;
     this.pageElement.style.aspectRatio = `${this.notebook.pageWidth} / ${this.notebook.pageHeight}`;
     this.resizeCanvas();
@@ -427,6 +510,14 @@ export class InkView extends FileView {
     this.drawPreview();
   }
 
+  private drawInteractiveStrokes(strokes: InkStroke[], refine = false): void {
+    if (!this.ctx || !this.pageElement) return;
+    this.tiles.sync(strokes);
+    this.tiles.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine);
+    this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
+    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+  }
+
   private onViewportMotion(): void {
     this.updateViewport(false);
     if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
@@ -442,9 +533,12 @@ export class InkView extends FileView {
     if (this.renderFrame !== null) return;
     this.renderFrame = window.requestAnimationFrame(() => {
       this.renderFrame = null;
+      this.flushPendingLassoPoint();
       const shouldResize = this.resizeRequested;
       this.resizeRequested = false;
       if (shouldResize) this.resizeCanvas();
+      else if (this.lassoDrag) this.drawLassoInteraction();
+      else if (this.interaction?.tool === "eraser") this.drawInteractiveStrokes(this.currentPage().strokes);
       else if (this.activeStroke?.tool === "pen") this.drawPreview();
       else this.drawStrokes(this.currentPage().strokes);
     });
@@ -470,9 +564,66 @@ export class InkView extends FileView {
     drawInkStroke(this.previewCtx, this.activeStroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
 
-  private commitPreview(): void {
+  private beginLassoPreview(page: InkPage): void {
+    const drag = this.lassoDrag;
+    if (!drag || !this.lassoCanvas) return;
+    const selected = new Set(drag.strokes.map((stroke) => stroke.id));
+    this.tiles.sync(page.strokes, selected);
+    this.tiles.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, false);
+    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight,
+      window.devicePixelRatio || 1, this.zoom, 4_000_000);
+    this.lassoCanvas.width = resolution.width;
+    this.lassoCanvas.height = resolution.height;
+    this.lassoCanvas.style.left = "0";
+    this.lassoCanvas.style.top = "0";
+    this.lassoCanvas.style.width = `${this.canvasLogicalWidth}px`;
+    this.lassoCanvas.style.height = `${this.canvasLogicalHeight}px`;
+    this.lassoCtx.setTransform(resolution.width / this.canvasLogicalWidth, 0, 0,
+      resolution.height / this.canvasLogicalHeight, 0, 0);
+    this.lassoCtx.clearRect(0, 0, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    for (const stroke of drag.strokes) drawInkStroke(this.lassoCtx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    this.lassoCanvas.style.transform = "translate(0px, 0px)";
+    this.lassoCanvas.style.display = "block";
+  }
+
+  private drawLassoInteraction(): void {
+    const drag = this.lassoDrag;
+    if (!drag) return;
+    this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
+    const bounds = drag.bounds;
+    if (!bounds) return;
+    this.ctx.save();
+    this.ctx.strokeStyle = "#2f80ed";
+    this.ctx.lineWidth = 1.5;
+    this.ctx.setLineDash([6, 4]);
+    this.ctx.strokeRect(
+      (bounds.minX + drag.dx) * this.canvasLogicalWidth,
+      (bounds.minY + drag.dy) * this.canvasLogicalHeight,
+      (bounds.maxX - bounds.minX) * this.canvasLogicalWidth,
+      (bounds.maxY - bounds.minY) * this.canvasLogicalHeight,
+    );
+    this.ctx.restore();
+  }
+
+  private commitLassoPreview(page: InkPage): void {
+    this.tiles.sync(page.strokes);
+    // Commit a complete 1x fallback before dropping the moving preview. The
+    // high-density tiles can then refine progressively without visible holes.
+    this.tiles.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom);
+    this.hideLassoPreview();
+    this.drawStrokes(page.strokes);
+  }
+
+  private hideLassoPreview(): void {
+    if (!this.lassoCanvas) return;
+    this.lassoCanvas.style.display = "none";
+    this.lassoCanvas.style.transform = "none";
+    this.lassoCanvas.width = this.lassoCanvas.height = 1;
+  }
+
+  private commitPreview(page = this.currentPage()): void {
     if (this.activeStroke?.tool !== "pen") return;
-    this.tiles.sync(this.currentPage().strokes);
+    this.tiles.sync(page.strokes);
     this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
     // Resolve dirty visible tiles before dropping the transient stroke, avoiding a pen-up flash.
     this.tiles.flushVisible();
@@ -499,38 +650,60 @@ export class InkView extends FileView {
 
   private onPointerDown(event: PointerEvent): void {
     if (event.pointerType === "touch") return;
-    if (this.activePointerId !== null) this.finishPointerInput();
+    if (this.activePointerId !== null) this.finishPointerInput(false);
     this.updateViewport(true);
     if (this.saveTimer !== undefined) {
       window.clearTimeout(this.saveTimer);
       this.saveTimer = undefined;
     }
     this.activePointerId = event.pointerId;
+    const page = this.currentPage();
+    const tool = this.state.tool;
+    this.interaction = {
+      generation: ++this.interactionGeneration,
+      pointerId: event.pointerId,
+      pageId: page.id,
+      tool,
+      eraserMode: tool === "eraser" ? this.state.eraserMode : undefined,
+      eraserSize: tool === "eraser" ? this.state.eraserSize : undefined,
+    };
     this.pageElement.setPointerCapture(event.pointerId);
     const point = this.toPoint(event);
     this.erasedStrokeIds.clear();
+    this.erasedCandidateIds.clear();
     this.erasedStrokes = [];
-    if (this.state.tool === "eraser") {
-      this.eraseAt(point);
+    this.eraserReplacementIds.clear();
+    this.eraserReplacements = [];
+    if (tool === "eraser") {
+      this.updateEraserCursor(point, true);
+      if (this.eraseAt(point, page)) this.requestRender();
       return;
     }
-    if (this.state.tool === "lasso") {
+    if (tool === "lasso") {
       if (this.isPointInSelection(point)) {
+        const strokes = this.selectedStrokes();
+        const before = new Map(strokes.map((stroke) => [stroke.id, clonePoints(stroke.points)]));
         this.lassoDrag = {
           start: point,
-          before: new Map(this.selectedStrokes().map((stroke) => [stroke.id, clonePoints(stroke.points)])),
+          pageId: page.id,
+          strokes,
+          before,
+          bounds: boundsForPointSets([...before.values()]),
+          dx: 0,
+          dy: 0,
         };
+        this.beginLassoPreview(page);
       } else {
         this.selectedStrokeIds.clear();
         this.lassoPath = [point];
-        this.drawStrokes(this.currentPage().strokes);
+        this.drawStrokes(page.strokes);
       }
       return;
     }
     this.activeStroke = {
       id: newId("stroke"),
-      pageId: this.currentPage().id,
-      tool: this.state.tool,
+      pageId: page.id,
+      tool,
       color: this.state.color,
       width: this.state.width,
       opacity: this.state.opacity,
@@ -539,37 +712,60 @@ export class InkView extends FileView {
       updatedAt: Date.now(),
     };
     this.lastPoint = point;
-    this.currentPage().strokes.push(this.activeStroke);
+    page.strokes.push(this.activeStroke);
     if (this.activeStroke.tool === "pen") {
       this.resizePreview();
       this.drawPreview();
-    } else this.drawStrokes(this.currentPage().strokes);
+    } else this.drawStrokes(page.strokes);
   }
 
   private onPointerMove(event: PointerEvent): void {
-    if (this.activePointerId !== event.pointerId || event.pointerType === "touch") return;
+    if (event.pointerType === "touch") return;
+    if (this.activePointerId === null) {
+      this.updateEraserCursor(this.state.tool === "eraser" ? this.toPoint(event) : null, this.state.tool === "eraser");
+      return;
+    }
+    if (this.activePointerId !== event.pointerId) return;
+    if (this.interaction?.tool === "eraser") this.updateEraserCursor(this.toPoint(event), true);
     this.applyPointerSamples(event);
   }
 
   private onPointerUp(event: PointerEvent): void {
     if (this.activePointerId !== event.pointerId) return;
     this.applyPointerSamples(event);
-    this.finishPointerInput();
+    this.finishPointerInput(true);
     if (this.pageElement.hasPointerCapture(event.pointerId)) this.pageElement.releasePointerCapture(event.pointerId);
+    if (this.state.tool === "eraser") this.updateEraserCursor(this.toPoint(event), true);
+  }
+
+  private onPointerCancel(event: PointerEvent): void {
+    if (this.activePointerId !== event.pointerId) return;
+    this.finishPointerInput(false);
   }
 
   private applyPointerSamples(event: PointerEvent): void {
+    const interaction = this.interaction;
+    if (!interaction || interaction.pointerId !== event.pointerId) return;
+    const page = this.pageById(interaction.pageId);
+    if (!page) return;
+    const rect = this.pageElement.getBoundingClientRect();
+    const samples = this.pointerSamples(event);
+    if (interaction.tool === "lasso") {
+      this.pendingLassoPoint = this.toPoint(samples[samples.length - 1], rect);
+      this.requestRender();
+      return;
+    }
     let changed = false;
-    for (const sample of this.pointerSamples(event)) {
-      const point = this.toPoint(sample);
-      if (this.state.tool === "eraser") {
-        changed = this.eraseAt(point) || changed;
-      } else if (this.state.tool === "lasso") {
-        changed = this.applyLassoPoint(point) || changed;
-      } else if (this.activeStroke && this.lastPoint && distance(point, this.lastPoint) >= 0.0002) {
-        this.activeStroke.points.push(point);
+    for (const sample of samples) {
+      const point = this.toPoint(sample, rect);
+      if (interaction.tool === "eraser") {
+        changed = this.eraseAt(point, page, interaction.eraserMode, interaction.eraserSize) || changed;
+      } else if (this.activeStroke && this.lastPoint) {
+        const stabilized = stabilizeInkPoint(point, this.lastPoint, this.canvasLogicalWidth, this.canvasLogicalHeight);
+        if (!stabilized) continue;
+        this.activeStroke.points.push(stabilized);
         this.activeStroke.updatedAt = Date.now();
-        this.lastPoint = point;
+        this.lastPoint = stabilized;
         changed = true;
       }
     }
@@ -583,13 +779,13 @@ export class InkView extends FileView {
 
   private applyLassoPoint(point: InkPoint): boolean {
     if (this.lassoDrag) {
-      const bounds = boundsForPointSets([...this.lassoDrag.before.values()]);
+      const bounds = this.lassoDrag.bounds;
       const dx = constrainDelta(point.x - this.lassoDrag.start.x, bounds?.minX ?? 0, bounds?.maxX ?? 1);
       const dy = constrainDelta(point.y - this.lassoDrag.start.y, bounds?.minY ?? 0, bounds?.maxY ?? 1);
-      for (const stroke of this.selectedStrokes()) {
-        const original = this.lassoDrag.before.get(stroke.id);
-        if (original) stroke.points = translatePoints(original, dx, dy);
-      }
+      if (dx === this.lassoDrag.dx && dy === this.lassoDrag.dy) return false;
+      this.lassoDrag.dx = dx;
+      this.lassoDrag.dy = dy;
+      this.lassoCanvas.style.transform = `translate(${dx * this.canvasLogicalWidth}px, ${dy * this.canvasLogicalHeight}px)`;
       return true;
     }
     const previous = this.lassoPath[this.lassoPath.length - 1];
@@ -598,21 +794,35 @@ export class InkView extends FileView {
     return true;
   }
 
-  private finishPointerInput(): void {
-    const page = this.currentPage();
-    this.commitPreview();
+  private flushPendingLassoPoint(): void {
+    const point = this.pendingLassoPoint;
+    this.pendingLassoPoint = null;
+    if (point) this.applyLassoPoint(point);
+  }
+
+  private finishPointerInput(_includeFinalSample = false): void {
+    const interaction = this.interaction;
+    if (!interaction) return;
+    const page = this.pageById(interaction.pageId);
+    this.interaction = null;
+    this.updateEraserCursor(null, false);
+    if (!page) { this.activePointerId = null; return; }
+    this.flushPendingLassoPoint();
+    this.commitPreview(page);
     if (this.activeStroke?.tool === "pen" && this.renderFrame !== null && !this.resizeRequested) {
       window.cancelAnimationFrame(this.renderFrame);
       this.renderFrame = null;
     }
-    if (this.state.tool === "lasso") {
+    if (interaction.tool === "lasso") {
       this.finishLasso(page);
       this.activePointerId = null;
       this.applyPendingMergedNotebook();
       return;
     }
-    if (this.state.tool === "eraser" && this.erasedStrokes.length > 0) {
-      this.pushCommand(this.deletedStrokesCommand(page.id, this.erasedStrokes));
+    if (interaction.tool === "eraser" && this.erasedStrokes.length > 0) {
+      this.markChanged(page);
+      this.pushCommand(this.erasedStrokesCommand(page.id, this.erasedStrokes, this.eraserReplacements));
+      this.drawInteractiveStrokes(page.strokes, true);
     } else if (this.activeStroke) {
       this.markChanged(page);
       this.pushCommand(this.addedStrokeCommand(page.id, this.activeStroke));
@@ -620,8 +830,13 @@ export class InkView extends FileView {
     this.activePointerId = null;
     this.activeStroke = null;
     this.lastPoint = null;
+    this.pendingLassoPoint = null;
     this.applyPendingMergedNotebook();
     this.scheduleSave();
+    if (this.externalRefreshPending) {
+      this.externalRefreshPending = false;
+      void this.reloadFromDisk().catch((error) => new Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
+    }
   }
 
   private applyPendingMergedNotebook(): void {
@@ -645,7 +860,7 @@ export class InkView extends FileView {
     if (this.activePointerId !== event.pointerId) return;
     // A delayed release from the previous stroke must not finish a recaptured pen.
     if (this.pageElement.hasPointerCapture(event.pointerId)) return;
-    this.finishPointerInput();
+    this.finishPointerInput(false);
   }
 
   private onWheel(event: WheelEvent): void {
@@ -705,8 +920,7 @@ export class InkView extends FileView {
       { x: gesture.pageX, y: gesture.pageY });
   }
 
-  private toPoint(event: PointerEvent): InkPoint {
-    const rect = this.pageElement.getBoundingClientRect();
+  private toPoint(event: PointerEvent, rect = this.pageElement.getBoundingClientRect()): InkPoint {
     return {
       x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
       y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
@@ -717,30 +931,71 @@ export class InkView extends FileView {
     };
   }
 
-  private eraseAt(point: InkPoint): boolean {
-    const page = this.currentPage();
-    const removed = page.strokes.filter((stroke) => !this.erasedStrokeIds.has(stroke.id) && stroke.points.some((candidate) => distance(candidate, point) < this.state.width / 500));
+  private eraseAt(point: InkPoint, page = this.currentPage(), mode = this.state.eraserMode, size = this.state.eraserSize): boolean {
+    const radius = mode === "stroke" ? STROKE_ERASER_HIT_RADIUS : size / 2;
+    const indexed = this.tiles?.queryNear ? this.tiles.queryNear(point, radius) : page.strokes;
+    const candidates = [...new Map([...indexed, ...this.eraserReplacements].map((stroke) => [stroke.id, stroke])).values()]
+      .filter((stroke) => !this.erasedCandidateIds.has(stroke.id));
+    const removed = candidates.filter((stroke) => strokeIntersectsEraser(stroke, point, radius, mode, this.canvasLogicalWidth, this.canvasLogicalHeight));
     if (removed.length === 0) return false;
     for (const stroke of removed) {
-      this.erasedStrokeIds.add(stroke.id);
-      this.erasedStrokes.push(cloneStroke(stroke));
+      this.erasedCandidateIds.add(stroke.id);
+      if (!this.eraserReplacementIds.has(stroke.id) && !this.erasedStrokeIds.has(stroke.id)) {
+        this.erasedStrokeIds.add(stroke.id);
+        this.erasedStrokes.push(cloneStroke(stroke));
+      }
+      if (this.eraserReplacementIds.delete(stroke.id)) this.eraserReplacements = this.eraserReplacements.filter((candidate) => candidate.id !== stroke.id);
     }
     this.deleteStrokes(page, removed.map((stroke) => stroke.id));
-    this.markChanged(page);
+    if (mode !== "stroke") {
+      const now = Date.now();
+      for (const stroke of removed) {
+        const segments = eraseStrokeSegments(stroke, point, radius, mode, this.canvasLogicalWidth, this.canvasLogicalHeight);
+        for (const points of segments) {
+          const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, createdAt: now, updatedAt: now };
+          page.strokes.push(replacement);
+          this.eraserReplacementIds.add(replacement.id);
+          this.eraserReplacements.push(cloneStroke(replacement));
+        }
+      }
+      page.strokes.sort((left, right) => left.createdAt - right.createdAt);
+    }
     return true;
   }
 
+  private updateEraserCursor(point: InkPoint | null, visible: boolean): void {
+    if (!this.eraserCursor) return;
+    this.eraserCursor.toggleClass("is-visible", visible);
+    this.eraserCursor.toggleClass("is-square", this.state.eraserMode === "square");
+    this.eraserCursor.toggleClass("is-stroke", this.state.eraserMode === "stroke");
+    const size = this.state.eraserMode === "stroke" ? STROKE_ERASER_HIT_RADIUS * 2 : this.state.eraserSize;
+    this.eraserCursor.style.width = `${size}px`;
+    this.eraserCursor.style.height = `${size}px`;
+    if (!point) return;
+    this.eraserCursor.style.left = `${point.x * this.canvasLogicalWidth}px`;
+    this.eraserCursor.style.top = `${point.y * this.canvasLogicalHeight}px`;
+  }
+
   private addPage(): void {
+    this.finishPointerInput(false);
+    const before = cloneNotebook(this.notebook);
+    const beforePageId = this.currentPage().id;
     const now = Date.now();
     const page: InkPage = { id: newId("page"), title: `Page ${this.notebook.pages.length + 1}`, paper: "ruled", strokes: [], deletedStrokeIds: [], createdAt: now, updatedAt: now };
     this.notebook.pages.push(page);
+    this.notebook.pageOrder.push(page.id);
+    this.notebook.pageOrderUpdatedAt = now;
+    this.notebook.updatedAt = now;
+    this.dirtyRevision += 1;
     this.pageIndex = this.notebook.pages.length - 1;
+    this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, page.id);
     this.renderPageRail();
     this.renderPage();
     this.scheduleSave();
   }
 
   private changePage(delta: number): void {
+    this.finishPointerInput(false);
     this.pageIndex = Math.max(0, Math.min(this.notebook.pages.length - 1, this.pageIndex + delta));
     this.renderPageRail();
     this.renderPage();
@@ -748,32 +1003,185 @@ export class InkView extends FileView {
 
   private openPageMenu(event: MouseEvent): void {
     const menu = new Menu();
-    for (const paper of ["blank", "ruled", "grid", "dot"] as PaperStyle[]) menu.addItem((item) => item.setTitle(`Paper: ${paper}`).setChecked(this.currentPage().paper === paper).onClick(() => { this.currentPage().paper = paper; this.currentPage().updatedAt = Date.now(); this.renderPageRail(); this.renderPage(); this.scheduleSave(); }));
+    for (const paper of ["blank", "ruled", "grid", "dot"] as PaperStyle[]) menu.addItem((item) => item.setTitle(`Paper: ${paper}`).setChecked(this.currentPage().paper === paper).onClick(() => {
+      const page = this.currentPage();
+      const before = page.paper;
+      page.paper = paper;
+      this.markChanged(page);
+      this.pushCommand({
+        undo: () => this.setPagePaper(page.id, before),
+        redo: () => this.setPagePaper(page.id, paper),
+      });
+      this.renderPageRail(); this.renderPage(); this.scheduleSave();
+    }));
     menu.addSeparator();
+    menu.addItem((item) => item.setTitle("Add page").onClick(() => this.addPage()));
     menu.addItem((item) => item.setTitle("Rename page").onClick(() => this.renamePage()));
+    menu.addItem((item) => item.setTitle("Duplicate page").onClick(() => this.duplicateCurrentPage()));
+    menu.addItem((item) => item.setTitle("Move page up").setDisabled(this.pageIndex === 0).onClick(() => this.moveCurrentPage(-1)));
+    menu.addItem((item) => item.setTitle("Move page down").setDisabled(this.pageIndex === this.notebook.pages.length - 1).onClick(() => this.moveCurrentPage(1)));
+    menu.addItem((item) => item.setTitle("Delete page").setDisabled(this.notebook.pages.length <= 1).onClick(() => this.deleteCurrentPage()));
+    menu.addSeparator();
+    menu.addItem((item) => item.setTitle("Copy page embed syntax").onClick(() => void this.copyCurrentPageEmbed()));
+    menu.addItem((item) => item.setTitle("Zoom out").setDisabled(this.zoom <= 0.5).onClick(() => this.setZoom(this.zoom - 0.1)));
+    menu.addItem((item) => item.setTitle("Reset zoom").setDisabled(this.zoom === 1).onClick(() => this.setZoom(1)));
+    menu.addItem((item) => item.setTitle("Zoom in").setDisabled(this.zoom >= 3).onClick(() => this.setZoom(this.zoom + 0.1)));
     menu.showAtMouseEvent(event);
   }
 
   private renamePage(): void {
     const title = window.prompt("Page title", this.currentPage().title)?.trim();
     if (!title) return;
-    this.currentPage().title = title;
-    this.currentPage().updatedAt = Date.now();
+    const page = this.currentPage();
+    const before = page.title;
+    page.title = title;
+    this.markChanged(page);
+    this.pushCommand({
+      undo: () => this.setPageTitle(page.id, before),
+      redo: () => this.setPageTitle(page.id, title),
+    });
     this.renderPageRail();
     this.renderPage();
     this.scheduleSave();
   }
 
+  private duplicateCurrentPage(): void {
+    this.finishPointerInput(false);
+    const before = cloneNotebook(this.notebook);
+    const beforePageId = this.currentPage().id;
+    const source = clonePage(this.currentPage());
+    const insertionIndex = this.pageIndex + 1;
+    const now = Date.now();
+    const page = clonePageAsNew(source, `${source.title} copy`, now);
+    this.notebook.pages.splice(insertionIndex, 0, page);
+    this.pageIndex += 1;
+    this.finishPageOrderChange(now);
+    this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, page.id);
+    this.renderAll();
+    this.scheduleSave();
+  }
+
+  private deleteCurrentPage(): void {
+    if (this.notebook.pages.length <= 1) return;
+    this.finishPointerInput(false);
+    const before = cloneNotebook(this.notebook);
+    const beforePageId = this.currentPage().id;
+    const deletedIndex = this.pageIndex;
+    const [deleted] = this.notebook.pages.splice(this.pageIndex, 1);
+    const now = Date.now();
+    this.notebook.deletedPages[deleted.id] = now;
+    this.pageIndex = Math.min(this.pageIndex, this.notebook.pages.length - 1);
+    this.finishPageOrderChange(now);
+    this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, this.currentPage().id);
+    this.clearSelection();
+    this.renderAll();
+    this.scheduleSave();
+  }
+
+  private moveCurrentPage(delta: number): void {
+    const target = this.pageIndex + delta;
+    if (target < 0 || target >= this.notebook.pages.length) return;
+    this.finishPointerInput(false);
+    const before = cloneNotebook(this.notebook);
+    const pageId = this.currentPage().id;
+    const [page] = this.notebook.pages.splice(this.pageIndex, 1);
+    this.notebook.pages.splice(target, 0, page);
+    this.pageIndex = target;
+    this.finishPageOrderChange(Date.now());
+    this.pushNotebookCommand(before, cloneNotebook(this.notebook), pageId, pageId);
+    this.renderAll();
+    this.scheduleSave();
+  }
+
+  private finishPageOrderChange(now: number): void {
+    this.notebook.pageOrder = this.notebook.pages.map((page) => page.id);
+    this.notebook.pageOrderUpdatedAt = now;
+    this.notebook.updatedAt = now;
+    this.dirtyRevision += 1;
+  }
+
+  private pushNotebookCommand(before: InkNotebook, after: InkNotebook, beforePageId: string, afterPageId: string): void {
+    this.pushCommand({
+      undo: () => this.restoreNotebookState(before, beforePageId),
+      redo: () => this.restoreNotebookState(after, afterPageId),
+    });
+  }
+
+  private restoreNotebookState(snapshot: InkNotebook, selectedPageId: string): void {
+    const current = this.notebook;
+    const next = cloneNotebook(snapshot);
+    const now = Date.now();
+    const nextIds = new Set(next.pages.map((page) => page.id));
+    const deletedPages = { ...current.deletedPages, ...next.deletedPages };
+    for (const page of current.pages) {
+      if (!nextIds.has(page.id)) deletedPages[page.id] = Math.max(deletedPages[page.id] ?? 0, now);
+    }
+    let selectedId = selectedPageId;
+    next.pages = next.pages.map((page) => {
+      if (!(page.id in deletedPages)) return page;
+      const restored = clonePageAsNew(page, page.title, now);
+      if (page.id === selectedPageId) selectedId = restored.id;
+      return restored;
+    });
+    next.deletedPages = deletedPages;
+    next.pageOrder = next.pages.map((page) => page.id);
+    next.updatedAt = now;
+    next.pageOrderUpdatedAt = now;
+    this.notebook = next;
+    this.pageIndex = Math.max(0, next.pages.findIndex((page) => page.id === selectedId));
+    this.dirtyRevision += 1;
+  }
+
+  private setPagePaper(pageId: string, paper: PaperStyle): void {
+    const page = this.pageById(pageId);
+    if (!page) return;
+    page.paper = paper;
+    this.markChanged(page);
+  }
+
+  private setPageTitle(pageId: string, title: string): void {
+    const page = this.pageById(pageId);
+    if (!page) return;
+    page.title = title;
+    this.markChanged(page);
+  }
+
+  private async copyCurrentPageEmbed(): Promise<void> {
+    if (!this.file) return;
+    const syntax = `\`\`\`ink\n${this.file.path}\npage: ${this.currentPage().id}\n\`\`\``;
+    try {
+      await navigator.clipboard.writeText(syntax);
+      new Notice("Copied Ink page embed syntax");
+    } catch (error) {
+      new Notice(`Could not copy embed syntax: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
   private addToolButton(parent: HTMLElement, icon: string, label: string, tool: InkTool): void {
-    const button = parent.createEl("button", { cls: "ink-tool-button", attr: { type: "button", title: label, "aria-label": label, "aria-pressed": String(this.state.tool === tool), "data-tool": tool } });
+    const hasSettings = tool === "pen" || tool === "highlighter" || tool === "eraser";
+    const button = parent.createEl("button", { cls: "ink-tool-button", attr: {
+      type: "button", title: label, "aria-label": label, "aria-pressed": String(this.state.tool === tool), "data-tool": tool,
+      ...(hasSettings ? { "aria-haspopup": "dialog", "aria-expanded": "false" } : {}),
+    } });
     const iconHolder = button.createSpan({ cls: "ink-button-icon" });
     setIcon(iconHolder, icon);
     button.createSpan({ cls: "ink-button-text", text: label });
     button.addEventListener("click", () => {
+      this.finishPointerInput(false);
+      if (this.state.tool === tool && (tool === "pen" || tool === "highlighter" || tool === "eraser")) {
+        this.setSizePopoverOpen(!this.sizePopoverOpen);
+        return;
+      }
       this.state.tool = tool;
       if (tool !== "lasso") this.clearSelection();
+      this.sizePopover?.toggleClass("is-eraser-tool", tool === "eraser");
+      this.updateBrushControls();
       this.updateToolButtons();
       this.renderPage();
+      if (this.sizePopoverOpen) {
+        this.setSizePopoverOpen(true);
+        this.positionSizePopover();
+      }
     });
   }
 
@@ -810,6 +1218,7 @@ export class InkView extends FileView {
 
   private addRange(parent: HTMLElement, name: string, min: number, max: number, step: number, value: number, onChange: (value: number) => void): void {
     const label = parent.createEl("label", { cls: "ink-range-control", attr: { title: name } });
+    label.addClass(`ink-range-${name.toLowerCase().replace(/\s+/g, "-")}`);
     const header = label.createDiv({ cls: "ink-range-header" });
     header.createSpan({ text: name });
     const valueText = header.createSpan({ cls: "ink-control-value", text: formatControlValue(name, value) });
@@ -872,14 +1281,16 @@ export class InkView extends FileView {
       await this.activeSave;
       return;
     }
-    this.activeSave = this.performSave(file);
+    const saving = this.performSave(file);
+    this.activeSave = saving;
     try {
-      await this.activeSave;
+      await saving;
     } catch (error) {
-      new Notice(`Ink Notes could not save: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      this.activeSave = null;
+      // Keep the public lifecycle promise settled even if a future store
+      // implementation throws outside its normal format-error path.
+      new Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
     }
+    if (this.activeSave === saving) this.activeSave = null;
   }
 
   private async performSave(file: TFile): Promise<void> {
@@ -887,12 +1298,23 @@ export class InkView extends FileView {
     try {
       do {
         this.saveRequested = false;
+        const revision = this.dirtyRevision;
         const snapshot = cloneNotebook(this.notebook);
-        const merged = await this.store.save(file, snapshot);
-        if (this.file === file) this.receiveMergedNotebook(merged);
-      } while (this.saveRequested);
+        try {
+          const merged = await this.store.save(file, snapshot);
+          this.savedRevision = Math.max(this.savedRevision, revision);
+          if (this.file === file) this.receiveMergedNotebook(merged);
+        } catch (error) {
+          new Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
+          break;
+        }
+      } while (this.saveRequested || this.dirtyRevision > this.savedRevision);
     } finally {
       this.syncing = false;
+      if (this.externalRefreshPending && this.activePointerId === null) {
+        this.externalRefreshPending = false;
+        void this.reloadFromDisk().catch((error) => new Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
+      }
     }
   }
 
@@ -921,7 +1343,7 @@ export class InkView extends FileView {
   private afterCommand(): void {
     this.clearSelection();
     this.updateHistoryButtons();
-    this.renderPage();
+    this.renderAll();
     this.scheduleSave();
   }
 
@@ -971,20 +1393,26 @@ export class InkView extends FileView {
     };
   }
 
-  private deletedStrokesCommand(pageId: string, originals: InkStroke[]): EditCommand {
-    let current = originals.map(cloneStroke);
+  private erasedStrokesCommand(pageId: string, originals: InkStroke[], replacements: InkStroke[]): EditCommand {
+    let currentOriginals = originals.map(cloneStroke);
+    let currentReplacements = replacements.map(cloneStroke);
     return {
       undo: () => {
         const page = this.pageById(pageId);
         if (!page) return;
-        current = originals.map(restoredStroke);
-        page.strokes.push(...current.map(cloneStroke));
+        this.deleteStrokes(page, currentReplacements.map((stroke) => stroke.id));
+        currentOriginals = originals.map(restoredStroke);
+        page.strokes.push(...currentOriginals.map(cloneStroke));
+        page.strokes.sort((left, right) => left.createdAt - right.createdAt);
         this.markChanged(page);
       },
       redo: () => {
         const page = this.pageById(pageId);
         if (!page) return;
-        this.deleteStrokes(page, current.map((stroke) => stroke.id));
+        this.deleteStrokes(page, currentOriginals.map((stroke) => stroke.id));
+        currentReplacements = replacements.map(restoredStroke);
+        page.strokes.push(...currentReplacements.map(cloneStroke));
+        page.strokes.sort((left, right) => left.createdAt - right.createdAt);
         this.markChanged(page);
       },
     };
@@ -992,23 +1420,28 @@ export class InkView extends FileView {
 
   private finishLasso(page: InkPage): void {
     if (this.lassoDrag) {
-      const before = this.lassoDrag.before;
-      const movedStrokes = this.selectedStrokes();
+      const drag = this.lassoDrag;
+      const before = drag.before;
+      const movedStrokes = drag.strokes;
+      const moved = drag.dx !== 0 || drag.dy !== 0;
+      if (moved) for (const stroke of movedStrokes) {
+        const points = before.get(stroke.id);
+        if (points) stroke.points = translatePoints(points, drag.dx, drag.dy);
+      }
       const after = new Map(movedStrokes.map((stroke) => [stroke.id, clonePoints(stroke.points)]));
-      const moved = [...after].some(([id, points]) => !samePoints(before.get(id), points));
-      this.lassoDrag = null;
       if (moved) {
         const now = Date.now();
         for (const stroke of movedStrokes) stroke.updatedAt = now;
-        const pageId = page.id;
+        const pageId = drag.pageId;
         this.pushCommand({
           undo: () => this.applyStrokePoints(pageId, before),
           redo: () => this.applyStrokePoints(pageId, after),
         });
-        this.markChanged(page);
+        this.markChanged(page, false);
         this.scheduleSave();
       }
-      this.drawStrokes(page.strokes);
+      this.lassoDrag = null;
+      this.commitLassoPreview(page);
       return;
     }
     if (this.lassoPath.length >= 3) {
@@ -1037,11 +1470,12 @@ export class InkView extends FileView {
     page.deletedStrokeIds = [...new Set([...page.deletedStrokeIds, ...ids])];
   }
 
-  private markChanged(page: InkPage): void {
+  private markChanged(page: InkPage, syncTiles = true): void {
     const now = Date.now();
     page.updatedAt = now;
     this.notebook.updatedAt = now;
-    if (page === this.currentPage()) this.tiles?.sync(page.strokes);
+    this.dirtyRevision += 1;
+    if (syncTiles && page === this.currentPage()) this.tiles?.sync(page.strokes);
   }
 
   private selectedStrokes(): InkStroke[] {
@@ -1059,17 +1493,22 @@ export class InkView extends FileView {
     this.selectedStrokeIds.clear();
     this.lassoPath = [];
     this.lassoDrag = null;
+    this.hideLassoPreview();
   }
 
   private resetInteraction(): void {
     if (this.previewCanvas) this.previewCanvas.width = this.previewCanvas.height = 1;
     this.touchGesture = null;
     this.pendingMergedNotebook = null;
+    this.externalRefreshPending = false;
     this.activeStroke = null;
     this.activePointerId = null;
     this.lastPoint = null;
     this.erasedStrokeIds.clear();
+    this.erasedCandidateIds.clear();
     this.erasedStrokes = [];
+    this.eraserReplacementIds.clear();
+    this.eraserReplacements = [];
     this.clearSelection();
   }
 
@@ -1088,9 +1527,107 @@ function distance(a: { x: number; y: number }, b: { x: number; y: number }): num
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
+function stabilizeInkPoint(point: InkPoint, previous: InkPoint, width: number, height: number): InkPoint | null {
+  if (width <= 1 || height <= 1) return distance(point, previous) >= 0.0002 ? point : null;
+  const dx = (point.x - previous.x) * width;
+  const dy = (point.y - previous.y) * height;
+  const pixels = Math.hypot(dx, dy);
+  if (pixels < 0.75) return null;
+  // Slow input exposes sensor jitter most strongly. Blend only short moves so
+  // quick corners and intentional direction changes remain responsive.
+  const weight = pixels < 4 ? 0.45 : pixels < 8 ? 0.7 : 1;
+  return {
+    ...point,
+    x: previous.x + (point.x - previous.x) * weight,
+    y: previous.y + (point.y - previous.y) * weight,
+    pressure: previous.pressure + (point.pressure - previous.pressure) * Math.max(0.55, weight),
+  };
+}
+
+function strokeIntersectsEraser(stroke: InkStroke, center: InkPoint, radius: number, mode: EraserMode, width: number, height: number): boolean {
+  if (stroke.points.some((point) => pointInsideEraser(point, center, radius, mode, width, height))) return true;
+  for (let index = 1; index < stroke.points.length; index++) {
+    if (segmentIntersectsEraser(stroke.points[index - 1], stroke.points[index], center, radius, mode, width, height)) return true;
+  }
+  return false;
+}
+
+function eraseStrokeSegments(stroke: InkStroke, center: InkPoint, radius: number, mode: Exclude<EraserMode, "stroke">, width: number, height: number): InkPoint[][] {
+  const segments: InkPoint[][] = [];
+  let segment: InkPoint[] = [];
+  const flush = () => {
+    if (segment.length > 0) segments.push(segment);
+    segment = [];
+  };
+  for (const point of sampleStrokeForEraser(stroke.points, radius, width, height)) {
+    if (pointInsideEraser(point, center, radius, mode, width, height)) flush();
+    else segment.push({ ...point });
+  }
+  flush();
+  return segments;
+}
+
+function pointInsideEraser(point: InkPoint, center: InkPoint, radius: number, mode: EraserMode, width: number, height: number): boolean {
+  const dx = (point.x - center.x) * width;
+  const dy = (point.y - center.y) * height;
+  return mode === "square" ? Math.abs(dx) <= radius && Math.abs(dy) <= radius : Math.hypot(dx, dy) <= radius;
+}
+
+function segmentIntersectsEraser(start: InkPoint, end: InkPoint, center: InkPoint, radius: number, mode: EraserMode, width: number, height: number): boolean {
+  const ax = (start.x - center.x) * width;
+  const ay = (start.y - center.y) * height;
+  const bx = (end.x - center.x) * width;
+  const by = (end.y - center.y) * height;
+  if (mode === "square") return segmentIntersectsBox(ax, ay, bx, by, radius);
+  const dx = bx - ax, dy = by - ay;
+  const lengthSquared = dx * dx + dy * dy;
+  const t = lengthSquared === 0 ? 0 : Math.max(0, Math.min(1, -(ax * dx + ay * dy) / lengthSquared));
+  return Math.hypot(ax + dx * t, ay + dy * t) <= radius;
+}
+
+function segmentIntersectsBox(ax: number, ay: number, bx: number, by: number, radius: number): boolean {
+  let minimum = 0, maximum = 1;
+  const dx = bx - ax, dy = by - ay;
+  for (const [origin, delta] of [[ax, dx], [ay, dy]] as const) {
+    if (delta === 0) { if (origin < -radius || origin > radius) return false; continue; }
+    const near = (-radius - origin) / delta;
+    const far = (radius - origin) / delta;
+    minimum = Math.max(minimum, Math.min(near, far));
+    maximum = Math.min(maximum, Math.max(near, far));
+    if (minimum > maximum) return false;
+  }
+  return true;
+}
+
+function sampleStrokeForEraser(points: InkPoint[], radius: number, width: number, height: number): InkPoint[] {
+  if (points.length < 2) return points.map((point) => ({ ...point }));
+  const sampled: InkPoint[] = [{ ...points[0] }];
+  const step = Math.max(1, radius / 3);
+  for (let index = 1; index < points.length; index++) {
+    const start = points[index - 1], end = points[index];
+    const pixels = Math.hypot((end.x - start.x) * width, (end.y - start.y) * height);
+    const count = Math.max(1, Math.ceil(pixels / step));
+    for (let sample = 1; sample <= count; sample++) sampled.push(interpolateInkPoint(start, end, sample / count));
+  }
+  return sampled;
+}
+
+function interpolateInkPoint(start: InkPoint, end: InkPoint, amount: number): InkPoint {
+  return {
+    x: start.x + (end.x - start.x) * amount,
+    y: start.y + (end.y - start.y) * amount,
+    pressure: start.pressure + (end.pressure - start.pressure) * amount,
+    tiltX: start.tiltX === undefined || end.tiltX === undefined ? end.tiltX : start.tiltX + (end.tiltX - start.tiltX) * amount,
+    tiltY: start.tiltY === undefined || end.tiltY === undefined ? end.tiltY : start.tiltY + (end.tiltY - start.tiltY) * amount,
+    t: start.t + (end.t - start.t) * amount,
+  };
+}
+
 function cloneNotebook(notebook: InkNotebook): InkNotebook {
   return {
     ...notebook,
+    pageOrder: [...notebook.pageOrder],
+    deletedPages: { ...notebook.deletedPages },
     pages: notebook.pages.map((page) => ({
       ...page,
       strokes: page.strokes.map(cloneStroke),
@@ -1101,6 +1638,23 @@ function cloneNotebook(notebook: InkNotebook): InkNotebook {
 
 function cloneStroke(stroke: InkStroke): InkStroke {
   return { ...stroke, points: clonePoints(stroke.points) };
+}
+
+function clonePage(page: InkPage): InkPage {
+  return { ...page, strokes: page.strokes.map(cloneStroke), deletedStrokeIds: [...page.deletedStrokeIds] };
+}
+
+function clonePageAsNew(page: InkPage, title: string, now = Date.now()): InkPage {
+  const pageId = newId("page");
+  return {
+    ...clonePage(page),
+    id: pageId,
+    title,
+    strokes: page.strokes.map((stroke) => ({ ...cloneStroke(stroke), id: newId("stroke"), pageId, createdAt: now, updatedAt: now })),
+    deletedStrokeIds: [],
+    createdAt: now,
+    updatedAt: now,
+  };
 }
 
 function clonePoints(points: InkPoint[]): InkPoint[] {
@@ -1121,14 +1675,18 @@ function selectionBounds(strokes: InkStroke[]): { minX: number; minY: number; ma
 }
 
 function boundsForPointSets(pointSets: InkPoint[][]): { minX: number; minY: number; maxX: number; maxY: number } | null {
-  const points = pointSets.flat();
-  if (points.length === 0) return null;
-  return {
-    minX: Math.min(...points.map((point) => point.x)),
-    minY: Math.min(...points.map((point) => point.y)),
-    maxX: Math.max(...points.map((point) => point.x)),
-    maxY: Math.max(...points.map((point) => point.y)),
-  };
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const points of pointSets) for (const point of points) {
+    minX = Math.min(minX, point.x);
+    minY = Math.min(minY, point.y);
+    maxX = Math.max(maxX, point.x);
+    maxY = Math.max(maxY, point.y);
+  }
+  return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : null;
+}
+
+function notebooksEqual(left: InkNotebook, right: InkNotebook): boolean {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 
 function pointInPolygon(point: InkPoint, polygon: InkPoint[]): boolean {
@@ -1141,11 +1699,6 @@ function pointInPolygon(point: InkPoint, polygon: InkPoint[]): boolean {
     if (crosses) inside = !inside;
   }
   return inside;
-}
-
-function samePoints(left: InkPoint[] | undefined, right: InkPoint[]): boolean {
-  return left !== undefined && left.length === right.length
-    && left.every((point, index) => point.x === right[index].x && point.y === right[index].y);
 }
 
 function constrainDelta(delta: number, minimum: number, maximum: number): number {

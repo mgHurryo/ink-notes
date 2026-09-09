@@ -26,28 +26,25 @@ afterEach(async () => {
 });
 
 describe("reference-style editor", () => {
-  it("starts with a collapsed rail and synchronizes both toolbars", () => {
+  it("starts with a collapsed rail and switches primary tools", () => {
     expect(document.querySelector(".ink-notes-view")?.classList.contains("ink-rail-hidden")).toBe(true);
     expect(button("Pen").getAttribute("aria-pressed")).toBe("true");
-    button("Highlighter tip").click();
+    button("Highlight").click();
     expect(button("Highlight").getAttribute("aria-pressed")).toBe("true");
     expect(button("Pen").getAttribute("aria-pressed")).toBe("false");
   });
   it("keeps page rail inside the workspace and updates navigation", () => {
-    button("Add page").click();
+    (view as unknown as { addPage(): void }).addPage();
     expect(document.querySelector(".ink-page-status")?.textContent).toBe("2 / 2");
-    expect(button("Previous").disabled).toBe(false);
-    expect(button("Next").disabled).toBe(true);
     button("Pages").click();
     expect(button("Pages").getAttribute("aria-pressed")).toBe("true");
     expect(document.querySelector(".ink-workspace > .ink-page-rail")).not.toBeNull();
     button("1: Page 1").click();
     expect(document.querySelector(".ink-page-status")?.textContent).toBe("1 / 2");
-    expect(button("Previous").disabled).toBe(true);
   });
   it("synchronizes preset, slider and custom-color selection", () => {
     button("8 px").click();
-    button("Brush size").click();
+    button("Pen").click();
     const size = document.querySelector<HTMLInputElement>('input[aria-label="Brush size"]')!;
     expect(size.value).toBe("8");
     size.value = "5.5";
@@ -58,6 +55,24 @@ describe("reference-style editor", () => {
     color.value = "#abcdef";
     color.dispatchEvent(new Event("input"));
     expect(document.querySelector('.ink-color-swatch[aria-pressed="true"]')).toBeNull();
+  });
+  it("shows a reference cursor and only offers size for local erasers", () => {
+    button("Erase").click();
+    button("Erase").click();
+    const popover = document.querySelector<HTMLElement>(".ink-size-popover")!;
+    const size = document.querySelector<HTMLInputElement>('input[aria-label="Eraser size"]')!;
+    expect(popover.classList.contains("is-stroke-eraser")).toBe(true);
+    expect(document.querySelector(".ink-stroke-eraser-hint")?.textContent).toContain("Size is fixed");
+    expect(document.querySelector(".ink-eraser-reference-point")).not.toBeNull();
+    button("Circle eraser").click();
+    expect(popover.classList.contains("is-stroke-eraser")).toBe(false);
+    size.value = "48";
+    size.dispatchEvent(new Event("input"));
+    const cursor = document.querySelector<HTMLElement>(".ink-eraser-cursor")!;
+    expect(cursor.style.width).toBe("48px");
+    button("Square eraser").click();
+    expect(cursor.classList.contains("is-square")).toBe(true);
+    expect(button("Square eraser").getAttribute("aria-checked")).toBe("true");
   });
   it("clamps zoom and resets the readout", () => {
     for (let i = 0; i < 40; i++) button("Zoom in").click();

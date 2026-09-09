@@ -22,7 +22,7 @@ __export(main_exports, {
   default: () => InkNotesPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 
 // src/view.ts
 var import_obsidian = require("obsidian");
@@ -36,12 +36,16 @@ function newId(prefix) {
 }
 function createNotebook(title = "Ink Notebook") {
   const now = Date.now();
+  const page = createPage("Page 1", "ruled", now);
   return {
-    schema: 1,
+    schema: 2,
     title,
     pageWidth: DEFAULT_PAGE_WIDTH,
     pageHeight: DEFAULT_PAGE_HEIGHT,
-    pages: [createPage("Page 1", "ruled", now)],
+    pages: [page],
+    pageOrder: [page.id],
+    deletedPages: {},
+    pageOrderUpdatedAt: now,
     updatedAt: now
   };
 }
@@ -52,31 +56,93 @@ function normalizeNotebook(value) {
   if (!value || typeof value !== "object") return createNotebook();
   const raw = value;
   const pages = Array.isArray(raw.pages) ? raw.pages : [];
+  const normalizedPages = pages.map(normalizePage).filter((page) => page !== null);
+  const pageIds = new Set(normalizedPages.map((page) => page.id));
+  const legacyOrder = [...normalizedPages].sort((a2, b2) => a2.createdAt - b2.createdAt).map((page) => page.id);
+  const requestedOrder = Array.isArray(raw.pageOrder) ? raw.pageOrder.filter((id) => typeof id === "string") : legacyOrder;
+  const pageOrder = [.../* @__PURE__ */ new Set([...requestedOrder.filter((id) => pageIds.has(id)), ...legacyOrder.filter((id) => !requestedOrder.includes(id))])];
+  const deletedPages = raw.deletedPages && typeof raw.deletedPages === "object" ? Object.fromEntries(Object.entries(raw.deletedPages).filter((entry) => typeof entry[0] === "string" && typeof entry[1] === "number" && Number.isFinite(entry[1]))) : {};
+  const visiblePages = normalizedPages.filter((page) => !(page.id in deletedPages));
+  const visibleIds = new Set(visiblePages.map((page) => page.id));
+  const byId = new Map(visiblePages.map((page) => [page.id, page]));
+  const orderedPages = pageOrder.map((id) => byId.get(id)).filter((page) => page !== void 0);
+  if (orderedPages.length === 0) orderedPages.push(createPage("Page 1"));
   return {
-    schema: 1,
+    schema: 2,
     title: typeof raw.title === "string" ? raw.title : "Ink Notebook",
     pageWidth: finitePositive(raw.pageWidth, DEFAULT_PAGE_WIDTH),
     pageHeight: finitePositive(raw.pageHeight, DEFAULT_PAGE_HEIGHT),
-    pages: pages.map(normalizePage).filter((page) => page !== null),
+    pages: orderedPages,
+    pageOrder: orderedPages.map((page) => page.id).filter((id) => visibleIds.has(id) || orderedPages.length === 1),
+    deletedPages,
+    pageOrderUpdatedAt: finitePositive(raw.pageOrderUpdatedAt, finitePositive(raw.updatedAt, Date.now())),
     updatedAt: finitePositive(raw.updatedAt, Date.now())
   };
 }
 function mergeNotebooks(base, incoming) {
+  var _a, _b, _c, _d, _e, _f, _g;
   const pages = /* @__PURE__ */ new Map();
   for (const page of base.pages) pages.set(page.id, page);
   for (const page of incoming.pages) {
     const existing = pages.get(page.id);
     pages.set(page.id, existing ? mergePages(existing, page) : page);
   }
-  const ordered = [...pages.values()].sort((a2, b2) => a2.createdAt - b2.createdAt);
+  const deletedPages = { ...(_a = base.deletedPages) != null ? _a : {} };
+  for (const [id, timestamp] of Object.entries((_b = incoming.deletedPages) != null ? _b : {})) deletedPages[id] = Math.max((_c = deletedPages[id]) != null ? _c : 0, timestamp);
+  for (const id of Object.keys(deletedPages)) pages.delete(id);
+  const orderSource = incoming.pageOrderUpdatedAt > base.pageOrderUpdatedAt || incoming.pageOrderUpdatedAt === base.pageOrderUpdatedAt && compareNotebookOrder(incoming, base) >= 0 ? incoming : base;
+  const preferred = (_d = orderSource.pageOrder) != null ? _d : [];
+  const known = preferred.map((id) => pages.get(id)).filter((page) => page !== void 0);
+  const additions = [...pages.values()].filter((page) => !preferred.includes(page.id)).sort((a2, b2) => a2.createdAt - b2.createdAt);
+  const ordered = [...known];
+  for (const page of additions) {
+    const inBase = ((_e = base.pageOrder) != null ? _e : []).includes(page.id);
+    const inIncoming = ((_f = incoming.pageOrder) != null ? _f : []).includes(page.id);
+    const source = inBase && !inIncoming ? base : incoming;
+    const sourceOrder = (_g = source.pageOrder) != null ? _g : source.pages.map((candidate) => candidate.id);
+    const sourceIndex = sourceOrder.indexOf(page.id);
+    let inserted = false;
+    for (let index = sourceIndex - 1; index >= 0; index--) {
+      const anchor = ordered.findIndex((candidate) => candidate.id === sourceOrder[index]);
+      if (anchor >= 0) {
+        ordered.splice(anchor + 1, 0, page);
+        inserted = true;
+        break;
+      }
+    }
+    if (!inserted) for (let index = sourceIndex + 1; index < sourceOrder.length; index++) {
+      const anchor = ordered.findIndex((candidate) => candidate.id === sourceOrder[index]);
+      if (anchor >= 0) {
+        ordered.splice(anchor, 0, page);
+        inserted = true;
+        break;
+      }
+    }
+    if (!inserted) {
+      const at = ordered.findIndex((candidate) => page.createdAt < candidate.createdAt);
+      ordered.splice(at < 0 ? ordered.length : at, 0, page);
+    }
+  }
+  const safePages = ordered.length ? ordered : [createPage("Page 1")];
+  const pageOrder = safePages.map((page) => page.id);
   return {
     ...incoming,
+    schema: 2,
     title: incoming.updatedAt >= base.updatedAt ? incoming.title : base.title,
     pageWidth: incoming.pageWidth || base.pageWidth,
     pageHeight: incoming.pageHeight || base.pageHeight,
-    pages: ordered.length ? ordered : [createPage("Page 1")],
+    pages: safePages,
+    pageOrder,
+    deletedPages,
+    pageOrderUpdatedAt: Math.max(base.pageOrderUpdatedAt, incoming.pageOrderUpdatedAt),
     updatedAt: Math.max(base.updatedAt, incoming.updatedAt)
   };
+}
+function compareNotebookOrder(left, right) {
+  var _a, _b;
+  const leftOrder = JSON.stringify((_a = left.pageOrder) != null ? _a : []);
+  const rightOrder = JSON.stringify((_b = right.pageOrder) != null ? _b : []);
+  return leftOrder < rightOrder ? -1 : leftOrder > rightOrder ? 1 : 0;
 }
 function mergePages(base, incoming) {
   var _a, _b;
@@ -346,8 +412,8 @@ function penOutline(stroke, width, height) {
     size: stroke.width * 0.925,
     thinning: 0.75 / 1.85,
     simulatePressure: false,
-    streamline: 0,
-    smoothing: 0.35,
+    streamline: 0.35,
+    smoothing: 0.65,
     last: true,
     start: { cap: true, taper: 0 },
     end: { cap: true, taper: 0 }
@@ -423,6 +489,9 @@ function drawSmoothPath(ctx, points, width, height) {
 var TILE = 128;
 var BLEED = 2;
 var MAX_PIXELS = 16e6;
+function isStrokeSet(exclusion) {
+  return exclusion instanceof Set;
+}
 var StrokeIndex = class {
   constructor(width, height) {
     this.width = width;
@@ -434,11 +503,14 @@ var StrokeIndex = class {
   sync(strokes, exclude) {
     const retained = /* @__PURE__ */ new Set();
     strokes.forEach((stroke, order) => {
-      if (stroke === exclude) return;
+      if (stroke === exclude || isStrokeSet(exclude) && exclude.has(stroke.id)) return;
       retained.add(stroke.id);
       const previous = this.entries.get(stroke.id);
       const style = [stroke.tool, stroke.color, stroke.width, stroke.opacity].join(":");
-      if ((previous == null ? void 0 : previous.stroke) === stroke && previous.points === stroke.points && previous.count === stroke.points.length && previous.revision === stroke.updatedAt && previous.order === order && previous.style === style) return;
+      if ((previous == null ? void 0 : previous.stroke) === stroke && previous.points === stroke.points && previous.count === stroke.points.length && previous.revision === stroke.updatedAt && previous.style === style) {
+        previous.order = order;
+        return;
+      }
       if (previous) this.remove(previous);
       const padding = stroke.width * 0.7 + BLEED / 0.5;
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -466,6 +538,14 @@ var StrokeIndex = class {
       for (const entry of (_a = this.cells.get(key)) != null ? _a : []) found.add(entry);
     }
     return [...found].sort((a2, b2) => a2.order - b2.order).map((entry) => entry.stroke);
+  }
+  queryNear(point, radius) {
+    return this.query({
+      x: point.x * this.width - radius,
+      y: point.y * this.height - radius,
+      width: radius * 2,
+      height: radius * 2
+    });
   }
   remove(entry) {
     this.entries.delete(entry.stroke.id);
@@ -511,11 +591,15 @@ var TileRenderer = class {
       this.active = state;
       this.jobs = [];
     }
-    state.index.sync(page.strokes, (exclude == null ? void 0 : exclude.tool) === "pen" ? exclude : null);
+    state.index.sync(page.strokes, isStrokeSet(exclude) || (exclude == null ? void 0 : exclude.tool) === "pen" ? exclude : null);
   }
   sync(strokes, exclude) {
     var _a;
     (_a = this.active) == null ? void 0 : _a.index.sync(strokes, exclude);
+  }
+  queryNear(point, radius) {
+    var _a, _b;
+    return (_b = (_a = this.active) == null ? void 0 : _a.index.queryNear(point, radius)) != null ? _b : [];
   }
   flushVisible() {
     var _a;
@@ -523,6 +607,11 @@ var TileRenderer = class {
     this.jobs = this.jobs.filter((job) => !jobs.includes(job));
     for (const job of jobs) this.attach((_a = this.get(job.state, job.cell, job.density)) != null ? _a : this.paint(job));
     this.evict();
+  }
+  commitInteractive(viewport, density, refine = true) {
+    this.update(viewport, Math.min(1, density), false);
+    this.flushVisible();
+    if (refine) this.update(viewport, density, true);
   }
   update(viewport, density, refine) {
     var _a;
@@ -675,19 +764,20 @@ var TileRenderer = class {
 
 // src/view.ts
 var VIEW_TYPE_INK = "ink-notes-view";
+var STROKE_ERASER_HIT_RADIUS = 10;
 var INK_COLORS = [
   { value: "#1b1b1b", label: "Black" },
   { value: "#195bff", label: "Blue" },
   { value: "#f23c42", label: "Red" },
   { value: "#42c449", label: "Green" },
-  { value: "#ffffff", label: "White" }
+  { value: "#f2c94c", label: "Yellow" }
 ];
 var InkView = class extends import_obsidian.FileView {
   constructor(leaf, store) {
     super(leaf);
     this.notebook = createNotebook();
     this.pageIndex = 0;
-    this.state = { tool: "pen", color: "#1b1b1b", width: 3, opacity: 1 };
+    this.state = { tool: "pen", color: "#1b1b1b", width: 3, opacity: 1, eraserMode: "stroke", eraserSize: 32 };
     this.viewport = { x: 0, y: 0, width: 1, height: 1 };
     this.overlayScaleX = 1;
     this.overlayScaleY = 1;
@@ -696,17 +786,26 @@ var InkView = class extends import_obsidian.FileView {
     this.syncing = false;
     this.saveRequested = false;
     this.activeSave = null;
+    this.dirtyRevision = 0;
+    this.savedRevision = 0;
     this.pendingMergedNotebook = null;
+    this.externalRefreshPending = false;
     this.activeStroke = null;
     this.activePointerId = null;
+    this.interaction = null;
+    this.interactionGeneration = 0;
     this.lastPoint = null;
     this.touchGesture = null;
+    this.pendingLassoPoint = null;
     this.zoom = 1;
     this.viewReady = false;
     this.undoStack = [];
     this.redoStack = [];
     this.erasedStrokeIds = /* @__PURE__ */ new Set();
+    this.erasedCandidateIds = /* @__PURE__ */ new Set();
     this.erasedStrokes = [];
+    this.eraserReplacementIds = /* @__PURE__ */ new Set();
+    this.eraserReplacements = [];
     this.lassoPath = [];
     this.selectedStrokeIds = /* @__PURE__ */ new Set();
     this.lassoDrag = null;
@@ -736,6 +835,14 @@ var InkView = class extends import_obsidian.FileView {
   getIcon() {
     return "pen-line";
   }
+  revealPage(pageId) {
+    this.finishPointerInput(false);
+    const index = this.notebook.pages.findIndex((page) => page.id === pageId);
+    if (index < 0) return;
+    this.pageIndex = index;
+    this.renderPageRail();
+    this.renderPage();
+  }
   async onOpen() {
     this.root = this.containerEl.children[1];
     this.root.empty();
@@ -755,13 +862,13 @@ var InkView = class extends import_obsidian.FileView {
     if (this.renderFrame !== null) window.cancelAnimationFrame(this.renderFrame);
     this.renderFrame = null;
     if (this.zoomRenderTimer !== void 0) window.clearTimeout(this.zoomRenderTimer);
-    (_a = this.tiles) == null ? void 0 : _a.dispose();
-    if (this.saveTimer !== void 0 && this.file) {
+    this.finishPointerInput(false);
+    if (this.saveTimer !== void 0) {
       window.clearTimeout(this.saveTimer);
       this.saveTimer = void 0;
-      await this.save(this.file);
     }
-    if (this.activeSave) await this.activeSave;
+    if (this.file && (this.dirtyRevision > this.savedRevision || this.activeSave)) await this.save(this.file);
+    (_a = this.tiles) == null ? void 0 : _a.dispose();
     this.viewReady = false;
   }
   async onLoadFile(file) {
@@ -770,21 +877,28 @@ var InkView = class extends import_obsidian.FileView {
     this.undoStack = [];
     this.redoStack = [];
     this.resetInteraction();
+    this.dirtyRevision = 0;
+    this.savedRevision = 0;
     this.renderAll();
   }
   async onUnloadFile(file) {
+    this.finishPointerInput(false);
     if (this.saveTimer !== void 0) {
       window.clearTimeout(this.saveTimer);
       this.saveTimer = void 0;
-      await this.save(file);
     }
-    if (this.activeSave) await this.activeSave;
+    if (this.dirtyRevision > this.savedRevision || this.activeSave) await this.save(file);
   }
   async reloadFromDisk() {
-    if (this.syncing || this.activePointerId !== null || !this.file) return;
+    if (this.syncing || this.activePointerId !== null) {
+      this.externalRefreshPending = true;
+      return;
+    }
+    if (!this.file) return;
     const file = this.file;
     const latest = await this.store.read(file);
     if (this.file !== file) return;
+    if (notebooksEqual(latest, this.notebook)) return;
     this.receiveMergedNotebook(latest);
   }
   renderToolbar() {
@@ -793,7 +907,6 @@ var InkView = class extends import_obsidian.FileView {
     (0, import_obsidian.setIcon)(documentBar.createSpan({ cls: "ink-brand", attr: { "aria-label": "Ink Notes" } }), "notebook-pen");
     const tab = documentBar.createDiv({ cls: "ink-document-tab" });
     tab.createSpan({ cls: "ink-document-title", text: this.getDisplayText() });
-    this.addIconButton(tab, "chevron-down", "Document options", (event) => this.openPageMenu(event));
     documentBar.createSpan({ cls: "ink-current-page-title", text: this.currentPage().title });
     const toolbar = this.root.querySelector(".ink-toolbar");
     toolbar.empty();
@@ -806,40 +919,23 @@ var InkView = class extends import_obsidian.FileView {
       this.resizeCanvas();
     });
     toggle.setAttribute("aria-pressed", String(!this.root.hasClass("ink-rail-hidden")));
-    this.addIconButton(navigation, "arrow-left", "Previous", () => this.changePage(-1));
-    this.addIconButton(navigation, "arrow-right", "Next", () => this.changePage(1));
     const tools = this.addToolbarSection(group, "Draw");
     this.addToolButton(tools, "pen-line", "Pen", "pen");
     this.addToolButton(tools, "highlighter", "Highlight", "highlighter");
     this.addToolButton(tools, "eraser", "Erase", "eraser");
     this.addToolButton(tools, "lasso-select", "Select", "lasso");
+    const history = this.addToolbarSection(group, "History");
+    this.addIconButton(history, "undo-2", "Undo", () => this.undo(), this.undoStack.length === 0);
+    this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
     const pages = this.addToolbarSection(group, "Document");
-    this.addIconButton(pages, "file-plus-2", "Add page", () => this.addPage());
-    this.addIconButton(pages, "more-horizontal", "Options", (event) => this.openPageMenu(event));
+    this.addIconButton(pages, "more-horizontal", "Page options", (event) => this.openPageMenu(event));
     this.renderBrushBar();
     this.updateToolButtons();
   }
   renderBrushBar() {
     const bar = this.root.querySelector(".ink-brush-bar");
     bar.empty();
-    const history = this.addToolbarSection(bar, "History");
-    this.addIconButton(history, "undo-2", "Undo", () => this.undo(), this.undoStack.length === 0);
-    this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
-    const brush = bar.createDiv({ cls: "ink-brush-palette", attr: { role: "toolbar", "aria-label": "Brush settings" } });
-    const tips = this.addToolbarSection(brush, "Tips");
-    this.addToolButton(tips, "pen-tool", "Pen tip", "pen");
-    this.addToolButton(tips, "highlighter", "Highlighter tip", "highlighter");
-    this.addToolButton(tips, "eraser", "Eraser tip", "eraser");
-    const widths = this.addToolbarSection(brush, "Widths");
-    for (const width of [2, 4, 8]) {
-      const button = widths.createEl("button", { cls: "ink-width-preset", attr: { type: "button", title: width + " px", "aria-label": width + " px", "data-width": String(width), "aria-pressed": String(this.state.width === width) } });
-      button.createSpan({ cls: "ink-width-line" }).style.height = width + "px";
-      button.addEventListener("click", () => {
-        this.state.width = width;
-        this.updateBrushControls();
-      });
-    }
-    this.addColorPicker(brush);
+    const brush = bar.createDiv({ cls: "ink-brush-palette", attr: { role: "group", "aria-label": "Brush settings" } });
     this.addSizePopover(brush);
   }
   addSizePopover(parent) {
@@ -849,8 +945,8 @@ var InkView = class extends import_obsidian.FileView {
       attr: {
         type: "button",
         "aria-label": "Brush size",
-        "aria-haspopup": "dialog",
-        "aria-expanded": "false"
+        "aria-hidden": "true",
+        tabindex: "-1"
       }
     });
     const icon = button.createSpan({ cls: "ink-button-icon" });
@@ -858,10 +954,10 @@ var InkView = class extends import_obsidian.FileView {
     button.title = "Brush size and opacity";
     const popover = container.createDiv({
       cls: "ink-size-popover",
-      attr: { role: "dialog", "aria-label": "Brush size", "aria-hidden": "true" }
+      attr: { role: "dialog", "aria-label": "Tool settings", "aria-hidden": "true" }
     });
     const header = popover.createDiv({ cls: "ink-size-popover-header" });
-    header.createSpan({ cls: "ink-size-popover-title", text: "Brush size" });
+    header.createSpan({ cls: "ink-size-popover-title", text: "Tool settings" });
     header.createSpan({ cls: "ink-control-value", text: formatControlValue("Size", this.state.width) });
     const input = popover.createEl("input", {
       attr: {
@@ -873,8 +969,35 @@ var InkView = class extends import_obsidian.FileView {
         "aria-label": "Brush size"
       }
     });
+    const widths = this.addToolbarSection(popover, "Widths");
+    for (const width of [2, 4, 8]) {
+      const preset = widths.createEl("button", { cls: "ink-width-preset", attr: { type: "button", title: width + " px", "aria-label": width + " px", "data-width": String(width), "aria-pressed": String(this.state.width === width) } });
+      preset.createSpan({ cls: "ink-width-line" }).style.height = width + "px";
+      preset.addEventListener("click", () => {
+        this.state.width = width;
+        this.updateBrushControls();
+      });
+    }
+    this.addColorPicker(popover);
     this.addRange(popover, "Opacity", 0.1, 1, 0.05, this.state.opacity, (value) => {
       this.state.opacity = value;
+    });
+    const eraser = popover.createDiv({ cls: "ink-eraser-settings" });
+    eraser.createDiv({ cls: "ink-size-popover-title", text: "Eraser" });
+    const modes = eraser.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
+    for (const [mode, label, iconName] of [["stroke", "Stroke eraser", "eraser"], ["circle", "Circle eraser", "circle"], ["square", "Square eraser", "square"]]) {
+      const modeButton = modes.createEl("button", { cls: "ink-eraser-mode", attr: { type: "button", role: "radio", title: label, "aria-label": label, "aria-checked": String(this.state.eraserMode === mode), "data-eraser-mode": mode } });
+      (0, import_obsidian.setIcon)(modeButton.createSpan({ cls: "ink-button-icon" }), iconName);
+      modeButton.addEventListener("click", () => {
+        this.state.eraserMode = mode;
+        this.updateEraserControls();
+      });
+    }
+    eraser.createDiv({ cls: "ink-stroke-eraser-hint", text: "Erases the entire touched stroke. Size is fixed." });
+    this.addRange(eraser, "Eraser size", 8, 160, 2, this.state.eraserSize, (value) => {
+      var _a, _b;
+      this.state.eraserSize = value;
+      this.updateEraserCursor(null, (_b = (_a = this.eraserCursor) == null ? void 0 : _a.classList.contains("is-visible")) != null ? _b : false);
     });
     const close = () => this.setSizePopoverOpen(false);
     button.addEventListener("click", (event) => {
@@ -890,9 +1013,10 @@ var InkView = class extends import_obsidian.FileView {
       if (this.sizePopoverOpen && !container.contains(event.target)) close();
     });
     this.registerDomEvent(document, "keydown", (event) => {
+      var _a;
       if (event.key === "Escape" && this.sizePopoverOpen) {
         close();
-        button.focus();
+        (_a = this.activeToolButton()) == null ? void 0 : _a.focus();
       }
     });
     this.registerDomEvent(window, "resize", () => this.positionSizePopover());
@@ -905,15 +1029,23 @@ var InkView = class extends import_obsidian.FileView {
     this.sizePopoverOpen = open;
     this.sizePopover.toggleClass("is-open", open);
     this.sizePopover.setAttribute("aria-hidden", String(!open));
-    this.sizePopoverButton.setAttribute("aria-expanded", String(open));
+    this.root.querySelectorAll(".ink-tool-button[aria-haspopup='dialog']").forEach((button) => {
+      button.setAttribute("aria-expanded", String(open && button.dataset.tool === this.state.tool));
+    });
     if (open) {
       this.positionSizePopover();
       window.requestAnimationFrame(() => this.positionSizePopover());
+      window.requestAnimationFrame(() => {
+        var _a, _b;
+        return (_b = (_a = this.sizePopover) == null ? void 0 : _a.querySelector(this.state.tool === "eraser" ? ".ink-eraser-mode" : "input, button")) == null ? void 0 : _b.focus();
+      });
     }
   }
   positionSizePopover() {
+    var _a;
     if (!this.sizePopoverOpen || !this.sizePopover || !this.sizePopoverButton) return;
-    const buttonRect = this.sizePopoverButton.getBoundingClientRect();
+    const anchor = (_a = this.activeToolButton()) != null ? _a : this.sizePopoverButton;
+    const buttonRect = anchor.getBoundingClientRect();
     const popoverRect = this.sizePopover.getBoundingClientRect();
     const margin = 12;
     const left = Math.max(margin, Math.min(window.innerWidth - popoverRect.width - margin, buttonRect.left + buttonRect.width / 2 - popoverRect.width / 2));
@@ -921,6 +1053,9 @@ var InkView = class extends import_obsidian.FileView {
     const top = below + popoverRect.height <= window.innerHeight - margin ? below : Math.max(margin, buttonRect.top - popoverRect.height - 10);
     this.sizePopover.style.left = `${left}px`;
     this.sizePopover.style.top = `${top}px`;
+  }
+  activeToolButton() {
+    return this.root.querySelector(`.ink-toolbar [data-tool="${this.state.tool}"]`);
   }
   addToolbarSection(parent, label) {
     const section = parent.createDiv({ cls: "ink-toolbar-section" });
@@ -937,7 +1072,17 @@ var InkView = class extends import_obsidian.FileView {
     const input = (_a = this.sizePopover) == null ? void 0 : _a.querySelector("input[aria-label='Brush size']");
     if (input) input.value = String(this.state.width);
     const value = (_b = this.sizePopover) == null ? void 0 : _b.querySelector(".ink-size-popover-header .ink-control-value");
-    if (value) value.textContent = formatControlValue("Size", this.state.width);
+    if (value) value.textContent = this.state.tool === "eraser" ? formatControlValue("Size", this.state.eraserSize) : formatControlValue("Size", this.state.width);
+    this.updateEraserControls();
+  }
+  updateEraserControls() {
+    var _a, _b;
+    if (!this.sizePopover) return;
+    this.sizePopover.toggleClass("is-stroke-eraser", this.state.eraserMode === "stroke");
+    this.sizePopover.querySelectorAll(".ink-eraser-mode").forEach((button) => {
+      button.setAttribute("aria-checked", String(button.dataset.eraserMode === this.state.eraserMode));
+    });
+    this.updateEraserCursor(null, (_b = (_a = this.eraserCursor) == null ? void 0 : _a.classList.contains("is-visible")) != null ? _b : false);
   }
   renderCanvas() {
     const workspace = this.root.createDiv({ cls: "ink-workspace" });
@@ -945,12 +1090,18 @@ var InkView = class extends import_obsidian.FileView {
     this.pageScroller = workspace.createDiv({ cls: "ink-page-scroller" });
     this.pageExtent = this.pageScroller.createDiv({ cls: "ink-page-extent" });
     this.pageElement = this.pageExtent.createDiv({ cls: "ink-page" });
+    this.eraserCursor = this.pageElement.createDiv({ cls: "ink-eraser-cursor", attr: { "aria-hidden": "true" } });
+    this.eraserCursor.createSpan({ cls: "ink-eraser-reference-point" });
     const tileHost = this.pageElement.createDiv({ cls: "ink-tile-layer" });
     tileHost.style.cssText = "position:absolute;inset:0;pointer-events:none;overflow:hidden";
     this.tiles = new TileRenderer(tileHost);
-    this.canvas = this.pageElement.createEl("canvas", { cls: "ink-canvas" });
+    this.canvas = this.pageElement.createEl("canvas", { cls: "ink-canvas ink-selection-canvas" });
     this.ctx = this.canvas.getContext("2d");
     this.canvas.setAttribute("aria-label", "Handwriting canvas");
+    this.lassoCanvas = this.pageElement.createEl("canvas", { cls: "ink-canvas ink-lasso-preview-canvas" });
+    this.lassoCanvas.style.display = "none";
+    this.lassoCanvas.style.pointerEvents = "none";
+    this.lassoCtx = this.lassoCanvas.getContext("2d");
     const footer = this.root.createDiv({ cls: "ink-statusbar" });
     footer.createSpan({ cls: "ink-page-status", attr: { "aria-live": "polite" } });
     const zoom = footer.createDiv({ cls: "ink-zoom-controls", attr: { role: "group", "aria-label": "Zoom" } });
@@ -965,8 +1116,11 @@ var InkView = class extends import_obsidian.FileView {
     this.pageElement.style.touchAction = "none";
     this.registerDomEvent(this.pageElement, "pointerdown", (event) => this.onPointerDown(event));
     this.registerDomEvent(this.pageElement, "pointermove", (event) => this.onPointerMove(event));
+    this.registerDomEvent(this.pageElement, "pointerleave", () => {
+      if (this.activePointerId === null) this.updateEraserCursor(null, false);
+    });
     this.registerDomEvent(this.pageElement, "pointerup", (event) => this.onPointerUp(event));
-    this.registerDomEvent(this.pageElement, "pointercancel", (event) => this.onPointerUp(event));
+    this.registerDomEvent(this.pageElement, "pointercancel", (event) => this.onPointerCancel(event));
     this.registerDomEvent(this.pageElement, "lostpointercapture", (event) => this.onLostPointerCapture(event));
     this.registerDomEvent(this.pageElement, "wheel", (event) => this.onWheel(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "scroll", () => this.onViewportMotion(), { passive: true });
@@ -994,6 +1148,7 @@ var InkView = class extends import_obsidian.FileView {
       button.createSpan({ text: String(index + 1), cls: "ink-page-thumb-number" });
       button.createSpan({ text: page.title, cls: "ink-page-thumb-title" });
       button.addEventListener("click", () => {
+        this.finishPointerInput(false);
         this.pageIndex = index;
         this.renderPageRail();
         this.renderPage();
@@ -1006,8 +1161,6 @@ var InkView = class extends import_obsidian.FileView {
     this.root.querySelector(".ink-document-title").textContent = this.getDisplayText();
     this.root.querySelector(".ink-current-page-title").textContent = page.title;
     this.root.querySelector(".ink-page-status").textContent = this.pageIndex + 1 + " / " + this.notebook.pages.length;
-    this.root.querySelector("[aria-label='Previous']").disabled = this.pageIndex === 0;
-    this.root.querySelector("[aria-label='Next']").disabled = this.pageIndex === this.notebook.pages.length - 1;
     this.pageElement.className = `ink-page ink-paper-${page.paper}`;
     this.pageElement.style.aspectRatio = `${this.notebook.pageWidth} / ${this.notebook.pageHeight}`;
     this.resizeCanvas();
@@ -1059,6 +1212,13 @@ var InkView = class extends import_obsidian.FileView {
     this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
     this.drawPreview();
   }
+  drawInteractiveStrokes(strokes, refine = false) {
+    if (!this.ctx || !this.pageElement) return;
+    this.tiles.sync(strokes);
+    this.tiles.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine);
+    this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
+    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+  }
   onViewportMotion() {
     this.updateViewport(false);
     if (this.zoomRenderTimer !== void 0) window.clearTimeout(this.zoomRenderTimer);
@@ -1071,12 +1231,15 @@ var InkView = class extends import_obsidian.FileView {
     this.resizeRequested || (this.resizeRequested = resize);
     if (this.renderFrame !== null) return;
     this.renderFrame = window.requestAnimationFrame(() => {
-      var _a;
+      var _a, _b;
       this.renderFrame = null;
+      this.flushPendingLassoPoint();
       const shouldResize = this.resizeRequested;
       this.resizeRequested = false;
       if (shouldResize) this.resizeCanvas();
-      else if (((_a = this.activeStroke) == null ? void 0 : _a.tool) === "pen") this.drawPreview();
+      else if (this.lassoDrag) this.drawLassoInteraction();
+      else if (((_a = this.interaction) == null ? void 0 : _a.tool) === "eraser") this.drawInteractiveStrokes(this.currentPage().strokes);
+      else if (((_b = this.activeStroke) == null ? void 0 : _b.tool) === "pen") this.drawPreview();
       else this.drawStrokes(this.currentPage().strokes);
     });
   }
@@ -1104,10 +1267,72 @@ var InkView = class extends import_obsidian.FileView {
     this.previewCtx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
     drawInkStroke(this.previewCtx, this.activeStroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
-  commitPreview() {
+  beginLassoPreview(page) {
+    const drag = this.lassoDrag;
+    if (!drag || !this.lassoCanvas) return;
+    const selected = new Set(drag.strokes.map((stroke) => stroke.id));
+    this.tiles.sync(page.strokes, selected);
+    this.tiles.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, false);
+    const resolution = canvasResolution(
+      this.canvasLogicalWidth,
+      this.canvasLogicalHeight,
+      window.devicePixelRatio || 1,
+      this.zoom,
+      4e6
+    );
+    this.lassoCanvas.width = resolution.width;
+    this.lassoCanvas.height = resolution.height;
+    this.lassoCanvas.style.left = "0";
+    this.lassoCanvas.style.top = "0";
+    this.lassoCanvas.style.width = `${this.canvasLogicalWidth}px`;
+    this.lassoCanvas.style.height = `${this.canvasLogicalHeight}px`;
+    this.lassoCtx.setTransform(
+      resolution.width / this.canvasLogicalWidth,
+      0,
+      0,
+      resolution.height / this.canvasLogicalHeight,
+      0,
+      0
+    );
+    this.lassoCtx.clearRect(0, 0, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    for (const stroke of drag.strokes) drawInkStroke(this.lassoCtx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    this.lassoCanvas.style.transform = "translate(0px, 0px)";
+    this.lassoCanvas.style.display = "block";
+  }
+  drawLassoInteraction() {
+    const drag = this.lassoDrag;
+    if (!drag) return;
+    this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
+    const bounds = drag.bounds;
+    if (!bounds) return;
+    this.ctx.save();
+    this.ctx.strokeStyle = "#2f80ed";
+    this.ctx.lineWidth = 1.5;
+    this.ctx.setLineDash([6, 4]);
+    this.ctx.strokeRect(
+      (bounds.minX + drag.dx) * this.canvasLogicalWidth,
+      (bounds.minY + drag.dy) * this.canvasLogicalHeight,
+      (bounds.maxX - bounds.minX) * this.canvasLogicalWidth,
+      (bounds.maxY - bounds.minY) * this.canvasLogicalHeight
+    );
+    this.ctx.restore();
+  }
+  commitLassoPreview(page) {
+    this.tiles.sync(page.strokes);
+    this.tiles.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom);
+    this.hideLassoPreview();
+    this.drawStrokes(page.strokes);
+  }
+  hideLassoPreview() {
+    if (!this.lassoCanvas) return;
+    this.lassoCanvas.style.display = "none";
+    this.lassoCanvas.style.transform = "none";
+    this.lassoCanvas.width = this.lassoCanvas.height = 1;
+  }
+  commitPreview(page = this.currentPage()) {
     var _a;
     if (((_a = this.activeStroke) == null ? void 0 : _a.tool) !== "pen") return;
-    this.tiles.sync(this.currentPage().strokes);
+    this.tiles.sync(page.strokes);
     this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
     this.tiles.flushVisible();
     this.previewCanvas.width = this.previewCanvas.height = 1;
@@ -1131,38 +1356,60 @@ var InkView = class extends import_obsidian.FileView {
   }
   onPointerDown(event) {
     if (event.pointerType === "touch") return;
-    if (this.activePointerId !== null) this.finishPointerInput();
+    if (this.activePointerId !== null) this.finishPointerInput(false);
     this.updateViewport(true);
     if (this.saveTimer !== void 0) {
       window.clearTimeout(this.saveTimer);
       this.saveTimer = void 0;
     }
     this.activePointerId = event.pointerId;
+    const page = this.currentPage();
+    const tool = this.state.tool;
+    this.interaction = {
+      generation: ++this.interactionGeneration,
+      pointerId: event.pointerId,
+      pageId: page.id,
+      tool,
+      eraserMode: tool === "eraser" ? this.state.eraserMode : void 0,
+      eraserSize: tool === "eraser" ? this.state.eraserSize : void 0
+    };
     this.pageElement.setPointerCapture(event.pointerId);
     const point = this.toPoint(event);
     this.erasedStrokeIds.clear();
+    this.erasedCandidateIds.clear();
     this.erasedStrokes = [];
-    if (this.state.tool === "eraser") {
-      this.eraseAt(point);
+    this.eraserReplacementIds.clear();
+    this.eraserReplacements = [];
+    if (tool === "eraser") {
+      this.updateEraserCursor(point, true);
+      if (this.eraseAt(point, page)) this.requestRender();
       return;
     }
-    if (this.state.tool === "lasso") {
+    if (tool === "lasso") {
       if (this.isPointInSelection(point)) {
+        const strokes = this.selectedStrokes();
+        const before = new Map(strokes.map((stroke) => [stroke.id, clonePoints(stroke.points)]));
         this.lassoDrag = {
           start: point,
-          before: new Map(this.selectedStrokes().map((stroke) => [stroke.id, clonePoints(stroke.points)]))
+          pageId: page.id,
+          strokes,
+          before,
+          bounds: boundsForPointSets([...before.values()]),
+          dx: 0,
+          dy: 0
         };
+        this.beginLassoPreview(page);
       } else {
         this.selectedStrokeIds.clear();
         this.lassoPath = [point];
-        this.drawStrokes(this.currentPage().strokes);
+        this.drawStrokes(page.strokes);
       }
       return;
     }
     this.activeStroke = {
       id: newId("stroke"),
-      pageId: this.currentPage().id,
-      tool: this.state.tool,
+      pageId: page.id,
+      tool,
       color: this.state.color,
       width: this.state.width,
       opacity: this.state.opacity,
@@ -1171,34 +1418,57 @@ var InkView = class extends import_obsidian.FileView {
       updatedAt: Date.now()
     };
     this.lastPoint = point;
-    this.currentPage().strokes.push(this.activeStroke);
+    page.strokes.push(this.activeStroke);
     if (this.activeStroke.tool === "pen") {
       this.resizePreview();
       this.drawPreview();
-    } else this.drawStrokes(this.currentPage().strokes);
+    } else this.drawStrokes(page.strokes);
   }
   onPointerMove(event) {
-    if (this.activePointerId !== event.pointerId || event.pointerType === "touch") return;
+    var _a;
+    if (event.pointerType === "touch") return;
+    if (this.activePointerId === null) {
+      this.updateEraserCursor(this.state.tool === "eraser" ? this.toPoint(event) : null, this.state.tool === "eraser");
+      return;
+    }
+    if (this.activePointerId !== event.pointerId) return;
+    if (((_a = this.interaction) == null ? void 0 : _a.tool) === "eraser") this.updateEraserCursor(this.toPoint(event), true);
     this.applyPointerSamples(event);
   }
   onPointerUp(event) {
     if (this.activePointerId !== event.pointerId) return;
     this.applyPointerSamples(event);
-    this.finishPointerInput();
+    this.finishPointerInput(true);
     if (this.pageElement.hasPointerCapture(event.pointerId)) this.pageElement.releasePointerCapture(event.pointerId);
+    if (this.state.tool === "eraser") this.updateEraserCursor(this.toPoint(event), true);
+  }
+  onPointerCancel(event) {
+    if (this.activePointerId !== event.pointerId) return;
+    this.finishPointerInput(false);
   }
   applyPointerSamples(event) {
+    const interaction = this.interaction;
+    if (!interaction || interaction.pointerId !== event.pointerId) return;
+    const page = this.pageById(interaction.pageId);
+    if (!page) return;
+    const rect = this.pageElement.getBoundingClientRect();
+    const samples = this.pointerSamples(event);
+    if (interaction.tool === "lasso") {
+      this.pendingLassoPoint = this.toPoint(samples[samples.length - 1], rect);
+      this.requestRender();
+      return;
+    }
     let changed = false;
-    for (const sample of this.pointerSamples(event)) {
-      const point = this.toPoint(sample);
-      if (this.state.tool === "eraser") {
-        changed = this.eraseAt(point) || changed;
-      } else if (this.state.tool === "lasso") {
-        changed = this.applyLassoPoint(point) || changed;
-      } else if (this.activeStroke && this.lastPoint && distance(point, this.lastPoint) >= 2e-4) {
-        this.activeStroke.points.push(point);
+    for (const sample of samples) {
+      const point = this.toPoint(sample, rect);
+      if (interaction.tool === "eraser") {
+        changed = this.eraseAt(point, page, interaction.eraserMode, interaction.eraserSize) || changed;
+      } else if (this.activeStroke && this.lastPoint) {
+        const stabilized = stabilizeInkPoint(point, this.lastPoint, this.canvasLogicalWidth, this.canvasLogicalHeight);
+        if (!stabilized) continue;
+        this.activeStroke.points.push(stabilized);
         this.activeStroke.updatedAt = Date.now();
-        this.lastPoint = point;
+        this.lastPoint = stabilized;
         changed = true;
       }
     }
@@ -1211,13 +1481,13 @@ var InkView = class extends import_obsidian.FileView {
   applyLassoPoint(point) {
     var _a, _b, _c, _d;
     if (this.lassoDrag) {
-      const bounds = boundsForPointSets([...this.lassoDrag.before.values()]);
+      const bounds = this.lassoDrag.bounds;
       const dx = constrainDelta(point.x - this.lassoDrag.start.x, (_a = bounds == null ? void 0 : bounds.minX) != null ? _a : 0, (_b = bounds == null ? void 0 : bounds.maxX) != null ? _b : 1);
       const dy = constrainDelta(point.y - this.lassoDrag.start.y, (_c = bounds == null ? void 0 : bounds.minY) != null ? _c : 0, (_d = bounds == null ? void 0 : bounds.maxY) != null ? _d : 1);
-      for (const stroke of this.selectedStrokes()) {
-        const original = this.lassoDrag.before.get(stroke.id);
-        if (original) stroke.points = translatePoints(original, dx, dy);
-      }
+      if (dx === this.lassoDrag.dx && dy === this.lassoDrag.dy) return false;
+      this.lassoDrag.dx = dx;
+      this.lassoDrag.dy = dy;
+      this.lassoCanvas.style.transform = `translate(${dx * this.canvasLogicalWidth}px, ${dy * this.canvasLogicalHeight}px)`;
       return true;
     }
     const previous = this.lassoPath[this.lassoPath.length - 1];
@@ -1225,22 +1495,38 @@ var InkView = class extends import_obsidian.FileView {
     this.lassoPath.push(point);
     return true;
   }
-  finishPointerInput() {
+  flushPendingLassoPoint() {
+    const point = this.pendingLassoPoint;
+    this.pendingLassoPoint = null;
+    if (point) this.applyLassoPoint(point);
+  }
+  finishPointerInput(_includeFinalSample = false) {
     var _a;
-    const page = this.currentPage();
-    this.commitPreview();
+    const interaction = this.interaction;
+    if (!interaction) return;
+    const page = this.pageById(interaction.pageId);
+    this.interaction = null;
+    this.updateEraserCursor(null, false);
+    if (!page) {
+      this.activePointerId = null;
+      return;
+    }
+    this.flushPendingLassoPoint();
+    this.commitPreview(page);
     if (((_a = this.activeStroke) == null ? void 0 : _a.tool) === "pen" && this.renderFrame !== null && !this.resizeRequested) {
       window.cancelAnimationFrame(this.renderFrame);
       this.renderFrame = null;
     }
-    if (this.state.tool === "lasso") {
+    if (interaction.tool === "lasso") {
       this.finishLasso(page);
       this.activePointerId = null;
       this.applyPendingMergedNotebook();
       return;
     }
-    if (this.state.tool === "eraser" && this.erasedStrokes.length > 0) {
-      this.pushCommand(this.deletedStrokesCommand(page.id, this.erasedStrokes));
+    if (interaction.tool === "eraser" && this.erasedStrokes.length > 0) {
+      this.markChanged(page);
+      this.pushCommand(this.erasedStrokesCommand(page.id, this.erasedStrokes, this.eraserReplacements));
+      this.drawInteractiveStrokes(page.strokes, true);
     } else if (this.activeStroke) {
       this.markChanged(page);
       this.pushCommand(this.addedStrokeCommand(page.id, this.activeStroke));
@@ -1248,8 +1534,13 @@ var InkView = class extends import_obsidian.FileView {
     this.activePointerId = null;
     this.activeStroke = null;
     this.lastPoint = null;
+    this.pendingLassoPoint = null;
     this.applyPendingMergedNotebook();
     this.scheduleSave();
+    if (this.externalRefreshPending) {
+      this.externalRefreshPending = false;
+      void this.reloadFromDisk().catch((error) => new import_obsidian.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
+    }
   }
   applyPendingMergedNotebook() {
     if (!this.pendingMergedNotebook) return;
@@ -1266,7 +1557,7 @@ var InkView = class extends import_obsidian.FileView {
   onLostPointerCapture(event) {
     if (this.activePointerId !== event.pointerId) return;
     if (this.pageElement.hasPointerCapture(event.pointerId)) return;
-    this.finishPointerInput();
+    this.finishPointerInput(false);
   }
   onWheel(event) {
     if (!event.ctrlKey && !event.metaKey) return;
@@ -1326,8 +1617,7 @@ var InkView = class extends import_obsidian.FileView {
       { x: gesture.pageX, y: gesture.pageY }
     );
   }
-  toPoint(event) {
-    const rect = this.pageElement.getBoundingClientRect();
+  toPoint(event, rect = this.pageElement.getBoundingClientRect()) {
     return {
       x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
       y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
@@ -1337,28 +1627,68 @@ var InkView = class extends import_obsidian.FileView {
       t: Date.now()
     };
   }
-  eraseAt(point) {
-    const page = this.currentPage();
-    const removed = page.strokes.filter((stroke) => !this.erasedStrokeIds.has(stroke.id) && stroke.points.some((candidate) => distance(candidate, point) < this.state.width / 500));
+  eraseAt(point, page = this.currentPage(), mode = this.state.eraserMode, size = this.state.eraserSize) {
+    var _a;
+    const radius = mode === "stroke" ? STROKE_ERASER_HIT_RADIUS : size / 2;
+    const indexed = ((_a = this.tiles) == null ? void 0 : _a.queryNear) ? this.tiles.queryNear(point, radius) : page.strokes;
+    const candidates = [...new Map([...indexed, ...this.eraserReplacements].map((stroke) => [stroke.id, stroke])).values()].filter((stroke) => !this.erasedCandidateIds.has(stroke.id));
+    const removed = candidates.filter((stroke) => strokeIntersectsEraser(stroke, point, radius, mode, this.canvasLogicalWidth, this.canvasLogicalHeight));
     if (removed.length === 0) return false;
     for (const stroke of removed) {
-      this.erasedStrokeIds.add(stroke.id);
-      this.erasedStrokes.push(cloneStroke(stroke));
+      this.erasedCandidateIds.add(stroke.id);
+      if (!this.eraserReplacementIds.has(stroke.id) && !this.erasedStrokeIds.has(stroke.id)) {
+        this.erasedStrokeIds.add(stroke.id);
+        this.erasedStrokes.push(cloneStroke(stroke));
+      }
+      if (this.eraserReplacementIds.delete(stroke.id)) this.eraserReplacements = this.eraserReplacements.filter((candidate) => candidate.id !== stroke.id);
     }
     this.deleteStrokes(page, removed.map((stroke) => stroke.id));
-    this.markChanged(page);
+    if (mode !== "stroke") {
+      const now = Date.now();
+      for (const stroke of removed) {
+        const segments = eraseStrokeSegments(stroke, point, radius, mode, this.canvasLogicalWidth, this.canvasLogicalHeight);
+        for (const points of segments) {
+          const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, createdAt: now, updatedAt: now };
+          page.strokes.push(replacement);
+          this.eraserReplacementIds.add(replacement.id);
+          this.eraserReplacements.push(cloneStroke(replacement));
+        }
+      }
+      page.strokes.sort((left, right) => left.createdAt - right.createdAt);
+    }
     return true;
   }
+  updateEraserCursor(point, visible) {
+    if (!this.eraserCursor) return;
+    this.eraserCursor.toggleClass("is-visible", visible);
+    this.eraserCursor.toggleClass("is-square", this.state.eraserMode === "square");
+    this.eraserCursor.toggleClass("is-stroke", this.state.eraserMode === "stroke");
+    const size = this.state.eraserMode === "stroke" ? STROKE_ERASER_HIT_RADIUS * 2 : this.state.eraserSize;
+    this.eraserCursor.style.width = `${size}px`;
+    this.eraserCursor.style.height = `${size}px`;
+    if (!point) return;
+    this.eraserCursor.style.left = `${point.x * this.canvasLogicalWidth}px`;
+    this.eraserCursor.style.top = `${point.y * this.canvasLogicalHeight}px`;
+  }
   addPage() {
+    this.finishPointerInput(false);
+    const before = cloneNotebook(this.notebook);
+    const beforePageId = this.currentPage().id;
     const now = Date.now();
     const page = { id: newId("page"), title: `Page ${this.notebook.pages.length + 1}`, paper: "ruled", strokes: [], deletedStrokeIds: [], createdAt: now, updatedAt: now };
     this.notebook.pages.push(page);
+    this.notebook.pageOrder.push(page.id);
+    this.notebook.pageOrderUpdatedAt = now;
+    this.notebook.updatedAt = now;
+    this.dirtyRevision += 1;
     this.pageIndex = this.notebook.pages.length - 1;
+    this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, page.id);
     this.renderPageRail();
     this.renderPage();
     this.scheduleSave();
   }
   changePage(delta) {
+    this.finishPointerInput(false);
     this.pageIndex = Math.max(0, Math.min(this.notebook.pages.length - 1, this.pageIndex + delta));
     this.renderPageRail();
     this.renderPage();
@@ -1366,36 +1696,185 @@ var InkView = class extends import_obsidian.FileView {
   openPageMenu(event) {
     const menu = new import_obsidian.Menu();
     for (const paper of ["blank", "ruled", "grid", "dot"]) menu.addItem((item) => item.setTitle(`Paper: ${paper}`).setChecked(this.currentPage().paper === paper).onClick(() => {
-      this.currentPage().paper = paper;
-      this.currentPage().updatedAt = Date.now();
+      const page = this.currentPage();
+      const before = page.paper;
+      page.paper = paper;
+      this.markChanged(page);
+      this.pushCommand({
+        undo: () => this.setPagePaper(page.id, before),
+        redo: () => this.setPagePaper(page.id, paper)
+      });
       this.renderPageRail();
       this.renderPage();
       this.scheduleSave();
     }));
     menu.addSeparator();
+    menu.addItem((item) => item.setTitle("Add page").onClick(() => this.addPage()));
     menu.addItem((item) => item.setTitle("Rename page").onClick(() => this.renamePage()));
+    menu.addItem((item) => item.setTitle("Duplicate page").onClick(() => this.duplicateCurrentPage()));
+    menu.addItem((item) => item.setTitle("Move page up").setDisabled(this.pageIndex === 0).onClick(() => this.moveCurrentPage(-1)));
+    menu.addItem((item) => item.setTitle("Move page down").setDisabled(this.pageIndex === this.notebook.pages.length - 1).onClick(() => this.moveCurrentPage(1)));
+    menu.addItem((item) => item.setTitle("Delete page").setDisabled(this.notebook.pages.length <= 1).onClick(() => this.deleteCurrentPage()));
+    menu.addSeparator();
+    menu.addItem((item) => item.setTitle("Copy page embed syntax").onClick(() => void this.copyCurrentPageEmbed()));
+    menu.addItem((item) => item.setTitle("Zoom out").setDisabled(this.zoom <= 0.5).onClick(() => this.setZoom(this.zoom - 0.1)));
+    menu.addItem((item) => item.setTitle("Reset zoom").setDisabled(this.zoom === 1).onClick(() => this.setZoom(1)));
+    menu.addItem((item) => item.setTitle("Zoom in").setDisabled(this.zoom >= 3).onClick(() => this.setZoom(this.zoom + 0.1)));
     menu.showAtMouseEvent(event);
   }
   renamePage() {
     var _a;
     const title = (_a = window.prompt("Page title", this.currentPage().title)) == null ? void 0 : _a.trim();
     if (!title) return;
-    this.currentPage().title = title;
-    this.currentPage().updatedAt = Date.now();
+    const page = this.currentPage();
+    const before = page.title;
+    page.title = title;
+    this.markChanged(page);
+    this.pushCommand({
+      undo: () => this.setPageTitle(page.id, before),
+      redo: () => this.setPageTitle(page.id, title)
+    });
     this.renderPageRail();
     this.renderPage();
     this.scheduleSave();
   }
+  duplicateCurrentPage() {
+    this.finishPointerInput(false);
+    const before = cloneNotebook(this.notebook);
+    const beforePageId = this.currentPage().id;
+    const source = clonePage(this.currentPage());
+    const insertionIndex = this.pageIndex + 1;
+    const now = Date.now();
+    const page = clonePageAsNew(source, `${source.title} copy`, now);
+    this.notebook.pages.splice(insertionIndex, 0, page);
+    this.pageIndex += 1;
+    this.finishPageOrderChange(now);
+    this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, page.id);
+    this.renderAll();
+    this.scheduleSave();
+  }
+  deleteCurrentPage() {
+    if (this.notebook.pages.length <= 1) return;
+    this.finishPointerInput(false);
+    const before = cloneNotebook(this.notebook);
+    const beforePageId = this.currentPage().id;
+    const deletedIndex = this.pageIndex;
+    const [deleted] = this.notebook.pages.splice(this.pageIndex, 1);
+    const now = Date.now();
+    this.notebook.deletedPages[deleted.id] = now;
+    this.pageIndex = Math.min(this.pageIndex, this.notebook.pages.length - 1);
+    this.finishPageOrderChange(now);
+    this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, this.currentPage().id);
+    this.clearSelection();
+    this.renderAll();
+    this.scheduleSave();
+  }
+  moveCurrentPage(delta) {
+    const target = this.pageIndex + delta;
+    if (target < 0 || target >= this.notebook.pages.length) return;
+    this.finishPointerInput(false);
+    const before = cloneNotebook(this.notebook);
+    const pageId = this.currentPage().id;
+    const [page] = this.notebook.pages.splice(this.pageIndex, 1);
+    this.notebook.pages.splice(target, 0, page);
+    this.pageIndex = target;
+    this.finishPageOrderChange(Date.now());
+    this.pushNotebookCommand(before, cloneNotebook(this.notebook), pageId, pageId);
+    this.renderAll();
+    this.scheduleSave();
+  }
+  finishPageOrderChange(now) {
+    this.notebook.pageOrder = this.notebook.pages.map((page) => page.id);
+    this.notebook.pageOrderUpdatedAt = now;
+    this.notebook.updatedAt = now;
+    this.dirtyRevision += 1;
+  }
+  pushNotebookCommand(before, after, beforePageId, afterPageId) {
+    this.pushCommand({
+      undo: () => this.restoreNotebookState(before, beforePageId),
+      redo: () => this.restoreNotebookState(after, afterPageId)
+    });
+  }
+  restoreNotebookState(snapshot, selectedPageId) {
+    var _a;
+    const current = this.notebook;
+    const next = cloneNotebook(snapshot);
+    const now = Date.now();
+    const nextIds = new Set(next.pages.map((page) => page.id));
+    const deletedPages = { ...current.deletedPages, ...next.deletedPages };
+    for (const page of current.pages) {
+      if (!nextIds.has(page.id)) deletedPages[page.id] = Math.max((_a = deletedPages[page.id]) != null ? _a : 0, now);
+    }
+    let selectedId = selectedPageId;
+    next.pages = next.pages.map((page) => {
+      if (!(page.id in deletedPages)) return page;
+      const restored = clonePageAsNew(page, page.title, now);
+      if (page.id === selectedPageId) selectedId = restored.id;
+      return restored;
+    });
+    next.deletedPages = deletedPages;
+    next.pageOrder = next.pages.map((page) => page.id);
+    next.updatedAt = now;
+    next.pageOrderUpdatedAt = now;
+    this.notebook = next;
+    this.pageIndex = Math.max(0, next.pages.findIndex((page) => page.id === selectedId));
+    this.dirtyRevision += 1;
+  }
+  setPagePaper(pageId, paper) {
+    const page = this.pageById(pageId);
+    if (!page) return;
+    page.paper = paper;
+    this.markChanged(page);
+  }
+  setPageTitle(pageId, title) {
+    const page = this.pageById(pageId);
+    if (!page) return;
+    page.title = title;
+    this.markChanged(page);
+  }
+  async copyCurrentPageEmbed() {
+    if (!this.file) return;
+    const syntax = `\`\`\`ink
+${this.file.path}
+page: ${this.currentPage().id}
+\`\`\``;
+    try {
+      await navigator.clipboard.writeText(syntax);
+      new import_obsidian.Notice("Copied Ink page embed syntax");
+    } catch (error) {
+      new import_obsidian.Notice(`Could not copy embed syntax: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
   addToolButton(parent, icon, label, tool) {
-    const button = parent.createEl("button", { cls: "ink-tool-button", attr: { type: "button", title: label, "aria-label": label, "aria-pressed": String(this.state.tool === tool), "data-tool": tool } });
+    const hasSettings = tool === "pen" || tool === "highlighter" || tool === "eraser";
+    const button = parent.createEl("button", { cls: "ink-tool-button", attr: {
+      type: "button",
+      title: label,
+      "aria-label": label,
+      "aria-pressed": String(this.state.tool === tool),
+      "data-tool": tool,
+      ...hasSettings ? { "aria-haspopup": "dialog", "aria-expanded": "false" } : {}
+    } });
     const iconHolder = button.createSpan({ cls: "ink-button-icon" });
     (0, import_obsidian.setIcon)(iconHolder, icon);
     button.createSpan({ cls: "ink-button-text", text: label });
     button.addEventListener("click", () => {
+      var _a;
+      this.finishPointerInput(false);
+      if (this.state.tool === tool && (tool === "pen" || tool === "highlighter" || tool === "eraser")) {
+        this.setSizePopoverOpen(!this.sizePopoverOpen);
+        return;
+      }
       this.state.tool = tool;
       if (tool !== "lasso") this.clearSelection();
+      (_a = this.sizePopover) == null ? void 0 : _a.toggleClass("is-eraser-tool", tool === "eraser");
+      this.updateBrushControls();
       this.updateToolButtons();
       this.renderPage();
+      if (this.sizePopoverOpen) {
+        this.setSizePopoverOpen(true);
+        this.positionSizePopover();
+      }
     });
   }
   addIconButton(parent, icon, label, callback, disabled = false) {
@@ -1429,6 +1908,7 @@ var InkView = class extends import_obsidian.FileView {
   }
   addRange(parent, name, min, max, step, value, onChange) {
     const label = parent.createEl("label", { cls: "ink-range-control", attr: { title: name } });
+    label.addClass(`ink-range-${name.toLowerCase().replace(/\s+/g, "-")}`);
     const header = label.createDiv({ cls: "ink-range-header" });
     header.createSpan({ text: name });
     const valueText = header.createSpan({ cls: "ink-control-value", text: formatControlValue(name, value) });
@@ -1485,26 +1965,37 @@ var InkView = class extends import_obsidian.FileView {
       await this.activeSave;
       return;
     }
-    this.activeSave = this.performSave(file);
+    const saving = this.performSave(file);
+    this.activeSave = saving;
     try {
-      await this.activeSave;
+      await saving;
     } catch (error) {
-      new import_obsidian.Notice(`Ink Notes could not save: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      this.activeSave = null;
+      new import_obsidian.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
     }
+    if (this.activeSave === saving) this.activeSave = null;
   }
   async performSave(file) {
     this.syncing = true;
     try {
       do {
         this.saveRequested = false;
+        const revision = this.dirtyRevision;
         const snapshot = cloneNotebook(this.notebook);
-        const merged = await this.store.save(file, snapshot);
-        if (this.file === file) this.receiveMergedNotebook(merged);
-      } while (this.saveRequested);
+        try {
+          const merged = await this.store.save(file, snapshot);
+          this.savedRevision = Math.max(this.savedRevision, revision);
+          if (this.file === file) this.receiveMergedNotebook(merged);
+        } catch (error) {
+          new import_obsidian.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
+          break;
+        }
+      } while (this.saveRequested || this.dirtyRevision > this.savedRevision);
     } finally {
       this.syncing = false;
+      if (this.externalRefreshPending && this.activePointerId === null) {
+        this.externalRefreshPending = false;
+        void this.reloadFromDisk().catch((error) => new import_obsidian.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
+      }
     }
   }
   undo() {
@@ -1529,7 +2020,7 @@ var InkView = class extends import_obsidian.FileView {
   afterCommand() {
     this.clearSelection();
     this.updateHistoryButtons();
-    this.renderPage();
+    this.renderAll();
     this.scheduleSave();
   }
   updateHistoryButtons() {
@@ -1574,43 +2065,54 @@ var InkView = class extends import_obsidian.FileView {
       }
     };
   }
-  deletedStrokesCommand(pageId, originals) {
-    let current = originals.map(cloneStroke);
+  erasedStrokesCommand(pageId, originals, replacements) {
+    let currentOriginals = originals.map(cloneStroke);
+    let currentReplacements = replacements.map(cloneStroke);
     return {
       undo: () => {
         const page = this.pageById(pageId);
         if (!page) return;
-        current = originals.map(restoredStroke);
-        page.strokes.push(...current.map(cloneStroke));
+        this.deleteStrokes(page, currentReplacements.map((stroke) => stroke.id));
+        currentOriginals = originals.map(restoredStroke);
+        page.strokes.push(...currentOriginals.map(cloneStroke));
+        page.strokes.sort((left, right) => left.createdAt - right.createdAt);
         this.markChanged(page);
       },
       redo: () => {
         const page = this.pageById(pageId);
         if (!page) return;
-        this.deleteStrokes(page, current.map((stroke) => stroke.id));
+        this.deleteStrokes(page, currentOriginals.map((stroke) => stroke.id));
+        currentReplacements = replacements.map(restoredStroke);
+        page.strokes.push(...currentReplacements.map(cloneStroke));
+        page.strokes.sort((left, right) => left.createdAt - right.createdAt);
         this.markChanged(page);
       }
     };
   }
   finishLasso(page) {
     if (this.lassoDrag) {
-      const before = this.lassoDrag.before;
-      const movedStrokes = this.selectedStrokes();
+      const drag = this.lassoDrag;
+      const before = drag.before;
+      const movedStrokes = drag.strokes;
+      const moved = drag.dx !== 0 || drag.dy !== 0;
+      if (moved) for (const stroke of movedStrokes) {
+        const points = before.get(stroke.id);
+        if (points) stroke.points = translatePoints(points, drag.dx, drag.dy);
+      }
       const after = new Map(movedStrokes.map((stroke) => [stroke.id, clonePoints(stroke.points)]));
-      const moved = [...after].some(([id, points]) => !samePoints(before.get(id), points));
-      this.lassoDrag = null;
       if (moved) {
         const now = Date.now();
         for (const stroke of movedStrokes) stroke.updatedAt = now;
-        const pageId = page.id;
+        const pageId = drag.pageId;
         this.pushCommand({
           undo: () => this.applyStrokePoints(pageId, before),
           redo: () => this.applyStrokePoints(pageId, after)
         });
-        this.markChanged(page);
+        this.markChanged(page, false);
         this.scheduleSave();
       }
-      this.drawStrokes(page.strokes);
+      this.lassoDrag = null;
+      this.commitLassoPreview(page);
       return;
     }
     if (this.lassoPath.length >= 3) {
@@ -1636,12 +2138,13 @@ var InkView = class extends import_obsidian.FileView {
     page.strokes = page.strokes.filter((stroke) => !deleted.has(stroke.id));
     page.deletedStrokeIds = [.../* @__PURE__ */ new Set([...page.deletedStrokeIds, ...ids])];
   }
-  markChanged(page) {
+  markChanged(page, syncTiles = true) {
     var _a;
     const now = Date.now();
     page.updatedAt = now;
     this.notebook.updatedAt = now;
-    if (page === this.currentPage()) (_a = this.tiles) == null ? void 0 : _a.sync(page.strokes);
+    this.dirtyRevision += 1;
+    if (syncTiles && page === this.currentPage()) (_a = this.tiles) == null ? void 0 : _a.sync(page.strokes);
   }
   selectedStrokes() {
     return this.currentPage().strokes.filter((stroke) => this.selectedStrokeIds.has(stroke.id));
@@ -1655,16 +2158,21 @@ var InkView = class extends import_obsidian.FileView {
     this.selectedStrokeIds.clear();
     this.lassoPath = [];
     this.lassoDrag = null;
+    this.hideLassoPreview();
   }
   resetInteraction() {
     if (this.previewCanvas) this.previewCanvas.width = this.previewCanvas.height = 1;
     this.touchGesture = null;
     this.pendingMergedNotebook = null;
+    this.externalRefreshPending = false;
     this.activeStroke = null;
     this.activePointerId = null;
     this.lastPoint = null;
     this.erasedStrokeIds.clear();
+    this.erasedCandidateIds.clear();
     this.erasedStrokes = [];
+    this.eraserReplacementIds.clear();
+    this.eraserReplacements = [];
     this.clearSelection();
   }
   renderAll() {
@@ -1683,9 +2191,100 @@ var InkView = class extends import_obsidian.FileView {
 function distance(a2, b2) {
   return Math.hypot(a2.x - b2.x, a2.y - b2.y);
 }
+function stabilizeInkPoint(point, previous, width, height) {
+  if (width <= 1 || height <= 1) return distance(point, previous) >= 2e-4 ? point : null;
+  const dx = (point.x - previous.x) * width;
+  const dy = (point.y - previous.y) * height;
+  const pixels = Math.hypot(dx, dy);
+  if (pixels < 0.75) return null;
+  const weight = pixels < 4 ? 0.45 : pixels < 8 ? 0.7 : 1;
+  return {
+    ...point,
+    x: previous.x + (point.x - previous.x) * weight,
+    y: previous.y + (point.y - previous.y) * weight,
+    pressure: previous.pressure + (point.pressure - previous.pressure) * Math.max(0.55, weight)
+  };
+}
+function strokeIntersectsEraser(stroke, center, radius, mode, width, height) {
+  if (stroke.points.some((point) => pointInsideEraser(point, center, radius, mode, width, height))) return true;
+  for (let index = 1; index < stroke.points.length; index++) {
+    if (segmentIntersectsEraser(stroke.points[index - 1], stroke.points[index], center, radius, mode, width, height)) return true;
+  }
+  return false;
+}
+function eraseStrokeSegments(stroke, center, radius, mode, width, height) {
+  const segments = [];
+  let segment = [];
+  const flush = () => {
+    if (segment.length > 0) segments.push(segment);
+    segment = [];
+  };
+  for (const point of sampleStrokeForEraser(stroke.points, radius, width, height)) {
+    if (pointInsideEraser(point, center, radius, mode, width, height)) flush();
+    else segment.push({ ...point });
+  }
+  flush();
+  return segments;
+}
+function pointInsideEraser(point, center, radius, mode, width, height) {
+  const dx = (point.x - center.x) * width;
+  const dy = (point.y - center.y) * height;
+  return mode === "square" ? Math.abs(dx) <= radius && Math.abs(dy) <= radius : Math.hypot(dx, dy) <= radius;
+}
+function segmentIntersectsEraser(start, end, center, radius, mode, width, height) {
+  const ax = (start.x - center.x) * width;
+  const ay = (start.y - center.y) * height;
+  const bx = (end.x - center.x) * width;
+  const by = (end.y - center.y) * height;
+  if (mode === "square") return segmentIntersectsBox(ax, ay, bx, by, radius);
+  const dx = bx - ax, dy = by - ay;
+  const lengthSquared = dx * dx + dy * dy;
+  const t2 = lengthSquared === 0 ? 0 : Math.max(0, Math.min(1, -(ax * dx + ay * dy) / lengthSquared));
+  return Math.hypot(ax + dx * t2, ay + dy * t2) <= radius;
+}
+function segmentIntersectsBox(ax, ay, bx, by, radius) {
+  let minimum = 0, maximum = 1;
+  const dx = bx - ax, dy = by - ay;
+  for (const [origin, delta] of [[ax, dx], [ay, dy]]) {
+    if (delta === 0) {
+      if (origin < -radius || origin > radius) return false;
+      continue;
+    }
+    const near = (-radius - origin) / delta;
+    const far = (radius - origin) / delta;
+    minimum = Math.max(minimum, Math.min(near, far));
+    maximum = Math.min(maximum, Math.max(near, far));
+    if (minimum > maximum) return false;
+  }
+  return true;
+}
+function sampleStrokeForEraser(points, radius, width, height) {
+  if (points.length < 2) return points.map((point) => ({ ...point }));
+  const sampled = [{ ...points[0] }];
+  const step = Math.max(1, radius / 3);
+  for (let index = 1; index < points.length; index++) {
+    const start = points[index - 1], end = points[index];
+    const pixels = Math.hypot((end.x - start.x) * width, (end.y - start.y) * height);
+    const count = Math.max(1, Math.ceil(pixels / step));
+    for (let sample = 1; sample <= count; sample++) sampled.push(interpolateInkPoint(start, end, sample / count));
+  }
+  return sampled;
+}
+function interpolateInkPoint(start, end, amount) {
+  return {
+    x: start.x + (end.x - start.x) * amount,
+    y: start.y + (end.y - start.y) * amount,
+    pressure: start.pressure + (end.pressure - start.pressure) * amount,
+    tiltX: start.tiltX === void 0 || end.tiltX === void 0 ? end.tiltX : start.tiltX + (end.tiltX - start.tiltX) * amount,
+    tiltY: start.tiltY === void 0 || end.tiltY === void 0 ? end.tiltY : start.tiltY + (end.tiltY - start.tiltY) * amount,
+    t: start.t + (end.t - start.t) * amount
+  };
+}
 function cloneNotebook(notebook) {
   return {
     ...notebook,
+    pageOrder: [...notebook.pageOrder],
+    deletedPages: { ...notebook.deletedPages },
     pages: notebook.pages.map((page) => ({
       ...page,
       strokes: page.strokes.map(cloneStroke),
@@ -1695,6 +2294,21 @@ function cloneNotebook(notebook) {
 }
 function cloneStroke(stroke) {
   return { ...stroke, points: clonePoints(stroke.points) };
+}
+function clonePage(page) {
+  return { ...page, strokes: page.strokes.map(cloneStroke), deletedStrokeIds: [...page.deletedStrokeIds] };
+}
+function clonePageAsNew(page, title, now = Date.now()) {
+  const pageId = newId("page");
+  return {
+    ...clonePage(page),
+    id: pageId,
+    title,
+    strokes: page.strokes.map((stroke) => ({ ...cloneStroke(stroke), id: newId("stroke"), pageId, createdAt: now, updatedAt: now })),
+    deletedStrokeIds: [],
+    createdAt: now,
+    updatedAt: now
+  };
 }
 function clonePoints(points) {
   return points.map((point) => ({ ...point }));
@@ -1710,14 +2324,17 @@ function selectionBounds(strokes) {
   return boundsForPointSets(strokes.map((stroke) => stroke.points));
 }
 function boundsForPointSets(pointSets) {
-  const points = pointSets.flat();
-  if (points.length === 0) return null;
-  return {
-    minX: Math.min(...points.map((point) => point.x)),
-    minY: Math.min(...points.map((point) => point.y)),
-    maxX: Math.max(...points.map((point) => point.x)),
-    maxY: Math.max(...points.map((point) => point.y))
-  };
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const points of pointSets) for (const point of points) {
+    minX = Math.min(minX, point.x);
+    minY = Math.min(minY, point.y);
+    maxX = Math.max(maxX, point.x);
+    maxY = Math.max(maxY, point.y);
+  }
+  return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : null;
+}
+function notebooksEqual(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
 }
 function pointInPolygon(point, polygon) {
   let inside = false;
@@ -1728,9 +2345,6 @@ function pointInPolygon(point, polygon) {
     if (crosses) inside = !inside;
   }
   return inside;
-}
-function samePoints(left, right) {
-  return left !== void 0 && left.length === right.length && left.every((point, index) => point.x === right[index].x && point.y === right[index].y);
 }
 function constrainDelta(delta, minimum, maximum) {
   return Math.max(-minimum, Math.min(1 - maximum, delta));
@@ -1743,8 +2357,15 @@ function formatControlValue(name, value) {
 var import_obsidian2 = require("obsidian");
 var INK_EXTENSION = "ink";
 var INK_FOLDER = "Ink Notes";
+var NotebookFormatError = class extends Error {
+  constructor(message = "Ink notebook contains invalid JSON") {
+    super(message);
+    this.name = "NotebookFormatError";
+  }
+};
 var NotebookStore = class {
   constructor(app) {
+    this.selfWrites = /* @__PURE__ */ new Map();
     this.app = app;
     this.vault = app.vault;
   }
@@ -1768,11 +2389,13 @@ var NotebookStore = class {
       let latest;
       try {
         latest = normalizeNotebook(JSON.parse(raw));
-      } catch (e2) {
-        latest = createNotebook(next.title);
+      } catch (error) {
+        throw new NotebookFormatError(`Cannot save ${file.path || "notebook"}: existing file is not valid JSON`);
       }
       merged = mergeNotebooks(latest, next);
-      return serialize(merged);
+      const serialized = serialize(merged);
+      this.selfWrites.set(file.path, serialized);
+      return serialized;
     });
     return merged;
   }
@@ -1780,11 +2403,34 @@ var NotebookStore = class {
     return this.vault.getFiles().filter((file) => file.extension === INK_EXTENSION && file.path.startsWith(`${INK_FOLDER}/`));
   }
   observe(onChange) {
+    const timers = /* @__PURE__ */ new Map();
     const handler = (file) => {
-      if (file instanceof import_obsidian2.TFile && file.extension === INK_EXTENSION && file.path.startsWith(`${INK_FOLDER}/`)) onChange(file);
+      if (!(file instanceof import_obsidian2.TFile) || file.extension !== INK_EXTENSION || !file.path.startsWith(`${INK_FOLDER}/`)) return;
+      const expected = this.selfWrites.get(file.path);
+      const notify = () => {
+        timers.delete(file.path);
+        onChange(file);
+      };
+      const existing = timers.get(file.path);
+      if (existing !== void 0) globalThis.clearTimeout(existing);
+      if (!expected) {
+        timers.set(file.path, globalThis.setTimeout(notify, 75));
+        return;
+      }
+      void this.vault.cachedRead(file).then((raw) => {
+        if (this.selfWrites.get(file.path) === expected) this.selfWrites.delete(file.path);
+        if (raw !== expected) timers.set(file.path, globalThis.setTimeout(notify, 75));
+      }).catch(() => {
+        this.selfWrites.delete(file.path);
+        timers.set(file.path, globalThis.setTimeout(notify, 75));
+      });
     };
     const ref = this.vault.on("modify", handler);
-    return () => this.vault.offref(ref);
+    return () => {
+      for (const timer of timers.values()) globalThis.clearTimeout(timer);
+      timers.clear();
+      this.vault.offref(ref);
+    };
   }
   async ensureFolder() {
     if (!this.vault.getAbstractFileByPath(INK_FOLDER)) await this.vault.createFolder(INK_FOLDER);
@@ -1795,8 +2441,106 @@ function serialize(notebook) {
 `;
 }
 
+// src/embed.ts
+var import_obsidian3 = require("obsidian");
+
+// src/embed-spec.ts
+function parseInkEmbed(source) {
+  var _a, _b;
+  const lines = source.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  const path = (_a = lines[0]) != null ? _a : "";
+  if (!path.startsWith(`${INK_FOLDER}/`) || !path.toLowerCase().endsWith(".ink") || path.includes("..")) {
+    throw new Error(`Ink path must be a .ink file inside ${INK_FOLDER}/`);
+  }
+  if (lines.length > 2 || lines[1] && !/^page:\s*\S+$/i.test(lines[1])) {
+    throw new Error("Optional second line must use: page: <page-id>");
+  }
+  return { path, pageId: (_b = lines[1]) == null ? void 0 : _b.replace(/^page:\s*/i, "") };
+}
+
+// src/embed.ts
+function createInkEmbedProcessor(app, open) {
+  return (source, el, context) => {
+    let spec;
+    try {
+      spec = parseInkEmbed(source);
+    } catch (error) {
+      renderError(el, error);
+      return;
+    }
+    context.addChild(new InkEmbedChild(app, el, spec, open));
+  };
+}
+var InkEmbedChild = class extends import_obsidian3.MarkdownRenderChild {
+  constructor(app, container, spec, open) {
+    super(container);
+    this.app = app;
+    this.spec = spec;
+    this.open = open;
+    this.renderRevision = 0;
+  }
+  onload() {
+    this.registerEvent(this.app.vault.on("modify", (file) => {
+      if (file instanceof import_obsidian3.TFile && file.path === this.spec.path) void this.render().catch((error) => renderError(this.containerEl, error));
+    }));
+    void this.render().catch((error) => renderError(this.containerEl, error));
+  }
+  async render() {
+    var _a;
+    const revision = ++this.renderRevision;
+    const el = this.containerEl;
+    el.empty();
+    el.addClass("ink-embed");
+    const file = this.app.vault.getAbstractFileByPath(this.spec.path);
+    if (!(file instanceof import_obsidian3.TFile)) {
+      renderError(el, new Error(`Ink notebook not found: ${this.spec.path}`));
+      return;
+    }
+    let notebook;
+    try {
+      notebook = normalizeNotebook(JSON.parse(await this.app.vault.cachedRead(file)));
+    } catch (e2) {
+      renderError(el, new Error(`Ink notebook is damaged: ${this.spec.path}`));
+      return;
+    }
+    if (revision !== this.renderRevision) return;
+    const page = this.spec.pageId ? notebook.pages.find((candidate) => candidate.id === this.spec.pageId) : notebook.pages[0];
+    if (!page) {
+      renderError(el, new Error(`Ink page not found: ${(_a = this.spec.pageId) != null ? _a : "first page"}`));
+      return;
+    }
+    const frame = el.createDiv({ cls: `ink-embed-page ink-paper-${page.paper}` });
+    frame.style.aspectRatio = `${notebook.pageWidth} / ${notebook.pageHeight}`;
+    const canvas = frame.createEl("canvas", { attr: { "aria-label": `Ink preview: ${page.title}` } });
+    drawPage(canvas, notebook, page);
+    const button = el.createEl("button", { cls: "ink-embed-open", attr: { type: "button", "aria-label": "Open Ink notebook" } });
+    (0, import_obsidian3.setIcon)(button, "external-link");
+    button.createSpan({ text: "Open notebook" });
+    button.addEventListener("click", () => void this.open(file, page.id));
+  }
+};
+function drawPage(canvas, notebook, page) {
+  const width = Math.min(1200, notebook.pageWidth);
+  const height = Math.round(width * notebook.pageHeight / notebook.pageWidth);
+  canvas.width = width;
+  canvas.height = height;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) return;
+  for (const stroke of page.strokes) drawInkStroke(ctx, stroke, width, height);
+}
+function renderError(el, error) {
+  el.empty();
+  el.createDiv({ cls: "ink-embed-error", text: error instanceof Error ? error.message : String(error) });
+}
+
 // src/main.ts
-var InkNotesPlugin = class extends import_obsidian3.Plugin {
+var InkNotesPlugin = class extends import_obsidian4.Plugin {
+  constructor() {
+    super(...arguments);
+    this.refreshTimers = /* @__PURE__ */ new Map();
+    this.refreshing = /* @__PURE__ */ new Set();
+    this.pendingRefresh = /* @__PURE__ */ new Set();
+  }
   async onload() {
     this.store = new NotebookStore(this.app);
     this.registerView(VIEW_TYPE_INK, (leaf) => this.createView(leaf));
@@ -1804,7 +2548,12 @@ var InkNotesPlugin = class extends import_obsidian3.Plugin {
     this.addRibbonIcon("pen-line", "Open Ink Notes", () => void this.openNotebook());
     this.addCommand({ id: "open-ink-notebook", name: "Open Ink Notebook", callback: () => void this.openNotebook() });
     this.addCommand({ id: "create-ink-notebook", name: "Create Ink Notebook", callback: () => void this.createNotebook() });
-    this.registerInterval(window.setInterval(() => void this.refreshViews(), 2500));
+    this.registerMarkdownCodeBlockProcessor("ink", createInkEmbedProcessor(this.app, (file, pageId) => this.openFile(file, pageId)));
+    this.register(this.store.observe((file) => this.queueRefresh(file)));
+    this.register(() => {
+      for (const timer of this.refreshTimers.values()) window.clearTimeout(timer);
+      this.refreshTimers.clear();
+    });
   }
   createView(leaf) {
     return new InkView(leaf, this.store);
@@ -1815,20 +2564,61 @@ var InkNotesPlugin = class extends import_obsidian3.Plugin {
       await this.createNotebook();
       return;
     }
-    await this.openFile(files[0]);
+    new NotebookSuggestModal(this.app, files, (file) => void this.openFile(file)).open();
   }
   async createNotebook() {
     const file = await this.store.create("Ink Notebook");
     await this.openFile(file);
   }
-  async openFile(file) {
+  async openFile(file, pageId) {
     const leaf = this.app.workspace.getLeaf(true);
     await leaf.openFile(file);
+    if (pageId && leaf.view instanceof InkView) leaf.view.revealPage(pageId);
   }
-  async refreshViews() {
-    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_INK)) {
-      if (leaf.view instanceof InkView) await leaf.view.reloadFromDisk();
+  queueRefresh(file) {
+    const existing = this.refreshTimers.get(file.path);
+    if (existing !== void 0) window.clearTimeout(existing);
+    this.refreshTimers.set(file.path, window.setTimeout(() => {
+      this.refreshTimers.delete(file.path);
+      void this.refreshFile(file);
+    }, 120));
+  }
+  async refreshFile(file) {
+    var _a;
+    if (this.refreshing.has(file.path)) {
+      this.pendingRefresh.add(file.path);
+      return;
     }
+    this.refreshing.add(file.path);
+    try {
+      do {
+        this.pendingRefresh.delete(file.path);
+        for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_INK)) {
+          if (leaf.view instanceof InkView && ((_a = leaf.view.file) == null ? void 0 : _a.path) === file.path) await leaf.view.reloadFromDisk();
+        }
+      } while (this.pendingRefresh.has(file.path));
+    } catch (error) {
+      new import_obsidian4.Notice(`Ink Notes could not reload ${file.path}: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      this.refreshing.delete(file.path);
+    }
+  }
+};
+var NotebookSuggestModal = class extends import_obsidian4.SuggestModal {
+  constructor(app, files, select) {
+    super(app);
+    this.files = files;
+    this.select = select;
+  }
+  getSuggestions(query) {
+    const search = query.trim().toLowerCase();
+    return this.files.filter((file) => !search || file.path.toLowerCase().includes(search));
+  }
+  renderSuggestion(file, el) {
+    el.setText(file.path);
+  }
+  onChooseSuggestion(file) {
+    this.select(file);
   }
 };
 //# sourceMappingURL=main.js.map

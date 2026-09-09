@@ -14,7 +14,7 @@ function view(): any {
     canvasLogicalWidth: 800, canvasLogicalHeight: 1000, renderFrame: null, resizeRequested: false,
     currentPage: () => ({ strokes: [] }),
     viewport: { x: 0, y: 0, width: 800, height: 1000 }, zoom: 1,
-    tiles: { sync: vi.fn(), update: vi.fn(), flushVisible: vi.fn() },
+    tiles: { sync: vi.fn(), update: vi.fn(), flushVisible: vi.fn(), commitInteractive: vi.fn() },
   });
   return v;
 }
@@ -56,6 +56,34 @@ it("updates composited tiles for highlighters", () => {
   vi.mocked(window.requestAnimationFrame).mock.calls[0][0](0);
   expect(v.drawStrokes).toHaveBeenCalledOnce();
   expect(drawInkStroke).not.toHaveBeenCalled();
+});
+
+it("commits eraser changes as a coherent fallback frame", () => {
+  const v = view();
+  v.pageElement = {};
+  v.ctx = { clearRect: vi.fn() };
+  v.drawSelection = vi.fn();
+  v.interaction = { tool: "eraser" };
+  v.requestRender();
+  vi.mocked(window.requestAnimationFrame).mock.calls[0][0](0);
+  expect(v.tiles.commitInteractive).toHaveBeenCalledWith(v.viewport, 1, false);
+  expect(v.tiles.update).not.toHaveBeenCalled();
+});
+
+it("moves a cached lasso preview without rebuilding stroke geometry", () => {
+  const v = view();
+  v.lassoCanvas = { style: {} };
+  const points = [{ x: 0.2, y: 0.2, pressure: 0.5, t: 1 }];
+  v.lassoDrag = {
+    start: { x: 0.2, y: 0.2 }, pageId: "page", bounds: { minX: 0.2, minY: 0.2, maxX: 0.4, maxY: 0.4 },
+    strokes: [{ id: "selected", points }], before: new Map([["selected", points]]), dx: 0, dy: 0,
+  };
+  expect(v.applyLassoPoint({ x: 0.3, y: 0.25 })).toBe(true);
+  expect(v.lassoDrag.strokes[0].points).toBe(points);
+  expect(v.lassoDrag.dx).toBeCloseTo(0.1);
+  expect(v.lassoDrag.dy).toBeCloseTo(0.05);
+  expect(v.lassoCanvas.style.transform).toContain("translate(");
+  expect(v.tiles.sync).not.toHaveBeenCalled();
 });
 
 it("debounces expensive zoom rasterization while updating the displayed scale immediately", () => {

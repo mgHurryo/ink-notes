@@ -13,11 +13,24 @@ interface ViewInternals {
   onPointerDown(event: PointerEvent): void;
   onPointerMove(event: PointerEvent): void;
   onPointerUp(event: PointerEvent): void;
+  onPointerCancel(event: PointerEvent): void;
   onLostPointerCapture(event: PointerEvent): void;
+  onUnloadFile(file: TFile): Promise<void>;
   drawStrokes: () => void;
   renderAll: () => void;
   updateHistoryButtons: () => void;
   save(): Promise<void>;
+  addPage(): void;
+  duplicateCurrentPage(): void;
+  deleteCurrentPage(): void;
+  moveCurrentPage(delta: number): void;
+  undo(): void;
+  redo(): void;
+  dirtyRevision: number;
+  savedRevision: number;
+  eraseAt(point: { x: number; y: number; pressure: number; t: number }, page?: InkNotebook["pages"][number], mode?: "stroke" | "circle" | "square", size?: number): boolean;
+  finishLasso(page: InkNotebook["pages"][number]): void;
+  state: { tool: string; eraserMode: "stroke" | "circle" | "square"; eraserSize: number };
 }
 
 function deferred<T>() {
@@ -48,6 +61,7 @@ function setup() {
     releasePointerCapture: (id: number) => { captured.delete(id); },
   } as HTMLCanvasElement;
   internal.drawStrokes = vi.fn();
+  Object.assign(internal, { ctx: { clearRect: vi.fn() }, drawSelection: vi.fn() });
   Object.assign(internal, {
     pageElement: internal.canvas,
     updateViewport: vi.fn(),
@@ -55,9 +69,12 @@ function setup() {
     drawPreview: vi.fn(),
     commitPreview: vi.fn(),
     requestRender: vi.fn(),
-    tiles: { sync: vi.fn() },
+    tiles: { sync: vi.fn(), commitInteractive: vi.fn() },
+    canvasLogicalWidth: 100,
+    canvasLogicalHeight: 100,
   });
   internal.renderAll = vi.fn();
+  Object.assign(internal, { renderPageRail: vi.fn(), renderPage: vi.fn() });
   internal.updateHistoryButtons = vi.fn();
   return { store, view, internal, captured };
 }
@@ -98,6 +115,146 @@ describe("consecutive handwriting input", () => {
     internal.onPointerUp(pointer(40));
     expect(internal.notebook.pages[0].strokes.map((stroke) => stroke.points.map((point) => point.x)))
       .toEqual([[0.1, 0.2], [0.3, 0.4]]);
+  });
+
+  it("does not sample pointercancel coordinates", () => {
+    const { internal } = setup();
+    internal.onPointerDown(pointer(10));
+    internal.onPointerMove(pointer(20));
+    internal.onPointerCancel(pointer(90));
+    expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2]);
+  });
+
+  it("filters sub-pixel slow-input jitter without dropping intentional movement", () => {
+    const { internal } = setup();
+    internal.onPointerDown(pointer(10));
+    internal.onPointerMove(pointer(10.5));
+    internal.onPointerMove(pointer(20));
+    internal.onPointerUp(pointer(30));
+    expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2, 0.3]);
+  });
+
+  it("reads layout once for all coalesced samples in one pointer event", () => {
+    const { internal } = setup();
+    const rect = vi.fn(() => ({ left: 0, top: 0, width: 100, height: 100, x: 0, y: 0, right: 100, bottom: 100, toJSON: () => ({}) }));
+    internal.canvas.getBoundingClientRect = rect;
+    internal.onPointerDown(pointer(10));
+    rect.mockClear();
+    internal.onPointerMove(pointer(40, { getCoalescedEvents: () => [pointer(20), pointer(30)] }));
+    expect(rect).toHaveBeenCalledOnce();
+    expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2, 0.3, 0.4]);
+  });
+
+  it("uses a fixed hit radius for whole-stroke erasing regardless of eraser size", () => {
+    const run = (size: number) => {
+      const { internal } = setup();
+      const page = internal.notebook.pages[0];
+      page.strokes.push({
+        id: `stroke-${size}`, pageId: page.id, tool: "pen", color: "#000", width: 3, opacity: 1,
+        points: [{ x: 0.5, y: 0.59, pressure: 0.5, t: 1 }], createdAt: 1, updatedAt: 1,
+      });
+      return internal.eraseAt({ x: 0.5, y: 0.5, pressure: 0.5, t: 2 }, page, "stroke", size);
+    };
+    expect(run(8)).toBe(true);
+    expect(run(160)).toBe(true);
+  });
+
+  it("commits a cross-tile stroke erasure as one coherent visible update", () => {
+    const { internal } = setup();
+    const page = internal.notebook.pages[0];
+    page.strokes.push({
+      id: "cross-tile", pageId: page.id, tool: "pen", color: "#000", width: 3, opacity: 1,
+      points: [{ x: 0.05, y: 0.5, pressure: 0.5, t: 1 }, { x: 0.95, y: 0.5, pressure: 0.5, t: 2 }], createdAt: 1, updatedAt: 1,
+    });
+    internal.state.tool = "eraser";
+    internal.state.eraserMode = "stroke";
+    internal.onPointerDown(pointer(50, { clientY: 50 }));
+    internal.onPointerUp(pointer(50, { clientY: 50 }));
+    const tiles = (internal as unknown as { tiles: { commitInteractive: ReturnType<typeof vi.fn> } }).tiles;
+    expect(page.strokes).toHaveLength(0);
+    expect(tiles.commitInteractive).toHaveBeenCalledWith(expect.any(Object), 1, true);
+  });
+
+  it("splits a stroke around a circular local eraser", () => {
+    const { internal } = setup();
+    const page = internal.notebook.pages[0];
+    page.strokes.push({
+      id: "line", pageId: page.id, tool: "pen", color: "#000", width: 3, opacity: 1,
+      points: [{ x: 0.2, y: 0.5, pressure: 0.5, t: 1 }, { x: 0.8, y: 0.5, pressure: 0.5, t: 2 }], createdAt: 1, updatedAt: 1,
+    });
+    expect(internal.eraseAt({ x: 0.5, y: 0.5, pressure: 0.5, t: 3 }, page, "circle", 20)).toBe(true);
+    expect(page.strokes).toHaveLength(2);
+    expect(page.strokes.every((stroke) => stroke.id !== "line")).toBe(true);
+    expect(page.strokes.flatMap((stroke) => stroke.points).every((point) => Math.hypot((point.x - 0.5) * 100, (point.y - 0.5) * 100) > 10)).toBe(true);
+  });
+
+  it("uses rectangular hit testing for the square local eraser", () => {
+    const createPointStroke = () => {
+      const { internal } = setup();
+      const page = internal.notebook.pages[0];
+      page.strokes.push({
+        id: "corner", pageId: page.id, tool: "pen", color: "#000", width: 3, opacity: 1,
+        points: [{ x: 0.58, y: 0.58, pressure: 0.5, t: 1 }], createdAt: 1, updatedAt: 1,
+      });
+      return { internal, page };
+    };
+    const circle = createPointStroke();
+    expect(circle.internal.eraseAt({ x: 0.5, y: 0.5, pressure: 0.5, t: 2 }, circle.page, "circle", 20)).toBe(false);
+    const square = createPointStroke();
+    expect(square.internal.eraseAt({ x: 0.5, y: 0.5, pressure: 0.5, t: 2 }, square.page, "square", 20)).toBe(true);
+  });
+
+  it("tests eraser geometry only for spatial-index candidates", () => {
+    const { internal } = setup();
+    const page = internal.notebook.pages[0];
+    const candidate = {
+      id: "candidate", pageId: page.id, tool: "pen" as const, color: "#000", width: 3, opacity: 1,
+      points: [{ x: 0.5, y: 0.5, pressure: 0.5, t: 1 }], createdAt: 1, updatedAt: 1,
+    };
+    const unrelated = { ...candidate, id: "unrelated", points: [{ x: 0.9, y: 0.9, pressure: 0.5, t: 1 }] };
+    page.strokes.push(candidate, unrelated);
+    const tiles = (internal as unknown as { tiles: { queryNear: ReturnType<typeof vi.fn> } }).tiles;
+    tiles.queryNear = vi.fn(() => [candidate]);
+    expect(internal.eraseAt({ x: 0.5, y: 0.5, pressure: 0.5, t: 2 }, page, "stroke", 160)).toBe(true);
+    expect(tiles.queryNear).toHaveBeenCalledOnce();
+    expect(page.strokes).toEqual([unrelated]);
+  });
+
+  it("commits cached lasso movement once and preserves undo and redo", () => {
+    const { internal } = setup();
+    const page = internal.notebook.pages[0];
+    const stroke = {
+      id: "selected", pageId: page.id, tool: "pen" as const, color: "#000", width: 3, opacity: 1,
+      points: [{ x: 0.2, y: 0.2, pressure: 0.5, t: 1 }], createdAt: 1, updatedAt: 1,
+    };
+    page.strokes.push(stroke);
+    Object.assign(internal, {
+      lassoDrag: {
+        start: { x: 0.2, y: 0.2 }, pageId: page.id,
+        bounds: { minX: 0.2, minY: 0.2, maxX: 0.2, maxY: 0.2 }, strokes: [stroke],
+        before: new Map([[stroke.id, structuredClone(stroke.points)]]), dx: 0.1, dy: 0.05,
+      },
+      commitLassoPreview: vi.fn(),
+    });
+    internal.finishLasso(page);
+    expect(stroke.points[0].x).toBeCloseTo(0.3);
+    expect(stroke.points[0].y).toBeCloseTo(0.25);
+    internal.undo();
+    expect(stroke.points[0]).toMatchObject({ x: 0.2, y: 0.2 });
+    internal.redo();
+    expect(stroke.points[0].x).toBeCloseTo(0.3);
+    expect(stroke.points[0].y).toBeCloseTo(0.25);
+  });
+
+  it("locks the page and tool selected at pointerdown", () => {
+    const { internal } = setup();
+    internal.notebook.pages.push(createPage("Second"));
+    internal.onPointerDown(pointer(10));
+    (internal as unknown as { state: { tool: string } }).state.tool = "eraser";
+    internal.pageIndex = 1;
+    internal.onPointerUp(pointer(20));
+    expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2]);
+    expect(internal.notebook.pages[1].strokes).toEqual([]);
   });
 
   it("accepts many consecutive strokes without waiting for autosave", () => {
@@ -166,6 +323,31 @@ describe("consecutive handwriting input", () => {
       .toEqual([[0.1, 0.2], [0.3, 0.4, 0.5]]);
   });
 
+  it("keeps dirty revision retryable after a handled save failure", async () => {
+    const { internal, store } = setup();
+    internal.onPointerDown(pointer(10));
+    internal.onPointerUp(pointer(20));
+    store.save.mockRejectedValueOnce(new Error("disk full"));
+    await expect(internal.save()).resolves.toBeUndefined();
+    expect(internal.savedRevision).toBeLessThan(internal.dirtyRevision);
+    store.save.mockImplementation(async (_file, notebook) => notebook);
+    await expect(internal.save()).resolves.toBeUndefined();
+    expect(internal.savedRevision).toBe(internal.dirtyRevision);
+  });
+
+  it("commits an active stroke before unloading and includes it in the save snapshot", async () => {
+    const { internal, store, view } = setup();
+    store.save.mockImplementation(async (_file, notebook) => notebook);
+    internal.onPointerDown(pointer(10));
+    internal.onPointerMove(pointer(20));
+    await internal.onUnloadFile(view.file!);
+    expect(store.save).toHaveBeenCalledOnce();
+    const saved = store.save.mock.calls[0][1] as InkNotebook;
+    expect(saved.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2]);
+    expect(internal.activePointerId).toBeNull();
+    expect(internal.savedRevision).toBe(internal.dirtyRevision);
+  });
+
   it("accumulates disk and save results that both arrive during a stroke", async () => {
     const { internal, view, store } = setup();
     const disk = structuredClone(internal.notebook);
@@ -202,5 +384,37 @@ describe("consecutive handwriting input", () => {
     internal.onPointerUp(pointer(20));
     expect(internal.notebook.pages[0].strokes).toHaveLength(0);
     expect(internal.notebook.pages[1].strokes).toHaveLength(1);
+  });
+
+  it("duplicates, moves, deletes and restores pages through history", () => {
+    const { internal } = setup();
+    internal.addPage();
+    internal.notebook.pages[1].strokes.push({
+      id: "source", pageId: internal.notebook.pages[1].id, tool: "pen", color: "#000", width: 3, opacity: 1,
+      points: [], createdAt: 1, updatedAt: 1,
+    });
+    internal.duplicateCurrentPage();
+    expect(internal.notebook.pages).toHaveLength(3);
+    expect(internal.notebook.pages[2].strokes[0].id).not.toBe("source");
+    expect(internal.notebook.pages[2].strokes[0].pageId).toBe(internal.notebook.pages[2].id);
+    const duplicateId = internal.notebook.pages[2].id;
+    internal.moveCurrentPage(-1);
+    expect(internal.notebook.pageOrder[1]).toBe(duplicateId);
+    internal.undo();
+    expect(internal.notebook.pageOrder[2]).toBe(duplicateId);
+    internal.deleteCurrentPage();
+    expect(internal.notebook.deletedPages[duplicateId]).toBeDefined();
+    internal.undo();
+    expect(internal.notebook.pages).toHaveLength(3);
+    expect(internal.notebook.pages.some((page) => page.id === duplicateId)).toBe(false);
+  });
+
+  it("protects the last editable page from deletion", () => {
+    const { internal } = setup();
+    const pageId = internal.notebook.pages[0].id;
+    internal.deleteCurrentPage();
+    expect(internal.notebook.pages).toHaveLength(1);
+    expect(internal.notebook.pages[0].id).toBe(pageId);
+    expect(internal.notebook.deletedPages).toEqual({});
   });
 });

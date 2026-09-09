@@ -54,6 +54,7 @@ export class Menu {
     const item = {
       setTitle: (title: string) => { button.textContent = title; return item; },
       setChecked: (checked: boolean) => { button.setAttribute("aria-pressed", String(checked)); return item; },
+      setDisabled: (disabled: boolean) => { button.disabled = disabled; return item; },
       onClick: (callback: () => void) => { button.onclick = () => { callback(); this.element.remove(); }; return item; },
     };
     build(item); this.element.append(button); return this;
@@ -71,3 +72,8 @@ export class Menu {
 export class Notice { constructor(message: string) { console.warn(message); } }
 export class TFile {}
 export class WorkspaceLeaf {}
+export class App {}
+export class MarkdownRenderChild {
+  constructor(public containerEl: HTMLElement) {}
+  registerEvent(_event: unknown) {}
+}
