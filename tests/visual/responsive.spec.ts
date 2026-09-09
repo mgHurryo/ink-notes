@@ -56,7 +56,7 @@ test("page rail and brush popover are keyboard dismissible", async ({ page }) =>
   await expect(page.getByRole("button", { name: "Pen", exact: true })).toBeFocused();
 });
 
-test("eraser settings expose local sizes and a pointer reference", async ({ page }) => {
+test("eraser reference follows hover and refreshes with local settings", async ({ page }) => {
   await page.setViewportSize({ width: 720, height: 900 });
   await page.goto("/");
   const eraser = page.getByRole("button", { name: "Erase", exact: true });
@@ -81,7 +81,11 @@ test("eraser settings expose local sizes and a pointer reference", async ({ page
   await expect(cursor).toHaveCSS("width", "48px");
   await expect(cursor.locator(".ink-eraser-reference-point")).toBeVisible();
 
-  await eraser.click();
-  await page.getByRole("radio", { name: "Square eraser" }).click();
+  await page.evaluate(() => (document.querySelector('[aria-label="Erase"]') as HTMLButtonElement).click());
+  await page.evaluate(() => (document.querySelector('[aria-label="Square eraser"]') as HTMLButtonElement).click());
+  await expect(cursor).toBeVisible();
   await expect(cursor).toHaveClass(/is-square/);
+  await expect(cursor.locator(".ink-eraser-reference-point")).toBeVisible();
+  await page.mouse.move(0, 0);
+  await expect(cursor).toBeHidden();
 });

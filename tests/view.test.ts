@@ -145,6 +145,17 @@ describe("consecutive handwriting input", () => {
     expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2, 0.3, 0.4]);
   });
 
+  it("keeps an eraser reference hidden after pointer capture moves outside the page", () => {
+    const { internal } = setup();
+    const cursor = { toggleClass: vi.fn(), style: {} };
+    Object.assign(internal, { eraserCursor: cursor });
+    internal.state.tool = "eraser";
+    internal.onPointerDown(pointer(50, { clientY: 50 }));
+    internal.onPointerMove(pointer(120, { clientY: 50 }));
+    expect(cursor.toggleClass).toHaveBeenLastCalledWith("is-stroke", true);
+    expect(cursor.toggleClass).toHaveBeenCalledWith("is-visible", false);
+  });
+
   it("uses a fixed hit radius for whole-stroke erasing regardless of eraser size", () => {
     const run = (size: number) => {
       const { internal } = setup();

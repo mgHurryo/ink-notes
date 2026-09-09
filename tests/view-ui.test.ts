@@ -74,6 +74,31 @@ describe("reference-style editor", () => {
     expect(cursor.classList.contains("is-square")).toBe(true);
     expect(button("Square eraser").getAttribute("aria-checked")).toBe("true");
   });
+  it("shows the eraser reference on hover and refreshes it without pressing", () => {
+    button("Erase").click();
+    const paper = document.querySelector<HTMLElement>(".ink-page")!;
+    paper.getBoundingClientRect = () => ({ left: 0, top: 0, width: 100, height: 100, right: 100, bottom: 100, x: 0, y: 0, toJSON: () => ({}) });
+    Object.assign(view as unknown as object, { canvasLogicalWidth: 100, canvasLogicalHeight: 100 });
+    paper.dispatchEvent(new MouseEvent("pointerenter", { clientX: 40, clientY: 60, bubbles: false }));
+    const cursor = document.querySelector<HTMLElement>(".ink-eraser-cursor")!;
+    expect(cursor.classList.contains("is-visible")).toBe(true);
+    expect(cursor.style.left).toBe("40px");
+    expect(cursor.style.top).toBe("60px");
+
+    button("Erase").click();
+    button("Circle eraser").click();
+    const size = document.querySelector<HTMLInputElement>('input[aria-label="Eraser size"]')!;
+    size.value = "64";
+    size.dispatchEvent(new Event("input"));
+    expect(cursor.classList.contains("is-visible")).toBe(true);
+    expect(cursor.classList.contains("is-stroke")).toBe(false);
+    expect(cursor.style.width).toBe("64px");
+    expect(cursor.style.left).toBe("40px");
+    expect(cursor.querySelector(".ink-eraser-reference-point")).not.toBeNull();
+
+    paper.dispatchEvent(new MouseEvent("pointerleave", { bubbles: false }));
+    expect(cursor.classList.contains("is-visible")).toBe(false);
+  });
   it("clamps zoom and resets the readout", () => {
     for (let i = 0; i < 40; i++) button("Zoom in").click();
     expect(button("Reset zoom").textContent).toBe("300%");

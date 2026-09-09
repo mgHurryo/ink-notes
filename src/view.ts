@@ -73,6 +73,8 @@ export class InkView extends FileView {
   private pageExtent!: HTMLElement;
   private pageScroller!: HTMLElement;
   private eraserCursor!: HTMLElement;
+  private eraserHoverPoint: InkPoint | null = null;
+  private eraserPointerInside = false;
   private syncing = false;
   private saveRequested = false;
   private activeSave: Promise<void> | null = null;
@@ -298,7 +300,7 @@ export class InkView extends FileView {
     eraser.createDiv({ cls: "ink-stroke-eraser-hint", text: "Erases the entire touched stroke. Size is fixed." });
     this.addRange(eraser, "Eraser size", 8, 160, 2, this.state.eraserSize, (value) => {
       this.state.eraserSize = value;
-      this.updateEraserCursor(null, this.eraserCursor?.classList.contains("is-visible") ?? false);
+      this.refreshEraserCursor();
     });
 
     const close = (): void => this.setSizePopoverOpen(false);
@@ -388,7 +390,7 @@ export class InkView extends FileView {
     this.sizePopover.querySelectorAll<HTMLElement>(".ink-eraser-mode").forEach((button) => {
       button.setAttribute("aria-checked", String(button.dataset.eraserMode === this.state.eraserMode));
     });
-    this.updateEraserCursor(null, this.eraserCursor?.classList.contains("is-visible") ?? false);
+    this.refreshEraserCursor();
   }
 
   private renderCanvas(): void {
@@ -421,10 +423,12 @@ export class InkView extends FileView {
     this.previewCtx = this.previewCanvas.getContext("2d")!;
     this.canvas.style.pointerEvents = "none";
     this.pageElement.style.touchAction = "none";
+    this.registerDomEvent(this.pageElement, "pointerenter", (event) => this.onPointerEnter(event));
     this.registerDomEvent(this.pageElement, "pointerdown", (event) => this.onPointerDown(event));
     this.registerDomEvent(this.pageElement, "pointermove", (event) => this.onPointerMove(event));
     this.registerDomEvent(this.pageElement, "pointerleave", () => {
-      if (this.activePointerId === null) this.updateEraserCursor(null, false);
+      this.eraserPointerInside = false;
+      this.refreshEraserCursor();
     });
     this.registerDomEvent(this.pageElement, "pointerup", (event) => this.onPointerUp(event));
     this.registerDomEvent(this.pageElement, "pointercancel", (event) => this.onPointerCancel(event));
@@ -479,6 +483,7 @@ export class InkView extends FileView {
     const rect = this.pageElement.getBoundingClientRect();
     this.canvasLogicalWidth = Math.max(1, Math.round(rect.width / this.zoom * 64) / 64);
     this.canvasLogicalHeight = Math.max(1, Math.round(rect.height / this.zoom * 64) / 64);
+    this.refreshEraserCursor();
     this.tiles.setPage(this.currentPage(), this.canvasLogicalWidth, this.canvasLogicalHeight, this.activeStroke);
     this.updateViewport(true);
   }
@@ -675,7 +680,7 @@ export class InkView extends FileView {
     this.eraserReplacementIds.clear();
     this.eraserReplacements = [];
     if (tool === "eraser") {
-      this.updateEraserCursor(point, true);
+      this.updateEraserHover(point, true);
       if (this.eraseAt(point, page)) this.requestRender();
       return;
     }
@@ -719,36 +724,48 @@ export class InkView extends FileView {
     } else this.drawStrokes(page.strokes);
   }
 
+  private onPointerEnter(event: PointerEvent): void {
+    if (event.pointerType === "touch") return;
+    const rect = this.pageElement.getBoundingClientRect();
+    this.updateEraserHover(this.toPoint(event, rect), pointInsideRect(event, rect));
+  }
+
   private onPointerMove(event: PointerEvent): void {
     if (event.pointerType === "touch") return;
+    const rect = this.pageElement.getBoundingClientRect();
+    const point = this.toPoint(event, rect);
+    const inside = pointInsideRect(event, rect);
     if (this.activePointerId === null) {
-      this.updateEraserCursor(this.state.tool === "eraser" ? this.toPoint(event) : null, this.state.tool === "eraser");
+      this.updateEraserHover(point, inside);
       return;
     }
     if (this.activePointerId !== event.pointerId) return;
-    if (this.interaction?.tool === "eraser") this.updateEraserCursor(this.toPoint(event), true);
-    this.applyPointerSamples(event);
+    if (this.interaction?.tool === "eraser") this.updateEraserHover(point, inside);
+    this.applyPointerSamples(event, rect);
   }
 
   private onPointerUp(event: PointerEvent): void {
     if (this.activePointerId !== event.pointerId) return;
-    this.applyPointerSamples(event);
+    const rect = this.pageElement.getBoundingClientRect();
+    const point = this.toPoint(event, rect);
+    const inside = pointInsideRect(event, rect);
+    this.applyPointerSamples(event, rect);
     this.finishPointerInput(true);
     if (this.pageElement.hasPointerCapture(event.pointerId)) this.pageElement.releasePointerCapture(event.pointerId);
-    if (this.state.tool === "eraser") this.updateEraserCursor(this.toPoint(event), true);
+    this.updateEraserHover(point, inside);
   }
 
   private onPointerCancel(event: PointerEvent): void {
     if (this.activePointerId !== event.pointerId) return;
+    this.eraserPointerInside = false;
     this.finishPointerInput(false);
   }
 
-  private applyPointerSamples(event: PointerEvent): void {
+  private applyPointerSamples(event: PointerEvent, rect = this.pageElement.getBoundingClientRect()): void {
     const interaction = this.interaction;
     if (!interaction || interaction.pointerId !== event.pointerId) return;
     const page = this.pageById(interaction.pageId);
     if (!page) return;
-    const rect = this.pageElement.getBoundingClientRect();
     const samples = this.pointerSamples(event);
     if (interaction.tool === "lasso") {
       this.pendingLassoPoint = this.toPoint(samples[samples.length - 1], rect);
@@ -805,7 +822,7 @@ export class InkView extends FileView {
     if (!interaction) return;
     const page = this.pageById(interaction.pageId);
     this.interaction = null;
-    this.updateEraserCursor(null, false);
+    this.refreshEraserCursor();
     if (!page) { this.activePointerId = null; return; }
     this.flushPendingLassoPoint();
     this.commitPreview(page);
@@ -963,17 +980,25 @@ export class InkView extends FileView {
     return true;
   }
 
-  private updateEraserCursor(point: InkPoint | null, visible: boolean): void {
+  private updateEraserHover(point: InkPoint, inside: boolean): void {
+    this.eraserHoverPoint = point;
+    this.eraserPointerInside = inside;
+    this.refreshEraserCursor();
+  }
+
+  private refreshEraserCursor(): void {
     if (!this.eraserCursor) return;
-    this.eraserCursor.toggleClass("is-visible", visible);
-    this.eraserCursor.toggleClass("is-square", this.state.eraserMode === "square");
-    this.eraserCursor.toggleClass("is-stroke", this.state.eraserMode === "stroke");
-    const size = this.state.eraserMode === "stroke" ? STROKE_ERASER_HIT_RADIUS * 2 : this.state.eraserSize;
+    const mode = this.interaction?.tool === "eraser" ? this.interaction.eraserMode ?? this.state.eraserMode : this.state.eraserMode;
+    const eraserSize = this.interaction?.tool === "eraser" ? this.interaction.eraserSize ?? this.state.eraserSize : this.state.eraserSize;
+    this.eraserCursor.toggleClass("is-visible", this.state.tool === "eraser" && this.eraserPointerInside && this.eraserHoverPoint !== null);
+    this.eraserCursor.toggleClass("is-square", mode === "square");
+    this.eraserCursor.toggleClass("is-stroke", mode === "stroke");
+    const size = mode === "stroke" ? STROKE_ERASER_HIT_RADIUS * 2 : eraserSize;
     this.eraserCursor.style.width = `${size}px`;
     this.eraserCursor.style.height = `${size}px`;
-    if (!point) return;
-    this.eraserCursor.style.left = `${point.x * this.canvasLogicalWidth}px`;
-    this.eraserCursor.style.top = `${point.y * this.canvasLogicalHeight}px`;
+    if (!this.eraserHoverPoint) return;
+    this.eraserCursor.style.left = `${this.eraserHoverPoint.x * this.canvasLogicalWidth}px`;
+    this.eraserCursor.style.top = `${this.eraserHoverPoint.y * this.canvasLogicalHeight}px`;
   }
 
   private addPage(): void {
@@ -1178,6 +1203,7 @@ export class InkView extends FileView {
       this.updateBrushControls();
       this.updateToolButtons();
       this.renderPage();
+      this.refreshEraserCursor();
       if (this.sizePopoverOpen) {
         this.setSizePopoverOpen(true);
         this.positionSizePopover();
@@ -1501,6 +1527,8 @@ export class InkView extends FileView {
     this.touchGesture = null;
     this.pendingMergedNotebook = null;
     this.externalRefreshPending = false;
+    this.eraserHoverPoint = null;
+    this.eraserPointerInside = false;
     this.activeStroke = null;
     this.activePointerId = null;
     this.lastPoint = null;
@@ -1525,6 +1553,11 @@ export class InkView extends FileView {
 
 function distance(a: { x: number; y: number }, b: { x: number; y: number }): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
+}
+
+function pointInsideRect(point: { clientX: number; clientY: number }, rect: DOMRect): boolean {
+  return point.clientX >= rect.left && point.clientX <= rect.right
+    && point.clientY >= rect.top && point.clientY <= rect.bottom;
 }
 
 function stabilizeInkPoint(point: InkPoint, previous: InkPoint, width: number, height: number): InkPoint | null {
