@@ -144,3 +144,35 @@ it("debounces expensive zoom rasterization while updating the displayed scale im
   (vi.mocked(window.setTimeout).mock.calls[1][0] as () => void)();
   expect(v.updateViewport).toHaveBeenLastCalledWith(true);
 });
+
+it("uses layout zoom instead of a transformed canvas subtree when supported", () => {
+  const v = view();
+  v.zoom = 2;
+  v.notebook = { pageWidth: 1600, pageHeight: 2200 };
+  v.pageScroller = { clientWidth: 800 };
+  v.pageElement = { style: {} };
+  v.pageExtent = { style: {} };
+  vi.stubGlobal("getComputedStyle", () => ({ paddingLeft: "20", paddingRight: "20" }));
+  vi.stubGlobal("CSS", { supports: (property: string) => property === "zoom" });
+
+  v.layoutPage();
+
+  expect(v.pageElement.style).toMatchObject({ width: "760px", height: "1045px", zoom: "2", transform: "none" });
+  expect(v.pageExtent.style).toMatchObject({ width: "1520px", height: "2090px" });
+});
+
+it("does not create a transformed canvas layer at 100% on older engines", () => {
+  const v = view();
+  v.zoom = 1;
+  v.notebook = { pageWidth: 1600, pageHeight: 2200 };
+  v.pageScroller = { clientWidth: 800 };
+  v.pageElement = { style: {} };
+  v.pageExtent = { style: {} };
+  vi.stubGlobal("getComputedStyle", () => ({ paddingLeft: "20", paddingRight: "20" }));
+  vi.stubGlobal("CSS", { supports: () => false });
+
+  v.layoutPage();
+
+  expect(v.pageElement.style.transform).toBe("none");
+  expect(v.pageElement.style.zoom).toBe("");
+});

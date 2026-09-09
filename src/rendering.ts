@@ -20,7 +20,8 @@ export function canvasResolution(width: number, height: number, dpr: number, zoo
 }
 
 export function penOutline(stroke: InkStroke, width: number, height: number): number[][] {
-  return getStroke(stroke.points.map((point) => [point.x * width, point.y * height, point.pressure]), {
+  const pressures = smoothPenPressures(stroke.points);
+  return getStroke(stroke.points.map((point, index) => [point.x * width, point.y * height, pressures[index]]), {
     // Preserve the existing diameter: width * (0.55 + pressure * 0.75).
     size: stroke.width * 0.925,
     thinning: 0.75 / 1.85,
@@ -31,6 +32,22 @@ export function penOutline(stroke: InkStroke, width: number, height: number): nu
     start: { cap: true, taper: 0 },
     end: { cap: true, taper: 0 },
   });
+}
+
+export function smoothPenPressures(points: readonly InkPoint[]): number[] {
+  if (points.length < 3) return points.map((point) => point.pressure);
+  // Pencil hardware can emit isolated pressure drops even while its position
+  // remains continuous. Those one-sample dips become visible bites on both
+  // sides of perfect-freehand's outline and persist after Vault sync. A local
+  // median rejects the spike while retaining sustained pressure changes.
+  return points.map((point, index) => {
+    if (index === 0 || index === points.length - 1) return point.pressure;
+    return median3(points[index - 1].pressure, point.pressure, points[index + 1].pressure);
+  });
+}
+
+function median3(a: number, b: number, c: number): number {
+  return Math.max(Math.min(a, b), Math.min(Math.max(a, b), c));
 }
 
 export function drawInkStroke(ctx: CanvasRenderingContext2D, stroke: InkStroke, width: number, height: number): void {

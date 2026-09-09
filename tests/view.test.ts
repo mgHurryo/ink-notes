@@ -300,7 +300,7 @@ describe("consecutive handwriting input", () => {
     expect(store.save).not.toHaveBeenCalled();
   });
 
-  it("accepts the next Pencil stroke while the previous tile commit is pending", () => {
+  it("keeps rapid Pencil strokes on the overlay until input becomes idle", async () => {
     const { internal } = setup();
     (internal as any).commitPreview = (InkView.prototype as any).commitPreview.bind(internal);
     const callbacks: Array<(committed: boolean) => void> = [];
@@ -310,7 +310,7 @@ describe("consecutive handwriting input", () => {
 
     internal.onPointerDown(pointer(10));
     internal.onPointerUp(pointer(20));
-    expect(callbacks).toHaveLength(1);
+    expect(callbacks).toHaveLength(0);
     expect(tiles.commitInteractive).not.toHaveBeenCalled();
     expect(internal.activePointerId).toBeNull();
 
@@ -319,10 +319,12 @@ describe("consecutive handwriting input", () => {
     internal.onPointerMove(pointer(40));
     internal.onPointerUp(pointer(50));
     expect(internal.notebook.pages[0].strokes).toHaveLength(2);
-
+    expect(callbacks).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(179);
+    expect(callbacks).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(callbacks).toHaveLength(1);
     callbacks[0](true);
-    expect(callbacks).toHaveLength(2);
-    callbacks[1](true);
     expect((internal as any).pendingInkStrokes).toEqual([]);
     expect(tiles.pauseInkCommit).toHaveBeenCalledTimes(2);
   });
