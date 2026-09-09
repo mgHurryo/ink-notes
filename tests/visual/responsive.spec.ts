@@ -230,7 +230,13 @@ test("a long highlighter stroke stays complete before pointerup", async ({ page 
 
   await page.mouse.up();
   await expect(preview).not.toHaveClass(/is-highlighter-preview/);
-  await expect(preview).toHaveJSProperty("width", 1);
+  await expect.poll(async () => preview.evaluate((canvas: HTMLCanvasElement) => {
+    const pixels = canvas.getContext("2d")?.getImageData(0, 0, canvas.width, canvas.height).data;
+    if (!pixels) return -1;
+    for (let index = 3; index < pixels.length; index += 4) if (pixels[index] > 0) return 1;
+    return 0;
+  })).toBe(0);
+  expect(await preview.evaluate((canvas: HTMLCanvasElement) => canvas.width)).toBeGreaterThan(1);
   await expect.poll(async () => page.locator(".ink-tile-layer").evaluate((layer) => {
     let yellow = 0;
     for (const canvas of Array.from(layer.querySelectorAll("canvas"))) {
@@ -241,6 +247,29 @@ test("a long highlighter stroke stays complete before pointerup", async ({ page 
     }
     return yellow;
   })).toBeGreaterThan(0);
+});
+
+test("iPad-sized writing stays at full 2x backing density", async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1024, height: 1366 }, deviceScaleFactor: 2,
+    baseURL: "http://127.0.0.1:4173" });
+  const page = await context.newPage();
+  try {
+    await page.goto("/");
+    const paper = page.locator(".ink-page");
+    const box = await paper.boundingBox();
+    if (!box) throw new Error("Ink page has no layout box");
+    await page.mouse.move(box.x + box.width * 0.25, box.y + box.height * 0.3);
+    await page.mouse.down();
+    await page.mouse.move(box.x + box.width * 0.55, box.y + box.height * 0.35, { steps: 12 });
+    const previewDensity = await page.locator(".ink-preview-canvas").evaluate((canvas: HTMLCanvasElement) =>
+      canvas.width / canvas.getBoundingClientRect().width);
+    expect(previewDensity).toBeGreaterThanOrEqual(1.95);
+    await page.mouse.up();
+    await expect.poll(async () => page.locator(".ink-tile-layer canvas").evaluateAll((canvases: HTMLCanvasElement[]) =>
+      Math.max(0, ...canvases.map(canvas => canvas.width / parseFloat(canvas.style.width))))).toBeGreaterThanOrEqual(1.95);
+  } finally {
+    await context.close();
+  }
 });
 
 test("Markdown ink embed renders a targeted read-only page preview", async ({ page }) => {

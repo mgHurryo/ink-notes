@@ -489,6 +489,7 @@ function drawSmoothPath(ctx, points, width, height) {
 var TILE = 128;
 var BLEED = 2;
 var MAX_PIXELS = 16e6;
+var VISIBLE_PIXEL_BUDGET = 12e6;
 function isStrokeSet(exclusion) {
   return exclusion instanceof Set;
 }
@@ -547,6 +548,12 @@ var StrokeIndex = class {
       height: radius * 2
     });
   }
+  cellsFor(strokes) {
+    var _a, _b;
+    const cells = /* @__PURE__ */ new Set();
+    for (const stroke of strokes) for (const cell of (_b = (_a = this.entries.get(stroke.id)) == null ? void 0 : _a.cells) != null ? _b : []) cells.add(cell);
+    return [...cells];
+  }
   remove(entry) {
     this.entries.delete(entry.stroke.id);
     for (const key of entry.cells) {
@@ -569,6 +576,12 @@ function cellKeys(rect, width, height) {
   }
   return keys;
 }
+function tileDensity(viewport, density) {
+  return Math.max(0.5, Math.min(
+    Math.ceil(density * 4) / 4,
+    Math.sqrt(VISIBLE_PIXEL_BUDGET / Math.max(1, (viewport.width + TILE * 2) * (viewport.height + TILE * 2)))
+  ));
+}
 var TileRenderer = class {
   constructor(host) {
     this.host = host;
@@ -580,6 +593,10 @@ var TileRenderer = class {
     this.visible = /* @__PURE__ */ new Set();
     this.jobs = [];
     this.frame = null;
+    this.inkFrame = null;
+    this.inkCommit = null;
+    this.inkCommitPaused = false;
+    this.heldCells = /* @__PURE__ */ new Set();
     this.sequence = 0;
     this.pixels = 0;
     this.disposed = false;
@@ -587,6 +604,7 @@ var TileRenderer = class {
   setPage(page, width, height, exclude) {
     const state = this.state(page, width, height);
     if (state !== this.active) {
+      this.cancelInkCommit();
       this.host.replaceChildren();
       this.active = state;
       this.jobs = [];
@@ -603,24 +621,59 @@ var TileRenderer = class {
   }
   flushVisible() {
     var _a;
-    const jobs = this.jobs.filter((job) => job.state === this.active && this.visible.has(job.cell));
+    const jobs = this.jobs.filter((job) => job.state === this.active && this.visible.has(job.cell) && !this.isHeld(job));
     this.jobs = this.jobs.filter((job) => !jobs.includes(job));
     for (const job of jobs) this.attach((_a = this.get(job.state, job.cell, job.density)) != null ? _a : this.paint(job));
     this.evict();
   }
   commitInteractive(viewport, density, refine = true) {
+    this.cancelInkCommit();
     this.update(viewport, Math.min(1, density), false);
     this.flushVisible();
     if (refine) this.update(viewport, density, true);
+  }
+  commitInk(strokes, viewport, density, onComplete) {
+    if (!this.active || this.disposed || this.inkCommit) {
+      onComplete(false);
+      return;
+    }
+    this.viewport = viewport;
+    this.density = tileDensity(viewport, density);
+    this.visible = new Set(cellKeys(viewport, this.active.index.width, this.active.index.height));
+    const cells = this.active.index.cellsFor(strokes).filter((cell) => this.visible.has(cell));
+    const jobs = [];
+    const tiles = [];
+    for (const cell of cells) {
+      this.heldCells.add(this.holdKey(this.active, cell));
+      const exact = this.get(this.active, cell, this.density);
+      if (exact) tiles.push(exact);
+      else jobs.push({ state: this.active, cell, density: this.density });
+    }
+    this.jobs = this.jobs.filter((job) => !this.isHeld(job));
+    this.inkCommit = { state: this.active, cells, jobs, tiles, onComplete };
+    if (jobs.length === 0) this.finishInkCommit(true);
+    else this.scheduleInkCommit();
+  }
+  pauseInkCommit() {
+    this.inkCommitPaused = true;
+    if (this.frame !== null) cancelAnimationFrame(this.frame);
+    this.frame = null;
+    if (this.inkFrame !== null) cancelAnimationFrame(this.inkFrame);
+    this.inkFrame = null;
+  }
+  resumeInkCommit() {
+    this.inkCommitPaused = false;
+    this.scheduleInkCommit();
+    this.schedule();
+  }
+  cancelInkCommit() {
+    this.abortInkCommit(true);
   }
   update(viewport, density, refine) {
     var _a;
     if (!this.active || this.disposed) return;
     this.viewport = viewport;
-    this.density = Math.max(0.5, Math.min(
-      Math.ceil(density * 4) / 4,
-      Math.sqrt(8e6 / Math.max(1, (viewport.width + TILE * 2) * (viewport.height + TILE * 2)))
-    ));
+    this.density = tileDensity(viewport, density);
     this.visible = new Set(cellKeys(viewport, this.active.index.width, this.active.index.height));
     this.jobs = [];
     for (const node of Array.from(this.host.children)) {
@@ -630,7 +683,10 @@ var TileRenderer = class {
       const exact = this.get(this.active, cell, this.density);
       const fallback = exact != null ? exact : this.fallback(this.active, cell);
       if (fallback) this.attach(fallback);
-      if (!exact && (refine || !fallback)) this.jobs.push({ state: this.active, cell, density: refine ? this.density : Math.min(1, this.density) });
+      if (!exact && (refine || !fallback)) {
+        const job = { state: this.active, cell, density: refine ? this.density : Math.min(1, this.density) };
+        if (!this.isHeld(job)) this.jobs.push(job);
+      }
     }
     this.schedule();
   }
@@ -654,6 +710,7 @@ var TileRenderer = class {
   dispose() {
     this.disposed = true;
     if (this.frame !== null) cancelAnimationFrame(this.frame);
+    this.abortInkCommit(false);
     for (const [key, tile] of this.cache) this.drop(key, tile);
     this.states.clear();
     this.jobs = [];
@@ -698,12 +755,12 @@ var TileRenderer = class {
     this.host.appendChild(tile.node);
   }
   schedule() {
-    if (this.frame !== null || !this.jobs.length || this.disposed) return;
+    if (this.frame !== null || !this.jobs.length || this.disposed || this.inkCommitPaused || this.inkCommit) return;
     this.frame = requestAnimationFrame(() => {
       var _a;
       this.frame = null;
       const job = this.jobs.shift();
-      if (job) {
+      if (job && !this.isHeld(job)) {
         const tile = (_a = this.get(job.state, job.cell, job.density)) != null ? _a : this.paint(job);
         if (job.state === this.active && this.visible.has(job.cell)) this.attach(tile);
         this.evict();
@@ -711,7 +768,72 @@ var TileRenderer = class {
       this.schedule();
     });
   }
+  scheduleInkCommit() {
+    if (this.inkFrame !== null || !this.inkCommit || this.inkCommitPaused || this.disposed) return;
+    this.inkFrame = requestAnimationFrame(() => {
+      this.inkFrame = null;
+      const commit = this.inkCommit;
+      if (!commit) return;
+      const job = commit.jobs.shift();
+      if (job) commit.tiles.push(this.createTile(job));
+      if (commit.jobs.length > 0) this.scheduleInkCommit();
+      else this.finishInkCommit(true);
+    });
+  }
+  finishInkCommit(requested) {
+    const commit = this.inkCommit;
+    if (!commit) return;
+    const valid = requested && !this.disposed && this.active === commit.state && commit.tiles.every((tile) => {
+      var _a;
+      return tile.revision === ((_a = tile.state.index.revisions.get(tile.cell)) != null ? _a : 0);
+    });
+    this.inkCommit = null;
+    for (const cell of commit.cells) this.heldCells.delete(this.holdKey(commit.state, cell));
+    if (valid) {
+      for (const tile of commit.tiles) {
+        this.cacheTile(tile);
+        if (this.visible.has(tile.cell)) this.attach(tile);
+      }
+      this.evict();
+    } else {
+      for (const tile of commit.tiles) if (this.cache.get(this.key(tile.state, tile.cell, tile.density)) !== tile) {
+        tile.node.remove();
+        tile.canvas.width = tile.canvas.height = 1;
+      }
+    }
+    commit.onComplete(valid);
+    this.schedule();
+  }
+  abortInkCommit(notify) {
+    const commit = this.inkCommit;
+    if (!commit) {
+      this.inkFrame = null;
+      return;
+    }
+    if (this.inkFrame !== null) cancelAnimationFrame(this.inkFrame);
+    this.inkFrame = null;
+    if (notify) this.finishInkCommit(false);
+    else {
+      this.inkCommit = null;
+      for (const cell of commit.cells) this.heldCells.delete(this.holdKey(commit.state, cell));
+      for (const tile of commit.tiles) if (this.cache.get(this.key(tile.state, tile.cell, tile.density)) !== tile) {
+        tile.node.remove();
+        tile.canvas.width = tile.canvas.height = 1;
+      }
+    }
+  }
+  holdKey(state, cell) {
+    return state.id + "/" + cell;
+  }
+  isHeld(job) {
+    return this.heldCells.has(this.holdKey(job.state, job.cell));
+  }
   paint(job) {
+    const tile = this.createTile(job);
+    this.cacheTile(tile);
+    return tile;
+  }
+  createTile(job) {
     var _a;
     const { state, cell, density } = job;
     const [column, row] = cell.split(":").map(Number);
@@ -729,7 +851,7 @@ var TileRenderer = class {
     ctx.setTransform(density, 0, 0, density, BLEED - x2 * density, BLEED - y2 * density);
     const rect = { x: x2, y: y2, width, height };
     for (const stroke of state.index.query(rect)) drawInkStroke(ctx, stroke, state.index.width, state.index.height);
-    const tile = {
+    return {
       node,
       canvas,
       revision: (_a = state.index.revisions.get(cell)) != null ? _a : 0,
@@ -739,12 +861,15 @@ var TileRenderer = class {
       cell,
       density
     };
+  }
+  cacheTile(tile) {
+    const { state, cell, density } = tile;
     const key = this.key(state, cell, density);
     const old = this.cache.get(key);
+    if (old === tile) return;
     if (old) this.drop(key, old);
     this.cache.set(key, tile);
     this.pixels += tile.pixels;
-    return tile;
   }
   evict() {
     if (this.pixels <= MAX_PIXELS) return;
@@ -765,6 +890,8 @@ var TileRenderer = class {
 // src/view.ts
 var VIEW_TYPE_INK = "ink-notes-view";
 var STROKE_ERASER_HIT_RADIUS = 10;
+var OVERLAY_PIXEL_BUDGET = 12e6;
+var SAVE_IDLE_DELAY = 1e3;
 var INK_COLORS = [
   { value: "#1b1b1b", label: "Black" },
   { value: "#195bff", label: "Blue" },
@@ -793,6 +920,9 @@ var InkView = class extends import_obsidian.FileView {
     this.pendingMergedNotebook = null;
     this.externalRefreshPending = false;
     this.activeStroke = null;
+    this.pendingInkStrokes = [];
+    this.committingInkStrokes = null;
+    this.pendingInkPageId = null;
     this.activePointerId = null;
     this.interaction = null;
     this.interactionGeneration = 0;
@@ -892,7 +1022,7 @@ var InkView = class extends import_obsidian.FileView {
     if (this.dirtyRevision > this.savedRevision || this.activeSave) await this.save(file);
   }
   async reloadFromDisk() {
-    if (this.syncing || this.activePointerId !== null) {
+    if (this.syncing || this.activePointerId !== null || this.pendingInkStrokes.length > 0) {
       this.externalRefreshPending = true;
       return;
     }
@@ -1156,7 +1286,8 @@ var InkView = class extends import_obsidian.FileView {
   renderPage() {
     if (!this.viewReady || this.notebook.pages.length === 0) return;
     const page = this.currentPage();
-    this.root.querySelector(".ink-page-status").textContent = this.pageIndex + 1 + " / " + this.notebook.pages.length;
+    if (this.pendingInkPageId && this.pendingInkPageId !== page.id) this.discardPendingInkPreview();
+    this.updatePageStatus();
     this.pageElement.className = `ink-page ink-paper-${page.paper}`;
     this.pageElement.style.aspectRatio = `${this.notebook.pageWidth} / ${this.notebook.pageHeight}`;
     this.resizeCanvas();
@@ -1166,6 +1297,11 @@ var InkView = class extends import_obsidian.FileView {
       el.setAttribute("aria-pressed", String(active));
     });
   }
+  updatePageStatus() {
+    var _a;
+    const status = (_a = this.root) == null ? void 0 : _a.querySelector(".ink-page-status");
+    if (status) status.textContent = this.pageIndex + 1 + " / " + this.notebook.pages.length;
+  }
   resizeCanvas() {
     if (!this.canvas || !this.pageElement) return;
     this.layoutPage();
@@ -1173,7 +1309,7 @@ var InkView = class extends import_obsidian.FileView {
     this.canvasLogicalWidth = Math.max(1, Math.round(rect.width / this.zoom * 64) / 64);
     this.canvasLogicalHeight = Math.max(1, Math.round(rect.height / this.zoom * 64) / 64);
     this.refreshEraserCursor();
-    this.tiles.setPage(this.currentPage(), this.canvasLogicalWidth, this.canvasLogicalHeight, this.activeStroke);
+    this.tiles.setPage(this.currentPage(), this.canvasLogicalWidth, this.canvasLogicalHeight, this.tileExclusion());
     this.updateViewport(true);
   }
   updateViewport(refine) {
@@ -1188,11 +1324,11 @@ var InkView = class extends import_obsidian.FileView {
       height: Math.max(1, Math.min(this.canvasLogicalHeight - y2, (screen.bottom - page.top) / this.zoom - y2))
     };
     this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine);
-    if (refine || this.activeStroke) {
+    if (refine || this.hasInkPreview()) {
       this.resizeOverlay(this.canvas, this.ctx);
       this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
       this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
-      if (this.activeStroke) {
+      if (this.hasInkPreview()) {
         this.resizePreview();
         this.drawPreview();
       }
@@ -1201,7 +1337,7 @@ var InkView = class extends import_obsidian.FileView {
   }
   drawStrokes(strokes) {
     if (!this.ctx || !this.pageElement) return;
-    this.tiles.sync(strokes, this.activeStroke);
+    this.tiles.sync(strokes, this.tileExclusion());
     this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
     this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
     this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
@@ -1234,13 +1370,13 @@ var InkView = class extends import_obsidian.FileView {
       if (shouldResize) this.resizeCanvas();
       else if (this.lassoDrag) this.drawLassoInteraction();
       else if (((_a = this.interaction) == null ? void 0 : _a.tool) === "eraser") this.drawInteractiveStrokes(this.currentPage().strokes);
-      else if (this.activeStroke) this.drawPreview();
+      else if (this.hasInkPreview()) this.drawPreview();
       else this.drawStrokes(this.currentPage().strokes);
     });
   }
-  resizeOverlay(canvas, ctx) {
+  resizeOverlay(canvas, ctx, maxPixels = 4e6) {
     const { x: x2, y: y2, width, height } = this.viewport;
-    const resolution = canvasResolution(width, height, window.devicePixelRatio || 1, this.zoom, 4e6);
+    const resolution = canvasResolution(width, height, window.devicePixelRatio || 1, this.zoom, maxPixels);
     if (canvas.width !== resolution.width) canvas.width = resolution.width;
     if (canvas.height !== resolution.height) canvas.height = resolution.height;
     canvas.style.left = x2 + "px";
@@ -1254,13 +1390,18 @@ var InkView = class extends import_obsidian.FileView {
     ctx.setTransform(this.overlayScaleX, 0, 0, this.overlayScaleY, -x2 * this.overlayScaleX, -y2 * this.overlayScaleY);
   }
   resizePreview() {
-    this.resizeOverlay(this.previewCanvas, this.previewCtx);
+    this.resizeOverlay(this.previewCanvas, this.previewCtx, OVERLAY_PIXEL_BUDGET);
   }
   drawPreview() {
-    if (!this.activeStroke || this.activeStroke.tool !== "pen" && this.activeStroke.tool !== "highlighter") return;
-    this.previewCanvas.classList.toggle("is-highlighter-preview", this.activeStroke.tool === "highlighter");
+    const strokes = [...this.pendingInkStrokes];
+    if (this.activeStroke && (this.activeStroke.tool === "pen" || this.activeStroke.tool === "highlighter")) strokes.push(this.activeStroke);
     this.previewCtx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
-    drawInkStroke(this.previewCtx, this.activeStroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    if (strokes.length === 0) {
+      this.previewCanvas.classList.remove("is-highlighter-preview");
+      return;
+    }
+    this.previewCanvas.classList.toggle("is-highlighter-preview", strokes.every((stroke) => stroke.tool === "highlighter"));
+    for (const stroke of strokes) drawInkStroke(this.previewCtx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
   beginLassoPreview(page) {
     const drag = this.lassoDrag;
@@ -1326,10 +1467,56 @@ var InkView = class extends import_obsidian.FileView {
   }
   commitPreview(page = this.currentPage()) {
     if (!this.activeStroke || this.activeStroke.tool !== "pen" && this.activeStroke.tool !== "highlighter") return;
-    this.tiles.sync(page.strokes);
-    this.tiles.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom);
-    this.previewCanvas.width = this.previewCanvas.height = 1;
-    this.previewCanvas.classList.remove("is-highlighter-preview");
+    if (this.pendingInkPageId && this.pendingInkPageId !== page.id) this.discardPendingInkPreview();
+    this.pendingInkPageId = page.id;
+    if (!this.pendingInkStrokes.includes(this.activeStroke)) this.pendingInkStrokes.push(this.activeStroke);
+  }
+  hasInkPreview() {
+    return this.activeStroke !== null || this.pendingInkStrokes.length > 0;
+  }
+  tileExclusion() {
+    var _a, _b;
+    const committing = new Set((_b = (_a = this.committingInkStrokes) == null ? void 0 : _a.map((stroke) => stroke.id)) != null ? _b : []);
+    const excluded = /* @__PURE__ */ new Set();
+    if (this.activeStroke) excluded.add(this.activeStroke.id);
+    for (const stroke of this.pendingInkStrokes) if (!committing.has(stroke.id)) excluded.add(stroke.id);
+    return excluded.size > 0 ? excluded : void 0;
+  }
+  startPendingInkCommit(page) {
+    if (this.activePointerId !== null || this.committingInkStrokes || this.pendingInkStrokes.length === 0 || this.pendingInkPageId !== page.id || page !== this.currentPage()) return;
+    const batch = [...this.pendingInkStrokes];
+    this.committingInkStrokes = batch;
+    this.tiles.sync(page.strokes, this.tileExclusion());
+    this.tiles.commitInk(batch, this.viewport, (window.devicePixelRatio || 1) * this.zoom, (committed) => {
+      if (this.committingInkStrokes !== batch) return;
+      this.committingInkStrokes = null;
+      const ids = new Set(batch.map((stroke) => stroke.id));
+      this.pendingInkStrokes = this.pendingInkStrokes.filter((stroke) => !ids.has(stroke.id));
+      if (this.pendingInkStrokes.length === 0) this.pendingInkPageId = null;
+      if (this.viewReady && page === this.currentPage()) {
+        if (!committed) this.drawStrokes(page.strokes);
+        else this.drawPreview();
+      }
+      if (this.pendingInkStrokes.length > 0) this.startPendingInkCommit(page);
+      else if (this.activePointerId === null) {
+        this.applyPendingMergedNotebook();
+        if (this.externalRefreshPending) {
+          this.externalRefreshPending = false;
+          void this.reloadFromDisk().catch((error) => new import_obsidian.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
+        }
+      }
+    });
+  }
+  discardPendingInkPreview() {
+    var _a;
+    this.committingInkStrokes = null;
+    this.pendingInkStrokes = [];
+    this.pendingInkPageId = null;
+    (_a = this.tiles) == null ? void 0 : _a.cancelInkCommit();
+    if (this.previewCanvas) {
+      this.previewCanvas.width = this.previewCanvas.height = 1;
+      this.previewCanvas.classList.remove("is-highlighter-preview");
+    }
   }
   drawSelection(width, height) {
     const ctx = this.ctx;
@@ -1351,14 +1538,16 @@ var InkView = class extends import_obsidian.FileView {
   onPointerDown(event) {
     if (event.pointerType === "touch") return;
     if (this.activePointerId !== null) this.finishPointerInput(false);
+    const page = this.currentPage();
+    const tool = this.state.tool;
+    if (tool === "pen" || tool === "highlighter") this.tiles.pauseInkCommit();
+    else if (this.pendingInkStrokes.length > 0 || this.committingInkStrokes) this.discardPendingInkPreview();
     this.updateViewport(true);
     if (this.saveTimer !== void 0) {
       window.clearTimeout(this.saveTimer);
       this.saveTimer = void 0;
     }
     this.activePointerId = event.pointerId;
-    const page = this.currentPage();
-    const tool = this.state.tool;
     this.interaction = {
       generation: ++this.interactionGeneration,
       pointerId: event.pointerId,
@@ -1514,6 +1703,7 @@ var InkView = class extends import_obsidian.FileView {
     this.refreshEraserCursor();
     if (!page) {
       this.activePointerId = null;
+      this.tiles.resumeInkCommit();
       return;
     }
     this.flushPendingLassoPoint();
@@ -1525,6 +1715,7 @@ var InkView = class extends import_obsidian.FileView {
     if (interaction.tool === "lasso") {
       this.finishLasso(page);
       this.activePointerId = null;
+      this.tiles.resumeInkCommit();
       this.applyPendingMergedNotebook();
       return;
     }
@@ -1540,24 +1731,38 @@ var InkView = class extends import_obsidian.FileView {
     this.activeStroke = null;
     this.lastPoint = null;
     this.pendingLassoPoint = null;
+    if (interaction.tool === "pen" || interaction.tool === "highlighter") {
+      this.resizePreview();
+      this.drawPreview();
+      this.startPendingInkCommit(page);
+    }
+    this.tiles.resumeInkCommit();
     this.applyPendingMergedNotebook();
     this.scheduleSave();
-    if (this.externalRefreshPending) {
+    if (this.externalRefreshPending && this.pendingInkStrokes.length === 0) {
       this.externalRefreshPending = false;
       void this.reloadFromDisk().catch((error) => new import_obsidian.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
     }
   }
   applyPendingMergedNotebook() {
-    if (!this.pendingMergedNotebook) return;
+    if (!this.pendingMergedNotebook || this.activePointerId !== null || this.pendingInkStrokes.length > 0) return;
     const pageId = this.currentPage().id;
-    this.notebook = mergeNotebooks(this.pendingMergedNotebook, this.notebook);
+    const previousPageIndex = this.pageIndex;
+    const merged = mergeNotebooks(this.pendingMergedNotebook, this.notebook);
     this.pendingMergedNotebook = null;
-    this.pageIndex = Math.max(0, this.notebook.pages.findIndex((page) => page.id === pageId));
-    this.renderAll();
+    const changes = reconcileNotebook(this.notebook, merged, pageId, previousPageIndex);
+    this.pageIndex = changes.pageIndex;
+    if (changes.pageRailChanged) this.renderPageRail();
+    if (changes.currentPageChanged || changes.currentPaperChanged || changes.dimensionsChanged) {
+      this.renderPage();
+    } else {
+      if (changes.pageRailChanged) this.updatePageStatus();
+      if (changes.currentInkChanged) this.drawStrokes(this.currentPage().strokes);
+    }
   }
   receiveMergedNotebook(notebook) {
     this.pendingMergedNotebook = this.pendingMergedNotebook ? mergeNotebooks(this.pendingMergedNotebook, notebook) : notebook;
-    if (this.activePointerId === null) this.applyPendingMergedNotebook();
+    if (this.activePointerId === null && this.pendingInkStrokes.length === 0) this.applyPendingMergedNotebook();
   }
   onLostPointerCapture(event) {
     if (this.activePointerId !== event.pointerId) return;
@@ -1970,7 +2175,7 @@ page: ${this.currentPage().id}
     this.saveTimer = window.setTimeout(() => {
       this.saveTimer = void 0;
       void this.save();
-    }, 250);
+    }, SAVE_IDLE_DELAY);
   }
   async save(file = this.file) {
     if (!file) return;
@@ -2039,6 +2244,7 @@ page: ${this.currentPage().id}
     this.updateHistoryButtons();
   }
   afterCommand() {
+    this.discardPendingInkPreview();
     this.clearSelection();
     this.updateHistoryButtons();
     this.renderAll();
@@ -2165,7 +2371,7 @@ page: ${this.currentPage().id}
     page.updatedAt = now;
     this.notebook.updatedAt = now;
     this.dirtyRevision += 1;
-    if (syncTiles && page === this.currentPage()) (_a = this.tiles) == null ? void 0 : _a.sync(page.strokes);
+    if (syncTiles && page === this.currentPage()) (_a = this.tiles) == null ? void 0 : _a.sync(page.strokes, this.tileExclusion());
   }
   selectedStrokes() {
     return this.currentPage().strokes.filter((stroke) => this.selectedStrokeIds.has(stroke.id));
@@ -2182,6 +2388,11 @@ page: ${this.currentPage().id}
     this.hideLassoPreview();
   }
   resetInteraction() {
+    var _a;
+    this.committingInkStrokes = null;
+    this.pendingInkStrokes = [];
+    this.pendingInkPageId = null;
+    (_a = this.tiles) == null ? void 0 : _a.cancelInkCommit();
     if (this.previewCanvas) this.previewCanvas.width = this.previewCanvas.height = 1;
     this.touchGesture = null;
     this.pendingMergedNotebook = null;
@@ -2388,6 +2599,85 @@ function boundsForPointSets(pointSets) {
 }
 function notebooksEqual(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+function reconcileNotebook(target, incoming, selectedPageId, previousPageIndex) {
+  const dimensionsChanged = target.pageWidth !== incoming.pageWidth || target.pageHeight !== incoming.pageHeight;
+  const previousPages = target.pages;
+  const previousById = new Map(previousPages.map((page) => [page.id, page]));
+  const pageChanges = /* @__PURE__ */ new Map();
+  const pages = incoming.pages.map((incomingPage) => {
+    const page = previousById.get(incomingPage.id);
+    if (!page) {
+      pageChanges.set(incomingPage.id, { ink: true, paper: true, rail: true });
+      return incomingPage;
+    }
+    const paperChanged = page.paper !== incomingPage.paper;
+    const railChanged = page.title !== incomingPage.title || paperChanged;
+    const inkChanged = reconcilePage(page, incomingPage);
+    pageChanges.set(page.id, { ink: inkChanged, paper: paperChanged, rail: railChanged });
+    return page;
+  });
+  const pageListChanged = previousPages.length !== pages.length || previousPages.some((page, index) => {
+    var _a;
+    return page.id !== ((_a = pages[index]) == null ? void 0 : _a.id);
+  });
+  const selectedIndex = pages.findIndex((page) => page.id === selectedPageId);
+  const pageIndex = selectedIndex >= 0 ? selectedIndex : Math.min(previousPageIndex, pages.length - 1);
+  const currentPage = pages[pageIndex];
+  const currentPageChanged = currentPage.id !== selectedPageId;
+  const currentChanges = pageChanges.get(currentPage.id);
+  target.schema = incoming.schema;
+  target.title = incoming.title;
+  target.pageWidth = incoming.pageWidth;
+  target.pageHeight = incoming.pageHeight;
+  target.pages = pageListChanged ? pages : previousPages;
+  target.pageOrder = arraysEqual(target.pageOrder, incoming.pageOrder) ? target.pageOrder : [...incoming.pageOrder];
+  target.deletedPages = recordsEqual(target.deletedPages, incoming.deletedPages) ? target.deletedPages : { ...incoming.deletedPages };
+  target.pageOrderUpdatedAt = incoming.pageOrderUpdatedAt;
+  target.updatedAt = incoming.updatedAt;
+  return {
+    pageIndex,
+    pageRailChanged: pageListChanged || [...pageChanges.values()].some((change) => change.rail),
+    currentPageChanged,
+    currentInkChanged: currentPageChanged || (currentChanges == null ? void 0 : currentChanges.ink) === true,
+    currentPaperChanged: !currentPageChanged && (currentChanges == null ? void 0 : currentChanges.paper) === true,
+    dimensionsChanged
+  };
+}
+function reconcilePage(target, incoming) {
+  const previousStrokes = target.strokes;
+  const previousById = new Map(previousStrokes.map((stroke) => [stroke.id, stroke]));
+  const strokes = incoming.strokes.map((incomingStroke) => {
+    const stroke = previousById.get(incomingStroke.id);
+    if (!stroke || !strokeAppearanceEqual(stroke, incomingStroke)) return incomingStroke;
+    stroke.updatedAt = incomingStroke.updatedAt;
+    return stroke;
+  });
+  const inkChanged = previousStrokes.length !== strokes.length || previousStrokes.some((stroke, index) => stroke !== strokes[index]);
+  target.title = incoming.title;
+  target.paper = incoming.paper;
+  if (inkChanged) target.strokes = strokes;
+  target.deletedStrokeIds = arraysEqual(target.deletedStrokeIds, incoming.deletedStrokeIds) ? target.deletedStrokeIds : [...incoming.deletedStrokeIds];
+  target.createdAt = incoming.createdAt;
+  target.updatedAt = incoming.updatedAt;
+  return inkChanged;
+}
+function strokeAppearanceEqual(left, right) {
+  if (left.id !== right.id || left.pageId !== right.pageId || left.tool !== right.tool || left.color !== right.color || left.width !== right.width || left.opacity !== right.opacity || left.createdAt !== right.createdAt || left.points.length !== right.points.length) return false;
+  for (let index = 0; index < left.points.length; index++) {
+    const a2 = left.points[index];
+    const b2 = right.points[index];
+    if (a2.x !== b2.x || a2.y !== b2.y || a2.pressure !== b2.pressure || a2.t !== b2.t || a2.tiltX !== b2.tiltX || a2.tiltY !== b2.tiltY) return false;
+  }
+  return true;
+}
+function arraysEqual(left, right) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+function recordsEqual(left, right) {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return leftKeys.length === rightKeys.length && leftKeys.every((key) => left[key] === right[key]);
 }
 function pointInPolygon(point, polygon) {
   let inside = false;
