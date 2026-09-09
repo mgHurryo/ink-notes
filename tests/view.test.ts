@@ -16,8 +16,10 @@ interface ViewInternals {
   onPointerCancel(event: PointerEvent): void;
   onLostPointerCapture(event: PointerEvent): void;
   onUnloadFile(file: TFile): Promise<void>;
-  drawStrokes: () => void;
+  drawStrokes(strokes: InkStroke[]): void;
   renderAll: () => void;
+  renderPageRail: () => void;
+  renderPage: () => void;
   updateHistoryButtons: () => void;
   save(file?: TFile): Promise<void>;
   addPage(): void;
@@ -70,7 +72,9 @@ function setup() {
     drawPreview: vi.fn(),
     commitPreview: vi.fn(),
     requestRender: vi.fn(),
-    tiles: { sync: vi.fn(), commitInteractive: vi.fn() },
+    tiles: { sync: vi.fn(), commitInteractive: vi.fn(),
+      commitInk: vi.fn((_strokes: unknown, _viewport: unknown, _density: number, complete: (committed: boolean) => void) => complete(true)),
+      pauseInkCommit: vi.fn(), resumeInkCommit: vi.fn(), cancelInkCommit: vi.fn() },
     canvasLogicalWidth: 100,
     canvasLogicalHeight: 100,
   });
@@ -294,6 +298,148 @@ describe("consecutive handwriting input", () => {
     expect(internal.notebook.pages[0].strokes).toHaveLength(40);
     expect(internal.notebook.pages[0].strokes.every((stroke) => stroke.points.length === 3)).toBe(true);
     expect(store.save).not.toHaveBeenCalled();
+  });
+
+  it("accepts the next Pencil stroke while the previous tile commit is pending", () => {
+    const { internal } = setup();
+    (internal as any).commitPreview = (InkView.prototype as any).commitPreview.bind(internal);
+    const callbacks: Array<(committed: boolean) => void> = [];
+    const tiles = (internal as any).tiles;
+    tiles.commitInk.mockImplementation((_strokes: unknown, _viewport: unknown, _density: number,
+      complete: (committed: boolean) => void) => { callbacks.push(complete); });
+
+    internal.onPointerDown(pointer(10));
+    internal.onPointerUp(pointer(20));
+    expect(callbacks).toHaveLength(1);
+    expect(tiles.commitInteractive).not.toHaveBeenCalled();
+    expect(internal.activePointerId).toBeNull();
+
+    internal.onPointerDown(pointer(30));
+    expect(internal.activePointerId).toBe(7);
+    internal.onPointerMove(pointer(40));
+    internal.onPointerUp(pointer(50));
+    expect(internal.notebook.pages[0].strokes).toHaveLength(2);
+
+    callbacks[0](true);
+    expect(callbacks).toHaveLength(2);
+    callbacks[1](true);
+    expect((internal as any).pendingInkStrokes).toEqual([]);
+    expect(tiles.pauseInkCommit).toHaveBeenCalledTimes(2);
+  });
+
+  it("waits for a full writing idle interval before autosave work", async () => {
+    const { internal, store } = setup();
+    store.save.mockImplementation(async (_file, notebook) => notebook);
+    internal.onPointerDown(pointer(10));
+    internal.onPointerUp(pointer(20));
+    await vi.advanceTimersByTimeAsync(999);
+    expect(store.save).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1);
+    expect(store.save).toHaveBeenCalledOnce();
+  });
+
+  it("does not rebuild any UI when a self-save returns equivalent notebook data", async () => {
+    const { internal, store } = setup();
+    const notebook = internal.notebook;
+    const page = notebook.pages[0];
+    const strokes = page.strokes;
+    store.save.mockImplementation(async (_file, snapshot) => structuredClone(snapshot));
+
+    await internal.save();
+
+    expect(internal.notebook).toBe(notebook);
+    expect(internal.notebook.pages[0]).toBe(page);
+    expect(internal.notebook.pages[0].strokes).toBe(strokes);
+    expect(internal.renderAll).not.toHaveBeenCalled();
+    expect(internal.renderPageRail).not.toHaveBeenCalled();
+    expect(internal.renderPage).not.toHaveBeenCalled();
+    expect(internal.drawStrokes).not.toHaveBeenCalled();
+  });
+
+  it("updates current-page remote ink without rebuilding or resizing the page", async () => {
+    const { internal, view, store } = setup();
+    const remote = structuredClone(internal.notebook);
+    const page = remote.pages[0];
+    page.strokes.push({
+      id: "remote-stroke", pageId: page.id, tool: "pen", color: "#000", width: 3, opacity: 1,
+      points: [{ x: 0.25, y: 0.25, pressure: 0.5, t: 1 }], createdAt: 1, updatedAt: 1,
+    });
+    page.updatedAt += 1_000;
+    remote.updatedAt += 1_000;
+    store.read.mockResolvedValue(remote);
+
+    await view.reloadFromDisk();
+
+    expect(internal.notebook.pages[0].strokes.map((stroke) => stroke.id)).toContain("remote-stroke");
+    expect(internal.drawStrokes).toHaveBeenCalledOnce();
+    expect(internal.renderPage).not.toHaveBeenCalled();
+    expect(internal.renderAll).not.toHaveBeenCalled();
+  });
+
+  it("does not redraw the current canvas for a remote update on another page", async () => {
+    const { internal, view, store } = setup();
+    const other = createPage("Other");
+    internal.notebook.pages.push(other);
+    internal.notebook.pageOrder.push(other.id);
+    const remote = structuredClone(internal.notebook);
+    remote.pages[1].strokes.push({
+      id: "other-remote-stroke", pageId: other.id, tool: "pen", color: "#000", width: 3, opacity: 1,
+      points: [{ x: 0.75, y: 0.75, pressure: 0.5, t: 1 }], createdAt: 1, updatedAt: 1,
+    });
+    remote.pages[1].updatedAt += 1_000;
+    remote.updatedAt += 1_000;
+    store.read.mockResolvedValue(remote);
+
+    await view.reloadFromDisk();
+
+    expect(internal.notebook.pages[1]).toBe(other);
+    expect(other.strokes.map((stroke) => stroke.id)).toContain("other-remote-stroke");
+    expect(internal.drawStrokes).not.toHaveBeenCalled();
+    expect(internal.renderPage).not.toHaveBeenCalled();
+    expect(internal.renderPageRail).not.toHaveBeenCalled();
+  });
+
+  it("updates the page rail for remote ordering and additions while preserving selection", async () => {
+    const { internal, view, store } = setup();
+    const selectedId = internal.notebook.pages[0].id;
+    const remote = structuredClone(internal.notebook);
+    const added = createPage("Remote first");
+    remote.pages.unshift(added);
+    remote.pageOrder = [added.id, selectedId];
+    remote.pageOrderUpdatedAt += 1_000;
+    remote.updatedAt += 1_000;
+    store.read.mockResolvedValue(remote);
+
+    await view.reloadFromDisk();
+
+    expect(internal.notebook.pages.map((page) => page.id)).toEqual([added.id, selectedId]);
+    expect(internal.pageIndex).toBe(1);
+    expect(internal.renderPageRail).toHaveBeenCalledOnce();
+    expect(internal.renderPage).not.toHaveBeenCalled();
+    expect(internal.drawStrokes).not.toHaveBeenCalled();
+  });
+
+  it("switches pages only when a remote tombstone deletes the selected page", async () => {
+    const { internal, view, store } = setup();
+    const selectedId = internal.notebook.pages[0].id;
+    const remaining = createPage("Remaining");
+    internal.notebook.pages.push(remaining);
+    internal.notebook.pageOrder.push(remaining.id);
+    const remote = structuredClone(internal.notebook);
+    remote.deletedPages[selectedId] = remote.updatedAt + 1_000;
+    remote.pages = [remote.pages[1]];
+    remote.pageOrder = [remaining.id];
+    remote.pageOrderUpdatedAt += 1_000;
+    remote.updatedAt += 1_000;
+    store.read.mockResolvedValue(remote);
+
+    await view.reloadFromDisk();
+
+    expect(internal.notebook.pages.map((page) => page.id)).toEqual([remaining.id]);
+    expect(internal.pageIndex).toBe(0);
+    expect(internal.renderPageRail).toHaveBeenCalledOnce();
+    expect(internal.renderPage).toHaveBeenCalledOnce();
+    expect(internal.renderAll).not.toHaveBeenCalled();
   });
 
   it("defers a disk read that completes after the next stroke has started", async () => {

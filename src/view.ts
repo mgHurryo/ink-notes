@@ -43,7 +43,18 @@ interface InteractionContext {
   smoothing?: number;
 }
 
+interface NotebookReconciliation {
+  pageIndex: number;
+  pageRailChanged: boolean;
+  currentPageChanged: boolean;
+  currentInkChanged: boolean;
+  currentPaperChanged: boolean;
+  dimensionsChanged: boolean;
+}
+
 const STROKE_ERASER_HIT_RADIUS = 10;
+const OVERLAY_PIXEL_BUDGET = 12_000_000;
+const SAVE_IDLE_DELAY = 1_000;
 
 const INK_COLORS = [
   { value: "#1b1b1b", label: "Black" },
@@ -86,6 +97,9 @@ export class InkView extends FileView {
   private externalRefreshPending = false;
   private saveTimer: number | undefined;
   private activeStroke: InkStroke | null = null;
+  private pendingInkStrokes: InkStroke[] = [];
+  private committingInkStrokes: InkStroke[] | null = null;
+  private pendingInkPageId: string | null = null;
   private activePointerId: number | null = null;
   private interaction: InteractionContext | null = null;
   private interactionGeneration = 0;
@@ -198,7 +212,7 @@ export class InkView extends FileView {
   }
 
   async reloadFromDisk(): Promise<void> {
-    if (this.syncing || this.activePointerId !== null) { this.externalRefreshPending = true; return; }
+    if (this.syncing || this.activePointerId !== null || this.pendingInkStrokes.length > 0) { this.externalRefreshPending = true; return; }
     if (!this.file) return;
     const file = this.file;
     const latest = await this.store.read(file);
@@ -459,7 +473,8 @@ export class InkView extends FileView {
   private renderPage(): void {
     if (!this.viewReady || this.notebook.pages.length === 0) return;
     const page = this.currentPage();
-    this.root.querySelector<HTMLElement>(".ink-page-status")!.textContent = (this.pageIndex + 1) + " / " + this.notebook.pages.length;
+    if (this.pendingInkPageId && this.pendingInkPageId !== page.id) this.discardPendingInkPreview();
+    this.updatePageStatus();
     this.pageElement.className = `ink-page ink-paper-${page.paper}`;
     this.pageElement.style.aspectRatio = `${this.notebook.pageWidth} / ${this.notebook.pageHeight}`;
     this.resizeCanvas();
@@ -470,6 +485,11 @@ export class InkView extends FileView {
     });
   }
 
+  private updatePageStatus(): void {
+    const status = this.root?.querySelector<HTMLElement>(".ink-page-status");
+    if (status) status.textContent = (this.pageIndex + 1) + " / " + this.notebook.pages.length;
+  }
+
   private resizeCanvas(): void {
     if (!this.canvas || !this.pageElement) return;
     this.layoutPage();
@@ -477,7 +497,7 @@ export class InkView extends FileView {
     this.canvasLogicalWidth = Math.max(1, Math.round(rect.width / this.zoom * 64) / 64);
     this.canvasLogicalHeight = Math.max(1, Math.round(rect.height / this.zoom * 64) / 64);
     this.refreshEraserCursor();
-    this.tiles.setPage(this.currentPage(), this.canvasLogicalWidth, this.canvasLogicalHeight, this.activeStroke);
+    this.tiles.setPage(this.currentPage(), this.canvasLogicalWidth, this.canvasLogicalHeight, this.tileExclusion());
     this.updateViewport(true);
   }
 
@@ -490,18 +510,18 @@ export class InkView extends FileView {
       width: Math.max(1, Math.min(this.canvasLogicalWidth - x, (screen.right - page.left) / this.zoom - x)),
       height: Math.max(1, Math.min(this.canvasLogicalHeight - y, (screen.bottom - page.top) / this.zoom - y)) };
     this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine);
-    if (refine || this.activeStroke) {
+    if (refine || this.hasInkPreview()) {
       this.resizeOverlay(this.canvas, this.ctx);
       this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
       this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
-      if (this.activeStroke) { this.resizePreview(); this.drawPreview(); }
+      if (this.hasInkPreview()) { this.resizePreview(); this.drawPreview(); }
     }
     if (refine) this.tiles.prewarm(this.notebook.pages.filter((_, index) => Math.abs(index - this.pageIndex) === 1));
   }
 
   private drawStrokes(strokes: InkStroke[]): void {
     if (!this.ctx || !this.pageElement) return;
-    this.tiles.sync(strokes, this.activeStroke);
+    this.tiles.sync(strokes, this.tileExclusion());
     this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
     this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
     this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
@@ -537,14 +557,14 @@ export class InkView extends FileView {
       if (shouldResize) this.resizeCanvas();
       else if (this.lassoDrag) this.drawLassoInteraction();
       else if (this.interaction?.tool === "eraser") this.drawInteractiveStrokes(this.currentPage().strokes);
-      else if (this.activeStroke) this.drawPreview();
+      else if (this.hasInkPreview()) this.drawPreview();
       else this.drawStrokes(this.currentPage().strokes);
     });
   }
 
-  private resizeOverlay(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D): void {
+  private resizeOverlay(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, maxPixels = 4_000_000): void {
     const { x, y, width, height } = this.viewport;
-    const resolution = canvasResolution(width, height, window.devicePixelRatio || 1, this.zoom, 4_000_000);
+    const resolution = canvasResolution(width, height, window.devicePixelRatio || 1, this.zoom, maxPixels);
     if (canvas.width !== resolution.width) canvas.width = resolution.width;
     if (canvas.height !== resolution.height) canvas.height = resolution.height;
     canvas.style.left = x + "px"; canvas.style.top = y + "px";
@@ -554,13 +574,18 @@ export class InkView extends FileView {
     ctx.setTransform(this.overlayScaleX, 0, 0, this.overlayScaleY, -x * this.overlayScaleX, -y * this.overlayScaleY);
   }
 
-  private resizePreview(): void { this.resizeOverlay(this.previewCanvas, this.previewCtx); }
+  private resizePreview(): void { this.resizeOverlay(this.previewCanvas, this.previewCtx, OVERLAY_PIXEL_BUDGET); }
 
   private drawPreview(): void {
-    if (!this.activeStroke || this.activeStroke.tool !== "pen" && this.activeStroke.tool !== "highlighter") return;
-    this.previewCanvas.classList.toggle("is-highlighter-preview", this.activeStroke.tool === "highlighter");
+    const strokes = [...this.pendingInkStrokes];
+    if (this.activeStroke && (this.activeStroke.tool === "pen" || this.activeStroke.tool === "highlighter")) strokes.push(this.activeStroke);
     this.previewCtx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
-    drawInkStroke(this.previewCtx, this.activeStroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    if (strokes.length === 0) {
+      this.previewCanvas.classList.remove("is-highlighter-preview");
+      return;
+    }
+    this.previewCanvas.classList.toggle("is-highlighter-preview", strokes.every(stroke => stroke.tool === "highlighter"));
+    for (const stroke of strokes) drawInkStroke(this.previewCtx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
 
   private beginLassoPreview(page: InkPage): void {
@@ -622,12 +647,57 @@ export class InkView extends FileView {
 
   private commitPreview(page = this.currentPage()): void {
     if (!this.activeStroke || this.activeStroke.tool !== "pen" && this.activeStroke.tool !== "highlighter") return;
-    this.tiles.sync(page.strokes);
-    // Commit a complete bounded-density frame before dropping the transient
-    // stroke. High-density tiles can refine later without a pen-up flash.
-    this.tiles.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom);
-    this.previewCanvas.width = this.previewCanvas.height = 1;
-    this.previewCanvas.classList.remove("is-highlighter-preview");
+    if (this.pendingInkPageId && this.pendingInkPageId !== page.id) this.discardPendingInkPreview();
+    this.pendingInkPageId = page.id;
+    if (!this.pendingInkStrokes.includes(this.activeStroke)) this.pendingInkStrokes.push(this.activeStroke);
+  }
+
+  private hasInkPreview(): boolean { return this.activeStroke !== null || this.pendingInkStrokes.length > 0; }
+
+  private tileExclusion(): ReadonlySet<string> | undefined {
+    const committing = new Set(this.committingInkStrokes?.map(stroke => stroke.id) ?? []);
+    const excluded = new Set<string>();
+    if (this.activeStroke) excluded.add(this.activeStroke.id);
+    for (const stroke of this.pendingInkStrokes) if (!committing.has(stroke.id)) excluded.add(stroke.id);
+    return excluded.size > 0 ? excluded : undefined;
+  }
+
+  private startPendingInkCommit(page: InkPage): void {
+    if (this.activePointerId !== null || this.committingInkStrokes || this.pendingInkStrokes.length === 0
+      || this.pendingInkPageId !== page.id || page !== this.currentPage()) return;
+    const batch = [...this.pendingInkStrokes];
+    this.committingInkStrokes = batch;
+    this.tiles.sync(page.strokes, this.tileExclusion());
+    this.tiles.commitInk(batch, this.viewport, (window.devicePixelRatio || 1) * this.zoom, (committed) => {
+      if (this.committingInkStrokes !== batch) return;
+      this.committingInkStrokes = null;
+      const ids = new Set(batch.map(stroke => stroke.id));
+      this.pendingInkStrokes = this.pendingInkStrokes.filter(stroke => !ids.has(stroke.id));
+      if (this.pendingInkStrokes.length === 0) this.pendingInkPageId = null;
+      if (this.viewReady && page === this.currentPage()) {
+        if (!committed) this.drawStrokes(page.strokes);
+        else this.drawPreview();
+      }
+      if (this.pendingInkStrokes.length > 0) this.startPendingInkCommit(page);
+      else if (this.activePointerId === null) {
+        this.applyPendingMergedNotebook();
+        if (this.externalRefreshPending) {
+          this.externalRefreshPending = false;
+          void this.reloadFromDisk().catch((error) => new Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
+        }
+      }
+    });
+  }
+
+  private discardPendingInkPreview(): void {
+    this.committingInkStrokes = null;
+    this.pendingInkStrokes = [];
+    this.pendingInkPageId = null;
+    this.tiles?.cancelInkCommit();
+    if (this.previewCanvas) {
+      this.previewCanvas.width = this.previewCanvas.height = 1;
+      this.previewCanvas.classList.remove("is-highlighter-preview");
+    }
   }
 
   private drawSelection(width: number, height: number): void {
@@ -651,14 +721,16 @@ export class InkView extends FileView {
   private onPointerDown(event: PointerEvent): void {
     if (event.pointerType === "touch") return;
     if (this.activePointerId !== null) this.finishPointerInput(false);
+    const page = this.currentPage();
+    const tool = this.state.tool;
+    if (tool === "pen" || tool === "highlighter") this.tiles.pauseInkCommit();
+    else if (this.pendingInkStrokes.length > 0 || this.committingInkStrokes) this.discardPendingInkPreview();
     this.updateViewport(true);
     if (this.saveTimer !== undefined) {
       window.clearTimeout(this.saveTimer);
       this.saveTimer = undefined;
     }
     this.activePointerId = event.pointerId;
-    const page = this.currentPage();
-    const tool = this.state.tool;
     this.interaction = {
       generation: ++this.interactionGeneration,
       pointerId: event.pointerId,
@@ -818,7 +890,7 @@ export class InkView extends FileView {
     const page = this.pageById(interaction.pageId);
     this.interaction = null;
     this.refreshEraserCursor();
-    if (!page) { this.activePointerId = null; return; }
+    if (!page) { this.activePointerId = null; this.tiles.resumeInkCommit(); return; }
     this.flushPendingLassoPoint();
     this.commitPreview(page);
     if (this.activeStroke && this.renderFrame !== null && !this.resizeRequested) {
@@ -828,6 +900,7 @@ export class InkView extends FileView {
     if (interaction.tool === "lasso") {
       this.finishLasso(page);
       this.activePointerId = null;
+      this.tiles.resumeInkCommit();
       this.applyPendingMergedNotebook();
       return;
     }
@@ -843,21 +916,38 @@ export class InkView extends FileView {
     this.activeStroke = null;
     this.lastPoint = null;
     this.pendingLassoPoint = null;
+    if (interaction.tool === "pen" || interaction.tool === "highlighter") {
+      this.resizePreview();
+      this.drawPreview();
+      this.startPendingInkCommit(page);
+    }
+    this.tiles.resumeInkCommit();
     this.applyPendingMergedNotebook();
     this.scheduleSave();
-    if (this.externalRefreshPending) {
+    if (this.externalRefreshPending && this.pendingInkStrokes.length === 0) {
       this.externalRefreshPending = false;
       void this.reloadFromDisk().catch((error) => new Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
     }
   }
 
   private applyPendingMergedNotebook(): void {
-    if (!this.pendingMergedNotebook) return;
+    if (!this.pendingMergedNotebook || this.activePointerId !== null || this.pendingInkStrokes.length > 0) return;
     const pageId = this.currentPage().id;
-    this.notebook = mergeNotebooks(this.pendingMergedNotebook, this.notebook);
+    const previousPageIndex = this.pageIndex;
+    const merged = mergeNotebooks(this.pendingMergedNotebook, this.notebook);
     this.pendingMergedNotebook = null;
-    this.pageIndex = Math.max(0, this.notebook.pages.findIndex((page) => page.id === pageId));
-    this.renderAll();
+    const changes = reconcileNotebook(this.notebook, merged, pageId, previousPageIndex);
+    this.pageIndex = changes.pageIndex;
+
+    // A save result usually differs only in merge metadata. Keep the current
+    // page and TileRenderer state alive instead of rebuilding the whole view.
+    if (changes.pageRailChanged) this.renderPageRail();
+    if (changes.currentPageChanged || changes.currentPaperChanged || changes.dimensionsChanged) {
+      this.renderPage();
+    } else {
+      if (changes.pageRailChanged) this.updatePageStatus();
+      if (changes.currentInkChanged) this.drawStrokes(this.currentPage().strokes);
+    }
   }
 
   private receiveMergedNotebook(notebook: InkNotebook): void {
@@ -865,7 +955,7 @@ export class InkView extends FileView {
       ? mergeNotebooks(this.pendingMergedNotebook, notebook)
       : notebook;
     // Reads and saves can finish after the next pointerdown. Apply only between strokes.
-    if (this.activePointerId === null) this.applyPendingMergedNotebook();
+    if (this.activePointerId === null && this.pendingInkStrokes.length === 0) this.applyPendingMergedNotebook();
   }
 
   private onLostPointerCapture(event: PointerEvent): void {
@@ -1292,7 +1382,7 @@ export class InkView extends FileView {
     this.saveTimer = window.setTimeout(() => {
       this.saveTimer = undefined;
       void this.save();
-    }, 250);
+    }, SAVE_IDLE_DELAY);
   }
 
   private async save(file = this.file): Promise<void> {
@@ -1370,6 +1460,7 @@ export class InkView extends FileView {
   }
 
   private afterCommand(): void {
+    this.discardPendingInkPreview();
     this.clearSelection();
     this.updateHistoryButtons();
     this.renderAll();
@@ -1504,7 +1595,7 @@ export class InkView extends FileView {
     page.updatedAt = now;
     this.notebook.updatedAt = now;
     this.dirtyRevision += 1;
-    if (syncTiles && page === this.currentPage()) this.tiles?.sync(page.strokes);
+    if (syncTiles && page === this.currentPage()) this.tiles?.sync(page.strokes, this.tileExclusion());
   }
 
   private selectedStrokes(): InkStroke[] {
@@ -1526,6 +1617,10 @@ export class InkView extends FileView {
   }
 
   private resetInteraction(): void {
+    this.committingInkStrokes = null;
+    this.pendingInkStrokes = [];
+    this.pendingInkPageId = null;
+    this.tiles?.cancelInkCommit();
     if (this.previewCanvas) this.previewCanvas.width = this.previewCanvas.height = 1;
     this.touchGesture = null;
     this.pendingMergedNotebook = null;
@@ -1755,6 +1850,102 @@ function boundsForPointSets(pointSets: InkPoint[][]): { minX: number; minY: numb
 
 function notebooksEqual(left: InkNotebook, right: InkNotebook): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function reconcileNotebook(target: InkNotebook, incoming: InkNotebook, selectedPageId: string,
+  previousPageIndex: number): NotebookReconciliation {
+  const dimensionsChanged = target.pageWidth !== incoming.pageWidth || target.pageHeight !== incoming.pageHeight;
+  const previousPages = target.pages;
+  const previousById = new Map(previousPages.map((page) => [page.id, page]));
+  const pageChanges = new Map<string, { ink: boolean; paper: boolean; rail: boolean }>();
+
+  const pages = incoming.pages.map((incomingPage) => {
+    const page = previousById.get(incomingPage.id);
+    if (!page) {
+      pageChanges.set(incomingPage.id, { ink: true, paper: true, rail: true });
+      return incomingPage;
+    }
+
+    const paperChanged = page.paper !== incomingPage.paper;
+    const railChanged = page.title !== incomingPage.title || paperChanged;
+    const inkChanged = reconcilePage(page, incomingPage);
+    pageChanges.set(page.id, { ink: inkChanged, paper: paperChanged, rail: railChanged });
+    return page;
+  });
+
+  const pageListChanged = previousPages.length !== pages.length
+    || previousPages.some((page, index) => page.id !== pages[index]?.id);
+  const selectedIndex = pages.findIndex((page) => page.id === selectedPageId);
+  const pageIndex = selectedIndex >= 0 ? selectedIndex : Math.min(previousPageIndex, pages.length - 1);
+  const currentPage = pages[pageIndex];
+  const currentPageChanged = currentPage.id !== selectedPageId;
+  const currentChanges = pageChanges.get(currentPage.id);
+
+  target.schema = incoming.schema;
+  target.title = incoming.title;
+  target.pageWidth = incoming.pageWidth;
+  target.pageHeight = incoming.pageHeight;
+  target.pages = pageListChanged ? pages : previousPages;
+  target.pageOrder = arraysEqual(target.pageOrder, incoming.pageOrder) ? target.pageOrder : [...incoming.pageOrder];
+  target.deletedPages = recordsEqual(target.deletedPages, incoming.deletedPages)
+    ? target.deletedPages : { ...incoming.deletedPages };
+  target.pageOrderUpdatedAt = incoming.pageOrderUpdatedAt;
+  target.updatedAt = incoming.updatedAt;
+
+  return {
+    pageIndex,
+    pageRailChanged: pageListChanged || [...pageChanges.values()].some((change) => change.rail),
+    currentPageChanged,
+    currentInkChanged: currentPageChanged || currentChanges?.ink === true,
+    currentPaperChanged: !currentPageChanged && currentChanges?.paper === true,
+    dimensionsChanged,
+  };
+}
+
+function reconcilePage(target: InkPage, incoming: InkPage): boolean {
+  const previousStrokes = target.strokes;
+  const previousById = new Map(previousStrokes.map((stroke) => [stroke.id, stroke]));
+  const strokes = incoming.strokes.map((incomingStroke) => {
+    const stroke = previousById.get(incomingStroke.id);
+    if (!stroke || !strokeAppearanceEqual(stroke, incomingStroke)) return incomingStroke;
+    // updatedAt participates in conflict resolution but not in rendering.
+    stroke.updatedAt = incomingStroke.updatedAt;
+    return stroke;
+  });
+  const inkChanged = previousStrokes.length !== strokes.length
+    || previousStrokes.some((stroke, index) => stroke !== strokes[index]);
+
+  target.title = incoming.title;
+  target.paper = incoming.paper;
+  if (inkChanged) target.strokes = strokes;
+  target.deletedStrokeIds = arraysEqual(target.deletedStrokeIds, incoming.deletedStrokeIds)
+    ? target.deletedStrokeIds : [...incoming.deletedStrokeIds];
+  target.createdAt = incoming.createdAt;
+  target.updatedAt = incoming.updatedAt;
+  return inkChanged;
+}
+
+function strokeAppearanceEqual(left: InkStroke, right: InkStroke): boolean {
+  if (left.id !== right.id || left.pageId !== right.pageId || left.tool !== right.tool
+    || left.color !== right.color || left.width !== right.width || left.opacity !== right.opacity
+    || left.createdAt !== right.createdAt || left.points.length !== right.points.length) return false;
+  for (let index = 0; index < left.points.length; index++) {
+    const a = left.points[index];
+    const b = right.points[index];
+    if (a.x !== b.x || a.y !== b.y || a.pressure !== b.pressure || a.t !== b.t
+      || a.tiltX !== b.tiltX || a.tiltY !== b.tiltY) return false;
+  }
+  return true;
+}
+
+function arraysEqual<T>(left: readonly T[], right: readonly T[]): boolean {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+
+function recordsEqual(left: Record<string, number>, right: Record<string, number>): boolean {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return leftKeys.length === rightKeys.length && leftKeys.every((key) => left[key] === right[key]);
 }
 
 function pointInPolygon(point: InkPoint, polygon: InkPoint[]): boolean {

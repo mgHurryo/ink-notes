@@ -3,20 +3,24 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 vi.mock("obsidian", () => ({ FileView: class {}, Scope: class {}, TFile: class {} }));
 vi.mock("../src/rendering", () => ({ canvasResolution: vi.fn(), drawInkStroke: vi.fn() }));
 import { InkView } from "../src/view";
-import { drawInkStroke } from "../src/rendering";
+import { canvasResolution, drawInkStroke } from "../src/rendering";
 
 // Exercise rendering coordination without needing an Obsidian workspace.
 function view(): any {
   const v = Object.create(InkView.prototype);
+  const page = { id: "page", strokes: [] };
   Object.assign(v, {
     root: { querySelector: vi.fn(() => null) },
     ctx: {}, previewCtx: { clearRect: vi.fn() }, previewCanvas: {
       width: 800, height: 1000, classList: { toggle: vi.fn(), remove: vi.fn() },
     },
+    pendingInkStrokes: [], committingInkStrokes: null, pendingInkPageId: null,
+    activePointerId: null, pendingMergedNotebook: null, externalRefreshPending: false, viewReady: true,
     canvasLogicalWidth: 800, canvasLogicalHeight: 1000, renderFrame: null, resizeRequested: false,
-    currentPage: () => ({ strokes: [] }),
+    currentPage: () => page,
     viewport: { x: 0, y: 0, width: 800, height: 1000 }, zoom: 1,
-    tiles: { sync: vi.fn(), update: vi.fn(), flushVisible: vi.fn(), commitInteractive: vi.fn() },
+    tiles: { sync: vi.fn(), update: vi.fn(), flushVisible: vi.fn(), commitInteractive: vi.fn(), commitInk: vi.fn(),
+      pauseInkCommit: vi.fn(), resumeInkCommit: vi.fn(), cancelInkCommit: vi.fn() },
   });
   return v;
 }
@@ -40,15 +44,23 @@ it("coalesces samples into one preview draw without repainting completed strokes
   expect(drawInkStroke).toHaveBeenCalledWith(v.previewCtx, v.activeStroke, 800, 1000);
 });
 
-it("commits visible tiles atomically before releasing the pen preview bitmap", () => {
+it("keeps a finished pen visible while tiles commit asynchronously", () => {
   const v = view();
-  v.activeStroke = { tool: "pen" };
+  const stroke = { id: "pen", tool: "pen" };
+  v.activeStroke = stroke;
   v.commitPreview();
-  expect(v.tiles.sync).toHaveBeenCalledOnce();
-  expect(v.tiles.commitInteractive).toHaveBeenCalledWith(v.viewport, 1);
-  expect(drawInkStroke).not.toHaveBeenCalled();
-  expect(v.previewCanvas.width).toBe(1);
-  expect(v.previewCanvas.height).toBe(1);
+  expect(v.pendingInkStrokes).toEqual([stroke]);
+  expect(v.tiles.commitInteractive).not.toHaveBeenCalled();
+  expect(v.previewCanvas.width).toBe(800);
+  let complete!: (committed: boolean) => void;
+  v.activeStroke = null;
+  v.tiles.commitInk.mockImplementation((_strokes: unknown, _viewport: unknown, _density: unknown, callback: typeof complete) => { complete = callback; });
+  v.startPendingInkCommit(v.currentPage());
+  expect(v.tiles.commitInk).toHaveBeenCalledWith([stroke], v.viewport, 1, expect.any(Function));
+  expect(v.pendingInkStrokes).toEqual([stroke]);
+  complete(true);
+  expect(v.pendingInkStrokes).toEqual([]);
+  expect(v.previewCtx.clearRect).toHaveBeenCalled();
 });
 
 it("keeps a long highlighter stroke on the immediate preview layer", () => {
@@ -64,15 +76,29 @@ it("keeps a long highlighter stroke on the immediate preview layer", () => {
   expect(v.previewCanvas.classList.toggle).toHaveBeenCalledWith("is-highlighter-preview", true);
 });
 
-it("commits a highlighter atomically before clearing its preview", () => {
+it("keeps a finished highlighter in the pending preview", () => {
   const v = view();
-  v.activeStroke = { tool: "highlighter" };
+  const stroke = { id: "marker", tool: "highlighter" };
+  v.activeStroke = stroke;
   v.commitPreview();
-  expect(v.tiles.sync).toHaveBeenCalledOnce();
-  expect(v.tiles.commitInteractive).toHaveBeenCalledWith(v.viewport, 1);
-  expect(v.previewCanvas.width).toBe(1);
-  expect(v.previewCanvas.height).toBe(1);
-  expect(v.previewCanvas.classList.remove).toHaveBeenCalledWith("is-highlighter-preview");
+  v.activeStroke = null;
+  v.drawPreview();
+  expect(v.pendingInkStrokes).toEqual([stroke]);
+  expect(drawInkStroke).toHaveBeenCalledWith(v.previewCtx, stroke, 800, 1000);
+  expect(v.previewCanvas.classList.toggle).toHaveBeenCalledWith("is-highlighter-preview", true);
+  expect(v.tiles.commitInteractive).not.toHaveBeenCalled();
+});
+
+it("allocates overlays with the mobile high-density pixel budget", () => {
+  const v = view();
+  const canvas = { width: 1, height: 1, style: {} };
+  const ctx = { setTransform: vi.fn() };
+  v.previewCanvas = canvas;
+  v.previewCtx = ctx;
+  vi.mocked(canvasResolution).mockReturnValue({ width: 1600, height: 2000 });
+  v.resizePreview();
+  expect(canvasResolution).toHaveBeenCalledWith(800, 1000, 1, 1, 12_000_000);
+  expect(canvas).toMatchObject({ width: 1600, height: 2000 });
 });
 
 it("commits eraser changes as a coherent fallback frame", () => {
