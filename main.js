@@ -851,9 +851,9 @@ var InkView = class extends import_obsidian.FileView {
     this.root.addClass("ink-notes-view");
     this.root.addClass("ink-rail-hidden");
     this.root.setAttribute("aria-label", "Ink Notes");
-    this.root.createDiv({ cls: "ink-document-bar" });
     this.root.createDiv({ cls: "ink-toolbar", attr: { role: "toolbar", "aria-label": "Ink tools" } });
-    this.root.createDiv({ cls: "ink-brush-bar" });
+    this.root.createDiv({ cls: "ink-tool-popover-host" });
+    this.root.createSpan({ cls: "ink-page-status", attr: { "aria-live": "polite" } });
     this.renderToolbar();
     this.renderCanvas();
     this.viewReady = true;
@@ -904,12 +904,6 @@ var InkView = class extends import_obsidian.FileView {
     this.receiveMergedNotebook(latest);
   }
   renderToolbar() {
-    const documentBar = this.root.querySelector(".ink-document-bar");
-    documentBar.empty();
-    (0, import_obsidian.setIcon)(documentBar.createSpan({ cls: "ink-brand", attr: { "aria-label": "Ink Notes" } }), "notebook-pen");
-    const tab = documentBar.createDiv({ cls: "ink-document-tab" });
-    tab.createSpan({ cls: "ink-document-title", text: this.getDisplayText() });
-    documentBar.createSpan({ cls: "ink-current-page-title", text: this.currentPage().title });
     const toolbar = this.root.querySelector(".ink-toolbar");
     toolbar.empty();
     const group = toolbar;
@@ -931,14 +925,13 @@ var InkView = class extends import_obsidian.FileView {
     this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
     const pages = this.addToolbarSection(group, "Document");
     this.addIconButton(pages, "more-horizontal", "Page options", (event) => this.openPageMenu(event));
-    this.renderBrushBar();
+    this.renderToolPopover();
     this.updateToolButtons();
   }
-  renderBrushBar() {
-    const bar = this.root.querySelector(".ink-brush-bar");
-    bar.empty();
-    const brush = bar.createDiv({ cls: "ink-brush-palette", attr: { role: "group", "aria-label": "Brush settings" } });
-    this.addSizePopover(brush);
+  renderToolPopover() {
+    const host = this.root.querySelector(".ink-tool-popover-host");
+    host.empty();
+    this.addSizePopover(host);
   }
   addSizePopover(parent) {
     const container = parent.createDiv({ cls: "ink-size-popover-control" });
@@ -1105,13 +1098,6 @@ var InkView = class extends import_obsidian.FileView {
     this.lassoCanvas.style.display = "none";
     this.lassoCanvas.style.pointerEvents = "none";
     this.lassoCtx = this.lassoCanvas.getContext("2d");
-    const footer = this.root.createDiv({ cls: "ink-statusbar" });
-    footer.createSpan({ cls: "ink-page-status", attr: { "aria-live": "polite" } });
-    const zoom = footer.createDiv({ cls: "ink-zoom-controls", attr: { role: "group", "aria-label": "Zoom" } });
-    this.addIconButton(zoom, "minus", "Zoom out", () => this.setZoom(this.zoom - 0.1));
-    const reset = zoom.createEl("button", { cls: "ink-zoom-value", text: "100%", attr: { type: "button", title: "Reset zoom", "aria-label": "Reset zoom" } });
-    reset.addEventListener("click", () => this.setZoom(1));
-    this.addIconButton(zoom, "plus", "Zoom in", () => this.setZoom(this.zoom + 0.1));
     this.previewCanvas = this.pageElement.createEl("canvas", { cls: "ink-canvas ink-preview-canvas" });
     this.previewCanvas.style.pointerEvents = "none";
     this.previewCtx = this.previewCanvas.getContext("2d");
@@ -1145,6 +1131,11 @@ var InkView = class extends import_obsidian.FileView {
     if (!rail) return;
     rail.empty();
     rail.createDiv({ cls: "ink-rail-heading", text: "Pages" });
+    const actions = rail.createDiv({ cls: "ink-rail-actions", attr: { role: "group", "aria-label": "Current page actions" } });
+    this.addIconButton(actions, "chevron-up", "Move current page up", () => this.moveCurrentPage(-1), this.pageIndex === 0);
+    this.addIconButton(actions, "chevron-down", "Move current page down", () => this.moveCurrentPage(1), this.pageIndex === this.notebook.pages.length - 1);
+    this.addIconButton(actions, "copy", "Duplicate current page", () => this.duplicateCurrentPage());
+    this.addIconButton(actions, "trash-2", "Delete current page", () => this.deleteCurrentPage(), this.notebook.pages.length <= 1);
     this.notebook.pages.forEach((page, index) => {
       const button = rail.createEl("button", { cls: "ink-page-thumb", attr: { type: "button", title: page.title } });
       if (index === this.pageIndex) button.addClass("is-active");
@@ -1165,8 +1156,6 @@ var InkView = class extends import_obsidian.FileView {
   renderPage() {
     if (!this.viewReady || this.notebook.pages.length === 0) return;
     const page = this.currentPage();
-    this.root.querySelector(".ink-document-title").textContent = this.getDisplayText();
-    this.root.querySelector(".ink-current-page-title").textContent = page.title;
     this.root.querySelector(".ink-page-status").textContent = this.pageIndex + 1 + " / " + this.notebook.pages.length;
     this.pageElement.className = `ink-page ink-paper-${page.paper}`;
     this.pageElement.style.aspectRatio = `${this.notebook.pageWidth} / ${this.notebook.pageHeight}`;
@@ -1987,7 +1976,11 @@ page: ${this.currentPage().id}
     if (!file) return;
     if (this.activeSave) {
       this.saveRequested = true;
-      await this.activeSave;
+      try {
+        await this.activeSave;
+      } catch (error) {
+        this.reportSaveFailure(file, error);
+      }
       return;
     }
     const saving = this.performSave(file);
@@ -1995,9 +1988,12 @@ page: ${this.currentPage().id}
     try {
       await saving;
     } catch (error) {
-      new import_obsidian.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
+      this.reportSaveFailure(file, error);
     }
     if (this.activeSave === saving) this.activeSave = null;
+  }
+  reportSaveFailure(file, error) {
+    new import_obsidian.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
   }
   async performSave(file) {
     this.syncing = true;

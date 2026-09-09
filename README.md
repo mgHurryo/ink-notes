@@ -11,7 +11,7 @@ Ink Notes is a cross-platform handwritten notebook plugin for Obsidian. It store
 - Paper templates, a collapsible page rail, page creation, duplication, deletion, reordering, rename, and zoom.
 - Undo and redo for drawing, erasing, lasso moves, and page operations.
 - Lasso selection and constrained on-page stroke movement.
-- Compact 56px responsive toolbar with tool settings in an accessible popover.
+- A single compact 56px responsive toolbar with tool settings in an accessible popover and no duplicate offscreen controls.
 - Atomic Vault writes with stroke and page tombstones so deleted content stays deleted during cross-device merges.
 - Read-only Markdown `ink` code-block embeds with optional page targeting.
 - No native dependency, so the plugin is packaged once for all Obsidian platforms.

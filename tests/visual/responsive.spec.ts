@@ -82,10 +82,15 @@ for (const viewport of viewports) {
     const ink = await inkPixels();
     expect(ink.count).toBeGreaterThan(0);
     expect(ink.blue).toBeGreaterThan(0);
-    await expect(page.locator(".ink-notes-view")).toHaveScreenshot(`editor-${viewport.width}.png`, {
-      animations: "disabled",
-      maxDiffPixelRatio: 0.01,
-    });
+    for (const [theme, variables] of Object.entries(themes)) {
+      await page.evaluate((values) => {
+        for (const [property, value] of Object.entries(values)) document.documentElement.style.setProperty(property, value);
+      }, variables);
+      await expect(page.locator(".ink-notes-view")).toHaveScreenshot(`editor-${viewport.width}-${theme}.png`, {
+        animations: "disabled",
+        maxDiffPixelRatio: 0.01,
+      });
+    }
   });
 }
 
@@ -103,10 +108,23 @@ test("page rail and brush popover are keyboard dismissible", async ({ page }) =>
   expect(layout.railRight).toBeLessThanOrEqual(layout.scrollerLeft + 1);
   expect(layout.paperLeft).toBeGreaterThanOrEqual(layout.scrollerLeft);
   expect(layout.paperRight).toBeLessThanOrEqual(layout.scrollerRight + 1);
+  for (const label of ["Move current page up", "Move current page down", "Duplicate current page", "Delete current page"]) {
+    const action = page.getByRole("button", { name: label, exact: true });
+    await expect(action).toBeVisible();
+    const actionBox = await action.boundingBox();
+    expect(actionBox?.width).toBeGreaterThanOrEqual(44);
+    expect(actionBox?.height).toBeGreaterThanOrEqual(44);
+  }
+  await expect(page.locator(".ink-notes-view")).toHaveScreenshot("page-rail-360.png", {
+    animations: "disabled", maxDiffPixelRatio: 0.01,
+  });
   await page.getByRole("button", { name: "Pen", exact: true }).click();
   const popover = page.getByRole("dialog", { name: "Tool settings" });
   await expect(popover).toBeVisible();
   await expect(page.getByRole("slider", { name: "Brush size", exact: true })).toBeFocused();
+  await expect(page.locator(".ink-notes-view")).toHaveScreenshot("tool-popover-360.png", {
+    animations: "disabled", maxDiffPixelRatio: 0.01,
+  });
   await page.keyboard.press("Escape");
   await expect(popover).toBeHidden();
   await expect(page.getByRole("button", { name: "Pen", exact: true })).toBeFocused();
@@ -223,4 +241,26 @@ test("a long highlighter stroke stays complete before pointerup", async ({ page 
     }
     return yellow;
   })).toBeGreaterThan(0);
+});
+
+test("Markdown ink embed renders a targeted read-only page preview", async ({ page }) => {
+  await page.goto("/");
+  const embed = page.locator(".preview-embed-fixture");
+  await expect(embed.locator('canvas[aria-label="Ink preview: Page 1"]')).toHaveJSProperty("width", 1200);
+  await expect(embed.getByRole("button", { name: "Open Ink notebook" })).toHaveCount(1);
+  const pixels = await embed.locator("canvas").evaluate((canvas: HTMLCanvasElement) => {
+    const data = canvas.getContext("2d")?.getImageData(0, 0, canvas.width, canvas.height).data;
+    if (!data) return 0;
+    let count = 0;
+    for (let index = 3; index < data.length; index += 4) if (data[index] > 0) count++;
+    return count;
+  });
+  expect(pixels).toBeGreaterThan(0);
+  await embed.evaluate((element: HTMLElement) => {
+    element.style.cssText = "position:relative;left:0;top:0;width:320px;padding:12px;background:var(--background-primary)";
+  });
+  await expect(embed).toHaveScreenshot("markdown-embed.png", {
+    animations: "disabled",
+    maxDiffPixelRatio: 0.01,
+  });
 });

@@ -13,7 +13,7 @@
 - Add adjustable handwriting smoothing and lightweight corner-preserving stroke beautification.
 - Keep long highlighter strokes visible in a continuous live overlay, then atomically commit them to tiles on pointer-up.
 - Move lasso and eraser commits to coherent low-density fallback frames followed by background high-density refinement.
-- Replace the multi-row controls with a responsive 56px toolbar using Obsidian semantic theme variables.
+- Replace the multi-row controls with one responsive 56px toolbar using Obsidian semantic theme variables; remove legacy offscreen bars and focus targets.
 - Add deterministic unit, integration, and browser regressions for persistence, input, embeds, rendering, themes, and 360–1280px layouts.
 
 ## 0.1.0-beta.5 - 2026-09-08

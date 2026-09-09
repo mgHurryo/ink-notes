@@ -19,7 +19,7 @@ interface ViewInternals {
   drawStrokes: () => void;
   renderAll: () => void;
   updateHistoryButtons: () => void;
-  save(): Promise<void>;
+  save(file?: TFile): Promise<void>;
   addPage(): void;
   duplicateCurrentPage(): void;
   deleteCurrentPage(): void;
@@ -28,6 +28,7 @@ interface ViewInternals {
   redo(): void;
   dirtyRevision: number;
   savedRevision: number;
+  activeSave: Promise<void> | null;
   eraseAt(point: { x: number; y: number; pressure: number; t: number }, page?: InkNotebook["pages"][number], mode?: "stroke" | "circle" | "square", size?: number): boolean;
   finishLasso(page: InkNotebook["pages"][number]): void;
   state: { tool: string; smoothing: number; eraserMode: "stroke" | "circle" | "square"; eraserSize: number };
@@ -348,6 +349,23 @@ describe("consecutive handwriting input", () => {
       .toEqual([[0.1, 0.2], [0.3, 0.4, 0.5]]);
   });
 
+  it("serializes a revision added while a save is in flight", async () => {
+    const { internal, store } = setup();
+    internal.onPointerDown(pointer(10));
+    internal.onPointerUp(pointer(20));
+    const first = deferred<InkNotebook>();
+    store.save.mockReturnValueOnce(first.promise).mockImplementation(async (_file, notebook) => notebook);
+    const initialSave = internal.save();
+    internal.onPointerDown(pointer(30));
+    internal.onPointerUp(pointer(40));
+    const concurrentWaiter = internal.save();
+    first.resolve(structuredClone(internal.notebook));
+    await Promise.all([initialSave, concurrentWaiter]);
+    expect(store.save).toHaveBeenCalledTimes(2);
+    expect(internal.savedRevision).toBe(internal.dirtyRevision);
+    expect((store.save.mock.calls[1][1] as InkNotebook).pages[0].strokes).toHaveLength(2);
+  });
+
   it("keeps dirty revision retryable after a handled save failure", async () => {
     const { internal, store } = setup();
     internal.onPointerDown(pointer(10));
@@ -358,6 +376,14 @@ describe("consecutive handwriting input", () => {
     store.save.mockImplementation(async (_file, notebook) => notebook);
     await expect(internal.save()).resolves.toBeUndefined();
     expect(internal.savedRevision).toBe(internal.dirtyRevision);
+  });
+
+  it("settles a concurrent lifecycle flush when the active save rejects unexpectedly", async () => {
+    const { internal, view } = setup();
+    const failure = Promise.reject(new Error("unexpected writer failure"));
+    internal.activeSave = failure;
+    await expect(internal.save(view.file!)).resolves.toBeUndefined();
+    internal.activeSave = null;
   });
 
   it("commits an active stroke before unloading and includes it in the save snapshot", async () => {

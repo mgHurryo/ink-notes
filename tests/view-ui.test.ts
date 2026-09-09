@@ -41,6 +41,15 @@ describe("reference-style editor", () => {
     expect(document.querySelector(".ink-workspace > .ink-page-rail")).not.toBeNull();
     button("1: Page 1").click();
     expect(document.querySelector(".ink-page-status")?.textContent).toBe("1 / 2");
+    expect(button("Move current page up").disabled).toBe(true);
+    expect(button("Move current page down").disabled).toBe(false);
+    expect(button("Delete current page").disabled).toBe(false);
+    button("Duplicate current page").click();
+    expect(document.querySelector(".ink-page-status")?.textContent).toBe("2 / 3");
+    button("Move current page down").click();
+    expect(document.querySelector(".ink-page-status")?.textContent).toBe("3 / 3");
+    button("Delete current page").click();
+    expect(document.querySelector(".ink-page-status")?.textContent).toBe("2 / 2");
   });
   it("synchronizes preset, slider and custom-color selection", () => {
     button("8 px").click();
@@ -110,15 +119,13 @@ describe("reference-style editor", () => {
     paper.dispatchEvent(new MouseEvent("pointerleave", { bubbles: false }));
     expect(cursor.classList.contains("is-visible")).toBe(false);
   });
-  it("clamps zoom and resets the readout", () => {
-    for (let i = 0; i < 40; i++) button("Zoom in").click();
-    expect(button("Reset zoom").textContent).toBe("300%");
-    expect(button("Zoom in").disabled).toBe(true);
-    button("Reset zoom").click();
-    expect(button("Reset zoom").textContent).toBe("100%");
-  });
-  it("refreshes document title after loading a file", async () => {
+  it("removes legacy chrome and offscreen focus targets", async () => {
     await view.onLoadFile({} as never);
-    expect(document.querySelector(".ink-document-title")?.textContent).toBe("Loaded notebook");
+    expect(view.getDisplayText()).toBe("Loaded notebook");
+    expect(document.querySelector(".ink-document-bar, .ink-brush-bar, .ink-statusbar")).toBeNull();
+    expect(button("Zoom in")).toBeNull();
+    expect(button("Zoom out")).toBeNull();
+    expect(button("Reset zoom")).toBeNull();
+    expect(document.querySelector(".ink-tool-popover-host .ink-size-popover")).not.toBeNull();
   });
 });

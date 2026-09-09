@@ -23,12 +23,6 @@
   letter-spacing: 0;
 }
 .ink-notes-view *, .ink-notes-view *::before, .ink-notes-view *::after { box-sizing: border-box; }
-.ink-document-bar { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-.ink-brand { display: grid; place-items: center; width: 36px; height: 44px; flex-shrink: 0; color: var(--ink-muted); }
-.ink-brand svg { width: 23px; height: 23px; }
-.ink-document-tab { display: flex; align-items: center; gap: 16px; width: min(46%, 420px); min-width: 140px; height: 45px; padding-left: 18px; border-radius: 8px 8px 0 0; background: var(--ink-blue); }
-.ink-document-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; font-weight: 500; }
-.ink-current-page-title { margin: 0 0 16px auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink-muted); font-size: 12px; }
 .ink-toolbar { display: flex; align-items: center; justify-content: center; gap: 4px; flex: 0 0 56px; height: 56px; min-height: 56px; padding: 6px 8px; background: var(--ink-blue); border-bottom: 1px solid var(--ink-border); }
 .ink-toolbar-section { display: flex; min-width: 0; align-items: center; }
 .ink-toolbar-section-controls { display: flex; align-items: center; gap: 6px; }
@@ -44,11 +38,9 @@
 .ink-toolbar .ink-tool-button.is-active { background: var(--interactive-accent, #39889b); color: var(--text-on-accent, #fff); }
 .ink-toolbar .ink-tool-button.is-active:hover { background: var(--interactive-accent, #39889b); }
 .ink-toolbar .ink-icon-button[aria-pressed="true"] { background: var(--background-modifier-hover, rgb(255 255 255 / 15%)); }
-.ink-brush-bar { position: absolute; width: 0; height: 0; overflow: visible; }
 .ink-toolbar-section-history { justify-self: start; padding: 3px; border: 1px solid var(--ink-border); border-radius: 8px; background: var(--ink-panel); }
 .ink-toolbar-section-history .ink-toolbar-section-controls { gap: 0; }
-.ink-brush-palette { width: 0; height: 0; }
-.ink-brush-palette .ink-tool-button.is-active { color: #fff; background: var(--ink-accent); }
+.ink-tool-popover-host { position: absolute; width: 0; height: 0; overflow: visible; }
 .ink-toolbar-section-tips { border-right: 1px solid var(--ink-border); padding-right: 10px; }
 .ink-toolbar-section-widths .ink-toolbar-section-controls { gap: 0; }
 .ink-width-line { width: 21px; border-radius: 4px; background: var(--text-normal, #eef0f2); }
@@ -104,16 +96,14 @@
 .ink-page-rail { width: 148px; flex: 0 0 148px; padding: 16px; overflow-y: auto; border-right: 1px solid var(--ink-border); background: var(--background-secondary); }
 .ink-rail-hidden .ink-page-rail { display: none; }
 .ink-rail-heading { margin-bottom: 18px; color: var(--ink-muted); font-size: 12px; }
+.ink-rail-actions { display: grid; grid-template-columns: repeat(2, 44px); gap: 4px; margin: -8px 0 16px; }
+.ink-rail-actions .ink-icon-button { width: 44px; height: 44px; min-height: 44px; padding: 0; border: 1px solid var(--ink-border); border-radius: 8px; color: var(--ink-text); background: transparent; }
 .ink-notes-view .ink-page-thumb { position: relative; display: block; width: 100%; height: auto; aspect-ratio: .73; margin: 0 0 34px; padding: 0; border: 2px solid transparent; border-radius: 3px; background: #fff; box-shadow: 0 2px 5px rgb(0 0 0 / 15%); }
 .ink-page-thumb.is-active { border-color: var(--interactive-accent, #7fb8e0); outline: 2px solid var(--interactive-accent, #7fb8e0); outline-offset: 3px; }
 .ink-page-thumb-paper { position: absolute; inset: 0; }
 .ink-page-thumb-number { position: absolute; bottom: 5px; right: 7px; color: #555; font-size: 11px; }
 .ink-page-thumb-title { position: absolute; top: calc(100% + 10px); left: 0; width: 100%; color: var(--ink-muted); font-size: 11px; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
-.ink-statusbar { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
-.ink-zoom-controls { display: flex; align-items: center; }
-.ink-statusbar .ink-icon-button { width: 36px; height: 36px; min-height: 36px; flex-basis: 36px; }
-.ink-statusbar .ink-button-icon svg { width: 16px; height: 16px; }
-.ink-notes-view .ink-zoom-value { min-width: 52px; height: 32px; padding: 0 4px; color: var(--ink-muted); background: transparent; border: 0; font-size: 11px; }
+.ink-page-status { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 @container ink-editor (max-width: 1000px) {
   .ink-toolbar-section-controls { gap: 2px; }
 }
@@ -121,7 +111,7 @@
   .ink-toolbar { padding-inline: 4px; gap: 0; }
   .ink-toolbar-section-controls { gap: 0; }
   .ink-page-scroller { padding-inline: 12px; }
-  .ink-page-rail { flex-basis: 108px; width: 108px; padding: 12px; }
+  .ink-page-rail { flex-basis: 120px; width: 120px; padding: 12px; }
 }
 @container ink-editor (max-width: 390px) {
   .ink-toolbar { overflow: hidden; gap: 0; padding-inline: 0; }
