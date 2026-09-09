@@ -12,6 +12,13 @@ function file(path: string): TFile {
   return Object.assign(new TFile(), { path, extension: "ink" });
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((done, fail) => { resolve = done; reject = fail; });
+  return { promise, resolve, reject };
+}
+
 describe("ink embed rendering", () => {
   beforeEach(() => {
     document.body.innerHTML = "";
@@ -75,5 +82,47 @@ describe("ink embed rendering", () => {
     const invalid = document.body.createDiv();
     processor("Other/Book.ink", invalid, { addChild: vi.fn() } as never);
     expect(invalid.querySelector(".ink-embed-error")?.textContent).toContain("inside Ink Notes/");
+  });
+
+  it("ignores a stale failed refresh after a newer preview succeeds", async () => {
+    const target = file("Ink Notes/Book.ink");
+    const first = deferred<string>();
+    const second = deferred<string>();
+    let modify: ((changed: TFile) => void) | undefined;
+    const vault = {
+      getAbstractFileByPath: vi.fn(() => target),
+      cachedRead: vi.fn().mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise),
+      on: vi.fn((_name: string, handler: (changed: TFile) => void) => { modify = handler; return {}; }),
+    };
+    const el = document.body.createDiv();
+    createInkEmbedProcessor({ vault } as never, vi.fn())("Ink Notes/Book.ink", el, { addChild: (child: { onload(): void }) => child.onload() } as never);
+    modify?.(target);
+    const notebook = createNotebook("Newest");
+    notebook.pages[0].title = "Newest page";
+    second.resolve(JSON.stringify(notebook));
+    await vi.waitFor(() => expect(el.querySelector('canvas[aria-label="Ink preview: Newest page"]')).not.toBeNull());
+    first.reject(new Error("stale read failed"));
+    await Promise.resolve();
+    expect(el.querySelector(".ink-embed-error")).toBeNull();
+    expect(el.querySelector('canvas[aria-label="Ink preview: Newest page"]')).not.toBeNull();
+  });
+
+  it("does not update the container after the preview component unloads", async () => {
+    const target = file("Ink Notes/Book.ink");
+    const read = deferred<string>();
+    const vault = {
+      getAbstractFileByPath: vi.fn(() => target),
+      cachedRead: vi.fn(() => read.promise),
+      on: vi.fn(() => ({})),
+    };
+    let child: { onload(): void; onunload(): void } | undefined;
+    const el = document.body.createDiv();
+    createInkEmbedProcessor({ vault } as never, vi.fn())("Ink Notes/Book.ink", el, { addChild: (next: typeof child) => { child = next; next?.onload(); } } as never);
+    child?.onunload();
+    read.resolve(JSON.stringify(createNotebook("Late")));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(el.querySelector("canvas")).toBeNull();
+    expect(el.querySelector(".ink-embed-error")).toBeNull();
   });
 });

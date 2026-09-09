@@ -12,9 +12,9 @@ export default class InkNotesPlugin extends Plugin {
     this.store = new NotebookStore(this.app);
     this.registerView(VIEW_TYPE_INK, (leaf) => this.createView(leaf));
     this.registerExtensions([INK_EXTENSION], VIEW_TYPE_INK);
-    this.addRibbonIcon("pen-line", "Open Ink Notes", () => void this.openNotebook());
-    this.addCommand({ id: "open-ink-notebook", name: "Open Ink Notebook", callback: () => void this.openNotebook() });
-    this.addCommand({ id: "create-ink-notebook", name: "Create Ink Notebook", callback: () => void this.createNotebook() });
+    this.addRibbonIcon("pen-line", "Open Ink Notes", () => this.runAsync(this.openNotebook(), "open a notebook"));
+    this.addCommand({ id: "open-ink-notebook", name: "Open Ink Notebook", callback: () => this.runAsync(this.openNotebook(), "open a notebook") });
+    this.addCommand({ id: "create-ink-notebook", name: "Create Ink Notebook", callback: () => this.runAsync(this.createNotebook(), "create a notebook") });
     this.registerMarkdownCodeBlockProcessor("ink", createInkEmbedProcessor(this.app, (file, pageId) => this.openFile(file, pageId)));
     this.register(this.store.observe((file) => this.queueRefresh(file)));
     this.register(() => {
@@ -30,7 +30,7 @@ export default class InkNotesPlugin extends Plugin {
   private async openNotebook(): Promise<void> {
     const files = await this.store.list();
     if (files.length === 0) { await this.createNotebook(); return; }
-    new NotebookSuggestModal(this.app, files, (file) => void this.openFile(file)).open();
+    new NotebookSuggestModal(this.app, files, (file) => this.runAsync(this.openFile(file), `open ${file.path}`)).open();
   }
 
   private async createNotebook(): Promise<void> {
@@ -42,6 +42,10 @@ export default class InkNotesPlugin extends Plugin {
     const leaf = this.app.workspace.getLeaf(true);
     await leaf.openFile(file);
     if (pageId && leaf.view instanceof InkView) leaf.view.revealPage(pageId);
+  }
+
+  private runAsync(action: Promise<unknown>, operation: string): void {
+    void action.catch((error) => new Notice(`Ink Notes could not ${operation}: ${error instanceof Error ? error.message : String(error)}`));
   }
 
   private queueRefresh(file: TFile): void {

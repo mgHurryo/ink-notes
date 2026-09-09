@@ -30,7 +30,7 @@ interface ViewInternals {
   savedRevision: number;
   eraseAt(point: { x: number; y: number; pressure: number; t: number }, page?: InkNotebook["pages"][number], mode?: "stroke" | "circle" | "square", size?: number): boolean;
   finishLasso(page: InkNotebook["pages"][number]): void;
-  state: { tool: string; eraserMode: "stroke" | "circle" | "square"; eraserSize: number };
+  state: { tool: string; smoothing: number; eraserMode: "stroke" | "circle" | "square"; eraserSize: number };
 }
 
 function deferred<T>() {
@@ -132,6 +132,20 @@ describe("consecutive handwriting input", () => {
     internal.onPointerMove(pointer(20));
     internal.onPointerUp(pointer(30));
     expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2, 0.3]);
+  });
+
+  it("smooths a continuous tail while preserving a deliberate turn", () => {
+    const { internal } = setup();
+    internal.state.smoothing = 1;
+    internal.onPointerDown(pointer(10, { clientY: 20 }));
+    internal.onPointerMove(pointer(12, { clientY: 20 }));
+    internal.onPointerMove(pointer(14, { clientY: 20 }));
+    internal.onPointerMove(pointer(14, { clientY: 40 }));
+    internal.onPointerUp(pointer(14, { clientY: 50 }));
+    const points = internal.notebook.pages[0].strokes[0].points;
+    expect(points.length).toBeGreaterThan(2);
+    expect(points[points.length - 2].y).toBeLessThan(points[points.length - 1].y);
+    expect(points[points.length - 1].y).toBeCloseTo(0.5);
   });
 
   it("reads layout once for all coalesced samples in one pointer event", () => {

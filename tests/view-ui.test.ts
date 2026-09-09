@@ -56,6 +56,17 @@ describe("reference-style editor", () => {
     color.dispatchEvent(new Event("input"));
     expect(document.querySelector('.ink-color-swatch[aria-pressed="true"]')).toBeNull();
   });
+  it("exposes smoothing for pen tools without adding another persistent control", () => {
+    button("Pen").click();
+    const smoothing = document.querySelector<HTMLInputElement>('input[aria-label="Smoothing"]')!;
+    expect(smoothing).toBeTruthy();
+    expect(smoothing.value).toBe("0.7");
+    smoothing.value = "0.9";
+    smoothing.dispatchEvent(new Event("input"));
+    expect(document.querySelector(".ink-size-popover-header .ink-control-value")?.textContent).toBe("3 px");
+    button("Erase").click();
+    expect(smoothing.offsetParent).toBeNull();
+  });
   it("shows a reference cursor and only offers size for local erasers", () => {
     button("Erase").click();
     button("Erase").click();

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.2.0-beta.1 - 2026-09-09
+
+- Fail closed when a notebook on disk contains damaged JSON, and serialize saves by dirty revision without losing pending edits after an error.
+- Upgrade notebooks to schema 2 with deterministic page order and page-deletion tombstones while retaining schema 1 compatibility.
+- Lock pointer interactions to their starting page and tool, preserve final samples, and safely flush active input before close or file changes.
+- Replace periodic view polling with debounced, per-file Vault events and self-write suppression.
+- Add page duplication, deletion, reordering, history support, notebook search selection, and page-targeted Markdown `ink` embeds.
+- Add stroke, circular, and square erasers with local spatial queries, adjustable local size, and a high-contrast hover aiming reference.
+- Add adjustable handwriting smoothing and lightweight corner-preserving stroke beautification.
+- Keep long highlighter strokes visible in a continuous live overlay, then atomically commit them to tiles on pointer-up.
+- Move lasso and eraser commits to coherent low-density fallback frames followed by background high-density refinement.
+- Replace the multi-row controls with a responsive 56px toolbar using Obsidian semantic theme variables.
+- Add deterministic unit, integration, and browser regressions for persistence, input, embeds, rendering, themes, and 360–1280px layouts.
+
 ## 0.1.0-beta.5 - 2026-09-08
 
 - Ignore delayed capture-loss events from the previous stroke once the pen has been recaptured, so consecutive strokes are not cut short.

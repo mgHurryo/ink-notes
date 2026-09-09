@@ -59,6 +59,30 @@ describe("NotebookStore", () => {
     expect(changed).not.toHaveBeenCalled();
   });
 
+  it("does not retain self-write suppression after the Vault write fails", async () => {
+    vi.useFakeTimers();
+    const notebook = createNotebook();
+    let external = JSON.stringify(notebook);
+    let modify: ((file: TFile) => void) | undefined;
+    const file = Object.assign(new (await import("obsidian")).TFile(), { path: "Ink Notes/Failed.ink", extension: "ink" });
+    const vault = {
+      process: vi.fn(async (_file: TFile, update: (current: string) => string) => {
+        external = update(external);
+        throw new Error("disk full");
+      }),
+      cachedRead: vi.fn(async () => external),
+      on: vi.fn((_name: string, handler: (changed: TFile) => void) => { modify = handler; return {}; }),
+      offref: vi.fn(),
+    };
+    const store = new NotebookStore({ vault } as unknown as App);
+    const changed = vi.fn();
+    store.observe(changed);
+    await expect(store.save(file, notebook)).rejects.toThrow("disk full");
+    modify?.(file);
+    await vi.advanceTimersByTimeAsync(75);
+    expect(changed).toHaveBeenCalledOnce();
+  });
+
   it("debounces external changes for one ink file and ignores unrelated files", async () => {
     vi.useFakeTimers();
     let modify: ((file: TFile) => void) | undefined;

@@ -38,18 +38,24 @@ export class NotebookStore {
   async save(file: TFile, notebook: InkNotebook): Promise<InkNotebook> {
     const next = { ...notebook, updatedAt: Date.now() };
     let merged = next;
-    await this.vault.process(file, (raw) => {
-      let latest: InkNotebook;
-      try {
-        latest = normalizeNotebook(JSON.parse(raw));
-      } catch (error) {
-        throw new NotebookFormatError(`Cannot save ${file.path || "notebook"}: existing file is not valid JSON`);
-      }
-      merged = mergeNotebooks(latest, next);
-      const serialized = serialize(merged);
-      this.selfWrites.set(file.path, serialized);
-      return serialized;
-    });
+    let expectedWrite: string | null = null;
+    try {
+      await this.vault.process(file, (raw) => {
+        let latest: InkNotebook;
+        try {
+          latest = normalizeNotebook(JSON.parse(raw));
+        } catch (error) {
+          throw new NotebookFormatError(`Cannot save ${file.path || "notebook"}: existing file is not valid JSON`);
+        }
+        merged = mergeNotebooks(latest, next);
+        expectedWrite = serialize(merged);
+        this.selfWrites.set(file.path, expectedWrite);
+        return expectedWrite;
+      });
+    } catch (error) {
+      if (expectedWrite !== null && this.selfWrites.get(file.path) === expectedWrite) this.selfWrites.delete(file.path);
+      throw error;
+    }
     return merged;
   }
 

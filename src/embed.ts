@@ -1,4 +1,4 @@
-import { App, MarkdownPostProcessorContext, MarkdownRenderChild, TFile, setIcon } from "obsidian";
+import { App, MarkdownPostProcessorContext, MarkdownRenderChild, Notice, TFile, setIcon } from "obsidian";
 import { InkNotebook, InkPage, normalizeNotebook } from "./model";
 import { drawInkStroke } from "./rendering";
 import { InkEmbedSpec, parseInkEmbed } from "./embed-spec";
@@ -15,6 +15,7 @@ export function createInkEmbedProcessor(app: App, open: (file: TFile, pageId?: s
 
 class InkEmbedChild extends MarkdownRenderChild {
   private renderRevision = 0;
+  private unloaded = false;
   constructor(
     private readonly app: App,
     container: HTMLElement,
@@ -23,33 +24,55 @@ class InkEmbedChild extends MarkdownRenderChild {
   ) { super(container); }
 
   onload(): void {
+    this.unloaded = false;
     this.registerEvent(this.app.vault.on("modify", (file) => {
-      if (file instanceof TFile && file.path === this.spec.path) void this.render().catch((error) => renderError(this.containerEl, error));
+      if (file instanceof TFile && file.path === this.spec.path) this.requestRender();
     }));
-    void this.render().catch((error) => renderError(this.containerEl, error));
+    this.requestRender();
   }
 
-  private async render(): Promise<void> {
+  onunload(): void {
+    this.unloaded = true;
+    this.renderRevision += 1;
+  }
+
+  private requestRender(): void {
     const revision = ++this.renderRevision;
+    void this.render(revision).catch((error) => this.renderError(revision, error));
+  }
+
+  private async render(revision: number): Promise<void> {
     const el = this.containerEl;
-    el.empty();
     el.addClass("ink-embed");
     const file = this.app.vault.getAbstractFileByPath(this.spec.path);
-    if (!(file instanceof TFile)) { renderError(el, new Error(`Ink notebook not found: ${this.spec.path}`)); return; }
+    if (!(file instanceof TFile)) { this.renderError(revision, new Error(`Ink notebook not found: ${this.spec.path}`)); return; }
     let notebook: InkNotebook;
     try { notebook = normalizeNotebook(JSON.parse(await this.app.vault.cachedRead(file))); }
-    catch { renderError(el, new Error(`Ink notebook is damaged: ${this.spec.path}`)); return; }
-    if (revision !== this.renderRevision) return;
+    catch { this.renderError(revision, new Error(`Ink notebook is damaged: ${this.spec.path}`)); return; }
+    if (!this.isCurrent(revision)) return;
     const page = this.spec.pageId ? notebook.pages.find((candidate) => candidate.id === this.spec.pageId) : notebook.pages[0];
-    if (!page) { renderError(el, new Error(`Ink page not found: ${this.spec.pageId ?? "first page"}`)); return; }
-    const frame = el.createDiv({ cls: `ink-embed-page ink-paper-${page.paper}` });
+    if (!page) { this.renderError(revision, new Error(`Ink page not found: ${this.spec.pageId ?? "first page"}`)); return; }
+    const next = document.createElement("div");
+    const frame = next.createDiv({ cls: `ink-embed-page ink-paper-${page.paper}` });
     frame.style.aspectRatio = `${notebook.pageWidth} / ${notebook.pageHeight}`;
     const canvas = frame.createEl("canvas", { attr: { "aria-label": `Ink preview: ${page.title}` } });
     drawPage(canvas, notebook, page);
-    const button = el.createEl("button", { cls: "ink-embed-open", attr: { type: "button", "aria-label": "Open Ink notebook" } });
+    const button = next.createEl("button", { cls: "ink-embed-open", attr: { type: "button", "aria-label": "Open Ink notebook" } });
     setIcon(button, "external-link");
     button.createSpan({ text: "Open notebook" });
-    button.addEventListener("click", () => void this.open(file, page.id));
+    button.addEventListener("click", () => {
+      void this.open(file, page.id).catch((error) => new Notice(`Ink Notes could not open ${file.path}: ${error instanceof Error ? error.message : String(error)}`));
+    });
+    if (!this.isCurrent(revision)) return;
+    el.replaceChildren(...Array.from(next.childNodes));
+  }
+
+  private isCurrent(revision: number): boolean {
+    return !this.unloaded && revision === this.renderRevision;
+  }
+
+  private renderError(revision: number, error: unknown): void {
+    if (this.isCurrent(revision)) renderError(this.containerEl, error);
   }
 }
 

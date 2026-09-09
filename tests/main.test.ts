@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 const observe = vi.fn();
 const register = vi.fn();
 const registerMarkdown = vi.fn();
+const list = vi.fn();
+const notice = vi.fn();
 
 vi.mock("obsidian", () => ({
   Plugin: class {
@@ -11,14 +13,14 @@ vi.mock("obsidian", () => ({
     registerMarkdownCodeBlockProcessor = registerMarkdown;
     register = register;
   },
-  Notice: class {},
+  Notice: class { constructor(message: string) { notice(message); } },
   SuggestModal: class {},
   TFile: class {},
   WorkspaceLeaf: class {},
 }));
 vi.mock("../src/storage", () => ({
   INK_EXTENSION: "ink",
-  NotebookStore: class { observe = observe; },
+  NotebookStore: class { observe = observe; list = list; },
 }));
 vi.mock("../src/embed", () => ({ createInkEmbedProcessor: vi.fn(() => vi.fn()) }));
 vi.mock("../src/view", () => ({ VIEW_TYPE_INK: "ink-notes-view", InkView: class {} }));
@@ -27,7 +29,7 @@ import InkNotesPlugin from "../src/main";
 import { InkView } from "../src/view";
 
 describe("plugin event synchronization", () => {
-  beforeEach(() => { observe.mockReset(); register.mockReset(); registerMarkdown.mockReset(); });
+  beforeEach(() => { observe.mockReset(); register.mockReset(); registerMarkdown.mockReset(); list.mockReset(); notice.mockReset(); });
   it("registers markdown embeds and vault observation without polling", async () => {
     const dispose = vi.fn();
     observe.mockReturnValue(dispose);
@@ -39,6 +41,17 @@ describe("plugin event synchronization", () => {
     expect(register).toHaveBeenCalledWith(dispose);
     expect(interval).not.toHaveBeenCalled();
     interval.mockRestore();
+  });
+
+  it("reports command failures instead of leaving rejected promises unhandled", async () => {
+    observe.mockReturnValue(vi.fn());
+    list.mockRejectedValue(new Error("vault unavailable"));
+    const plugin = new InkNotesPlugin({} as never, {} as never);
+    await plugin.onload();
+    const addCommand = plugin.addCommand as unknown as ReturnType<typeof vi.fn>;
+    const command = addCommand.mock.calls.map(([value]) => value).find((value) => value.id === "open-ink-notebook");
+    command.callback();
+    await vi.waitFor(() => expect(notice).toHaveBeenCalledWith("Ink Notes could not open a notebook: vault unavailable"));
   });
 
   it("refreshes only the matching open notebook and coalesces in-flight changes", async () => {

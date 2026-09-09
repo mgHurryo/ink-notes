@@ -42,8 +42,8 @@ describe("tile spatial index", () => {
     a.updatedAt++; index.sync([a]);
     expect(index.revisions.get("0:0")).toBeGreaterThan(revision);
   });
-  it("excludes the live pen until committed", () => {
-    const index = new StrokeIndex(1000, 1000), a = stroke("a", 0.1, 0.1);
+  it.each(["pen", "highlighter"] as const)("excludes the live %s until committed", (tool) => {
+    const index = new StrokeIndex(1000, 1000), a = { ...stroke("a", 0.1, 0.1), tool };
     index.sync([a], a);
     expect(index.query({ x: 0, y: 0, width: 1000, height: 1000 })).toEqual([]);
     index.sync([a]);

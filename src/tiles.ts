@@ -127,7 +127,7 @@ export class TileRenderer {
       this.active = state;
       this.jobs = [];
     }
-    state.index.sync(page.strokes, isStrokeSet(exclude) || exclude?.tool === "pen" ? exclude : null);
+    state.index.sync(page.strokes, exclude);
   }
 
   sync(strokes: InkStroke[], exclude?: StrokeExclusion): void {

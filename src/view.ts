@@ -21,6 +21,7 @@ interface ToolState {
   color: string;
   width: number;
   opacity: number;
+  smoothing: number;
   eraserMode: EraserMode;
   eraserSize: number;
 }
@@ -39,6 +40,7 @@ interface InteractionContext {
   tool: InkTool;
   eraserMode?: EraserMode;
   eraserSize?: number;
+  smoothing?: number;
 }
 
 const STROKE_ERASER_HIT_RADIUS = 10;
@@ -55,7 +57,7 @@ export class InkView extends FileView {
   private readonly store: NotebookStore;
   private notebook: InkNotebook = createNotebook();
   private pageIndex = 0;
-  private state: ToolState = { tool: "pen", color: "#1b1b1b", width: 3, opacity: 1, eraserMode: "stroke", eraserSize: 32 };
+  private state: ToolState = { tool: "pen", color: "#1b1b1b", width: 3, opacity: 1, smoothing: 0.7, eraserMode: "stroke", eraserSize: 32 };
   private root!: HTMLElement;
   private canvas!: HTMLCanvasElement;
   private ctx!: CanvasRenderingContext2D;
@@ -286,6 +288,7 @@ export class InkView extends FileView {
     }
     this.addColorPicker(popover);
     this.addRange(popover, "Opacity", 0.1, 1, 0.05, this.state.opacity, (value) => { this.state.opacity = value; });
+    this.addRange(popover, "Smoothing", 0, 1, 0.05, this.state.smoothing, (value) => { this.state.smoothing = value; });
     const eraser = popover.createDiv({ cls: "ink-eraser-settings" });
     eraser.createDiv({ cls: "ink-size-popover-title", text: "Eraser" });
     const modes = eraser.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
@@ -459,6 +462,7 @@ export class InkView extends FileView {
       button.createSpan({ text: page.title, cls: "ink-page-thumb-title" });
       button.addEventListener("click", () => { this.finishPointerInput(false); this.pageIndex = index; this.renderPageRail(); this.renderPage(); });
     });
+    rail.querySelector<HTMLElement>(".ink-page-thumb.is-active")?.scrollIntoView?.({ block: "nearest" });
   }
 
   private renderPage(): void {
@@ -501,14 +505,14 @@ export class InkView extends FileView {
       this.resizeOverlay(this.canvas, this.ctx);
       this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
       this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
-      if (this.activeStroke?.tool === "pen") { this.resizePreview(); this.drawPreview(); }
+      if (this.activeStroke) { this.resizePreview(); this.drawPreview(); }
     }
     if (refine) this.tiles.prewarm(this.notebook.pages.filter((_, index) => Math.abs(index - this.pageIndex) === 1));
   }
 
   private drawStrokes(strokes: InkStroke[]): void {
     if (!this.ctx || !this.pageElement) return;
-    this.tiles.sync(strokes, this.activeStroke?.tool === "pen" ? this.activeStroke : null);
+    this.tiles.sync(strokes, this.activeStroke);
     this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
     this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
     this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
@@ -544,7 +548,7 @@ export class InkView extends FileView {
       if (shouldResize) this.resizeCanvas();
       else if (this.lassoDrag) this.drawLassoInteraction();
       else if (this.interaction?.tool === "eraser") this.drawInteractiveStrokes(this.currentPage().strokes);
-      else if (this.activeStroke?.tool === "pen") this.drawPreview();
+      else if (this.activeStroke) this.drawPreview();
       else this.drawStrokes(this.currentPage().strokes);
     });
   }
@@ -564,7 +568,8 @@ export class InkView extends FileView {
   private resizePreview(): void { this.resizeOverlay(this.previewCanvas, this.previewCtx); }
 
   private drawPreview(): void {
-    if (this.activeStroke?.tool !== "pen") return;
+    if (!this.activeStroke || this.activeStroke.tool !== "pen" && this.activeStroke.tool !== "highlighter") return;
+    this.previewCanvas.classList.toggle("is-highlighter-preview", this.activeStroke.tool === "highlighter");
     this.previewCtx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
     drawInkStroke(this.previewCtx, this.activeStroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
@@ -627,12 +632,13 @@ export class InkView extends FileView {
   }
 
   private commitPreview(page = this.currentPage()): void {
-    if (this.activeStroke?.tool !== "pen") return;
+    if (!this.activeStroke || this.activeStroke.tool !== "pen" && this.activeStroke.tool !== "highlighter") return;
     this.tiles.sync(page.strokes);
-    this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
-    // Resolve dirty visible tiles before dropping the transient stroke, avoiding a pen-up flash.
-    this.tiles.flushVisible();
+    // Commit a complete bounded-density frame before dropping the transient
+    // stroke. High-density tiles can refine later without a pen-up flash.
+    this.tiles.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom);
     this.previewCanvas.width = this.previewCanvas.height = 1;
+    this.previewCanvas.classList.remove("is-highlighter-preview");
   }
 
   private drawSelection(width: number, height: number): void {
@@ -671,6 +677,7 @@ export class InkView extends FileView {
       tool,
       eraserMode: tool === "eraser" ? this.state.eraserMode : undefined,
       eraserSize: tool === "eraser" ? this.state.eraserSize : undefined,
+      smoothing: tool === "pen" || tool === "highlighter" ? this.state.smoothing : undefined,
     };
     this.pageElement.setPointerCapture(event.pointerId);
     const point = this.toPoint(event);
@@ -718,10 +725,8 @@ export class InkView extends FileView {
     };
     this.lastPoint = point;
     page.strokes.push(this.activeStroke);
-    if (this.activeStroke.tool === "pen") {
-      this.resizePreview();
-      this.drawPreview();
-    } else this.drawStrokes(page.strokes);
+    this.resizePreview();
+    this.drawPreview();
   }
 
   private onPointerEnter(event: PointerEvent): void {
@@ -778,9 +783,10 @@ export class InkView extends FileView {
       if (interaction.tool === "eraser") {
         changed = this.eraseAt(point, page, interaction.eraserMode, interaction.eraserSize) || changed;
       } else if (this.activeStroke && this.lastPoint) {
-        const stabilized = stabilizeInkPoint(point, this.lastPoint, this.canvasLogicalWidth, this.canvasLogicalHeight);
+        const stabilized = stabilizeInkPoint(point, this.lastPoint, this.canvasLogicalWidth, this.canvasLogicalHeight, interaction.smoothing ?? this.state.smoothing);
         if (!stabilized) continue;
         this.activeStroke.points.push(stabilized);
+        beautifyStrokeTail(this.activeStroke.points, this.canvasLogicalWidth, this.canvasLogicalHeight, interaction.smoothing ?? this.state.smoothing);
         this.activeStroke.updatedAt = Date.now();
         this.lastPoint = stabilized;
         changed = true;
@@ -826,7 +832,7 @@ export class InkView extends FileView {
     if (!page) { this.activePointerId = null; return; }
     this.flushPendingLassoPoint();
     this.commitPreview(page);
-    if (this.activeStroke?.tool === "pen" && this.renderFrame !== null && !this.resizeRequested) {
+    if (this.activeStroke && this.renderFrame !== null && !this.resizeRequested) {
       window.cancelAnimationFrame(this.renderFrame);
       this.renderFrame = null;
     }
@@ -1560,21 +1566,53 @@ function pointInsideRect(point: { clientX: number; clientY: number }, rect: DOMR
     && point.clientY >= rect.top && point.clientY <= rect.bottom;
 }
 
-function stabilizeInkPoint(point: InkPoint, previous: InkPoint, width: number, height: number): InkPoint | null {
+function stabilizeInkPoint(point: InkPoint, previous: InkPoint, width: number, height: number, smoothing: number): InkPoint | null {
   if (width <= 1 || height <= 1) return distance(point, previous) >= 0.0002 ? point : null;
   const dx = (point.x - previous.x) * width;
   const dy = (point.y - previous.y) * height;
   const pixels = Math.hypot(dx, dy);
-  if (pixels < 0.75) return null;
-  // Slow input exposes sensor jitter most strongly. Blend only short moves so
-  // quick corners and intentional direction changes remain responsive.
-  const weight = pixels < 4 ? 0.45 : pixels < 8 ? 0.7 : 1;
+  const strength = Math.max(0, Math.min(1, smoothing));
+  if (pixels < 0.35 + strength * 0.65) return null;
+  // Slow input exposes sensor and pressure noise most strongly. Blend only
+  // short moves; quick strokes and deliberate corners remain responsive.
+  const minimumWeight = 0.78 - strength * 0.48;
+  const mediumWeight = 0.92 - strength * 0.27;
+  const weight = pixels < 4 ? minimumWeight : pixels < 8 ? mediumWeight : 1;
+  const pressureDelta = point.pressure - previous.pressure;
+  const pressureWeight = Math.max(0.2, 0.82 - strength * 0.52);
   return {
     ...point,
     x: previous.x + (point.x - previous.x) * weight,
     y: previous.y + (point.y - previous.y) * weight,
-    pressure: previous.pressure + (point.pressure - previous.pressure) * Math.max(0.55, weight),
+    pressure: Math.abs(pressureDelta) < 0.025 * strength
+      ? previous.pressure
+      : previous.pressure + pressureDelta * Math.max(pressureWeight, Math.min(1, pixels / 12)),
   };
+}
+
+function beautifyStrokeTail(points: InkPoint[], width: number, height: number, smoothing: number): void {
+  if (points.length < 3 || smoothing <= 0 || width <= 1 || height <= 1) return;
+  const start = points[points.length - 3];
+  const middle = points[points.length - 2];
+  const end = points[points.length - 1];
+  const incomingX = (middle.x - start.x) * width, incomingY = (middle.y - start.y) * height;
+  const outgoingX = (end.x - middle.x) * width, outgoingY = (end.y - middle.y) * height;
+  const incomingLength = Math.hypot(incomingX, incomingY), outgoingLength = Math.hypot(outgoingX, outgoingY);
+  if (incomingLength < 0.001 || outgoingLength < 0.001) return;
+  const direction = (incomingX * outgoingX + incomingY * outgoingY) / (incomingLength * outgoingLength);
+  // Only polish continuous motion. A turn of roughly 60 degrees or sharper is
+  // treated as intentional handwriting structure and remains untouched.
+  const continuity = Math.max(0, Math.min(1, (direction - 0.5) / 0.5));
+  if (continuity === 0) return;
+  const targetX = (start.x + end.x) / 2, targetY = (start.y + end.y) / 2;
+  const correctionX = (targetX - middle.x) * width, correctionY = (targetY - middle.y) * height;
+  const correctionLength = Math.hypot(correctionX, correctionY);
+  if (correctionLength < 0.01) return;
+  const maximumCorrection = 1.25 * smoothing * continuity;
+  const scale = correctionLength > maximumCorrection && correctionLength > 0 ? maximumCorrection / correctionLength : 1;
+  middle.x += correctionX * scale / width;
+  middle.y += correctionY * scale / height;
+  middle.pressure += ((start.pressure + end.pressure) / 2 - middle.pressure) * smoothing * continuity * 0.35;
 }
 
 function strokeIntersectsEraser(stroke: InkStroke, center: InkPoint, radius: number, mode: EraserMode, width: number, height: number): boolean {
@@ -1739,5 +1777,5 @@ function constrainDelta(delta: number, minimum: number, maximum: number): number
 }
 
 function formatControlValue(name: string, value: number): string {
-  return name === "Opacity" ? `${Math.round(value * 100)}%` : `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(1)} px`;
+  return name === "Opacity" || name === "Smoothing" ? `${Math.round(value * 100)}%` : `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(1)} px`;
 }
