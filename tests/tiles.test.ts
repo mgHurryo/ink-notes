@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { cellKeys, StrokeIndex, TileRenderer } from "../src/tiles";
+import { cellKeys, StrokeIndex, tileDensity, TileRenderer } from "../src/tiles";
 import type { InkStroke } from "../src/model";
 
 function stroke(id: string, x: number, y: number): InkStroke {
@@ -61,6 +61,31 @@ describe("tile spatial index", () => {
 });
 
 describe("interactive tile commits", () => {
+  it("preserves full 2x density for an iPad-sized viewport", () => {
+    expect(tileDensity({ x: 0, y: 0, width: 1024, height: 1366 }, 2)).toBe(2);
+  });
+
+  it("defers finished-ink painting to an animation frame", () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => { frames.push(callback); return 1; }));
+    const state = { id: 1, index: { width: 800, height: 1000, cellsFor: () => ["0:0"], revisions: new Map([["0:0", 1]]) } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, {
+      active: state, disposed: false, inkCommit: null, inkCommitPaused: false, inkFrame: null,
+      heldCells: new Set(), jobs: [], visible: new Set(), cache: new Map(), density: 1,
+      get: vi.fn(() => undefined), createTile: vi.fn(() => ({ state, cell: "0:0", revision: 1 })),
+      finishInkCommit: vi.fn(),
+    });
+    const complete = vi.fn();
+    renderer.commitInk([stroke("ink", 0.1, 0.1)], { x: 0, y: 0, width: 800, height: 1000 }, 2, complete);
+    expect(renderer.createTile).not.toHaveBeenCalled();
+    expect(complete).not.toHaveBeenCalled();
+    frames[0](0);
+    expect(renderer.createTile).toHaveBeenCalledOnce();
+    expect(renderer.finishInkCommit).toHaveBeenCalledWith(true);
+    vi.unstubAllGlobals();
+  });
+
   it("flushes a bounded fallback before scheduling density refinement", () => {
     const renderer = Object.create(TileRenderer.prototype) as {
       update: ReturnType<typeof vi.fn>;

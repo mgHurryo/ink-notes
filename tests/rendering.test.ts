@@ -31,6 +31,9 @@ describe("canvas density", () => {
     expect(size.width * size.height).toBeLessThan(16_010_000);
     expect(Math.max(size.width, size.height)).toBeLessThanOrEqual(8192);
   });
+  it("keeps a full 2x backing bitmap for an iPad-sized writing overlay", () => {
+    expect(canvasResolution(1024, 1366, 2, 1, 12_000_000)).toEqual({ width: 2048, height: 2732 });
+  });
 });
 
 describe("continuous pen rendering", () => {

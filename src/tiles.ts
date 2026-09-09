@@ -5,6 +5,7 @@ export interface Rect { x: number; y: number; width: number; height: number }
 const TILE = 128;
 const BLEED = 2;
 const MAX_PIXELS = 16_000_000;
+const VISIBLE_PIXEL_BUDGET = 12_000_000;
 
 interface IndexedStroke {
   stroke: InkStroke;
@@ -79,6 +80,12 @@ export class StrokeIndex {
     });
   }
 
+  cellsFor(strokes: readonly InkStroke[]): string[] {
+    const cells = new Set<string>();
+    for (const stroke of strokes) for (const cell of this.entries.get(stroke.id)?.cells ?? []) cells.add(cell);
+    return [...cells];
+  }
+
   private remove(entry: IndexedStroke): void {
     this.entries.delete(entry.stroke.id);
     for (const key of entry.cells) {
@@ -104,6 +111,18 @@ export function cellKeys(rect: Rect, width: number, height: number): string[] {
 interface PageTiles { page: InkPage; index: StrokeIndex; id: number }
 interface Tile { node: HTMLDivElement; canvas: HTMLCanvasElement; revision: number; pixels: number; used: number; state: PageTiles; cell: string; density: number }
 interface Job { state: PageTiles; cell: string; density: number }
+interface InkCommit {
+  state: PageTiles;
+  cells: string[];
+  jobs: Job[];
+  tiles: Tile[];
+  onComplete: (committed: boolean) => void;
+}
+
+export function tileDensity(viewport: Rect, density: number): number {
+  return Math.max(0.5, Math.min(Math.ceil(density * 4) / 4,
+    Math.sqrt(VISIBLE_PIXEL_BUDGET / Math.max(1, (viewport.width + TILE * 2) * (viewport.height + TILE * 2)))));
+}
 
 export class TileRenderer {
   private states = new Map<InkPage, PageTiles>();
@@ -114,6 +133,10 @@ export class TileRenderer {
   private visible = new Set<string>();
   private jobs: Job[] = [];
   private frame: number | null = null;
+  private inkFrame: number | null = null;
+  private inkCommit: InkCommit | null = null;
+  private inkCommitPaused = false;
+  private heldCells = new Set<string>();
   private sequence = 0;
   private pixels = 0;
   private disposed = false;
@@ -123,6 +146,7 @@ export class TileRenderer {
   setPage(page: InkPage, width: number, height: number, exclude?: StrokeExclusion): void {
     const state = this.state(page, width, height);
     if (state !== this.active) {
+      this.cancelInkCommit();
       this.host.replaceChildren();
       this.active = state;
       this.jobs = [];
@@ -139,13 +163,14 @@ export class TileRenderer {
   }
 
   flushVisible(): void {
-    const jobs = this.jobs.filter(job => job.state === this.active && this.visible.has(job.cell));
+    const jobs = this.jobs.filter(job => job.state === this.active && this.visible.has(job.cell) && !this.isHeld(job));
     this.jobs = this.jobs.filter(job => !jobs.includes(job));
     for (const job of jobs) this.attach(this.get(job.state, job.cell, job.density) ?? this.paint(job));
     this.evict();
   }
 
   commitInteractive(viewport: Rect, density: number, refine = true): void {
+    this.cancelInkCommit();
     // Make all visible content changes coherent at a bounded 1x density. A
     // second pass keeps that complete frame attached while high-density tiles
     // are refined incrementally in the background.
@@ -154,12 +179,47 @@ export class TileRenderer {
     if (refine) this.update(viewport, density, true);
   }
 
+  commitInk(strokes: readonly InkStroke[], viewport: Rect, density: number, onComplete: (committed: boolean) => void): void {
+    if (!this.active || this.disposed || this.inkCommit) { onComplete(false); return; }
+    this.viewport = viewport;
+    this.density = tileDensity(viewport, density);
+    this.visible = new Set(cellKeys(viewport, this.active.index.width, this.active.index.height));
+    const cells = this.active.index.cellsFor(strokes).filter(cell => this.visible.has(cell));
+    const jobs: Job[] = [];
+    const tiles: Tile[] = [];
+    for (const cell of cells) {
+      this.heldCells.add(this.holdKey(this.active, cell));
+      const exact = this.get(this.active, cell, this.density);
+      if (exact) tiles.push(exact);
+      else jobs.push({ state: this.active, cell, density: this.density });
+    }
+    this.jobs = this.jobs.filter(job => !this.isHeld(job));
+    this.inkCommit = { state: this.active, cells, jobs, tiles, onComplete };
+    if (jobs.length === 0) this.finishInkCommit(true);
+    else this.scheduleInkCommit();
+  }
+
+  pauseInkCommit(): void {
+    this.inkCommitPaused = true;
+    if (this.frame !== null) cancelAnimationFrame(this.frame);
+    this.frame = null;
+    if (this.inkFrame !== null) cancelAnimationFrame(this.inkFrame);
+    this.inkFrame = null;
+  }
+
+  resumeInkCommit(): void {
+    this.inkCommitPaused = false;
+    this.scheduleInkCommit();
+    this.schedule();
+  }
+
+  cancelInkCommit(): void { this.abortInkCommit(true); }
+
   update(viewport: Rect, density: number, refine: boolean): void {
     if (!this.active || this.disposed) return;
     this.viewport = viewport;
     // Density is budgeted against the visible region, never the full page.
-    this.density = Math.max(0.5, Math.min(Math.ceil(density * 4) / 4,
-      Math.sqrt(8_000_000 / Math.max(1, (viewport.width + TILE * 2) * (viewport.height + TILE * 2)))));
+    this.density = tileDensity(viewport, density);
     this.visible = new Set(cellKeys(viewport, this.active.index.width, this.active.index.height));
     this.jobs = [];
     for (const node of Array.from(this.host.children)) {
@@ -170,7 +230,10 @@ export class TileRenderer {
       const fallback = exact ?? this.fallback(this.active, cell);
       if (fallback) this.attach(fallback);
       // Missing newly exposed tiles get a cheap preview during motion.
-      if (!exact && (refine || !fallback)) this.jobs.push({ state: this.active, cell, density: refine ? this.density : Math.min(1, this.density) });
+      if (!exact && (refine || !fallback)) {
+        const job = { state: this.active, cell, density: refine ? this.density : Math.min(1, this.density) };
+        if (!this.isHeld(job)) this.jobs.push(job);
+      }
     }
     this.schedule();
   }
@@ -197,6 +260,7 @@ export class TileRenderer {
   dispose(): void {
     this.disposed = true;
     if (this.frame !== null) cancelAnimationFrame(this.frame);
+    this.abortInkCommit(false);
     for (const [key, tile] of this.cache) this.drop(key, tile);
     this.states.clear(); this.jobs = []; this.host.replaceChildren();
   }
@@ -233,12 +297,12 @@ export class TileRenderer {
   }
 
   private schedule(): void {
-    if (this.frame !== null || !this.jobs.length || this.disposed) return;
+    if (this.frame !== null || !this.jobs.length || this.disposed || this.inkCommitPaused || this.inkCommit) return;
     this.frame = requestAnimationFrame(() => {
       this.frame = null;
       // One tile per frame bounds scheduling work and gives input priority.
       const job = this.jobs.shift();
-      if (job) {
+      if (job && !this.isHeld(job)) {
         const tile = this.get(job.state, job.cell, job.density) ?? this.paint(job);
         if (job.state === this.active && this.visible.has(job.cell)) this.attach(tile);
         this.evict();
@@ -247,7 +311,66 @@ export class TileRenderer {
     });
   }
 
+  private scheduleInkCommit(): void {
+    if (this.inkFrame !== null || !this.inkCommit || this.inkCommitPaused || this.disposed) return;
+    this.inkFrame = requestAnimationFrame(() => {
+      this.inkFrame = null;
+      const commit = this.inkCommit;
+      if (!commit) return;
+      const job = commit.jobs.shift();
+      if (job) commit.tiles.push(this.createTile(job));
+      if (commit.jobs.length > 0) this.scheduleInkCommit();
+      else this.finishInkCommit(true);
+    });
+  }
+
+  private finishInkCommit(requested: boolean): void {
+    const commit = this.inkCommit;
+    if (!commit) return;
+    const valid = requested && !this.disposed && this.active === commit.state
+      && commit.tiles.every(tile => tile.revision === (tile.state.index.revisions.get(tile.cell) ?? 0));
+    this.inkCommit = null;
+    for (const cell of commit.cells) this.heldCells.delete(this.holdKey(commit.state, cell));
+    if (valid) {
+      for (const tile of commit.tiles) {
+        this.cacheTile(tile);
+        if (this.visible.has(tile.cell)) this.attach(tile);
+      }
+      this.evict();
+    } else {
+      for (const tile of commit.tiles) if (this.cache.get(this.key(tile.state, tile.cell, tile.density)) !== tile) {
+        tile.node.remove(); tile.canvas.width = tile.canvas.height = 1;
+      }
+    }
+    commit.onComplete(valid);
+    this.schedule();
+  }
+
+  private abortInkCommit(notify: boolean): void {
+    const commit = this.inkCommit;
+    if (!commit) { this.inkFrame = null; return; }
+    if (this.inkFrame !== null) cancelAnimationFrame(this.inkFrame);
+    this.inkFrame = null;
+    if (notify) this.finishInkCommit(false);
+    else {
+      this.inkCommit = null;
+      for (const cell of commit.cells) this.heldCells.delete(this.holdKey(commit.state, cell));
+      for (const tile of commit.tiles) if (this.cache.get(this.key(tile.state, tile.cell, tile.density)) !== tile) {
+        tile.node.remove(); tile.canvas.width = tile.canvas.height = 1;
+      }
+    }
+  }
+
+  private holdKey(state: PageTiles, cell: string): string { return state.id + "/" + cell; }
+  private isHeld(job: Job): boolean { return this.heldCells.has(this.holdKey(job.state, job.cell)); }
+
   private paint(job: Job): Tile {
+    const tile = this.createTile(job);
+    this.cacheTile(tile);
+    return tile;
+  }
+
+  private createTile(job: Job): Tile {
     const { state, cell, density } = job;
     const [column, row] = cell.split(":").map(Number);
     const x = column * TILE, y = row * TILE;
@@ -266,13 +389,17 @@ export class TileRenderer {
     // Index bounds already include the bleed; querying adjacent cells again duplicates work.
     const rect = { x, y, width, height };
     for (const stroke of state.index.query(rect)) drawInkStroke(ctx, stroke, state.index.width, state.index.height);
-    const tile = { node, canvas, revision: state.index.revisions.get(cell) ?? 0, pixels: canvas.width * canvas.height,
+    return { node, canvas, revision: state.index.revisions.get(cell) ?? 0, pixels: canvas.width * canvas.height,
       used: ++this.sequence, state, cell, density };
+  }
+
+  private cacheTile(tile: Tile): void {
+    const { state, cell, density } = tile;
     const key = this.key(state, cell, density);
     const old = this.cache.get(key);
+    if (old === tile) return;
     if (old) this.drop(key, old);
     this.cache.set(key, tile); this.pixels += tile.pixels;
-    return tile;
   }
 
   private evict(): void {
