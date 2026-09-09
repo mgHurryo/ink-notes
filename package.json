@@ -8,7 +8,7 @@
     "preview": "node dev/serve.mjs",
     "build": "esbuild src/main.ts --bundle --external:obsidian --format=cjs --platform=node --target=es2018 --outdir=. --sourcemap",
     "typecheck": "tsc --noEmit",
-    "test": "vitest run --exclude tests/visual/**",
+    "test": "vitest run --exclude \"tests/visual/**\"",
     "test:visual": "playwright test"
   },
   "devDependencies": {
