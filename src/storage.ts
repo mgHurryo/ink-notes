@@ -31,8 +31,28 @@ export class NotebookStore {
   }
 
   async read(file: TFile): Promise<InkNotebook> {
-    const raw = await this.vault.read(file);
+    const raw = await this.readRaw(file);
     return normalizeNotebook(JSON.parse(raw));
+  }
+
+  async readRaw(file: TFile): Promise<string> {
+    return this.vault.read(file);
+  }
+
+  async writeIfUnchanged(file: TFile, expectedRaw: string, nextRaw: string): Promise<boolean> {
+    let matched = false;
+    try {
+      await this.vault.process(file, (raw) => {
+        if (raw !== expectedRaw) return raw;
+        matched = true;
+        this.selfWrites.set(file.path, nextRaw);
+        return nextRaw;
+      });
+    } catch (error) {
+      if (this.selfWrites.get(file.path) === nextRaw) this.selfWrites.delete(file.path);
+      throw error;
+    }
+    return matched;
   }
 
   async save(file: TFile, notebook: InkNotebook): Promise<InkNotebook> {

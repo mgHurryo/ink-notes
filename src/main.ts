@@ -2,14 +2,18 @@ import { Notice, Plugin, SuggestModal, TFile, WorkspaceLeaf } from "obsidian";
 import { InkView, VIEW_TYPE_INK } from "./view";
 import { INK_EXTENSION, NotebookStore } from "./storage";
 import { createInkEmbedProcessor } from "./embed";
+import { InkWorkerService } from "./worker-service";
 
 export default class InkNotesPlugin extends Plugin {
   private store!: NotebookStore;
+  private workers!: InkWorkerService;
   private refreshTimers = new Map<string, number>();
   private refreshing = new Set<string>();
   private pendingRefresh = new Set<string>();
   async onload(): Promise<void> {
     this.store = new NotebookStore(this.app);
+    this.workers = new InkWorkerService((message) => new Notice(message));
+    this.register(() => this.workers.dispose());
     this.registerView(VIEW_TYPE_INK, (leaf) => this.createView(leaf));
     this.registerExtensions([INK_EXTENSION], VIEW_TYPE_INK);
     this.addRibbonIcon("pen-line", "Open Ink Notes", () => this.runAsync(this.openNotebook(), "open a notebook"));
@@ -24,7 +28,7 @@ export default class InkNotesPlugin extends Plugin {
   }
 
   private createView(leaf: WorkspaceLeaf): InkView {
-    return new InkView(leaf, this.store);
+    return new InkView(leaf, this.store, this.workers);
   }
 
   private async openNotebook(): Promise<void> {

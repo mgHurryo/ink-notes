@@ -910,12 +910,237 @@ var TileRenderer = class {
   }
 };
 
+// ink-worker:ink-worker-source
+var ink_worker_source_default = '(() => {\n  // src/model.ts\n  var DEFAULT_PAGE_WIDTH = 1600;\n  var DEFAULT_PAGE_HEIGHT = 2200;\n  function newId(prefix) {\n    const random = Math.random().toString(36).slice(2, 10);\n    return `${prefix}-${Date.now().toString(36)}-${random}`;\n  }\n  function createNotebook(title = "Ink Notebook") {\n    const now = Date.now();\n    const page = createPage("Page 1", "ruled", now);\n    return {\n      schema: 2,\n      title,\n      pageWidth: DEFAULT_PAGE_WIDTH,\n      pageHeight: DEFAULT_PAGE_HEIGHT,\n      pages: [page],\n      pageOrder: [page.id],\n      deletedPages: {},\n      pageOrderUpdatedAt: now,\n      updatedAt: now\n    };\n  }\n  function createPage(title, paper = "ruled", now = Date.now()) {\n    return { id: newId("page"), title, paper, strokes: [], deletedStrokeIds: [], createdAt: now, updatedAt: now };\n  }\n  function normalizeNotebook(value) {\n    if (!value || typeof value !== "object") return createNotebook();\n    const raw = value;\n    const pages = Array.isArray(raw.pages) ? raw.pages : [];\n    const normalizedPages = pages.map(normalizePage).filter((page) => page !== null);\n    const pageIds = new Set(normalizedPages.map((page) => page.id));\n    const legacyOrder = [...normalizedPages].sort((a, b) => a.createdAt - b.createdAt).map((page) => page.id);\n    const requestedOrder = Array.isArray(raw.pageOrder) ? raw.pageOrder.filter((id) => typeof id === "string") : legacyOrder;\n    const pageOrder = [.../* @__PURE__ */ new Set([...requestedOrder.filter((id) => pageIds.has(id)), ...legacyOrder.filter((id) => !requestedOrder.includes(id))])];\n    const deletedPages = raw.deletedPages && typeof raw.deletedPages === "object" ? Object.fromEntries(Object.entries(raw.deletedPages).filter((entry) => typeof entry[0] === "string" && typeof entry[1] === "number" && Number.isFinite(entry[1]))) : {};\n    const visiblePages = normalizedPages.filter((page) => !(page.id in deletedPages));\n    const visibleIds = new Set(visiblePages.map((page) => page.id));\n    const byId = new Map(visiblePages.map((page) => [page.id, page]));\n    const orderedPages = pageOrder.map((id) => byId.get(id)).filter((page) => page !== void 0);\n    if (orderedPages.length === 0) orderedPages.push(createPage("Page 1"));\n    return {\n      schema: 2,\n      title: typeof raw.title === "string" ? raw.title : "Ink Notebook",\n      pageWidth: finitePositive(raw.pageWidth, DEFAULT_PAGE_WIDTH),\n      pageHeight: finitePositive(raw.pageHeight, DEFAULT_PAGE_HEIGHT),\n      pages: orderedPages,\n      pageOrder: orderedPages.map((page) => page.id).filter((id) => visibleIds.has(id) || orderedPages.length === 1),\n      deletedPages,\n      pageOrderUpdatedAt: finitePositive(raw.pageOrderUpdatedAt, finitePositive(raw.updatedAt, Date.now())),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function mergeNotebooks(base, incoming) {\n    var _a, _b, _c, _d, _e, _f, _g;\n    const pages = /* @__PURE__ */ new Map();\n    for (const page of base.pages) pages.set(page.id, page);\n    for (const page of incoming.pages) {\n      const existing = pages.get(page.id);\n      pages.set(page.id, existing ? mergePages(existing, page) : page);\n    }\n    const deletedPages = { ...(_a = base.deletedPages) != null ? _a : {} };\n    for (const [id, timestamp] of Object.entries((_b = incoming.deletedPages) != null ? _b : {})) deletedPages[id] = Math.max((_c = deletedPages[id]) != null ? _c : 0, timestamp);\n    for (const id of Object.keys(deletedPages)) pages.delete(id);\n    const orderSource = incoming.pageOrderUpdatedAt > base.pageOrderUpdatedAt || incoming.pageOrderUpdatedAt === base.pageOrderUpdatedAt && compareNotebookOrder(incoming, base) >= 0 ? incoming : base;\n    const preferred = (_d = orderSource.pageOrder) != null ? _d : [];\n    const known = preferred.map((id) => pages.get(id)).filter((page) => page !== void 0);\n    const additions = [...pages.values()].filter((page) => !preferred.includes(page.id)).sort((a, b) => a.createdAt - b.createdAt);\n    const ordered = [...known];\n    for (const page of additions) {\n      const inBase = ((_e = base.pageOrder) != null ? _e : []).includes(page.id);\n      const inIncoming = ((_f = incoming.pageOrder) != null ? _f : []).includes(page.id);\n      const source = inBase && !inIncoming ? base : incoming;\n      const sourceOrder = (_g = source.pageOrder) != null ? _g : source.pages.map((candidate) => candidate.id);\n      const sourceIndex = sourceOrder.indexOf(page.id);\n      let inserted = false;\n      for (let index = sourceIndex - 1; index >= 0; index--) {\n        const anchor = ordered.findIndex((candidate) => candidate.id === sourceOrder[index]);\n        if (anchor >= 0) {\n          ordered.splice(anchor + 1, 0, page);\n          inserted = true;\n          break;\n        }\n      }\n      if (!inserted) for (let index = sourceIndex + 1; index < sourceOrder.length; index++) {\n        const anchor = ordered.findIndex((candidate) => candidate.id === sourceOrder[index]);\n        if (anchor >= 0) {\n          ordered.splice(anchor, 0, page);\n          inserted = true;\n          break;\n        }\n      }\n      if (!inserted) {\n        const at = ordered.findIndex((candidate) => page.createdAt < candidate.createdAt);\n        ordered.splice(at < 0 ? ordered.length : at, 0, page);\n      }\n    }\n    const safePages = ordered.length ? ordered : [createPage("Page 1")];\n    const pageOrder = safePages.map((page) => page.id);\n    return {\n      ...incoming,\n      schema: 2,\n      title: incoming.updatedAt >= base.updatedAt ? incoming.title : base.title,\n      pageWidth: incoming.pageWidth || base.pageWidth,\n      pageHeight: incoming.pageHeight || base.pageHeight,\n      pages: safePages,\n      pageOrder,\n      deletedPages,\n      pageOrderUpdatedAt: Math.max(base.pageOrderUpdatedAt, incoming.pageOrderUpdatedAt),\n      updatedAt: Math.max(base.updatedAt, incoming.updatedAt)\n    };\n  }\n  function compareNotebookOrder(left, right) {\n    var _a, _b;\n    const leftOrder = JSON.stringify((_a = left.pageOrder) != null ? _a : []);\n    const rightOrder = JSON.stringify((_b = right.pageOrder) != null ? _b : []);\n    return leftOrder < rightOrder ? -1 : leftOrder > rightOrder ? 1 : 0;\n  }\n  function mergePages(base, incoming) {\n    var _a, _b;\n    const strokes = /* @__PURE__ */ new Map();\n    for (const stroke of base.strokes) strokes.set(stroke.id, stroke);\n    for (const stroke of incoming.strokes) {\n      const existing = strokes.get(stroke.id);\n      if (!existing || stroke.updatedAt >= existing.updatedAt) strokes.set(stroke.id, stroke);\n    }\n    const deletedStrokeIds = [.../* @__PURE__ */ new Set([...(_a = base.deletedStrokeIds) != null ? _a : [], ...(_b = incoming.deletedStrokeIds) != null ? _b : []])];\n    for (const id of deletedStrokeIds) strokes.delete(id);\n    return {\n      ...base,\n      ...incoming,\n      title: incoming.updatedAt >= base.updatedAt ? incoming.title : base.title,\n      paper: incoming.updatedAt >= base.updatedAt ? incoming.paper : base.paper,\n      strokes: [...strokes.values()].sort((a, b) => a.createdAt - b.createdAt),\n      deletedStrokeIds,\n      updatedAt: Math.max(base.updatedAt, incoming.updatedAt)\n    };\n  }\n  function normalizePage(value) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    const strokes = Array.isArray(raw.strokes) ? raw.strokes : [];\n    const deletedStrokeIds = Array.isArray(raw.deletedStrokeIds) ? raw.deletedStrokeIds.filter((id) => typeof id === "string") : [];\n    const deleted = new Set(deletedStrokeIds);\n    return {\n      id: typeof raw.id === "string" ? raw.id : newId("page"),\n      title: typeof raw.title === "string" ? raw.title : "Untitled",\n      paper: isPaperStyle(raw.paper) ? raw.paper : "ruled",\n      strokes: strokes.map(normalizeStroke).filter((stroke) => stroke !== null && !deleted.has(stroke.id)),\n      deletedStrokeIds,\n      createdAt: finitePositive(raw.createdAt, Date.now()),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function normalizeStroke(value) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    if (typeof raw.id !== "string" || typeof raw.pageId !== "string") return null;\n    const points = Array.isArray(raw.points) ? raw.points : [];\n    return {\n      id: raw.id,\n      pageId: raw.pageId,\n      tool: raw.tool === "highlighter" ? "highlighter" : "pen",\n      color: typeof raw.color === "string" ? raw.color : "#1b1b1b",\n      width: finitePositive(raw.width, 3),\n      opacity: clamp(finitePositive(raw.opacity, 1), 0.05, 1),\n      points: points.map(normalizePoint).filter((point) => point !== null),\n      createdAt: finitePositive(raw.createdAt, Date.now()),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function normalizePoint(value) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    if (typeof raw.x !== "number" || typeof raw.y !== "number") return null;\n    return {\n      x: clamp(raw.x, 0, 1),\n      y: clamp(raw.y, 0, 1),\n      pressure: clamp(typeof raw.pressure === "number" ? raw.pressure : 0.5, 0.05, 1),\n      tiltX: typeof raw.tiltX === "number" ? raw.tiltX : void 0,\n      tiltY: typeof raw.tiltY === "number" ? raw.tiltY : void 0,\n      t: finitePositive(raw.t, Date.now())\n    };\n  }\n  function finitePositive(value, fallback) {\n    return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;\n  }\n  function clamp(value, min, max) {\n    return Math.max(min, Math.min(max, value));\n  }\n  function isPaperStyle(value) {\n    return value === "blank" || value === "ruled" || value === "grid" || value === "dot";\n  }\n\n  // src/worker-protocol.ts\n  function serializeNotebook(notebook) {\n    return `${JSON.stringify(notebook, null, 2)}\n`;\n  }\n  function cloneStrokeValue(stroke) {\n    return { ...stroke, points: stroke.points.map((point) => ({ ...point })) };\n  }\n\n  // src/worker-core.ts\n  var ProtocolError = class extends Error {\n    constructor(code, message) {\n      super(message);\n      this.code = code;\n    }\n  };\n  var InkWorkerCore = class {\n    constructor(capabilities) {\n      this.capabilities = capabilities;\n      this.sessions = /* @__PURE__ */ new Map();\n    }\n    ready() {\n      return { type: "ready", requestId: 0, sessionId: "", generation: 0, capabilities: this.capabilities };\n    }\n    async handle(request) {\n      try {\n        return { response: await this.dispatch(request) };\n      } catch (error) {\n        return { response: {\n          type: "error",\n          requestId: request.requestId,\n          sessionId: request.sessionId,\n          generation: request.generation,\n          code: error instanceof ProtocolError ? error.code : "internal",\n          message: error instanceof Error ? error.message : String(error)\n        } };\n      }\n    }\n    async dispatch(request) {\n      if (request.type === "initialize-raw") {\n        const notebook = parseNotebook(request.raw);\n        this.sessions.set(request.sessionId, {\n          generation: request.generation,\n          notebook,\n          revision: request.revision,\n          pendingSave: /* @__PURE__ */ new Map()\n        });\n        return this.response(request, { type: "initialized", notebook, revision: request.revision });\n      }\n      if (request.type === "initialize-notebook") {\n        const notebook = normalizeNotebook(request.notebook);\n        this.sessions.set(request.sessionId, {\n          generation: request.generation,\n          notebook,\n          revision: request.revision,\n          pendingSave: /* @__PURE__ */ new Map()\n        });\n        return this.response(request, { type: "initialized", notebook, revision: request.revision });\n      }\n      const session = this.sessions.get(request.sessionId);\n      if (!session) throw new ProtocolError("missing-session", "Ink worker session is not initialized");\n      if (session.generation !== request.generation) throw new ProtocolError("stale-generation", "Ink worker request belongs to a stale file generation");\n      if (request.type === "apply-operation") {\n        if (request.revision !== session.revision + 1) {\n          throw new ProtocolError("revision-gap", `Expected revision ${session.revision + 1}, received ${request.revision}`);\n        }\n        applyNotebookOperation(session.notebook, request.operation);\n        session.revision = request.revision;\n        return this.response(request, { type: "operation-applied", revision: session.revision });\n      }\n      if (request.type === "barrier") {\n        if (session.revision < request.minimumRevision) {\n          throw new ProtocolError("revision-gap", `Worker revision ${session.revision} is behind ${request.minimumRevision}`);\n        }\n        return this.response(request, { type: "barrier-complete", revision: session.revision });\n      }\n      if (request.type === "prepare-save") {\n        if (session.revision < request.minimumRevision) {\n          throw new ProtocolError("revision-gap", `Worker revision ${session.revision} is behind ${request.minimumRevision}`);\n        }\n        const disk = parseNotebook(request.raw);\n        const local = normalizeNotebook(session.notebook);\n        const merged = mergeNotebooks(disk, local);\n        const token = `${request.sessionId}:${request.generation}:${request.requestId}`;\n        session.pendingSave.clear();\n        session.pendingSave.set(token, {\n          notebook: normalizeNotebook(merged),\n          revision: session.revision,\n          reconcile: serializeNotebook(merged) !== serializeNotebook(local)\n        });\n        return this.response(request, { type: "save-prepared", token, content: serializeNotebook(merged), revision: session.revision });\n      }\n      if (request.type === "commit-save") {\n        const candidate = session.pendingSave.get(request.token);\n        if (!candidate) throw new ProtocolError("missing-session", "Prepared save is no longer available");\n        session.pendingSave.delete(request.token);\n        session.notebook = mergeNotebooks(candidate.notebook, session.notebook);\n        return this.response(request, {\n          type: "save-committed",\n          revision: candidate.revision,\n          merged: candidate.reconcile ? candidate.notebook : void 0\n        });\n      }\n      if (request.type === "abort-save") {\n        session.pendingSave.delete(request.token);\n        return this.response(request, { type: "save-aborted" });\n      }\n      if (request.type === "merge-external") {\n        const merged = mergeNotebooks(parseNotebook(request.raw), session.notebook);\n        const changed = serializeNotebook(merged) !== serializeNotebook(session.notebook);\n        session.notebook = normalizeNotebook(merged);\n        return this.response(request, { type: "external-merged", notebook: changed ? session.notebook : void 0, revision: session.revision });\n      }\n      this.sessions.delete(request.sessionId);\n      return this.response(request, { type: "session-disposed" });\n    }\n    response(request, response) {\n      return { ...response, requestId: request.requestId, sessionId: request.sessionId, generation: request.generation };\n    }\n  };\n  function parseNotebook(raw) {\n    try {\n      return normalizeNotebook(JSON.parse(raw));\n    } catch (e) {\n      throw new ProtocolError("invalid-format", "Existing ink notebook is not valid JSON");\n    }\n  }\n  function applyNotebookOperation(notebook, operation) {\n    if (operation.type === "replace-notebook") {\n      Object.assign(notebook, normalizeNotebook(operation.notebook));\n      return;\n    }\n    const page = notebook.pages.find((candidate) => candidate.id === operation.pageId);\n    if (!page) return;\n    if (operation.type === "finalize-stroke") {\n      const index = page.strokes.findIndex((stroke2) => stroke2.id === operation.stroke.id);\n      const stroke = cloneStrokeValue(operation.stroke);\n      if (index >= 0) page.strokes[index] = stroke;\n      else page.strokes.push(stroke);\n      page.strokes.sort((left, right) => left.createdAt - right.createdAt);\n    } else if (operation.type === "patch-strokes") {\n      const removed = new Set(operation.remove);\n      const upsert = new Map(operation.upsert.map((stroke) => [stroke.id, cloneStrokeValue(stroke)]));\n      page.strokes = page.strokes.filter((stroke) => !removed.has(stroke.id) && !upsert.has(stroke.id));\n      page.strokes.push(...upsert.values());\n      page.strokes.sort((left, right) => left.createdAt - right.createdAt);\n      page.deletedStrokeIds = [.../* @__PURE__ */ new Set([...page.deletedStrokeIds, ...operation.deletedStrokeIds])];\n    } else {\n      if (operation.title !== void 0) page.title = operation.title;\n      if (operation.paper !== void 0) page.paper = operation.paper;\n    }\n    page.updatedAt = operation.pageUpdatedAt;\n    notebook.updatedAt = operation.notebookUpdatedAt;\n  }\n\n  // src/ink-worker.ts\n  var scope = self;\n  var core = new InkWorkerCore({\n    offscreenCanvas: typeof OffscreenCanvas !== "undefined",\n    imageBitmap: typeof ImageBitmap !== "undefined"\n  });\n  scope.onmessage = (event) => {\n    void core.handle(event.data).then(({ response, transfer }) => scope.postMessage(response, transfer != null ? transfer : []));\n  };\n  scope.postMessage(core.ready());\n})();\n';
+
+// src/worker-service.ts
+var WORKER_READY_TIMEOUT = 2e3;
+var InkWorkerRequestError = class extends Error {
+  constructor(code, message) {
+    super(message);
+    this.code = code;
+    this.name = "InkWorkerRequestError";
+  }
+};
+var InkWorkerService = class {
+  constructor(reportFallback) {
+    this.reportFallback = reportFallback;
+    this.worker = null;
+    this.workerUrl = null;
+    this.readyPromise = null;
+    this.resolveReady = null;
+    this.rejectReady = null;
+    this.nextRequestId = 1;
+    this.nextSessionId = 1;
+    this.restartCount = 0;
+    this.disabled = false;
+    this.recoveryPromise = null;
+    this.pending = /* @__PURE__ */ new Map();
+    this.sessions = /* @__PURE__ */ new Map();
+  }
+  createSession(snapshot) {
+    const session = new InkWorkerSession(this, `view-${this.nextSessionId++}`, snapshot);
+    this.sessions.set(session.id, session);
+    return session;
+  }
+  async send(message, retry = true, skipRecovery = false) {
+    if (this.disabled) throw new InkWorkerRequestError("unavailable", "Ink background worker is unavailable");
+    if (this.recoveryPromise && !skipRecovery) await this.recoveryPromise;
+    await this.ensureWorker();
+    try {
+      return await this.dispatch(message);
+    } catch (error) {
+      if (retry && this.recoveryPromise) {
+        await this.recoveryPromise;
+        return this.send(message, false);
+      }
+      throw error;
+    }
+  }
+  removeSession(id) {
+    this.sessions.delete(id);
+  }
+  dispose() {
+    this.disabled = true;
+    this.stopWorker(new InkWorkerRequestError("disposed", "Ink background worker was disposed"));
+    this.sessions.clear();
+  }
+  async ensureWorker() {
+    if (this.readyPromise) return this.readyPromise;
+    if (typeof Worker === "undefined" || typeof Blob === "undefined" || typeof URL.createObjectURL !== "function") {
+      this.disable("This device does not support the Ink Notes background worker; reduced-performance mode is active.");
+      throw new InkWorkerRequestError("unsupported", "Web Worker is not supported");
+    }
+    const blob = new Blob([ink_worker_source_default], { type: "text/javascript" });
+    this.workerUrl = URL.createObjectURL(blob);
+    this.worker = new Worker(this.workerUrl);
+    this.readyPromise = new Promise((resolve, reject) => {
+      this.resolveReady = resolve;
+      this.rejectReady = reject;
+      this.readyTimer = globalThis.setTimeout(() => reject(new InkWorkerRequestError("timeout", "Ink background worker did not start")), WORKER_READY_TIMEOUT);
+    });
+    this.worker.onmessage = (event) => this.onMessage(event.data);
+    this.worker.onerror = () => this.onWorkerFailure(new InkWorkerRequestError("crashed", "Ink background worker stopped unexpectedly"));
+    try {
+      return await this.readyPromise;
+    } catch (error) {
+      this.onWorkerFailure(error instanceof Error ? error : new Error(String(error)));
+      throw error;
+    }
+  }
+  dispatch(message) {
+    const requestId = this.nextRequestId++;
+    return new Promise((resolve, reject) => {
+      this.pending.set(requestId, { resolve, reject });
+      try {
+        this.worker.postMessage({ ...message, requestId });
+      } catch (error) {
+        this.pending.delete(requestId);
+        reject(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
+  }
+  onMessage(response) {
+    var _a;
+    if (response.type === "ready") {
+      if (this.readyTimer !== void 0) globalThis.clearTimeout(this.readyTimer);
+      this.readyTimer = void 0;
+      (_a = this.resolveReady) == null ? void 0 : _a.call(this, response.capabilities);
+      this.resolveReady = null;
+      this.rejectReady = null;
+      if (this.workerUrl) URL.revokeObjectURL(this.workerUrl);
+      this.workerUrl = null;
+      return;
+    }
+    const pending = this.pending.get(response.requestId);
+    if (!pending) return;
+    this.pending.delete(response.requestId);
+    if (response.type === "error") pending.reject(new InkWorkerRequestError(response.code, response.message));
+    else pending.resolve(response);
+  }
+  onWorkerFailure(error) {
+    if (this.disabled || this.recoveryPromise) return;
+    this.stopWorker(error);
+    if (this.restartCount >= 1) {
+      this.disable("Ink Notes could not restart its background worker; reduced-performance mode is active.");
+      return;
+    }
+    this.restartCount += 1;
+    this.recoveryPromise = this.recover().finally(() => {
+      this.recoveryPromise = null;
+    });
+  }
+  async recover() {
+    try {
+      await this.ensureWorker();
+      for (const session of this.sessions.values()) await session.recover();
+    } catch (e2) {
+      this.disable("Ink Notes could not restart its background worker; reduced-performance mode is active.");
+    }
+  }
+  stopWorker(error) {
+    var _a, _b;
+    if (this.readyTimer !== void 0) globalThis.clearTimeout(this.readyTimer);
+    this.readyTimer = void 0;
+    (_a = this.rejectReady) == null ? void 0 : _a.call(this, error);
+    this.resolveReady = null;
+    this.rejectReady = null;
+    this.readyPromise = null;
+    (_b = this.worker) == null ? void 0 : _b.terminate();
+    this.worker = null;
+    if (this.workerUrl) URL.revokeObjectURL(this.workerUrl);
+    this.workerUrl = null;
+    for (const request of this.pending.values()) request.reject(error);
+    this.pending.clear();
+  }
+  disable(message) {
+    if (this.disabled) return;
+    this.disabled = true;
+    this.stopWorker(new InkWorkerRequestError("unavailable", message));
+    this.reportFallback(message);
+  }
+};
+var InkWorkerSession = class {
+  constructor(service, id, snapshot) {
+    this.service = service;
+    this.id = id;
+    this.snapshot = snapshot;
+    this.generation = 0;
+    this.operationTail = Promise.resolve();
+  }
+  async initializeRaw(raw, revision) {
+    this.generation += 1;
+    const response = await this.service.send({ type: "initialize-raw", sessionId: this.id, generation: this.generation, raw, revision });
+    if (response.type !== "initialized") throw unexpected(response);
+    return response.notebook;
+  }
+  async apply(revision, operation) {
+    const apply = this.operationTail.then(async () => {
+      const response = await this.service.send({ type: "apply-operation", sessionId: this.id, generation: this.generation, revision, operation });
+      if (response.type !== "operation-applied") throw unexpected(response);
+    });
+    this.operationTail = apply.catch(() => void 0);
+    return apply;
+  }
+  async barrier(minimumRevision) {
+    await this.operationTail;
+    const response = await this.service.send({ type: "barrier", sessionId: this.id, generation: this.generation, minimumRevision });
+    if (response.type !== "barrier-complete") throw unexpected(response);
+    return response.revision;
+  }
+  async prepareSave(raw, minimumRevision) {
+    const response = await this.service.send({ type: "prepare-save", sessionId: this.id, generation: this.generation, raw, minimumRevision });
+    if (response.type !== "save-prepared") throw unexpected(response);
+    return response;
+  }
+  async commitSave(token) {
+    const response = await this.service.send({ type: "commit-save", sessionId: this.id, generation: this.generation, token });
+    if (response.type !== "save-committed") throw unexpected(response);
+    return response;
+  }
+  async abortSave(token) {
+    const response = await this.service.send({ type: "abort-save", sessionId: this.id, generation: this.generation, token });
+    if (response.type !== "save-aborted") throw unexpected(response);
+  }
+  async mergeExternal(raw) {
+    const response = await this.service.send({ type: "merge-external", sessionId: this.id, generation: this.generation, raw });
+    if (response.type !== "external-merged") throw unexpected(response);
+    return response.notebook;
+  }
+  async recover() {
+    const { notebook, revision } = this.snapshot();
+    const response = await this.service.send({
+      type: "initialize-notebook",
+      sessionId: this.id,
+      generation: this.generation,
+      notebook,
+      revision
+    }, false, true);
+    if (response.type !== "initialized") throw unexpected(response);
+  }
+  dispose() {
+    void this.service.send({ type: "dispose-session", sessionId: this.id, generation: this.generation }, false).catch(() => void 0);
+    this.service.removeSession(this.id);
+  }
+};
+function unexpected(response) {
+  return new InkWorkerRequestError("protocol", `Unexpected worker response: ${response.type}`);
+}
+
 // src/view.ts
 var VIEW_TYPE_INK = "ink-notes-view";
 var STROKE_ERASER_HIT_RADIUS = 10;
 var OVERLAY_PIXEL_BUDGET = 12e6;
-var SAVE_IDLE_DELAY = 1e3;
+var SAVE_IDLE_DELAY = 1500;
+var SAVE_MAX_DELAY = 1e4;
+var SAVE_CONFLICT_RETRIES = 3;
 var INK_COMMIT_IDLE_DELAY = 180;
+var SaveConflictError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "SaveConflictError";
+  }
+};
 var INK_COLORS = [
   { value: "#1b1b1b", label: "Black" },
   { value: "#195bff", label: "Blue" },
@@ -924,8 +1149,9 @@ var INK_COLORS = [
   { value: "#f2c94c", label: "Yellow" }
 ];
 var InkView = class extends import_obsidian.FileView {
-  constructor(leaf, store) {
+  constructor(leaf, store, workers) {
     super(leaf);
+    this.workers = workers;
     this.notebook = createNotebook();
     this.pageIndex = 0;
     this.state = { tool: "pen", color: "#1b1b1b", width: 3, opacity: 1, smoothing: 0.7, eraserMode: "stroke", eraserSize: 32 };
@@ -943,6 +1169,8 @@ var InkView = class extends import_obsidian.FileView {
     this.savedRevision = 0;
     this.pendingMergedNotebook = null;
     this.externalRefreshPending = false;
+    this.workerSession = null;
+    this.workerFallbackReported = false;
     this.activeStroke = null;
     this.pendingInkStrokes = [];
     this.committingInkStrokes = null;
@@ -1014,22 +1242,35 @@ var InkView = class extends import_obsidian.FileView {
     this.renderAll();
   }
   async onClose() {
-    var _a;
+    var _a, _b;
     if (this.renderFrame !== null) window.cancelAnimationFrame(this.renderFrame);
     this.renderFrame = null;
     if (this.zoomRenderTimer !== void 0) window.clearTimeout(this.zoomRenderTimer);
     this.finishPointerInput(false);
     this.cancelPendingInkCommitTimer();
-    if (this.saveTimer !== void 0) {
-      window.clearTimeout(this.saveTimer);
-      this.saveTimer = void 0;
-    }
+    this.clearSaveTimers();
     if (this.file && (this.dirtyRevision > this.savedRevision || this.activeSave)) await this.save(this.file);
-    (_a = this.tiles) == null ? void 0 : _a.dispose();
+    (_a = this.workerSession) == null ? void 0 : _a.dispose();
+    this.workerSession = null;
+    (_b = this.tiles) == null ? void 0 : _b.dispose();
     this.viewReady = false;
   }
   async onLoadFile(file) {
-    this.notebook = await this.store.read(file);
+    var _a;
+    (_a = this.workerSession) == null ? void 0 : _a.dispose();
+    this.workerSession = null;
+    if (this.workers) {
+      const session = this.workers.createSession(() => ({ notebook: this.notebook, revision: this.dirtyRevision }));
+      try {
+        this.notebook = await session.initializeRaw(await this.store.readRaw(file), 0);
+        this.workerSession = session;
+      } catch (e2) {
+        session.dispose();
+        this.notebook = await this.store.read(file);
+      }
+    } else {
+      this.notebook = await this.store.read(file);
+    }
     this.pageIndex = 0;
     this.undoStack = [];
     this.redoStack = [];
@@ -1039,13 +1280,13 @@ var InkView = class extends import_obsidian.FileView {
     this.renderAll();
   }
   async onUnloadFile(file) {
+    var _a;
     this.finishPointerInput(false);
     this.cancelPendingInkCommitTimer();
-    if (this.saveTimer !== void 0) {
-      window.clearTimeout(this.saveTimer);
-      this.saveTimer = void 0;
-    }
+    this.clearSaveTimers();
     if (this.dirtyRevision > this.savedRevision || this.activeSave) await this.save(file);
+    (_a = this.workerSession) == null ? void 0 : _a.dispose();
+    this.workerSession = null;
   }
   async reloadFromDisk() {
     if (this.syncing || this.activePointerId !== null || this.pendingInkStrokes.length > 0) {
@@ -1054,8 +1295,9 @@ var InkView = class extends import_obsidian.FileView {
     }
     if (!this.file) return;
     const file = this.file;
-    const latest = await this.store.read(file);
+    const latest = this.workerSession ? await this.workerSession.mergeExternal(await this.store.readRaw(file)) : await this.store.read(file);
     if (this.file !== file) return;
+    if (!latest) return;
     if (notebooksEqual(latest, this.notebook)) return;
     this.receiveMergedNotebook(latest);
   }
@@ -1761,11 +2003,28 @@ var InkView = class extends import_obsidian.FileView {
       return;
     }
     if (interaction.tool === "eraser" && this.erasedStrokes.length > 0) {
-      this.markChanged(page);
+      this.markChanged(page, true, false);
+      const replacementIds = new Set(this.eraserReplacements.map((stroke) => stroke.id));
+      this.queueWorkerOperation({
+        type: "patch-strokes",
+        pageId: page.id,
+        upsert: page.strokes.filter((stroke) => replacementIds.has(stroke.id)).map(cloneStroke),
+        remove: [.../* @__PURE__ */ new Set([...this.erasedStrokes.map((stroke) => stroke.id), ...replacementIds])],
+        deletedStrokeIds: [...page.deletedStrokeIds],
+        pageUpdatedAt: page.updatedAt,
+        notebookUpdatedAt: this.notebook.updatedAt
+      });
       this.pushCommand(this.erasedStrokesCommand(page.id, this.erasedStrokes, this.eraserReplacements));
       this.drawInteractiveStrokes(page.strokes, true);
     } else if (this.activeStroke) {
-      this.markChanged(page);
+      this.markChanged(page, true, false);
+      this.queueWorkerOperation({
+        type: "finalize-stroke",
+        pageId: page.id,
+        stroke: cloneStroke(this.activeStroke),
+        pageUpdatedAt: page.updatedAt,
+        notebookUpdatedAt: this.notebook.updatedAt
+      });
       this.pushCommand(this.addedStrokeCommand(page.id, this.activeStroke));
     }
     this.activePointerId = null;
@@ -1940,6 +2199,7 @@ var InkView = class extends import_obsidian.FileView {
     this.notebook.pageOrderUpdatedAt = now;
     this.notebook.updatedAt = now;
     this.dirtyRevision += 1;
+    this.queueWorkerSnapshot();
     this.pageIndex = this.notebook.pages.length - 1;
     this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, page.id);
     this.renderPageRail();
@@ -2047,6 +2307,7 @@ var InkView = class extends import_obsidian.FileView {
     this.notebook.pageOrderUpdatedAt = now;
     this.notebook.updatedAt = now;
     this.dirtyRevision += 1;
+    this.queueWorkerSnapshot();
   }
   pushNotebookCommand(before, after, beforePageId, afterPageId) {
     this.pushCommand({
@@ -2078,18 +2339,33 @@ var InkView = class extends import_obsidian.FileView {
     this.notebook = next;
     this.pageIndex = Math.max(0, next.pages.findIndex((page) => page.id === selectedId));
     this.dirtyRevision += 1;
+    this.queueWorkerSnapshot();
   }
   setPagePaper(pageId, paper) {
     const page = this.pageById(pageId);
     if (!page) return;
     page.paper = paper;
-    this.markChanged(page);
+    this.markChanged(page, true, false);
+    this.queueWorkerOperation({
+      type: "set-page",
+      pageId,
+      paper,
+      pageUpdatedAt: page.updatedAt,
+      notebookUpdatedAt: this.notebook.updatedAt
+    });
   }
   setPageTitle(pageId, title) {
     const page = this.pageById(pageId);
     if (!page) return;
     page.title = title;
-    this.markChanged(page);
+    this.markChanged(page, true, false);
+    this.queueWorkerOperation({
+      type: "set-page",
+      pageId,
+      title,
+      pageUpdatedAt: page.updatedAt,
+      notebookUpdatedAt: this.notebook.updatedAt
+    });
   }
   async copyCurrentPageEmbed() {
     if (!this.file) return;
@@ -2223,9 +2499,26 @@ page: ${this.currentPage().id}
       this.saveTimer = void 0;
       void this.save();
     }, SAVE_IDLE_DELAY);
+    if (this.maxSaveTimer === void 0) {
+      this.maxSaveTimer = window.setTimeout(() => {
+        this.maxSaveTimer = void 0;
+        if (this.activePointerId !== null && !this.workerSession) {
+          this.scheduleSave();
+          return;
+        }
+        void this.save();
+      }, SAVE_MAX_DELAY);
+    }
+  }
+  clearSaveTimers() {
+    if (this.saveTimer !== void 0) window.clearTimeout(this.saveTimer);
+    if (this.maxSaveTimer !== void 0) window.clearTimeout(this.maxSaveTimer);
+    this.saveTimer = void 0;
+    this.maxSaveTimer = void 0;
   }
   async save(file = this.file) {
     if (!file) return;
+    this.clearSaveTimers();
     if (this.activeSave) {
       this.saveRequested = true;
       try {
@@ -2253,11 +2546,10 @@ page: ${this.currentPage().id}
       do {
         this.saveRequested = false;
         const revision = this.dirtyRevision;
-        const snapshot = cloneNotebook(this.notebook);
         try {
-          const merged = await this.store.save(file, snapshot);
-          this.savedRevision = Math.max(this.savedRevision, revision);
-          if (this.file === file) this.receiveMergedNotebook(merged);
+          const result = await this.saveRevision(file, revision);
+          this.savedRevision = Math.max(this.savedRevision, result.revision);
+          if (result.merged && this.file === file) this.receiveMergedNotebook(result.merged);
         } catch (error) {
           new import_obsidian.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
           break;
@@ -2269,7 +2561,40 @@ page: ${this.currentPage().id}
         this.externalRefreshPending = false;
         void this.reloadFromDisk().catch((error) => new import_obsidian.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
       }
+      if (this.dirtyRevision > this.savedRevision && this.saveRequested) this.scheduleSave();
     }
+  }
+  async saveRevision(file, minimumRevision) {
+    const session = this.workerSession;
+    if (session) {
+      try {
+        return await this.saveRevisionWithWorker(file, session, minimumRevision);
+      } catch (error) {
+        if (error instanceof InkWorkerRequestError && error.code === "invalid-format") throw error;
+        if (error instanceof SaveConflictError) throw error;
+        if (this.workerSession === session) this.disableWorkerSession(error);
+      }
+    }
+    const snapshot = cloneNotebook(this.notebook);
+    return { revision: minimumRevision, merged: await this.store.save(file, snapshot) };
+  }
+  async saveRevisionWithWorker(file, session, minimumRevision) {
+    await session.barrier(minimumRevision);
+    let raw = await this.store.readRaw(file);
+    for (let attempt = 0; attempt < SAVE_CONFLICT_RETRIES; attempt++) {
+      const prepared = await session.prepareSave(raw, minimumRevision);
+      if (await this.store.writeIfUnchanged(file, raw, prepared.content)) {
+        try {
+          return await session.commitSave(prepared.token);
+        } catch (error) {
+          if (this.workerSession === session) this.disableWorkerSession(error);
+          return { revision: prepared.revision, merged: await this.store.read(file) };
+        }
+      }
+      await session.abortSave(prepared.token);
+      raw = await this.store.readRaw(file);
+    }
+    throw new SaveConflictError(`Cannot save ${file.path || "notebook"}: the file kept changing`);
   }
   undo() {
     const command = this.undoStack.pop();
@@ -2382,7 +2707,16 @@ page: ${this.currentPage().id}
           undo: () => this.applyStrokePoints(pageId, before),
           redo: () => this.applyStrokePoints(pageId, after)
         });
-        this.markChanged(page, false);
+        this.markChanged(page, false, false);
+        this.queueWorkerOperation({
+          type: "patch-strokes",
+          pageId: page.id,
+          upsert: movedStrokes.map(cloneStroke),
+          remove: [],
+          deletedStrokeIds: [...page.deletedStrokeIds],
+          pageUpdatedAt: page.updatedAt,
+          notebookUpdatedAt: this.notebook.updatedAt
+        });
         this.scheduleSave();
       }
       this.lassoDrag = null;
@@ -2412,13 +2746,34 @@ page: ${this.currentPage().id}
     page.strokes = page.strokes.filter((stroke) => !deleted.has(stroke.id));
     page.deletedStrokeIds = [.../* @__PURE__ */ new Set([...page.deletedStrokeIds, ...ids])];
   }
-  markChanged(page, syncTiles = true) {
+  markChanged(page, syncTiles = true, syncWorker = true) {
     var _a;
     const now = Date.now();
     page.updatedAt = now;
     this.notebook.updatedAt = now;
     this.dirtyRevision += 1;
     if (syncTiles && page === this.currentPage()) (_a = this.tiles) == null ? void 0 : _a.sync(page.strokes, this.tileExclusion());
+    if (syncWorker) this.queueWorkerSnapshot();
+  }
+  queueWorkerSnapshot() {
+    if (!this.workerSession) return;
+    this.queueWorkerOperation({ type: "replace-notebook", notebook: cloneNotebook(this.notebook) });
+  }
+  queueWorkerOperation(operation) {
+    const session = this.workerSession;
+    if (!session) return;
+    const revision = this.dirtyRevision;
+    void session.apply(revision, operation).catch((error) => {
+      if (this.workerSession === session) this.disableWorkerSession(error);
+    });
+  }
+  disableWorkerSession(error) {
+    var _a;
+    (_a = this.workerSession) == null ? void 0 : _a.dispose();
+    this.workerSession = null;
+    if (this.workerFallbackReported) return;
+    this.workerFallbackReported = true;
+    new import_obsidian.Notice(`Ink Notes background processing is unavailable; using reduced-performance mode: ${error instanceof Error ? error.message : String(error)}`);
   }
   selectedStrokes() {
     return this.currentPage().strokes.filter((stroke) => this.selectedStrokeIds.has(stroke.id));
@@ -2773,8 +3128,26 @@ var NotebookStore = class {
     return this.vault.create(path, serialize(notebook));
   }
   async read(file) {
-    const raw = await this.vault.read(file);
+    const raw = await this.readRaw(file);
     return normalizeNotebook(JSON.parse(raw));
+  }
+  async readRaw(file) {
+    return this.vault.read(file);
+  }
+  async writeIfUnchanged(file, expectedRaw, nextRaw) {
+    let matched = false;
+    try {
+      await this.vault.process(file, (raw) => {
+        if (raw !== expectedRaw) return raw;
+        matched = true;
+        this.selfWrites.set(file.path, nextRaw);
+        return nextRaw;
+      });
+    } catch (error) {
+      if (this.selfWrites.get(file.path) === nextRaw) this.selfWrites.delete(file.path);
+      throw error;
+    }
+    return matched;
   }
   async save(file, notebook) {
     const next = { ...notebook, updatedAt: Date.now() };
@@ -2962,6 +3335,8 @@ var InkNotesPlugin = class extends import_obsidian4.Plugin {
   }
   async onload() {
     this.store = new NotebookStore(this.app);
+    this.workers = new InkWorkerService((message) => new import_obsidian4.Notice(message));
+    this.register(() => this.workers.dispose());
     this.registerView(VIEW_TYPE_INK, (leaf) => this.createView(leaf));
     this.registerExtensions([INK_EXTENSION], VIEW_TYPE_INK);
     this.addRibbonIcon("pen-line", "Open Ink Notes", () => this.runAsync(this.openNotebook(), "open a notebook"));
@@ -2975,7 +3350,7 @@ var InkNotesPlugin = class extends import_obsidian4.Plugin {
     });
   }
   createView(leaf) {
-    return new InkView(leaf, this.store);
+    return new InkView(leaf, this.store, this.workers);
   }
   async openNotebook() {
     const files = await this.store.list();

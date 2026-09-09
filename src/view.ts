@@ -13,6 +13,8 @@ import {
 import { NotebookStore } from "./storage";
 import { canvasResolution, drawInkStroke } from "./rendering";
 import { Rect, TileRenderer } from "./tiles";
+import type { NotebookOperation } from "./worker-protocol";
+import { InkWorkerRequestError, InkWorkerService, InkWorkerSession } from "./worker-service";
 
 export const VIEW_TYPE_INK = "ink-notes-view";
 
@@ -54,8 +56,17 @@ interface NotebookReconciliation {
 
 const STROKE_ERASER_HIT_RADIUS = 10;
 const OVERLAY_PIXEL_BUDGET = 12_000_000;
-const SAVE_IDLE_DELAY = 1_000;
+const SAVE_IDLE_DELAY = 1_500;
+const SAVE_MAX_DELAY = 10_000;
+const SAVE_CONFLICT_RETRIES = 3;
 const INK_COMMIT_IDLE_DELAY = 180;
+
+class SaveConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SaveConflictError";
+  }
+}
 
 const INK_COLORS = [
   { value: "#1b1b1b", label: "Black" },
@@ -97,6 +108,9 @@ export class InkView extends FileView {
   private pendingMergedNotebook: InkNotebook | null = null;
   private externalRefreshPending = false;
   private saveTimer: number | undefined;
+  private maxSaveTimer: number | undefined;
+  private workerSession: InkWorkerSession | null = null;
+  private workerFallbackReported = false;
   private activeStroke: InkStroke | null = null;
   private pendingInkStrokes: InkStroke[] = [];
   private committingInkStrokes: InkStroke[] | null = null;
@@ -143,7 +157,7 @@ export class InkView extends FileView {
   private zoomRenderTimer: number | undefined;
   private inkCommitTimer: number | undefined;
 
-  constructor(leaf: WorkspaceLeaf, store: NotebookStore) {
+  constructor(leaf: WorkspaceLeaf, store: NotebookStore, private readonly workers?: InkWorkerService) {
     super(leaf);
     this.store = store;
     this.scope = new Scope(this.app.scope);
@@ -185,17 +199,29 @@ export class InkView extends FileView {
     if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
     this.finishPointerInput(false);
     this.cancelPendingInkCommitTimer();
-    if (this.saveTimer !== undefined) {
-      window.clearTimeout(this.saveTimer);
-      this.saveTimer = undefined;
-    }
+    this.clearSaveTimers();
     if (this.file && (this.dirtyRevision > this.savedRevision || this.activeSave)) await this.save(this.file);
+    this.workerSession?.dispose();
+    this.workerSession = null;
     this.tiles?.dispose();
     this.viewReady = false;
   }
 
   async onLoadFile(file: TFile): Promise<void> {
-    this.notebook = await this.store.read(file);
+    this.workerSession?.dispose();
+    this.workerSession = null;
+    if (this.workers) {
+      const session = this.workers.createSession(() => ({ notebook: this.notebook, revision: this.dirtyRevision }));
+      try {
+        this.notebook = await session.initializeRaw(await this.store.readRaw(file), 0);
+        this.workerSession = session;
+      } catch {
+        session.dispose();
+        this.notebook = await this.store.read(file);
+      }
+    } else {
+      this.notebook = await this.store.read(file);
+    }
     this.pageIndex = 0;
     this.undoStack = [];
     this.redoStack = [];
@@ -208,19 +234,21 @@ export class InkView extends FileView {
   async onUnloadFile(file: TFile): Promise<void> {
     this.finishPointerInput(false);
     this.cancelPendingInkCommitTimer();
-    if (this.saveTimer !== undefined) {
-      window.clearTimeout(this.saveTimer);
-      this.saveTimer = undefined;
-    }
+    this.clearSaveTimers();
     if (this.dirtyRevision > this.savedRevision || this.activeSave) await this.save(file);
+    this.workerSession?.dispose();
+    this.workerSession = null;
   }
 
   async reloadFromDisk(): Promise<void> {
     if (this.syncing || this.activePointerId !== null || this.pendingInkStrokes.length > 0) { this.externalRefreshPending = true; return; }
     if (!this.file) return;
     const file = this.file;
-    const latest = await this.store.read(file);
+    const latest = this.workerSession
+      ? await this.workerSession.mergeExternal(await this.store.readRaw(file))
+      : await this.store.read(file);
     if (this.file !== file) return;
+    if (!latest) return;
     if (notebooksEqual(latest, this.notebook)) return;
     this.receiveMergedNotebook(latest);
   }
@@ -926,11 +954,28 @@ export class InkView extends FileView {
       return;
     }
     if (interaction.tool === "eraser" && this.erasedStrokes.length > 0) {
-      this.markChanged(page);
+      this.markChanged(page, true, false);
+      const replacementIds = new Set(this.eraserReplacements.map((stroke) => stroke.id));
+      this.queueWorkerOperation({
+        type: "patch-strokes",
+        pageId: page.id,
+        upsert: page.strokes.filter((stroke) => replacementIds.has(stroke.id)).map(cloneStroke),
+        remove: [...new Set([...this.erasedStrokes.map((stroke) => stroke.id), ...replacementIds])],
+        deletedStrokeIds: [...page.deletedStrokeIds],
+        pageUpdatedAt: page.updatedAt,
+        notebookUpdatedAt: this.notebook.updatedAt,
+      });
       this.pushCommand(this.erasedStrokesCommand(page.id, this.erasedStrokes, this.eraserReplacements));
       this.drawInteractiveStrokes(page.strokes, true);
     } else if (this.activeStroke) {
-      this.markChanged(page);
+      this.markChanged(page, true, false);
+      this.queueWorkerOperation({
+        type: "finalize-stroke",
+        pageId: page.id,
+        stroke: cloneStroke(this.activeStroke),
+        pageUpdatedAt: page.updatedAt,
+        notebookUpdatedAt: this.notebook.updatedAt,
+      });
       this.pushCommand(this.addedStrokeCommand(page.id, this.activeStroke));
     }
     this.activePointerId = null;
@@ -1118,6 +1163,7 @@ export class InkView extends FileView {
     this.notebook.pageOrderUpdatedAt = now;
     this.notebook.updatedAt = now;
     this.dirtyRevision += 1;
+    this.queueWorkerSnapshot();
     this.pageIndex = this.notebook.pages.length - 1;
     this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, page.id);
     this.renderPageRail();
@@ -1229,6 +1275,7 @@ export class InkView extends FileView {
     this.notebook.pageOrderUpdatedAt = now;
     this.notebook.updatedAt = now;
     this.dirtyRevision += 1;
+    this.queueWorkerSnapshot();
   }
 
   private pushNotebookCommand(before: InkNotebook, after: InkNotebook, beforePageId: string, afterPageId: string): void {
@@ -1261,20 +1308,29 @@ export class InkView extends FileView {
     this.notebook = next;
     this.pageIndex = Math.max(0, next.pages.findIndex((page) => page.id === selectedId));
     this.dirtyRevision += 1;
+    this.queueWorkerSnapshot();
   }
 
   private setPagePaper(pageId: string, paper: PaperStyle): void {
     const page = this.pageById(pageId);
     if (!page) return;
     page.paper = paper;
-    this.markChanged(page);
+    this.markChanged(page, true, false);
+    this.queueWorkerOperation({
+      type: "set-page", pageId, paper,
+      pageUpdatedAt: page.updatedAt, notebookUpdatedAt: this.notebook.updatedAt,
+    });
   }
 
   private setPageTitle(pageId: string, title: string): void {
     const page = this.pageById(pageId);
     if (!page) return;
     page.title = title;
-    this.markChanged(page);
+    this.markChanged(page, true, false);
+    this.queueWorkerOperation({
+      type: "set-page", pageId, title,
+      pageUpdatedAt: page.updatedAt, notebookUpdatedAt: this.notebook.updatedAt,
+    });
   }
 
   private async copyCurrentPageEmbed(): Promise<void> {
@@ -1415,10 +1471,28 @@ export class InkView extends FileView {
       this.saveTimer = undefined;
       void this.save();
     }, SAVE_IDLE_DELAY);
+    if (this.maxSaveTimer === undefined) {
+      this.maxSaveTimer = window.setTimeout(() => {
+        this.maxSaveTimer = undefined;
+        if (this.activePointerId !== null && !this.workerSession) {
+          this.scheduleSave();
+          return;
+        }
+        void this.save();
+      }, SAVE_MAX_DELAY);
+    }
+  }
+
+  private clearSaveTimers(): void {
+    if (this.saveTimer !== undefined) window.clearTimeout(this.saveTimer);
+    if (this.maxSaveTimer !== undefined) window.clearTimeout(this.maxSaveTimer);
+    this.saveTimer = undefined;
+    this.maxSaveTimer = undefined;
   }
 
   private async save(file = this.file): Promise<void> {
     if (!file) return;
+    this.clearSaveTimers();
     if (this.activeSave) {
       this.saveRequested = true;
       try {
@@ -1450,11 +1524,10 @@ export class InkView extends FileView {
       do {
         this.saveRequested = false;
         const revision = this.dirtyRevision;
-        const snapshot = cloneNotebook(this.notebook);
         try {
-          const merged = await this.store.save(file, snapshot);
-          this.savedRevision = Math.max(this.savedRevision, revision);
-          if (this.file === file) this.receiveMergedNotebook(merged);
+          const result = await this.saveRevision(file, revision);
+          this.savedRevision = Math.max(this.savedRevision, result.revision);
+          if (result.merged && this.file === file) this.receiveMergedNotebook(result.merged);
         } catch (error) {
           new Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
           break;
@@ -1466,7 +1539,43 @@ export class InkView extends FileView {
         this.externalRefreshPending = false;
         void this.reloadFromDisk().catch((error) => new Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
       }
+      if (this.dirtyRevision > this.savedRevision && this.saveRequested) this.scheduleSave();
     }
+  }
+
+  private async saveRevision(file: TFile, minimumRevision: number): Promise<{ revision: number; merged?: InkNotebook }> {
+    const session = this.workerSession;
+    if (session) {
+      try {
+        return await this.saveRevisionWithWorker(file, session, minimumRevision);
+      } catch (error) {
+        if (error instanceof InkWorkerRequestError && error.code === "invalid-format") throw error;
+        if (error instanceof SaveConflictError) throw error;
+        if (this.workerSession === session) this.disableWorkerSession(error);
+      }
+    }
+    const snapshot = cloneNotebook(this.notebook);
+    return { revision: minimumRevision, merged: await this.store.save(file, snapshot) };
+  }
+
+  private async saveRevisionWithWorker(file: TFile, session: InkWorkerSession,
+    minimumRevision: number): Promise<{ revision: number; merged?: InkNotebook }> {
+    await session.barrier(minimumRevision);
+    let raw = await this.store.readRaw(file);
+    for (let attempt = 0; attempt < SAVE_CONFLICT_RETRIES; attempt++) {
+      const prepared = await session.prepareSave(raw, minimumRevision);
+      if (await this.store.writeIfUnchanged(file, raw, prepared.content)) {
+        try {
+          return await session.commitSave(prepared.token);
+        } catch (error) {
+          if (this.workerSession === session) this.disableWorkerSession(error);
+          return { revision: prepared.revision, merged: await this.store.read(file) };
+        }
+      }
+      await session.abortSave(prepared.token);
+      raw = await this.store.readRaw(file);
+    }
+    throw new SaveConflictError(`Cannot save ${file.path || "notebook"}: the file kept changing`);
   }
 
   private undo(): void {
@@ -1589,7 +1698,16 @@ export class InkView extends FileView {
           undo: () => this.applyStrokePoints(pageId, before),
           redo: () => this.applyStrokePoints(pageId, after),
         });
-        this.markChanged(page, false);
+        this.markChanged(page, false, false);
+        this.queueWorkerOperation({
+          type: "patch-strokes",
+          pageId: page.id,
+          upsert: movedStrokes.map(cloneStroke),
+          remove: [],
+          deletedStrokeIds: [...page.deletedStrokeIds],
+          pageUpdatedAt: page.updatedAt,
+          notebookUpdatedAt: this.notebook.updatedAt,
+        });
         this.scheduleSave();
       }
       this.lassoDrag = null;
@@ -1622,12 +1740,35 @@ export class InkView extends FileView {
     page.deletedStrokeIds = [...new Set([...page.deletedStrokeIds, ...ids])];
   }
 
-  private markChanged(page: InkPage, syncTiles = true): void {
+  private markChanged(page: InkPage, syncTiles = true, syncWorker = true): void {
     const now = Date.now();
     page.updatedAt = now;
     this.notebook.updatedAt = now;
     this.dirtyRevision += 1;
     if (syncTiles && page === this.currentPage()) this.tiles?.sync(page.strokes, this.tileExclusion());
+    if (syncWorker) this.queueWorkerSnapshot();
+  }
+
+  private queueWorkerSnapshot(): void {
+    if (!this.workerSession) return;
+    this.queueWorkerOperation({ type: "replace-notebook", notebook: cloneNotebook(this.notebook) });
+  }
+
+  private queueWorkerOperation(operation: NotebookOperation): void {
+    const session = this.workerSession;
+    if (!session) return;
+    const revision = this.dirtyRevision;
+    void session.apply(revision, operation).catch((error) => {
+      if (this.workerSession === session) this.disableWorkerSession(error);
+    });
+  }
+
+  private disableWorkerSession(error: unknown): void {
+    this.workerSession?.dispose();
+    this.workerSession = null;
+    if (this.workerFallbackReported) return;
+    this.workerFallbackReported = true;
+    new Notice(`Ink Notes background processing is unavailable; using reduced-performance mode: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   private selectedStrokes(): InkStroke[] {

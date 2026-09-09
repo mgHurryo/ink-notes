@@ -334,7 +334,7 @@ describe("consecutive handwriting input", () => {
     store.save.mockImplementation(async (_file, notebook) => notebook);
     internal.onPointerDown(pointer(10));
     internal.onPointerUp(pointer(20));
-    await vi.advanceTimersByTimeAsync(999);
+    await vi.advanceTimersByTimeAsync(1499);
     expect(store.save).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(store.save).toHaveBeenCalledOnce();
