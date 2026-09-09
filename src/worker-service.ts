@@ -6,6 +6,7 @@ import type {
   NotebookOperation,
   WorkerCapabilities,
 } from "./worker-protocol";
+import type { RenderTileResult } from "./tiles";
 
 type WorkerRequestInput = InkWorkerRequest extends infer Request
   ? Request extends InkWorkerRequest ? Omit<Request, "requestId"> : never
@@ -41,6 +42,7 @@ export class InkWorkerService {
   private nextSessionId = 1;
   private restartCount = 0;
   private disabled = false;
+  private capabilities: WorkerCapabilities | null = null;
   private recoveryPromise: Promise<void> | null = null;
   private readonly pending = new Map<number, PendingRequest>();
   private readonly sessions = new Map<string, InkWorkerSession>();
@@ -69,6 +71,10 @@ export class InkWorkerService {
   }
 
   removeSession(id: string): void { this.sessions.delete(id); }
+
+  canRenderTiles(): boolean {
+    return this.capabilities?.offscreenCanvas === true && this.capabilities.imageBitmap === true;
+  }
 
   dispose(): void {
     this.disabled = true;
@@ -117,6 +123,7 @@ export class InkWorkerService {
       if (this.readyTimer !== undefined) globalThis.clearTimeout(this.readyTimer);
       this.readyTimer = undefined;
       this.resolveReady?.(response.capabilities);
+      this.capabilities = response.capabilities;
       this.resolveReady = null;
       this.rejectReady = null;
       if (this.workerUrl) URL.revokeObjectURL(this.workerUrl);
@@ -157,6 +164,7 @@ export class InkWorkerService {
     this.resolveReady = null;
     this.rejectReady = null;
     this.readyPromise = null;
+    this.capabilities = null;
     this.worker?.terminate();
     this.worker = null;
     if (this.workerUrl) URL.revokeObjectURL(this.workerUrl);
@@ -181,6 +189,10 @@ export class InkWorkerSession {
     readonly id: string,
     private readonly snapshot: () => RecoverySnapshot,
   ) {}
+
+  canRenderTiles(): boolean {
+    return this.service.canRenderTiles();
+  }
 
   async initializeRaw(raw: string, revision: number): Promise<InkNotebook> {
     this.generation += 1;
@@ -208,6 +220,16 @@ export class InkWorkerSession {
   async prepareSave(raw: string, minimumRevision: number): Promise<{ token: string; content: string; revision: number }> {
     const response = await this.service.send({ type: "prepare-save", sessionId: this.id, generation: this.generation, raw, minimumRevision });
     if (response.type !== "save-prepared") throw unexpected(response);
+    return response;
+  }
+
+  async renderTile(pageId: string, cell: string, density: number, revision: number, width: number, height: number): Promise<RenderTileResult> {
+    const response = await this.service.send({
+      type: "render-tile", sessionId: this.id, generation: this.generation,
+      pageId,
+      cell, density, revision, width, height,
+    });
+    if (response.type !== "tile-rendered") throw unexpected(response);
     return response;
   }
 

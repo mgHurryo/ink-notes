@@ -53,4 +53,26 @@ describe("InkWorkerCore persistence mirror", () => {
     const stale = { ...request({ type: "barrier", minimumRevision: 0 }, 3), generation: 2 } as InkWorkerRequest;
     expect(await response(core, stale)).toMatchObject({ type: "error", code: "stale-generation" });
   });
+
+  it("keeps incremental stroke points in the worker mirror", async () => {
+    const core = new InkWorkerCore({ offscreenCanvas: false, imageBitmap: false });
+    const notebook = createNotebook();
+    const page = notebook.pages[0];
+    const stroke = {
+      id: "incremental", pageId: page.id, tool: "pen" as const, color: "#000", width: 3, opacity: 1,
+      points: [{ x: 0.1, y: 0.1, pressure: 0.5, t: 1 }], createdAt: 1, updatedAt: 1,
+    };
+    await response(core, request({ type: "initialize-notebook", notebook, revision: 0 }));
+    await response(core, request({ type: "apply-operation", revision: 1, operation: {
+      type: "start-stroke", pageId: page.id, stroke, pageUpdatedAt: 1, notebookUpdatedAt: 1,
+    } }, 2));
+    await response(core, request({ type: "apply-operation", revision: 2, operation: {
+      type: "append-stroke-points", pageId: page.id, strokeId: stroke.id,
+      points: [{ x: 0.2, y: 0.2, pressure: 0.6, t: 2 }], pageUpdatedAt: 2, notebookUpdatedAt: 2,
+    } }, 3));
+    const prepared = await response(core, request({ type: "prepare-save", raw: JSON.stringify(notebook), minimumRevision: 2 }, 4));
+    expect(prepared).toMatchObject({ type: "save-prepared", revision: 2 });
+    if (prepared.type !== "save-prepared") throw new Error("save was not prepared");
+    expect(JSON.parse(prepared.content).pages[0].strokes[0].points).toHaveLength(2);
+  });
 });

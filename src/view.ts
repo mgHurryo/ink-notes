@@ -105,13 +105,16 @@ export class InkView extends FileView {
   private activeSave: Promise<void> | null = null;
   private dirtyRevision = 0;
   private savedRevision = 0;
+  private workerRevision = 0;
   private pendingMergedNotebook: InkNotebook | null = null;
+  private pendingMergedNotebookIsFinal = false;
   private externalRefreshPending = false;
   private saveTimer: number | undefined;
   private maxSaveTimer: number | undefined;
   private workerSession: InkWorkerSession | null = null;
   private workerFallbackReported = false;
   private activeStroke: InkStroke | null = null;
+  private workerStrokePointIndex = 0;
   private pendingInkStrokes: InkStroke[] = [];
   private committingInkStrokes: InkStroke[] | null = null;
   private pendingInkPageId: string | null = null;
@@ -201,6 +204,7 @@ export class InkView extends FileView {
     this.cancelPendingInkCommitTimer();
     this.clearSaveTimers();
     if (this.file && (this.dirtyRevision > this.savedRevision || this.activeSave)) await this.save(this.file);
+    this.tiles?.setBackend?.(null);
     this.workerSession?.dispose();
     this.workerSession = null;
     this.tiles?.dispose();
@@ -208,6 +212,7 @@ export class InkView extends FileView {
   }
 
   async onLoadFile(file: TFile): Promise<void> {
+    this.tiles?.setBackend?.(null);
     this.workerSession?.dispose();
     this.workerSession = null;
     if (this.workers) {
@@ -215,6 +220,10 @@ export class InkView extends FileView {
       try {
         this.notebook = await session.initializeRaw(await this.store.readRaw(file), 0);
         this.workerSession = session;
+        this.workerRevision = 0;
+        if (session.canRenderTiles()) this.tiles?.setBackend(session, (error) => {
+          if (this.workerSession === session) this.disableWorkerSession(error);
+        });
       } catch {
         session.dispose();
         this.notebook = await this.store.read(file);
@@ -228,6 +237,7 @@ export class InkView extends FileView {
     this.resetInteraction();
     this.dirtyRevision = 0;
     this.savedRevision = 0;
+    this.workerRevision = 0;
     this.renderAll();
   }
 
@@ -236,6 +246,7 @@ export class InkView extends FileView {
     this.cancelPendingInkCommitTimer();
     this.clearSaveTimers();
     if (this.dirtyRevision > this.savedRevision || this.activeSave) await this.save(file);
+    this.tiles?.setBackend?.(null);
     this.workerSession?.dispose();
     this.workerSession = null;
   }
@@ -244,11 +255,15 @@ export class InkView extends FileView {
     if (this.syncing || this.activePointerId !== null || this.pendingInkStrokes.length > 0) { this.externalRefreshPending = true; return; }
     if (!this.file) return;
     const file = this.file;
-    const latest = this.workerSession
-      ? await this.workerSession.mergeExternal(await this.store.readRaw(file))
-      : await this.store.read(file);
+    if (this.workerSession) {
+      const latest = await this.workerSession.mergeExternal(await this.store.readRaw(file));
+      if (this.file !== file) return;
+      if (!latest) return;
+      this.receiveMergedNotebook(latest, true);
+      return;
+    }
+    const latest = await this.store.read(file);
     if (this.file !== file) return;
-    if (!latest) return;
     if (notebooksEqual(latest, this.notebook)) return;
     this.receiveMergedNotebook(latest);
   }
@@ -584,6 +599,7 @@ export class InkView extends FileView {
     this.renderFrame = window.requestAnimationFrame(() => {
       this.renderFrame = null;
       this.flushPendingLassoPoint();
+      this.flushWorkerStrokePoints();
       const shouldResize = this.resizeRequested;
       this.resizeRequested = false;
       if (shouldResize) this.resizeCanvas();
@@ -833,6 +849,14 @@ export class InkView extends FileView {
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
+    this.workerStrokePointIndex = 1;
+    this.queueWorkerOperation({
+      type: "start-stroke",
+      pageId: page.id,
+      stroke: { ...this.activeStroke, points: [{ ...point }] },
+      pageUpdatedAt: page.updatedAt,
+      notebookUpdatedAt: this.notebook.updatedAt,
+    });
     this.lastPoint = point;
     page.strokes.push(this.activeStroke);
     this.resizePreview();
@@ -933,6 +957,19 @@ export class InkView extends FileView {
     if (point) this.applyLassoPoint(point);
   }
 
+  private flushWorkerStrokePoints(): void {
+    const stroke = this.activeStroke;
+    const interaction = this.interaction;
+    if (!stroke || !interaction || (interaction.tool !== "pen" && interaction.tool !== "highlighter")) return;
+    if (this.workerStrokePointIndex >= stroke.points.length) return;
+    const points = stroke.points.slice(this.workerStrokePointIndex).map((point) => ({ ...point }));
+    this.workerStrokePointIndex = stroke.points.length;
+    this.queueWorkerOperation({
+      type: "append-stroke-points", pageId: stroke.pageId, strokeId: stroke.id, points,
+      pageUpdatedAt: stroke.updatedAt, notebookUpdatedAt: this.notebook.updatedAt,
+    });
+  }
+
   private finishPointerInput(_includeFinalSample = false): void {
     const interaction = this.interaction;
     if (!interaction) return;
@@ -941,6 +978,7 @@ export class InkView extends FileView {
     this.refreshEraserCursor();
     if (!page) { this.activePointerId = null; this.tiles.resumeInkCommit(); return; }
     this.flushPendingLassoPoint();
+    this.flushWorkerStrokePoints();
     this.commitPreview(page);
     if (this.activeStroke && this.renderFrame !== null && !this.resizeRequested) {
       window.cancelAnimationFrame(this.renderFrame);
@@ -969,17 +1007,13 @@ export class InkView extends FileView {
       this.drawInteractiveStrokes(page.strokes, true);
     } else if (this.activeStroke) {
       this.markChanged(page, true, false);
-      this.queueWorkerOperation({
-        type: "finalize-stroke",
-        pageId: page.id,
-        stroke: cloneStroke(this.activeStroke),
-        pageUpdatedAt: page.updatedAt,
-        notebookUpdatedAt: this.notebook.updatedAt,
-      });
+      this.queueWorkerOperation({ type: "complete-stroke", pageId: page.id, strokeId: this.activeStroke.id,
+        pageUpdatedAt: page.updatedAt, notebookUpdatedAt: this.notebook.updatedAt });
       this.pushCommand(this.addedStrokeCommand(page.id, this.activeStroke));
     }
     this.activePointerId = null;
     this.activeStroke = null;
+    this.workerStrokePointIndex = 0;
     this.lastPoint = null;
     this.pendingLassoPoint = null;
     if (interaction.tool === "pen" || interaction.tool === "highlighter") {
@@ -1000,8 +1034,11 @@ export class InkView extends FileView {
     if (!this.pendingMergedNotebook || this.activePointerId !== null || this.pendingInkStrokes.length > 0) return;
     const pageId = this.currentPage().id;
     const previousPageIndex = this.pageIndex;
-    const merged = mergeNotebooks(this.pendingMergedNotebook, this.notebook);
+    const merged = this.pendingMergedNotebookIsFinal
+      ? this.pendingMergedNotebook
+      : mergeNotebooks(this.pendingMergedNotebook, this.notebook);
     this.pendingMergedNotebook = null;
+    this.pendingMergedNotebookIsFinal = false;
     const changes = reconcileNotebook(this.notebook, merged, pageId, previousPageIndex);
     this.pageIndex = changes.pageIndex;
 
@@ -1016,10 +1053,11 @@ export class InkView extends FileView {
     }
   }
 
-  private receiveMergedNotebook(notebook: InkNotebook): void {
+  private receiveMergedNotebook(notebook: InkNotebook, alreadyMerged = false): void {
     this.pendingMergedNotebook = this.pendingMergedNotebook
       ? mergeNotebooks(this.pendingMergedNotebook, notebook)
       : notebook;
+    this.pendingMergedNotebookIsFinal ||= alreadyMerged;
     // Reads and saves can finish after the next pointerdown. Apply only between strokes.
     if (this.activePointerId === null && this.pendingInkStrokes.length === 0) this.applyPendingMergedNotebook();
   }
@@ -1474,7 +1512,7 @@ export class InkView extends FileView {
     if (this.maxSaveTimer === undefined) {
       this.maxSaveTimer = window.setTimeout(() => {
         this.maxSaveTimer = undefined;
-        if (this.activePointerId !== null && !this.workerSession) {
+        if (this.activePointerId !== null) {
           this.scheduleSave();
           return;
         }
@@ -1560,16 +1598,17 @@ export class InkView extends FileView {
 
   private async saveRevisionWithWorker(file: TFile, session: InkWorkerSession,
     minimumRevision: number): Promise<{ revision: number; merged?: InkNotebook }> {
-    await session.barrier(minimumRevision);
+    await session.barrier(this.workerRevision);
     let raw = await this.store.readRaw(file);
     for (let attempt = 0; attempt < SAVE_CONFLICT_RETRIES; attempt++) {
       const prepared = await session.prepareSave(raw, minimumRevision);
       if (await this.store.writeIfUnchanged(file, raw, prepared.content)) {
         try {
-          return await session.commitSave(prepared.token);
+          await session.commitSave(prepared.token);
+          return { revision: minimumRevision };
         } catch (error) {
           if (this.workerSession === session) this.disableWorkerSession(error);
-          return { revision: prepared.revision, merged: await this.store.read(file) };
+          return { revision: minimumRevision, merged: await this.store.read(file) };
         }
       }
       await session.abortSave(prepared.token);
@@ -1757,13 +1796,18 @@ export class InkView extends FileView {
   private queueWorkerOperation(operation: NotebookOperation): void {
     const session = this.workerSession;
     if (!session) return;
-    const revision = this.dirtyRevision;
+    const revision = ++this.workerRevision;
     void session.apply(revision, operation).catch((error) => {
       if (this.workerSession === session) this.disableWorkerSession(error);
     });
   }
 
   private disableWorkerSession(error: unknown): void {
+    this.tiles?.setBackend?.(null);
+    if (this.viewReady && this.tiles && this.notebook.pages.length > 0) {
+      this.tiles.sync(this.currentPage().strokes, this.tileExclusion());
+      this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
+    }
     this.workerSession?.dispose();
     this.workerSession = null;
     if (this.workerFallbackReported) return;
@@ -1798,6 +1842,7 @@ export class InkView extends FileView {
     if (this.previewCanvas) this.previewCanvas.width = this.previewCanvas.height = 1;
     this.touchGesture = null;
     this.pendingMergedNotebook = null;
+    this.pendingMergedNotebookIsFinal = false;
     this.externalRefreshPending = false;
     this.eraserHoverPoint = null;
     this.eraserPointerInside = false;

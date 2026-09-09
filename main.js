@@ -609,6 +609,16 @@ var TileRenderer = class {
     this.sequence = 0;
     this.pixels = 0;
     this.disposed = false;
+    this.renderGeneration = 0;
+    this.backend = null;
+    this.backendError = null;
+    this.pendingTiles = /* @__PURE__ */ new Set();
+  }
+  setBackend(backend, onError) {
+    this.backend = backend;
+    this.backendError = onError != null ? onError : null;
+    this.jobs = [];
+    if (!backend) this.pendingTiles.clear();
   }
   setPage(page, width, height, exclude) {
     const state = this.state(page, width, height);
@@ -629,10 +639,14 @@ var TileRenderer = class {
     return (_b = (_a = this.active) == null ? void 0 : _a.index.queryNear(point, radius)) != null ? _b : [];
   }
   flushVisible() {
-    var _a;
     const jobs = this.jobs.filter((job) => job.state === this.active && this.visible.has(job.cell) && !this.isHeld(job));
     this.jobs = this.jobs.filter((job) => !jobs.includes(job));
-    for (const job of jobs) this.attach((_a = this.get(job.state, job.cell, job.density)) != null ? _a : this.paint(job));
+    for (const job of jobs) {
+      const tile = this.get(job.state, job.cell, job.density);
+      if (tile) this.attach(tile);
+      else if (this.backend) this.requestWorkerTile(job);
+      else this.attach(this.paint(job));
+    }
     this.evict();
   }
   commitInteractive(viewport, density, refine = true) {
@@ -659,16 +673,18 @@ var TileRenderer = class {
       else jobs.push({ state: this.active, cell, density: this.density });
     }
     this.jobs = this.jobs.filter((job) => !this.isHeld(job));
-    this.inkCommit = { state: this.active, strokes, cells, jobs, tiles, onComplete };
+    this.inkCommit = { state: this.active, strokes, cells, jobs, tiles, onComplete, invalid: false, generation: this.renderGeneration };
     if (jobs.length === 0) this.finishInkCommit(true);
     else this.scheduleInkCommit();
   }
   pauseInkCommit() {
+    this.renderGeneration += 1;
     this.inkCommitPaused = true;
     if (this.frame !== null) cancelAnimationFrame(this.frame);
     this.frame = null;
     if (this.inkFrame !== null) cancelAnimationFrame(this.inkFrame);
     this.inkFrame = null;
+    if (this.inkCommit) this.abortInkCommit(true);
   }
   resumeInkCommit() {
     this.inkCommitPaused = false;
@@ -723,6 +739,7 @@ var TileRenderer = class {
     for (const [key, tile] of this.cache) this.drop(key, tile);
     this.states.clear();
     this.jobs = [];
+    this.pendingTiles.clear();
     this.host.replaceChildren();
   }
   state(page, width, height) {
@@ -766,13 +783,19 @@ var TileRenderer = class {
   schedule() {
     if (this.frame !== null || !this.jobs.length || this.disposed || this.inkCommitPaused || this.inkCommit) return;
     this.frame = requestAnimationFrame(() => {
-      var _a;
       this.frame = null;
       const job = this.jobs.shift();
       if (job && !this.isHeld(job)) {
-        const tile = (_a = this.get(job.state, job.cell, job.density)) != null ? _a : this.paint(job);
-        if (job.state === this.active && this.visible.has(job.cell)) this.attach(tile);
-        this.evict();
+        const tile = this.get(job.state, job.cell, job.density);
+        if (tile) {
+          if (job.state === this.active && this.visible.has(job.cell)) this.attach(tile);
+          this.evict();
+        } else if (this.backend) this.requestWorkerTile(job);
+        else {
+          const painted = this.paint(job);
+          if (job.state === this.active && this.visible.has(job.cell)) this.attach(painted);
+          this.evict();
+        }
       }
       this.schedule();
     });
@@ -780,11 +803,43 @@ var TileRenderer = class {
   scheduleInkCommit() {
     if (this.inkFrame !== null || !this.inkCommit || this.inkCommitPaused || this.disposed) return;
     this.inkFrame = requestAnimationFrame(() => {
+      var _a;
       this.inkFrame = null;
       const commit = this.inkCommit;
       if (!commit) return;
       const job = commit.jobs.shift();
-      if (job) commit.tiles.push(this.createInkTile(job, commit.strokes));
+      if (!job) {
+        this.finishInkCommit(true);
+        return;
+      }
+      if (this.backend) {
+        this.backend.renderTile(
+          job.state.page.id,
+          job.cell,
+          job.density,
+          (_a = job.state.index.revisions.get(job.cell)) != null ? _a : 0,
+          job.state.index.width,
+          job.state.index.height
+        ).then((result) => {
+          var _a2;
+          if (this.inkCommit !== commit || commit.generation !== this.renderGeneration || this.disposed) {
+            result.bitmap.close();
+            return;
+          }
+          if (result.revision === ((_a2 = job.state.index.revisions.get(job.cell)) != null ? _a2 : 0)) commit.tiles.push(this.tileFromBitmap(job, result));
+          else commit.invalid = true;
+          if (commit.jobs.length > 0) this.scheduleInkCommit();
+          else this.finishInkCommit(true);
+        }).catch((error) => {
+          var _a2;
+          if (this.inkCommit === commit) {
+            (_a2 = this.backendError) == null ? void 0 : _a2.call(this, error);
+            this.finishInkCommit(false);
+          }
+        });
+        return;
+      }
+      commit.tiles.push(this.createInkTile(job, commit.strokes));
       if (commit.jobs.length > 0) this.scheduleInkCommit();
       else this.finishInkCommit(true);
     });
@@ -792,7 +847,7 @@ var TileRenderer = class {
   finishInkCommit(requested) {
     const commit = this.inkCommit;
     if (!commit) return;
-    const valid = requested && !this.disposed && this.active === commit.state && commit.tiles.every((tile) => {
+    const valid = requested && !commit.invalid && !this.disposed && this.active === commit.state && commit.tiles.every((tile) => {
       var _a;
       return tile.revision === ((_a = tile.state.index.revisions.get(tile.cell)) != null ? _a : 0);
     });
@@ -841,6 +896,66 @@ var TileRenderer = class {
     const tile = this.createTile(job);
     this.cacheTile(tile);
     return tile;
+  }
+  requestWorkerTile(job) {
+    var _a;
+    if (!this.backend || this.disposed) return;
+    const key = this.key(job.state, job.cell, job.density);
+    if (this.pendingTiles.has(key)) return;
+    this.pendingTiles.add(key);
+    const revision = (_a = job.state.index.revisions.get(job.cell)) != null ? _a : 0;
+    const generation = this.renderGeneration;
+    this.backend.renderTile(job.state.page.id, job.cell, job.density, revision, job.state.index.width, job.state.index.height).then((result) => {
+      var _a2;
+      this.pendingTiles.delete(key);
+      if (this.disposed || generation !== this.renderGeneration) {
+        result.bitmap.close();
+        return;
+      }
+      const currentRevision = (_a2 = job.state.index.revisions.get(job.cell)) != null ? _a2 : 0;
+      if (result.revision !== currentRevision || result.density !== job.density) {
+        result.bitmap.close();
+        this.schedule();
+        return;
+      }
+      const tile = this.tileFromBitmap(job, result);
+      this.cacheTile(tile);
+      if (job.state === this.active && this.visible.has(job.cell)) this.attach(tile);
+      this.evict();
+      this.schedule();
+    }).catch((error) => {
+      var _a2;
+      this.pendingTiles.delete(key);
+      (_a2 = this.backendError) == null ? void 0 : _a2.call(this, error);
+      this.schedule();
+    });
+  }
+  tileFromBitmap(job, result) {
+    const canvas = document.createElement("canvas");
+    canvas.width = result.canvasWidth;
+    canvas.height = result.canvasHeight;
+    const bitmapContext = canvas.getContext("bitmaprenderer");
+    if (bitmapContext) bitmapContext.transferFromImageBitmap(result.bitmap);
+    else {
+      const context = canvas.getContext("2d");
+      if (context) context.drawImage(result.bitmap, 0, 0);
+      result.bitmap.close();
+    }
+    canvas.style.cssText = `position:absolute;left:${-BLEED}px;top:${-BLEED}px;width:${result.canvasWidth / result.density}px;height:${result.canvasHeight / result.density}px`;
+    const node = document.createElement("div");
+    node.dataset.cell = result.cell;
+    node.style.cssText = `position:absolute;overflow:hidden;left:${result.x}px;top:${result.y}px;width:${result.width}px;height:${result.height}px`;
+    node.appendChild(canvas);
+    return {
+      node,
+      canvas,
+      revision: result.revision,
+      pixels: result.canvasWidth * result.canvasHeight,
+      used: ++this.sequence,
+      state: job.state,
+      cell: result.cell,
+      density: result.density
+    };
   }
   createTile(job) {
     return this.createTileFrom(job);
@@ -911,7 +1026,7 @@ var TileRenderer = class {
 };
 
 // ink-worker:ink-worker-source
-var ink_worker_source_default = '(() => {\n  // src/model.ts\n  var DEFAULT_PAGE_WIDTH = 1600;\n  var DEFAULT_PAGE_HEIGHT = 2200;\n  function newId(prefix) {\n    const random = Math.random().toString(36).slice(2, 10);\n    return `${prefix}-${Date.now().toString(36)}-${random}`;\n  }\n  function createNotebook(title = "Ink Notebook") {\n    const now = Date.now();\n    const page = createPage("Page 1", "ruled", now);\n    return {\n      schema: 2,\n      title,\n      pageWidth: DEFAULT_PAGE_WIDTH,\n      pageHeight: DEFAULT_PAGE_HEIGHT,\n      pages: [page],\n      pageOrder: [page.id],\n      deletedPages: {},\n      pageOrderUpdatedAt: now,\n      updatedAt: now\n    };\n  }\n  function createPage(title, paper = "ruled", now = Date.now()) {\n    return { id: newId("page"), title, paper, strokes: [], deletedStrokeIds: [], createdAt: now, updatedAt: now };\n  }\n  function normalizeNotebook(value) {\n    if (!value || typeof value !== "object") return createNotebook();\n    const raw = value;\n    const pages = Array.isArray(raw.pages) ? raw.pages : [];\n    const normalizedPages = pages.map(normalizePage).filter((page) => page !== null);\n    const pageIds = new Set(normalizedPages.map((page) => page.id));\n    const legacyOrder = [...normalizedPages].sort((a, b) => a.createdAt - b.createdAt).map((page) => page.id);\n    const requestedOrder = Array.isArray(raw.pageOrder) ? raw.pageOrder.filter((id) => typeof id === "string") : legacyOrder;\n    const pageOrder = [.../* @__PURE__ */ new Set([...requestedOrder.filter((id) => pageIds.has(id)), ...legacyOrder.filter((id) => !requestedOrder.includes(id))])];\n    const deletedPages = raw.deletedPages && typeof raw.deletedPages === "object" ? Object.fromEntries(Object.entries(raw.deletedPages).filter((entry) => typeof entry[0] === "string" && typeof entry[1] === "number" && Number.isFinite(entry[1]))) : {};\n    const visiblePages = normalizedPages.filter((page) => !(page.id in deletedPages));\n    const visibleIds = new Set(visiblePages.map((page) => page.id));\n    const byId = new Map(visiblePages.map((page) => [page.id, page]));\n    const orderedPages = pageOrder.map((id) => byId.get(id)).filter((page) => page !== void 0);\n    if (orderedPages.length === 0) orderedPages.push(createPage("Page 1"));\n    return {\n      schema: 2,\n      title: typeof raw.title === "string" ? raw.title : "Ink Notebook",\n      pageWidth: finitePositive(raw.pageWidth, DEFAULT_PAGE_WIDTH),\n      pageHeight: finitePositive(raw.pageHeight, DEFAULT_PAGE_HEIGHT),\n      pages: orderedPages,\n      pageOrder: orderedPages.map((page) => page.id).filter((id) => visibleIds.has(id) || orderedPages.length === 1),\n      deletedPages,\n      pageOrderUpdatedAt: finitePositive(raw.pageOrderUpdatedAt, finitePositive(raw.updatedAt, Date.now())),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function mergeNotebooks(base, incoming) {\n    var _a, _b, _c, _d, _e, _f, _g;\n    const pages = /* @__PURE__ */ new Map();\n    for (const page of base.pages) pages.set(page.id, page);\n    for (const page of incoming.pages) {\n      const existing = pages.get(page.id);\n      pages.set(page.id, existing ? mergePages(existing, page) : page);\n    }\n    const deletedPages = { ...(_a = base.deletedPages) != null ? _a : {} };\n    for (const [id, timestamp] of Object.entries((_b = incoming.deletedPages) != null ? _b : {})) deletedPages[id] = Math.max((_c = deletedPages[id]) != null ? _c : 0, timestamp);\n    for (const id of Object.keys(deletedPages)) pages.delete(id);\n    const orderSource = incoming.pageOrderUpdatedAt > base.pageOrderUpdatedAt || incoming.pageOrderUpdatedAt === base.pageOrderUpdatedAt && compareNotebookOrder(incoming, base) >= 0 ? incoming : base;\n    const preferred = (_d = orderSource.pageOrder) != null ? _d : [];\n    const known = preferred.map((id) => pages.get(id)).filter((page) => page !== void 0);\n    const additions = [...pages.values()].filter((page) => !preferred.includes(page.id)).sort((a, b) => a.createdAt - b.createdAt);\n    const ordered = [...known];\n    for (const page of additions) {\n      const inBase = ((_e = base.pageOrder) != null ? _e : []).includes(page.id);\n      const inIncoming = ((_f = incoming.pageOrder) != null ? _f : []).includes(page.id);\n      const source = inBase && !inIncoming ? base : incoming;\n      const sourceOrder = (_g = source.pageOrder) != null ? _g : source.pages.map((candidate) => candidate.id);\n      const sourceIndex = sourceOrder.indexOf(page.id);\n      let inserted = false;\n      for (let index = sourceIndex - 1; index >= 0; index--) {\n        const anchor = ordered.findIndex((candidate) => candidate.id === sourceOrder[index]);\n        if (anchor >= 0) {\n          ordered.splice(anchor + 1, 0, page);\n          inserted = true;\n          break;\n        }\n      }\n      if (!inserted) for (let index = sourceIndex + 1; index < sourceOrder.length; index++) {\n        const anchor = ordered.findIndex((candidate) => candidate.id === sourceOrder[index]);\n        if (anchor >= 0) {\n          ordered.splice(anchor, 0, page);\n          inserted = true;\n          break;\n        }\n      }\n      if (!inserted) {\n        const at = ordered.findIndex((candidate) => page.createdAt < candidate.createdAt);\n        ordered.splice(at < 0 ? ordered.length : at, 0, page);\n      }\n    }\n    const safePages = ordered.length ? ordered : [createPage("Page 1")];\n    const pageOrder = safePages.map((page) => page.id);\n    return {\n      ...incoming,\n      schema: 2,\n      title: incoming.updatedAt >= base.updatedAt ? incoming.title : base.title,\n      pageWidth: incoming.pageWidth || base.pageWidth,\n      pageHeight: incoming.pageHeight || base.pageHeight,\n      pages: safePages,\n      pageOrder,\n      deletedPages,\n      pageOrderUpdatedAt: Math.max(base.pageOrderUpdatedAt, incoming.pageOrderUpdatedAt),\n      updatedAt: Math.max(base.updatedAt, incoming.updatedAt)\n    };\n  }\n  function compareNotebookOrder(left, right) {\n    var _a, _b;\n    const leftOrder = JSON.stringify((_a = left.pageOrder) != null ? _a : []);\n    const rightOrder = JSON.stringify((_b = right.pageOrder) != null ? _b : []);\n    return leftOrder < rightOrder ? -1 : leftOrder > rightOrder ? 1 : 0;\n  }\n  function mergePages(base, incoming) {\n    var _a, _b;\n    const strokes = /* @__PURE__ */ new Map();\n    for (const stroke of base.strokes) strokes.set(stroke.id, stroke);\n    for (const stroke of incoming.strokes) {\n      const existing = strokes.get(stroke.id);\n      if (!existing || stroke.updatedAt >= existing.updatedAt) strokes.set(stroke.id, stroke);\n    }\n    const deletedStrokeIds = [.../* @__PURE__ */ new Set([...(_a = base.deletedStrokeIds) != null ? _a : [], ...(_b = incoming.deletedStrokeIds) != null ? _b : []])];\n    for (const id of deletedStrokeIds) strokes.delete(id);\n    return {\n      ...base,\n      ...incoming,\n      title: incoming.updatedAt >= base.updatedAt ? incoming.title : base.title,\n      paper: incoming.updatedAt >= base.updatedAt ? incoming.paper : base.paper,\n      strokes: [...strokes.values()].sort((a, b) => a.createdAt - b.createdAt),\n      deletedStrokeIds,\n      updatedAt: Math.max(base.updatedAt, incoming.updatedAt)\n    };\n  }\n  function normalizePage(value) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    const strokes = Array.isArray(raw.strokes) ? raw.strokes : [];\n    const deletedStrokeIds = Array.isArray(raw.deletedStrokeIds) ? raw.deletedStrokeIds.filter((id) => typeof id === "string") : [];\n    const deleted = new Set(deletedStrokeIds);\n    return {\n      id: typeof raw.id === "string" ? raw.id : newId("page"),\n      title: typeof raw.title === "string" ? raw.title : "Untitled",\n      paper: isPaperStyle(raw.paper) ? raw.paper : "ruled",\n      strokes: strokes.map(normalizeStroke).filter((stroke) => stroke !== null && !deleted.has(stroke.id)),\n      deletedStrokeIds,\n      createdAt: finitePositive(raw.createdAt, Date.now()),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function normalizeStroke(value) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    if (typeof raw.id !== "string" || typeof raw.pageId !== "string") return null;\n    const points = Array.isArray(raw.points) ? raw.points : [];\n    return {\n      id: raw.id,\n      pageId: raw.pageId,\n      tool: raw.tool === "highlighter" ? "highlighter" : "pen",\n      color: typeof raw.color === "string" ? raw.color : "#1b1b1b",\n      width: finitePositive(raw.width, 3),\n      opacity: clamp(finitePositive(raw.opacity, 1), 0.05, 1),\n      points: points.map(normalizePoint).filter((point) => point !== null),\n      createdAt: finitePositive(raw.createdAt, Date.now()),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function normalizePoint(value) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    if (typeof raw.x !== "number" || typeof raw.y !== "number") return null;\n    return {\n      x: clamp(raw.x, 0, 1),\n      y: clamp(raw.y, 0, 1),\n      pressure: clamp(typeof raw.pressure === "number" ? raw.pressure : 0.5, 0.05, 1),\n      tiltX: typeof raw.tiltX === "number" ? raw.tiltX : void 0,\n      tiltY: typeof raw.tiltY === "number" ? raw.tiltY : void 0,\n      t: finitePositive(raw.t, Date.now())\n    };\n  }\n  function finitePositive(value, fallback) {\n    return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;\n  }\n  function clamp(value, min, max) {\n    return Math.max(min, Math.min(max, value));\n  }\n  function isPaperStyle(value) {\n    return value === "blank" || value === "ruled" || value === "grid" || value === "dot";\n  }\n\n  // src/worker-protocol.ts\n  function serializeNotebook(notebook) {\n    return `${JSON.stringify(notebook, null, 2)}\n`;\n  }\n  function cloneStrokeValue(stroke) {\n    return { ...stroke, points: stroke.points.map((point) => ({ ...point })) };\n  }\n\n  // src/worker-core.ts\n  var ProtocolError = class extends Error {\n    constructor(code, message) {\n      super(message);\n      this.code = code;\n    }\n  };\n  var InkWorkerCore = class {\n    constructor(capabilities) {\n      this.capabilities = capabilities;\n      this.sessions = /* @__PURE__ */ new Map();\n    }\n    ready() {\n      return { type: "ready", requestId: 0, sessionId: "", generation: 0, capabilities: this.capabilities };\n    }\n    async handle(request) {\n      try {\n        return { response: await this.dispatch(request) };\n      } catch (error) {\n        return { response: {\n          type: "error",\n          requestId: request.requestId,\n          sessionId: request.sessionId,\n          generation: request.generation,\n          code: error instanceof ProtocolError ? error.code : "internal",\n          message: error instanceof Error ? error.message : String(error)\n        } };\n      }\n    }\n    async dispatch(request) {\n      if (request.type === "initialize-raw") {\n        const notebook = parseNotebook(request.raw);\n        this.sessions.set(request.sessionId, {\n          generation: request.generation,\n          notebook,\n          revision: request.revision,\n          pendingSave: /* @__PURE__ */ new Map()\n        });\n        return this.response(request, { type: "initialized", notebook, revision: request.revision });\n      }\n      if (request.type === "initialize-notebook") {\n        const notebook = normalizeNotebook(request.notebook);\n        this.sessions.set(request.sessionId, {\n          generation: request.generation,\n          notebook,\n          revision: request.revision,\n          pendingSave: /* @__PURE__ */ new Map()\n        });\n        return this.response(request, { type: "initialized", notebook, revision: request.revision });\n      }\n      const session = this.sessions.get(request.sessionId);\n      if (!session) throw new ProtocolError("missing-session", "Ink worker session is not initialized");\n      if (session.generation !== request.generation) throw new ProtocolError("stale-generation", "Ink worker request belongs to a stale file generation");\n      if (request.type === "apply-operation") {\n        if (request.revision !== session.revision + 1) {\n          throw new ProtocolError("revision-gap", `Expected revision ${session.revision + 1}, received ${request.revision}`);\n        }\n        applyNotebookOperation(session.notebook, request.operation);\n        session.revision = request.revision;\n        return this.response(request, { type: "operation-applied", revision: session.revision });\n      }\n      if (request.type === "barrier") {\n        if (session.revision < request.minimumRevision) {\n          throw new ProtocolError("revision-gap", `Worker revision ${session.revision} is behind ${request.minimumRevision}`);\n        }\n        return this.response(request, { type: "barrier-complete", revision: session.revision });\n      }\n      if (request.type === "prepare-save") {\n        if (session.revision < request.minimumRevision) {\n          throw new ProtocolError("revision-gap", `Worker revision ${session.revision} is behind ${request.minimumRevision}`);\n        }\n        const disk = parseNotebook(request.raw);\n        const local = normalizeNotebook(session.notebook);\n        const merged = mergeNotebooks(disk, local);\n        const token = `${request.sessionId}:${request.generation}:${request.requestId}`;\n        session.pendingSave.clear();\n        session.pendingSave.set(token, {\n          notebook: normalizeNotebook(merged),\n          revision: session.revision,\n          reconcile: serializeNotebook(merged) !== serializeNotebook(local)\n        });\n        return this.response(request, { type: "save-prepared", token, content: serializeNotebook(merged), revision: session.revision });\n      }\n      if (request.type === "commit-save") {\n        const candidate = session.pendingSave.get(request.token);\n        if (!candidate) throw new ProtocolError("missing-session", "Prepared save is no longer available");\n        session.pendingSave.delete(request.token);\n        session.notebook = mergeNotebooks(candidate.notebook, session.notebook);\n        return this.response(request, {\n          type: "save-committed",\n          revision: candidate.revision,\n          merged: candidate.reconcile ? candidate.notebook : void 0\n        });\n      }\n      if (request.type === "abort-save") {\n        session.pendingSave.delete(request.token);\n        return this.response(request, { type: "save-aborted" });\n      }\n      if (request.type === "merge-external") {\n        const merged = mergeNotebooks(parseNotebook(request.raw), session.notebook);\n        const changed = serializeNotebook(merged) !== serializeNotebook(session.notebook);\n        session.notebook = normalizeNotebook(merged);\n        return this.response(request, { type: "external-merged", notebook: changed ? session.notebook : void 0, revision: session.revision });\n      }\n      this.sessions.delete(request.sessionId);\n      return this.response(request, { type: "session-disposed" });\n    }\n    response(request, response) {\n      return { ...response, requestId: request.requestId, sessionId: request.sessionId, generation: request.generation };\n    }\n  };\n  function parseNotebook(raw) {\n    try {\n      return normalizeNotebook(JSON.parse(raw));\n    } catch (e) {\n      throw new ProtocolError("invalid-format", "Existing ink notebook is not valid JSON");\n    }\n  }\n  function applyNotebookOperation(notebook, operation) {\n    if (operation.type === "replace-notebook") {\n      Object.assign(notebook, normalizeNotebook(operation.notebook));\n      return;\n    }\n    const page = notebook.pages.find((candidate) => candidate.id === operation.pageId);\n    if (!page) return;\n    if (operation.type === "finalize-stroke") {\n      const index = page.strokes.findIndex((stroke2) => stroke2.id === operation.stroke.id);\n      const stroke = cloneStrokeValue(operation.stroke);\n      if (index >= 0) page.strokes[index] = stroke;\n      else page.strokes.push(stroke);\n      page.strokes.sort((left, right) => left.createdAt - right.createdAt);\n    } else if (operation.type === "patch-strokes") {\n      const removed = new Set(operation.remove);\n      const upsert = new Map(operation.upsert.map((stroke) => [stroke.id, cloneStrokeValue(stroke)]));\n      page.strokes = page.strokes.filter((stroke) => !removed.has(stroke.id) && !upsert.has(stroke.id));\n      page.strokes.push(...upsert.values());\n      page.strokes.sort((left, right) => left.createdAt - right.createdAt);\n      page.deletedStrokeIds = [.../* @__PURE__ */ new Set([...page.deletedStrokeIds, ...operation.deletedStrokeIds])];\n    } else {\n      if (operation.title !== void 0) page.title = operation.title;\n      if (operation.paper !== void 0) page.paper = operation.paper;\n    }\n    page.updatedAt = operation.pageUpdatedAt;\n    notebook.updatedAt = operation.notebookUpdatedAt;\n  }\n\n  // src/ink-worker.ts\n  var scope = self;\n  var core = new InkWorkerCore({\n    offscreenCanvas: typeof OffscreenCanvas !== "undefined",\n    imageBitmap: typeof ImageBitmap !== "undefined"\n  });\n  scope.onmessage = (event) => {\n    void core.handle(event.data).then(({ response, transfer }) => scope.postMessage(response, transfer != null ? transfer : []));\n  };\n  scope.postMessage(core.ready());\n})();\n';
+var ink_worker_source_default = '(() => {\n  // src/model.ts\n  var DEFAULT_PAGE_WIDTH = 1600;\n  var DEFAULT_PAGE_HEIGHT = 2200;\n  function newId(prefix) {\n    const random = Math.random().toString(36).slice(2, 10);\n    return `${prefix}-${Date.now().toString(36)}-${random}`;\n  }\n  function createNotebook(title = "Ink Notebook") {\n    const now = Date.now();\n    const page = createPage("Page 1", "ruled", now);\n    return {\n      schema: 2,\n      title,\n      pageWidth: DEFAULT_PAGE_WIDTH,\n      pageHeight: DEFAULT_PAGE_HEIGHT,\n      pages: [page],\n      pageOrder: [page.id],\n      deletedPages: {},\n      pageOrderUpdatedAt: now,\n      updatedAt: now\n    };\n  }\n  function createPage(title, paper = "ruled", now = Date.now()) {\n    return { id: newId("page"), title, paper, strokes: [], deletedStrokeIds: [], createdAt: now, updatedAt: now };\n  }\n  function normalizeNotebook(value) {\n    if (!value || typeof value !== "object") return createNotebook();\n    const raw = value;\n    const pages = Array.isArray(raw.pages) ? raw.pages : [];\n    const normalizedPages = pages.map(normalizePage).filter((page) => page !== null);\n    const pageIds = new Set(normalizedPages.map((page) => page.id));\n    const legacyOrder = [...normalizedPages].sort((a2, b2) => a2.createdAt - b2.createdAt).map((page) => page.id);\n    const requestedOrder = Array.isArray(raw.pageOrder) ? raw.pageOrder.filter((id) => typeof id === "string") : legacyOrder;\n    const pageOrder = [.../* @__PURE__ */ new Set([...requestedOrder.filter((id) => pageIds.has(id)), ...legacyOrder.filter((id) => !requestedOrder.includes(id))])];\n    const deletedPages = raw.deletedPages && typeof raw.deletedPages === "object" ? Object.fromEntries(Object.entries(raw.deletedPages).filter((entry) => typeof entry[0] === "string" && typeof entry[1] === "number" && Number.isFinite(entry[1]))) : {};\n    const visiblePages = normalizedPages.filter((page) => !(page.id in deletedPages));\n    const visibleIds = new Set(visiblePages.map((page) => page.id));\n    const byId = new Map(visiblePages.map((page) => [page.id, page]));\n    const orderedPages = pageOrder.map((id) => byId.get(id)).filter((page) => page !== void 0);\n    if (orderedPages.length === 0) orderedPages.push(createPage("Page 1"));\n    return {\n      schema: 2,\n      title: typeof raw.title === "string" ? raw.title : "Ink Notebook",\n      pageWidth: finitePositive(raw.pageWidth, DEFAULT_PAGE_WIDTH),\n      pageHeight: finitePositive(raw.pageHeight, DEFAULT_PAGE_HEIGHT),\n      pages: orderedPages,\n      pageOrder: orderedPages.map((page) => page.id).filter((id) => visibleIds.has(id) || orderedPages.length === 1),\n      deletedPages,\n      pageOrderUpdatedAt: finitePositive(raw.pageOrderUpdatedAt, finitePositive(raw.updatedAt, Date.now())),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function mergeNotebooks(base, incoming) {\n    var _a, _b, _c, _d, _e, _f, _g;\n    const pages = /* @__PURE__ */ new Map();\n    for (const page of base.pages) pages.set(page.id, page);\n    for (const page of incoming.pages) {\n      const existing = pages.get(page.id);\n      pages.set(page.id, existing ? mergePages(existing, page) : page);\n    }\n    const deletedPages = { ...(_a = base.deletedPages) != null ? _a : {} };\n    for (const [id, timestamp] of Object.entries((_b = incoming.deletedPages) != null ? _b : {})) deletedPages[id] = Math.max((_c = deletedPages[id]) != null ? _c : 0, timestamp);\n    for (const id of Object.keys(deletedPages)) pages.delete(id);\n    const orderSource = incoming.pageOrderUpdatedAt > base.pageOrderUpdatedAt || incoming.pageOrderUpdatedAt === base.pageOrderUpdatedAt && compareNotebookOrder(incoming, base) >= 0 ? incoming : base;\n    const preferred = (_d = orderSource.pageOrder) != null ? _d : [];\n    const known = preferred.map((id) => pages.get(id)).filter((page) => page !== void 0);\n    const additions = [...pages.values()].filter((page) => !preferred.includes(page.id)).sort((a2, b2) => a2.createdAt - b2.createdAt);\n    const ordered = [...known];\n    for (const page of additions) {\n      const inBase = ((_e = base.pageOrder) != null ? _e : []).includes(page.id);\n      const inIncoming = ((_f = incoming.pageOrder) != null ? _f : []).includes(page.id);\n      const source = inBase && !inIncoming ? base : incoming;\n      const sourceOrder = (_g = source.pageOrder) != null ? _g : source.pages.map((candidate) => candidate.id);\n      const sourceIndex = sourceOrder.indexOf(page.id);\n      let inserted = false;\n      for (let index = sourceIndex - 1; index >= 0; index--) {\n        const anchor = ordered.findIndex((candidate) => candidate.id === sourceOrder[index]);\n        if (anchor >= 0) {\n          ordered.splice(anchor + 1, 0, page);\n          inserted = true;\n          break;\n        }\n      }\n      if (!inserted) for (let index = sourceIndex + 1; index < sourceOrder.length; index++) {\n        const anchor = ordered.findIndex((candidate) => candidate.id === sourceOrder[index]);\n        if (anchor >= 0) {\n          ordered.splice(anchor, 0, page);\n          inserted = true;\n          break;\n        }\n      }\n      if (!inserted) {\n        const at = ordered.findIndex((candidate) => page.createdAt < candidate.createdAt);\n        ordered.splice(at < 0 ? ordered.length : at, 0, page);\n      }\n    }\n    const safePages = ordered.length ? ordered : [createPage("Page 1")];\n    const pageOrder = safePages.map((page) => page.id);\n    return {\n      ...incoming,\n      schema: 2,\n      title: incoming.updatedAt >= base.updatedAt ? incoming.title : base.title,\n      pageWidth: incoming.pageWidth || base.pageWidth,\n      pageHeight: incoming.pageHeight || base.pageHeight,\n      pages: safePages,\n      pageOrder,\n      deletedPages,\n      pageOrderUpdatedAt: Math.max(base.pageOrderUpdatedAt, incoming.pageOrderUpdatedAt),\n      updatedAt: Math.max(base.updatedAt, incoming.updatedAt)\n    };\n  }\n  function compareNotebookOrder(left, right) {\n    var _a, _b;\n    const leftOrder = JSON.stringify((_a = left.pageOrder) != null ? _a : []);\n    const rightOrder = JSON.stringify((_b = right.pageOrder) != null ? _b : []);\n    return leftOrder < rightOrder ? -1 : leftOrder > rightOrder ? 1 : 0;\n  }\n  function mergePages(base, incoming) {\n    var _a, _b;\n    const strokes = /* @__PURE__ */ new Map();\n    for (const stroke of base.strokes) strokes.set(stroke.id, stroke);\n    for (const stroke of incoming.strokes) {\n      const existing = strokes.get(stroke.id);\n      if (!existing || stroke.updatedAt >= existing.updatedAt) strokes.set(stroke.id, stroke);\n    }\n    const deletedStrokeIds = [.../* @__PURE__ */ new Set([...(_a = base.deletedStrokeIds) != null ? _a : [], ...(_b = incoming.deletedStrokeIds) != null ? _b : []])];\n    for (const id of deletedStrokeIds) strokes.delete(id);\n    return {\n      ...base,\n      ...incoming,\n      title: incoming.updatedAt >= base.updatedAt ? incoming.title : base.title,\n      paper: incoming.updatedAt >= base.updatedAt ? incoming.paper : base.paper,\n      strokes: [...strokes.values()].sort((a2, b2) => a2.createdAt - b2.createdAt),\n      deletedStrokeIds,\n      updatedAt: Math.max(base.updatedAt, incoming.updatedAt)\n    };\n  }\n  function normalizePage(value) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    const strokes = Array.isArray(raw.strokes) ? raw.strokes : [];\n    const deletedStrokeIds = Array.isArray(raw.deletedStrokeIds) ? raw.deletedStrokeIds.filter((id) => typeof id === "string") : [];\n    const deleted = new Set(deletedStrokeIds);\n    return {\n      id: typeof raw.id === "string" ? raw.id : newId("page"),\n      title: typeof raw.title === "string" ? raw.title : "Untitled",\n      paper: isPaperStyle(raw.paper) ? raw.paper : "ruled",\n      strokes: strokes.map(normalizeStroke).filter((stroke) => stroke !== null && !deleted.has(stroke.id)),\n      deletedStrokeIds,\n      createdAt: finitePositive(raw.createdAt, Date.now()),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function normalizeStroke(value) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    if (typeof raw.id !== "string" || typeof raw.pageId !== "string") return null;\n    const points = Array.isArray(raw.points) ? raw.points : [];\n    return {\n      id: raw.id,\n      pageId: raw.pageId,\n      tool: raw.tool === "highlighter" ? "highlighter" : "pen",\n      color: typeof raw.color === "string" ? raw.color : "#1b1b1b",\n      width: finitePositive(raw.width, 3),\n      opacity: clamp(finitePositive(raw.opacity, 1), 0.05, 1),\n      points: points.map(normalizePoint).filter((point) => point !== null),\n      createdAt: finitePositive(raw.createdAt, Date.now()),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function normalizePoint(value) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    if (typeof raw.x !== "number" || typeof raw.y !== "number") return null;\n    return {\n      x: clamp(raw.x, 0, 1),\n      y: clamp(raw.y, 0, 1),\n      pressure: clamp(typeof raw.pressure === "number" ? raw.pressure : 0.5, 0.05, 1),\n      tiltX: typeof raw.tiltX === "number" ? raw.tiltX : void 0,\n      tiltY: typeof raw.tiltY === "number" ? raw.tiltY : void 0,\n      t: finitePositive(raw.t, Date.now())\n    };\n  }\n  function finitePositive(value, fallback) {\n    return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;\n  }\n  function clamp(value, min, max) {\n    return Math.max(min, Math.min(max, value));\n  }\n  function isPaperStyle(value) {\n    return value === "blank" || value === "ruled" || value === "grid" || value === "dot";\n  }\n\n  // node_modules/perfect-freehand/dist/esm/index.mjs\n  var { PI: e } = Math;\n  var t = e + 1e-4;\n  var n = 0.5;\n  var r = [1, 1];\n  function i(e2, t2, n2, r2 = (e3) => e3) {\n    return e2 * r2(0.5 - t2 * (0.5 - n2));\n  }\n  var { min: a } = Math;\n  function o(e2, t2, n2) {\n    let r2 = a(1, t2 / n2);\n    return a(1, e2 + (a(1, 1 - r2) - e2) * (r2 * 0.275));\n  }\n  function s(e2) {\n    return [-e2[0], -e2[1]];\n  }\n  function c(e2, t2) {\n    return [e2[0] + t2[0], e2[1] + t2[1]];\n  }\n  function l(e2, t2, n2) {\n    return e2[0] = t2[0] + n2[0], e2[1] = t2[1] + n2[1], e2;\n  }\n  function u(e2, t2) {\n    return [e2[0] - t2[0], e2[1] - t2[1]];\n  }\n  function d(e2, t2, n2) {\n    return e2[0] = t2[0] - n2[0], e2[1] = t2[1] - n2[1], e2;\n  }\n  function f(e2, t2) {\n    return [e2[0] * t2, e2[1] * t2];\n  }\n  function p(e2, t2, n2) {\n    return e2[0] = t2[0] * n2, e2[1] = t2[1] * n2, e2;\n  }\n  function m(e2, t2) {\n    return [e2[0] / t2, e2[1] / t2];\n  }\n  function h(e2) {\n    return [e2[1], -e2[0]];\n  }\n  function g(e2, t2) {\n    let n2 = t2[0];\n    return e2[0] = t2[1], e2[1] = -n2, e2;\n  }\n  function ee(e2, t2) {\n    return e2[0] * t2[0] + e2[1] * t2[1];\n  }\n  function _(e2, t2) {\n    return e2[0] === t2[0] && e2[1] === t2[1];\n  }\n  function v(e2) {\n    return Math.hypot(e2[0], e2[1]);\n  }\n  function y(e2, t2) {\n    let n2 = e2[0] - t2[0], r2 = e2[1] - t2[1];\n    return n2 * n2 + r2 * r2;\n  }\n  function b(e2) {\n    return m(e2, v(e2));\n  }\n  function x(e2, t2) {\n    return Math.hypot(e2[1] - t2[1], e2[0] - t2[0]);\n  }\n  function S(e2, t2, n2) {\n    let r2 = Math.sin(n2), i2 = Math.cos(n2), a2 = e2[0] - t2[0], o2 = e2[1] - t2[1], s2 = a2 * i2 - o2 * r2, c2 = a2 * r2 + o2 * i2;\n    return [s2 + t2[0], c2 + t2[1]];\n  }\n  function C(e2, t2, n2, r2) {\n    let i2 = Math.sin(r2), a2 = Math.cos(r2), o2 = t2[0] - n2[0], s2 = t2[1] - n2[1], c2 = o2 * a2 - s2 * i2, l2 = o2 * i2 + s2 * a2;\n    return e2[0] = c2 + n2[0], e2[1] = l2 + n2[1], e2;\n  }\n  function w(e2, t2, n2) {\n    return c(e2, f(u(t2, e2), n2));\n  }\n  function te(e2, t2, n2, r2) {\n    let i2 = n2[0] - t2[0], a2 = n2[1] - t2[1];\n    return e2[0] = t2[0] + i2 * r2, e2[1] = t2[1] + a2 * r2, e2;\n  }\n  function T(e2, t2, n2) {\n    return c(e2, f(t2, n2));\n  }\n  var E = [0, 0];\n  var D = [0, 0];\n  var O = [0, 0];\n  function k(e2, n2) {\n    let r2 = T(e2, b(h(u(e2, c(e2, [1, 1])))), -n2), i2 = [], a2 = 1 / 13;\n    for (let n3 = a2; n3 <= 1; n3 += a2) i2.push(S(r2, e2, t * 2 * n3));\n    return i2;\n  }\n  function A(e2, n2, r2) {\n    let i2 = [], a2 = 1 / r2;\n    for (let r3 = a2; r3 <= 1; r3 += a2) i2.push(S(n2, e2, t * r3));\n    return i2;\n  }\n  function j(e2, t2, n2) {\n    let r2 = u(t2, n2), i2 = f(r2, 0.5), a2 = f(r2, 0.51);\n    return [u(e2, i2), u(e2, a2), c(e2, a2), c(e2, i2)];\n  }\n  function M(e2, n2, r2, i2) {\n    let a2 = [], o2 = T(e2, n2, r2), s2 = 1 / i2;\n    for (let n3 = s2; n3 < 1; n3 += s2) a2.push(S(o2, e2, t * 3 * n3));\n    return a2;\n  }\n  function ne(e2, t2, n2) {\n    return [c(e2, f(t2, n2)), c(e2, f(t2, n2 * 0.99)), u(e2, f(t2, n2 * 0.99)), u(e2, f(t2, n2))];\n  }\n  function N(e2, t2, n2) {\n    return e2 === false || e2 === void 0 ? 0 : e2 === true ? Math.max(t2, n2) : e2;\n  }\n  function re(e2, t2, n2) {\n    return e2.slice(0, 10).reduce((e3, r2) => {\n      let i2 = r2.pressure;\n      return t2 && (i2 = o(e3, r2.distance, n2)), (e3 + i2) / 2;\n    }, e2[0].pressure);\n  }\n  function P(e2, n2 = {}) {\n    let { size: r2 = 16, smoothing: a2 = 0.5, thinning: f2 = 0.5, simulatePressure: m2 = true, easing: _2 = (e3) => e3, start: v2 = {}, end: b2 = {}, last: x2 = false } = n2, { cap: S2 = true, easing: w2 = (e3) => e3 * (2 - e3) } = v2, { cap: T2 = true, easing: P2 = (e3) => --e3 * e3 * e3 + 1 } = b2;\n    if (e2.length === 0 || r2 <= 0) return [];\n    let F2 = e2[e2.length - 1].runningLength, I2 = N(v2.taper, r2, F2), L2 = N(b2.taper, r2, F2), R2 = (r2 * a2) ** 2, z = [], B = [], V = re(e2, m2, r2), H = i(r2, f2, e2[e2.length - 1].pressure, _2), U, W = e2[0].vector, G = e2[0].point, K = G, q = G, J = K, Y = false;\n    for (let n3 = 0; n3 < e2.length; n3++) {\n      let { pressure: a3 } = e2[n3], { point: s2, vector: h2, distance: v3, runningLength: b3 } = e2[n3], x3 = n3 === e2.length - 1;\n      if (!x3 && F2 - b3 < 3) continue;\n      f2 ? (m2 && (a3 = o(V, v3, r2)), H = i(r2, f2, a3, _2)) : H = r2 / 2, U === void 0 && (U = H);\n      let S3 = b3 < I2 ? w2(b3 / I2) : 1, T3 = F2 - b3 < L2 ? P2((F2 - b3) / L2) : 1;\n      H = Math.max(0.01, H * Math.min(S3, T3));\n      let k2 = (x3 ? e2[n3] : e2[n3 + 1]).vector, A2 = x3 ? 1 : ee(h2, k2), j2 = ee(h2, W) < 0 && !Y, M2 = A2 !== null && A2 < 0;\n      if (j2 || M2) {\n        g(E, W), p(E, E, H);\n        for (let e3 = 0; e3 <= 1; e3 += 0.07692307692307693) d(D, s2, E), C(D, D, s2, t * e3), q = [D[0], D[1]], z.push(q), l(O, s2, E), C(O, O, s2, t * -e3), J = [O[0], O[1]], B.push(J);\n        G = q, K = J, M2 && (Y = true);\n        continue;\n      }\n      if (Y = false, x3) {\n        g(E, h2), p(E, E, H), z.push(u(s2, E)), B.push(c(s2, E));\n        continue;\n      }\n      te(E, k2, h2, A2), g(E, E), p(E, E, H), d(D, s2, E), q = [D[0], D[1]], (n3 <= 1 || y(G, q) > R2) && (z.push(q), G = q), l(O, s2, E), J = [O[0], O[1]], (n3 <= 1 || y(K, J) > R2) && (B.push(J), K = J), V = a3, W = h2;\n    }\n    let X = [e2[0].point[0], e2[0].point[1]], Z = e2.length > 1 ? [e2[e2.length - 1].point[0], e2[e2.length - 1].point[1]] : c(e2[0].point, [1, 1]), Q = [], $ = [];\n    if (e2.length === 1) {\n      if (!(I2 || L2) || x2) return k(X, U || H);\n    } else {\n      I2 || L2 && e2.length === 1 || (S2 ? Q.push(...A(X, B[0], 13)) : Q.push(...j(X, z[0], B[0])));\n      let t2 = h(s(e2[e2.length - 1].vector));\n      L2 || I2 && e2.length === 1 ? $.push(Z) : T2 ? $.push(...M(Z, t2, H, 29)) : $.push(...ne(Z, t2, H));\n    }\n    return z.concat($, B.reverse(), Q);\n  }\n  var F = [0, 0];\n  function I(e2) {\n    return e2 != null && e2 >= 0;\n  }\n  function L(e2, t2 = {}) {\n    var _a;\n    let { streamline: i2 = 0.5, size: a2 = 16, last: o2 = false } = t2;\n    if (e2.length === 0) return [];\n    let s2 = 0.15 + (1 - i2) * 0.85, l2 = Array.isArray(e2[0]) ? e2 : e2.map(({ x: e3, y: t3, pressure: r2 = n }) => [e3, t3, r2]);\n    if (l2.length === 2) {\n      let e3 = l2[1];\n      l2 = l2.slice(0, -1);\n      for (let t3 = 1; t3 < 5; t3++) l2.push(w(l2[0], e3, t3 / 4));\n    }\n    l2.length === 1 && (l2 = [...l2, [...c(l2[0], r), ...l2[0].slice(2)]]);\n    let u2 = [{ point: [l2[0][0], l2[0][1]], pressure: I(l2[0][2]) ? l2[0][2] : 0.25, vector: [...r], distance: 0, runningLength: 0 }], f2 = false, p2 = 0, m2 = u2[0], h2 = l2.length - 1;\n    for (let e3 = 1; e3 < l2.length; e3++) {\n      let t3 = o2 && e3 === h2 ? [l2[e3][0], l2[e3][1]] : w(m2.point, l2[e3], s2);\n      if (_(m2.point, t3)) continue;\n      let r2 = x(t3, m2.point);\n      if (p2 += r2, e3 < h2 && !f2) {\n        if (p2 < a2) continue;\n        f2 = true;\n      }\n      d(F, m2.point, t3), m2 = { point: t3, pressure: I(l2[e3][2]) ? l2[e3][2] : n, vector: b(F), distance: r2, runningLength: p2 }, u2.push(m2);\n    }\n    return u2[0].vector = ((_a = u2[1]) == null ? void 0 : _a.vector) || [0, 0], u2;\n  }\n  function R(e2, t2 = {}) {\n    return P(L(e2, t2), t2);\n  }\n\n  // src/rendering.ts\n  var paths = /* @__PURE__ */ new WeakMap();\n  function penOutline(stroke, width, height) {\n    const pressures = smoothPenPressures(stroke.points);\n    return R(stroke.points.map((point, index) => [point.x * width, point.y * height, pressures[index]]), {\n      // Preserve the existing diameter: width * (0.55 + pressure * 0.75).\n      size: stroke.width * 0.925,\n      thinning: 0.75 / 1.85,\n      simulatePressure: false,\n      streamline: 0.35,\n      smoothing: 0.65,\n      last: true,\n      start: { cap: true, taper: 0 },\n      end: { cap: true, taper: 0 }\n    });\n  }\n  function smoothPenPressures(points) {\n    if (points.length < 3) return points.map((point) => point.pressure);\n    return points.map((point, index) => {\n      if (index === 0 || index === points.length - 1) return point.pressure;\n      return median3(points[index - 1].pressure, point.pressure, points[index + 1].pressure);\n    });\n  }\n  function median3(a2, b2, c2) {\n    return Math.max(Math.min(a2, b2), Math.min(Math.max(a2, b2), c2));\n  }\n  function drawInkStroke(ctx, stroke, width, height) {\n    if (stroke.points.length === 0) return;\n    ctx.save();\n    ctx.globalAlpha = stroke.opacity;\n    ctx.fillStyle = stroke.color;\n    ctx.strokeStyle = stroke.color;\n    ctx.lineCap = "round";\n    ctx.lineJoin = "round";\n    ctx.globalCompositeOperation = stroke.tool === "highlighter" ? "multiply" : "source-over";\n    if (stroke.points.length === 1) {\n      const point = stroke.points[0];\n      const diameter = stroke.tool === "highlighter" ? stroke.width : stroke.width * (0.55 + point.pressure * 0.75);\n      ctx.beginPath();\n      ctx.arc(point.x * width, point.y * height, diameter / 2, 0, Math.PI * 2);\n      ctx.fill();\n    } else if (stroke.tool === "highlighter") {\n      ctx.lineWidth = stroke.width;\n      drawSmoothPath(ctx, stroke.points, width, height);\n      ctx.stroke();\n    } else {\n      let cached = paths.get(stroke);\n      if (!cached || cached.points !== stroke.points || cached.count !== stroke.points.length || cached.updatedAt !== stroke.updatedAt || cached.size !== stroke.width || cached.width !== width || cached.height !== height) {\n        cached = {\n          points: stroke.points,\n          count: stroke.points.length,\n          updatedAt: stroke.updatedAt,\n          size: stroke.width,\n          width,\n          height,\n          path: createPenPath(stroke, width, height)\n        };\n        paths.set(stroke, cached);\n      }\n      ctx.fill(cached.path);\n    }\n    ctx.restore();\n  }\n  function createPenPath(stroke, width, height) {\n    const path = new Path2D();\n    const outline = penOutline(stroke, width, height);\n    if (outline.length > 0) {\n      const first = outline[0];\n      const last = outline[outline.length - 1];\n      path.moveTo((last[0] + first[0]) / 2, (last[1] + first[1]) / 2);\n      for (let index = 0; index < outline.length; index++) {\n        const point = outline[index];\n        const next = outline[(index + 1) % outline.length];\n        path.quadraticCurveTo(point[0], point[1], (point[0] + next[0]) / 2, (point[1] + next[1]) / 2);\n      }\n      path.closePath();\n    }\n    return path;\n  }\n  function drawSmoothPath(ctx, points, width, height) {\n    ctx.beginPath();\n    ctx.moveTo(points[0].x * width, points[0].y * height);\n    for (let index = 1; index < points.length; index++) {\n      const previous = points[index - 1];\n      const point = points[index];\n      const end = index === points.length - 1 ? point : { x: (previous.x + point.x) / 2, y: (previous.y + point.y) / 2 };\n      ctx.quadraticCurveTo(previous.x * width, previous.y * height, end.x * width, end.y * height);\n    }\n    const last = points[points.length - 1];\n    ctx.lineTo(last.x * width, last.y * height);\n  }\n\n  // src/worker-protocol.ts\n  function serializeNotebook(notebook) {\n    return `${JSON.stringify(notebook, null, 2)}\n`;\n  }\n  function cloneStrokeValue(stroke) {\n    return { ...stroke, points: stroke.points.map((point) => ({ ...point })) };\n  }\n\n  // src/worker-core.ts\n  var ProtocolError = class extends Error {\n    constructor(code, message) {\n      super(message);\n      this.code = code;\n    }\n  };\n  var InkWorkerCore = class {\n    constructor(capabilities) {\n      this.capabilities = capabilities;\n      this.sessions = /* @__PURE__ */ new Map();\n    }\n    ready() {\n      return { type: "ready", requestId: 0, sessionId: "", generation: 0, capabilities: this.capabilities };\n    }\n    async handle(request) {\n      try {\n        const response = await this.dispatch(request);\n        return response.type === "tile-rendered" ? { response, transfer: [response.bitmap] } : { response };\n      } catch (error) {\n        return { response: {\n          type: "error",\n          requestId: request.requestId,\n          sessionId: request.sessionId,\n          generation: request.generation,\n          code: error instanceof ProtocolError ? error.code : "internal",\n          message: error instanceof Error ? error.message : String(error)\n        } };\n      }\n    }\n    async dispatch(request) {\n      if (request.type === "initialize-raw") {\n        const notebook = parseNotebook(request.raw);\n        this.sessions.set(request.sessionId, {\n          generation: request.generation,\n          notebook,\n          revision: request.revision,\n          pendingSave: /* @__PURE__ */ new Map()\n        });\n        return this.response(request, { type: "initialized", notebook, revision: request.revision });\n      }\n      if (request.type === "initialize-notebook") {\n        const notebook = normalizeNotebook(request.notebook);\n        this.sessions.set(request.sessionId, {\n          generation: request.generation,\n          notebook,\n          revision: request.revision,\n          pendingSave: /* @__PURE__ */ new Map()\n        });\n        return this.response(request, { type: "initialized", notebook, revision: request.revision });\n      }\n      const session = this.sessions.get(request.sessionId);\n      if (!session) throw new ProtocolError("missing-session", "Ink worker session is not initialized");\n      if (session.generation !== request.generation) throw new ProtocolError("stale-generation", "Ink worker request belongs to a stale file generation");\n      if (request.type === "apply-operation") {\n        if (request.revision !== session.revision + 1) {\n          throw new ProtocolError("revision-gap", `Expected revision ${session.revision + 1}, received ${request.revision}`);\n        }\n        applyNotebookOperation(session.notebook, request.operation);\n        session.revision = request.revision;\n        return this.response(request, { type: "operation-applied", revision: session.revision });\n      }\n      if (request.type === "barrier") {\n        if (session.revision < request.minimumRevision) {\n          throw new ProtocolError("revision-gap", `Worker revision ${session.revision} is behind ${request.minimumRevision}`);\n        }\n        return this.response(request, { type: "barrier-complete", revision: session.revision });\n      }\n      if (request.type === "prepare-save") {\n        if (session.revision < request.minimumRevision) {\n          throw new ProtocolError("revision-gap", `Worker revision ${session.revision} is behind ${request.minimumRevision}`);\n        }\n        const disk = parseNotebook(request.raw);\n        const local = normalizeNotebook(session.notebook);\n        const merged = mergeNotebooks(disk, local);\n        const token = `${request.sessionId}:${request.generation}:${request.requestId}`;\n        session.pendingSave.clear();\n        session.pendingSave.set(token, {\n          notebook: normalizeNotebook(merged),\n          revision: session.revision,\n          reconcile: serializeNotebook(merged) !== serializeNotebook(local)\n        });\n        return this.response(request, { type: "save-prepared", token, content: serializeNotebook(merged), revision: session.revision });\n      }\n      if (request.type === "render-tile") {\n        const rendered = renderTile(session.notebook, request.pageId, request.cell, request.density, request.revision, request.width, request.height);\n        return this.response(request, { type: "tile-rendered", ...rendered });\n      }\n      if (request.type === "commit-save") {\n        const candidate = session.pendingSave.get(request.token);\n        if (!candidate) throw new ProtocolError("missing-session", "Prepared save is no longer available");\n        session.pendingSave.delete(request.token);\n        session.notebook = mergeNotebooks(candidate.notebook, session.notebook);\n        return this.response(request, {\n          type: "save-committed",\n          revision: candidate.revision,\n          merged: candidate.reconcile ? candidate.notebook : void 0\n        });\n      }\n      if (request.type === "abort-save") {\n        session.pendingSave.delete(request.token);\n        return this.response(request, { type: "save-aborted" });\n      }\n      if (request.type === "merge-external") {\n        const merged = mergeNotebooks(parseNotebook(request.raw), session.notebook);\n        const changed = serializeNotebook(merged) !== serializeNotebook(session.notebook);\n        session.notebook = normalizeNotebook(merged);\n        return this.response(request, { type: "external-merged", notebook: changed ? session.notebook : void 0, revision: session.revision });\n      }\n      this.sessions.delete(request.sessionId);\n      return this.response(request, { type: "session-disposed" });\n    }\n    response(request, response) {\n      return { ...response, requestId: request.requestId, sessionId: request.sessionId, generation: request.generation };\n    }\n  };\n  function renderTile(notebook, pageId, cell, density, revision, pageWidth, pageHeight) {\n    const page = notebook.pages.find((candidate) => candidate.id === pageId);\n    if (!page) throw new Error(`Ink worker page is unavailable: ${pageId}`);\n    const Canvas = globalThis.OffscreenCanvas;\n    if (!Canvas) throw new Error("OffscreenCanvas is not supported by this device");\n    const [column, row] = cell.split(":").map(Number);\n    const x2 = column * 128;\n    const y2 = row * 128;\n    const width = Math.min(128, pageWidth - x2);\n    const height = Math.min(128, pageHeight - y2);\n    if (width <= 0 || height <= 0) throw new Error(`Ink worker tile is outside page bounds: ${cell}`);\n    const safeDensity = Math.max(0.5, Math.min(9, density));\n    const bleedPixels = Math.ceil(4 * safeDensity);\n    const canvasWidth = Math.ceil(width * safeDensity) + bleedPixels * 2;\n    const canvasHeight = Math.ceil(height * safeDensity) + bleedPixels * 2;\n    const canvas = new Canvas(canvasWidth, canvasHeight);\n    const ctx = canvas.getContext("2d");\n    if (!ctx) throw new Error("Ink worker could not create a 2D tile context");\n    ctx.setTransform(safeDensity, 0, 0, safeDensity, bleedPixels - x2 * safeDensity, bleedPixels - y2 * safeDensity);\n    const rect = { x: x2 - 4, y: y2 - 4, width: width + 8, height: height + 8 };\n    for (const stroke of page.strokes) {\n      if (strokeTouchesRect(stroke, rect, pageWidth, pageHeight)) {\n        drawInkStroke(ctx, stroke, pageWidth, pageHeight);\n      }\n    }\n    return {\n      pageId,\n      cell,\n      density: safeDensity,\n      revision,\n      x: x2,\n      y: y2,\n      width,\n      height,\n      canvasWidth,\n      canvasHeight,\n      bitmap: canvas.transferToImageBitmap()\n    };\n  }\n  function strokeTouchesRect(stroke, rect, pageWidth, pageHeight) {\n    if (stroke.points.length === 0) return false;\n    const padding = stroke.width * 0.7 + 4;\n    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;\n    for (const point of stroke.points) {\n      minX = Math.min(minX, point.x * pageWidth);\n      minY = Math.min(minY, point.y * pageHeight);\n      maxX = Math.max(maxX, point.x * pageWidth);\n      maxY = Math.max(maxY, point.y * pageHeight);\n    }\n    return maxX + padding >= rect.x && minX - padding <= rect.x + rect.width && maxY + padding >= rect.y && minY - padding <= rect.y + rect.height;\n  }\n  function parseNotebook(raw) {\n    try {\n      return normalizeNotebook(JSON.parse(raw));\n    } catch (e2) {\n      throw new ProtocolError("invalid-format", "Existing ink notebook is not valid JSON");\n    }\n  }\n  function applyNotebookOperation(notebook, operation) {\n    if (operation.type === "replace-notebook") {\n      Object.assign(notebook, normalizeNotebook(operation.notebook));\n      return;\n    }\n    const page = notebook.pages.find((candidate) => candidate.id === operation.pageId);\n    if (!page) return;\n    if (operation.type === "start-stroke") {\n      const index = page.strokes.findIndex((stroke2) => stroke2.id === operation.stroke.id);\n      const stroke = cloneStrokeValue(operation.stroke);\n      if (index >= 0) page.strokes[index] = stroke;\n      else page.strokes.push(stroke);\n    } else if (operation.type === "append-stroke-points") {\n      const stroke = page.strokes.find((candidate) => candidate.id === operation.strokeId);\n      if (stroke) stroke.points.push(...operation.points.map((point) => ({ ...point })));\n    } else if (operation.type === "complete-stroke") {\n      const stroke = page.strokes.find((candidate) => candidate.id === operation.strokeId);\n      if (stroke) stroke.updatedAt = operation.pageUpdatedAt;\n    } else if (operation.type === "finalize-stroke") {\n      const index = page.strokes.findIndex((stroke2) => stroke2.id === operation.stroke.id);\n      const stroke = cloneStrokeValue(operation.stroke);\n      if (index >= 0) page.strokes[index] = stroke;\n      else page.strokes.push(stroke);\n      page.strokes.sort((left, right) => left.createdAt - right.createdAt);\n    } else if (operation.type === "patch-strokes") {\n      const removed = new Set(operation.remove);\n      const upsert = new Map(operation.upsert.map((stroke) => [stroke.id, cloneStrokeValue(stroke)]));\n      page.strokes = page.strokes.filter((stroke) => !removed.has(stroke.id) && !upsert.has(stroke.id));\n      page.strokes.push(...upsert.values());\n      page.strokes.sort((left, right) => left.createdAt - right.createdAt);\n      page.deletedStrokeIds = [.../* @__PURE__ */ new Set([...page.deletedStrokeIds, ...operation.deletedStrokeIds])];\n    } else {\n      if (operation.title !== void 0) page.title = operation.title;\n      if (operation.paper !== void 0) page.paper = operation.paper;\n    }\n    page.updatedAt = operation.pageUpdatedAt;\n    notebook.updatedAt = operation.notebookUpdatedAt;\n  }\n\n  // src/ink-worker.ts\n  var scope = self;\n  var core = new InkWorkerCore({\n    offscreenCanvas: typeof OffscreenCanvas !== "undefined",\n    imageBitmap: typeof ImageBitmap !== "undefined"\n  });\n  scope.onmessage = (event) => {\n    void core.handle(event.data).then(({ response, transfer }) => scope.postMessage(response, transfer != null ? transfer : []));\n  };\n  scope.postMessage(core.ready());\n})();\n';
 
 // src/worker-service.ts
 var WORKER_READY_TIMEOUT = 2e3;
@@ -934,6 +1049,7 @@ var InkWorkerService = class {
     this.nextSessionId = 1;
     this.restartCount = 0;
     this.disabled = false;
+    this.capabilities = null;
     this.recoveryPromise = null;
     this.pending = /* @__PURE__ */ new Map();
     this.sessions = /* @__PURE__ */ new Map();
@@ -959,6 +1075,10 @@ var InkWorkerService = class {
   }
   removeSession(id) {
     this.sessions.delete(id);
+  }
+  canRenderTiles() {
+    var _a;
+    return ((_a = this.capabilities) == null ? void 0 : _a.offscreenCanvas) === true && this.capabilities.imageBitmap === true;
   }
   dispose() {
     this.disabled = true;
@@ -1006,6 +1126,7 @@ var InkWorkerService = class {
       if (this.readyTimer !== void 0) globalThis.clearTimeout(this.readyTimer);
       this.readyTimer = void 0;
       (_a = this.resolveReady) == null ? void 0 : _a.call(this, response.capabilities);
+      this.capabilities = response.capabilities;
       this.resolveReady = null;
       this.rejectReady = null;
       if (this.workerUrl) URL.revokeObjectURL(this.workerUrl);
@@ -1046,6 +1167,7 @@ var InkWorkerService = class {
     this.resolveReady = null;
     this.rejectReady = null;
     this.readyPromise = null;
+    this.capabilities = null;
     (_b = this.worker) == null ? void 0 : _b.terminate();
     this.worker = null;
     if (this.workerUrl) URL.revokeObjectURL(this.workerUrl);
@@ -1067,6 +1189,9 @@ var InkWorkerSession = class {
     this.snapshot = snapshot;
     this.generation = 0;
     this.operationTail = Promise.resolve();
+  }
+  canRenderTiles() {
+    return this.service.canRenderTiles();
   }
   async initializeRaw(raw, revision) {
     this.generation += 1;
@@ -1091,6 +1216,21 @@ var InkWorkerSession = class {
   async prepareSave(raw, minimumRevision) {
     const response = await this.service.send({ type: "prepare-save", sessionId: this.id, generation: this.generation, raw, minimumRevision });
     if (response.type !== "save-prepared") throw unexpected(response);
+    return response;
+  }
+  async renderTile(pageId, cell, density, revision, width, height) {
+    const response = await this.service.send({
+      type: "render-tile",
+      sessionId: this.id,
+      generation: this.generation,
+      pageId,
+      cell,
+      density,
+      revision,
+      width,
+      height
+    });
+    if (response.type !== "tile-rendered") throw unexpected(response);
     return response;
   }
   async commitSave(token) {
@@ -1167,11 +1307,14 @@ var InkView = class extends import_obsidian.FileView {
     this.activeSave = null;
     this.dirtyRevision = 0;
     this.savedRevision = 0;
+    this.workerRevision = 0;
     this.pendingMergedNotebook = null;
+    this.pendingMergedNotebookIsFinal = false;
     this.externalRefreshPending = false;
     this.workerSession = null;
     this.workerFallbackReported = false;
     this.activeStroke = null;
+    this.workerStrokePointIndex = 0;
     this.pendingInkStrokes = [];
     this.committingInkStrokes = null;
     this.pendingInkPageId = null;
@@ -1242,7 +1385,7 @@ var InkView = class extends import_obsidian.FileView {
     this.renderAll();
   }
   async onClose() {
-    var _a, _b;
+    var _a, _b, _c, _d;
     if (this.renderFrame !== null) window.cancelAnimationFrame(this.renderFrame);
     this.renderFrame = null;
     if (this.zoomRenderTimer !== void 0) window.clearTimeout(this.zoomRenderTimer);
@@ -1250,20 +1393,26 @@ var InkView = class extends import_obsidian.FileView {
     this.cancelPendingInkCommitTimer();
     this.clearSaveTimers();
     if (this.file && (this.dirtyRevision > this.savedRevision || this.activeSave)) await this.save(this.file);
-    (_a = this.workerSession) == null ? void 0 : _a.dispose();
+    (_b = (_a = this.tiles) == null ? void 0 : _a.setBackend) == null ? void 0 : _b.call(_a, null);
+    (_c = this.workerSession) == null ? void 0 : _c.dispose();
     this.workerSession = null;
-    (_b = this.tiles) == null ? void 0 : _b.dispose();
+    (_d = this.tiles) == null ? void 0 : _d.dispose();
     this.viewReady = false;
   }
   async onLoadFile(file) {
-    var _a;
-    (_a = this.workerSession) == null ? void 0 : _a.dispose();
+    var _a, _b, _c, _d;
+    (_b = (_a = this.tiles) == null ? void 0 : _a.setBackend) == null ? void 0 : _b.call(_a, null);
+    (_c = this.workerSession) == null ? void 0 : _c.dispose();
     this.workerSession = null;
     if (this.workers) {
       const session = this.workers.createSession(() => ({ notebook: this.notebook, revision: this.dirtyRevision }));
       try {
         this.notebook = await session.initializeRaw(await this.store.readRaw(file), 0);
         this.workerSession = session;
+        this.workerRevision = 0;
+        if (session.canRenderTiles()) (_d = this.tiles) == null ? void 0 : _d.setBackend(session, (error) => {
+          if (this.workerSession === session) this.disableWorkerSession(error);
+        });
       } catch (e2) {
         session.dispose();
         this.notebook = await this.store.read(file);
@@ -1277,15 +1426,17 @@ var InkView = class extends import_obsidian.FileView {
     this.resetInteraction();
     this.dirtyRevision = 0;
     this.savedRevision = 0;
+    this.workerRevision = 0;
     this.renderAll();
   }
   async onUnloadFile(file) {
-    var _a;
+    var _a, _b, _c;
     this.finishPointerInput(false);
     this.cancelPendingInkCommitTimer();
     this.clearSaveTimers();
     if (this.dirtyRevision > this.savedRevision || this.activeSave) await this.save(file);
-    (_a = this.workerSession) == null ? void 0 : _a.dispose();
+    (_b = (_a = this.tiles) == null ? void 0 : _a.setBackend) == null ? void 0 : _b.call(_a, null);
+    (_c = this.workerSession) == null ? void 0 : _c.dispose();
     this.workerSession = null;
   }
   async reloadFromDisk() {
@@ -1295,9 +1446,15 @@ var InkView = class extends import_obsidian.FileView {
     }
     if (!this.file) return;
     const file = this.file;
-    const latest = this.workerSession ? await this.workerSession.mergeExternal(await this.store.readRaw(file)) : await this.store.read(file);
+    if (this.workerSession) {
+      const latest2 = await this.workerSession.mergeExternal(await this.store.readRaw(file));
+      if (this.file !== file) return;
+      if (!latest2) return;
+      this.receiveMergedNotebook(latest2, true);
+      return;
+    }
+    const latest = await this.store.read(file);
     if (this.file !== file) return;
-    if (!latest) return;
     if (notebooksEqual(latest, this.notebook)) return;
     this.receiveMergedNotebook(latest);
   }
@@ -1633,6 +1790,7 @@ var InkView = class extends import_obsidian.FileView {
       var _a;
       this.renderFrame = null;
       this.flushPendingLassoPoint();
+      this.flushWorkerStrokePoints();
       const shouldResize = this.resizeRequested;
       this.resizeRequested = false;
       if (shouldResize) this.resizeCanvas();
@@ -1884,6 +2042,14 @@ var InkView = class extends import_obsidian.FileView {
       createdAt: Date.now(),
       updatedAt: Date.now()
     };
+    this.workerStrokePointIndex = 1;
+    this.queueWorkerOperation({
+      type: "start-stroke",
+      pageId: page.id,
+      stroke: { ...this.activeStroke, points: [{ ...point }] },
+      pageUpdatedAt: page.updatedAt,
+      notebookUpdatedAt: this.notebook.updatedAt
+    });
     this.lastPoint = point;
     page.strokes.push(this.activeStroke);
     this.resizePreview();
@@ -1978,6 +2144,22 @@ var InkView = class extends import_obsidian.FileView {
     this.pendingLassoPoint = null;
     if (point) this.applyLassoPoint(point);
   }
+  flushWorkerStrokePoints() {
+    const stroke = this.activeStroke;
+    const interaction = this.interaction;
+    if (!stroke || !interaction || interaction.tool !== "pen" && interaction.tool !== "highlighter") return;
+    if (this.workerStrokePointIndex >= stroke.points.length) return;
+    const points = stroke.points.slice(this.workerStrokePointIndex).map((point) => ({ ...point }));
+    this.workerStrokePointIndex = stroke.points.length;
+    this.queueWorkerOperation({
+      type: "append-stroke-points",
+      pageId: stroke.pageId,
+      strokeId: stroke.id,
+      points,
+      pageUpdatedAt: stroke.updatedAt,
+      notebookUpdatedAt: this.notebook.updatedAt
+    });
+  }
   finishPointerInput(_includeFinalSample = false) {
     const interaction = this.interaction;
     if (!interaction) return;
@@ -1990,6 +2172,7 @@ var InkView = class extends import_obsidian.FileView {
       return;
     }
     this.flushPendingLassoPoint();
+    this.flushWorkerStrokePoints();
     this.commitPreview(page);
     if (this.activeStroke && this.renderFrame !== null && !this.resizeRequested) {
       window.cancelAnimationFrame(this.renderFrame);
@@ -2019,9 +2202,9 @@ var InkView = class extends import_obsidian.FileView {
     } else if (this.activeStroke) {
       this.markChanged(page, true, false);
       this.queueWorkerOperation({
-        type: "finalize-stroke",
+        type: "complete-stroke",
         pageId: page.id,
-        stroke: cloneStroke(this.activeStroke),
+        strokeId: this.activeStroke.id,
         pageUpdatedAt: page.updatedAt,
         notebookUpdatedAt: this.notebook.updatedAt
       });
@@ -2029,6 +2212,7 @@ var InkView = class extends import_obsidian.FileView {
     }
     this.activePointerId = null;
     this.activeStroke = null;
+    this.workerStrokePointIndex = 0;
     this.lastPoint = null;
     this.pendingLassoPoint = null;
     if (interaction.tool === "pen" || interaction.tool === "highlighter") {
@@ -2048,8 +2232,9 @@ var InkView = class extends import_obsidian.FileView {
     if (!this.pendingMergedNotebook || this.activePointerId !== null || this.pendingInkStrokes.length > 0) return;
     const pageId = this.currentPage().id;
     const previousPageIndex = this.pageIndex;
-    const merged = mergeNotebooks(this.pendingMergedNotebook, this.notebook);
+    const merged = this.pendingMergedNotebookIsFinal ? this.pendingMergedNotebook : mergeNotebooks(this.pendingMergedNotebook, this.notebook);
     this.pendingMergedNotebook = null;
+    this.pendingMergedNotebookIsFinal = false;
     const changes = reconcileNotebook(this.notebook, merged, pageId, previousPageIndex);
     this.pageIndex = changes.pageIndex;
     if (changes.pageRailChanged) this.renderPageRail();
@@ -2060,8 +2245,9 @@ var InkView = class extends import_obsidian.FileView {
       if (changes.currentInkChanged) this.drawStrokes(this.currentPage().strokes);
     }
   }
-  receiveMergedNotebook(notebook) {
+  receiveMergedNotebook(notebook, alreadyMerged = false) {
     this.pendingMergedNotebook = this.pendingMergedNotebook ? mergeNotebooks(this.pendingMergedNotebook, notebook) : notebook;
+    this.pendingMergedNotebookIsFinal || (this.pendingMergedNotebookIsFinal = alreadyMerged);
     if (this.activePointerId === null && this.pendingInkStrokes.length === 0) this.applyPendingMergedNotebook();
   }
   onLostPointerCapture(event) {
@@ -2502,7 +2688,7 @@ page: ${this.currentPage().id}
     if (this.maxSaveTimer === void 0) {
       this.maxSaveTimer = window.setTimeout(() => {
         this.maxSaveTimer = void 0;
-        if (this.activePointerId !== null && !this.workerSession) {
+        if (this.activePointerId !== null) {
           this.scheduleSave();
           return;
         }
@@ -2579,16 +2765,17 @@ page: ${this.currentPage().id}
     return { revision: minimumRevision, merged: await this.store.save(file, snapshot) };
   }
   async saveRevisionWithWorker(file, session, minimumRevision) {
-    await session.barrier(minimumRevision);
+    await session.barrier(this.workerRevision);
     let raw = await this.store.readRaw(file);
     for (let attempt = 0; attempt < SAVE_CONFLICT_RETRIES; attempt++) {
       const prepared = await session.prepareSave(raw, minimumRevision);
       if (await this.store.writeIfUnchanged(file, raw, prepared.content)) {
         try {
-          return await session.commitSave(prepared.token);
+          await session.commitSave(prepared.token);
+          return { revision: minimumRevision };
         } catch (error) {
           if (this.workerSession === session) this.disableWorkerSession(error);
-          return { revision: prepared.revision, merged: await this.store.read(file) };
+          return { revision: minimumRevision, merged: await this.store.read(file) };
         }
       }
       await session.abortSave(prepared.token);
@@ -2762,14 +2949,19 @@ page: ${this.currentPage().id}
   queueWorkerOperation(operation) {
     const session = this.workerSession;
     if (!session) return;
-    const revision = this.dirtyRevision;
+    const revision = ++this.workerRevision;
     void session.apply(revision, operation).catch((error) => {
       if (this.workerSession === session) this.disableWorkerSession(error);
     });
   }
   disableWorkerSession(error) {
-    var _a;
-    (_a = this.workerSession) == null ? void 0 : _a.dispose();
+    var _a, _b, _c;
+    (_b = (_a = this.tiles) == null ? void 0 : _a.setBackend) == null ? void 0 : _b.call(_a, null);
+    if (this.viewReady && this.tiles && this.notebook.pages.length > 0) {
+      this.tiles.sync(this.currentPage().strokes, this.tileExclusion());
+      this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
+    }
+    (_c = this.workerSession) == null ? void 0 : _c.dispose();
     this.workerSession = null;
     if (this.workerFallbackReported) return;
     this.workerFallbackReported = true;
@@ -2799,6 +2991,7 @@ page: ${this.currentPage().id}
     if (this.previewCanvas) this.previewCanvas.width = this.previewCanvas.height = 1;
     this.touchGesture = null;
     this.pendingMergedNotebook = null;
+    this.pendingMergedNotebookIsFinal = false;
     this.externalRefreshPending = false;
     this.eraserHoverPoint = null;
     this.eraserPointerInside = false;

@@ -1,6 +1,24 @@
 import type { InkPage, InkPoint, InkStroke } from "./model";
 import { drawInkStroke } from "./rendering";
 
+export interface RenderTileResult {
+  pageId: string;
+  cell: string;
+  density: number;
+  revision: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  canvasWidth: number;
+  canvasHeight: number;
+  bitmap: ImageBitmap;
+}
+
+export interface RenderBackend {
+  renderTile(pageId: string, cell: string, density: number, revision: number, width: number, height: number): Promise<RenderTileResult>;
+}
+
 export interface Rect { x: number; y: number; width: number; height: number }
 const TILE = 128;
 // Bleed is measured in logical page pixels. Keeping it independent from
@@ -120,6 +138,8 @@ interface InkCommit {
   jobs: Job[];
   tiles: Tile[];
   onComplete: (committed: boolean) => void;
+  invalid: boolean;
+  generation: number;
 }
 
 export function tileDensity(viewport: Rect, density: number): number {
@@ -147,8 +167,19 @@ export class TileRenderer {
   private sequence = 0;
   private pixels = 0;
   private disposed = false;
+  private renderGeneration = 0;
+  private backend: RenderBackend | null = null;
+  private backendError: ((error: unknown) => void) | null = null;
+  private pendingTiles = new Set<string>();
 
   constructor(private host: HTMLElement) {}
+
+  setBackend(backend: RenderBackend | null, onError?: (error: unknown) => void): void {
+    this.backend = backend;
+    this.backendError = onError ?? null;
+    this.jobs = [];
+    if (!backend) this.pendingTiles.clear();
+  }
 
   setPage(page: InkPage, width: number, height: number, exclude?: StrokeExclusion): void {
     const state = this.state(page, width, height);
@@ -172,7 +203,12 @@ export class TileRenderer {
   flushVisible(): void {
     const jobs = this.jobs.filter(job => job.state === this.active && this.visible.has(job.cell) && !this.isHeld(job));
     this.jobs = this.jobs.filter(job => !jobs.includes(job));
-    for (const job of jobs) this.attach(this.get(job.state, job.cell, job.density) ?? this.paint(job));
+    for (const job of jobs) {
+      const tile = this.get(job.state, job.cell, job.density);
+      if (tile) this.attach(tile);
+      else if (this.backend) this.requestWorkerTile(job);
+      else this.attach(this.paint(job));
+    }
     this.evict();
   }
 
@@ -201,17 +237,19 @@ export class TileRenderer {
       else jobs.push({ state: this.active, cell, density: this.density });
     }
     this.jobs = this.jobs.filter(job => !this.isHeld(job));
-    this.inkCommit = { state: this.active, strokes, cells, jobs, tiles, onComplete };
+    this.inkCommit = { state: this.active, strokes, cells, jobs, tiles, onComplete, invalid: false, generation: this.renderGeneration };
     if (jobs.length === 0) this.finishInkCommit(true);
     else this.scheduleInkCommit();
   }
 
   pauseInkCommit(): void {
+    this.renderGeneration += 1;
     this.inkCommitPaused = true;
     if (this.frame !== null) cancelAnimationFrame(this.frame);
     this.frame = null;
     if (this.inkFrame !== null) cancelAnimationFrame(this.inkFrame);
     this.inkFrame = null;
+    if (this.inkCommit) this.abortInkCommit(true);
   }
 
   resumeInkCommit(): void {
@@ -269,7 +307,7 @@ export class TileRenderer {
     if (this.frame !== null) cancelAnimationFrame(this.frame);
     this.abortInkCommit(false);
     for (const [key, tile] of this.cache) this.drop(key, tile);
-    this.states.clear(); this.jobs = []; this.host.replaceChildren();
+    this.states.clear(); this.jobs = []; this.pendingTiles.clear(); this.host.replaceChildren();
   }
 
   private state(page: InkPage, width: number, height: number): PageTiles {
@@ -310,9 +348,16 @@ export class TileRenderer {
       // One tile per frame bounds scheduling work and gives input priority.
       const job = this.jobs.shift();
       if (job && !this.isHeld(job)) {
-        const tile = this.get(job.state, job.cell, job.density) ?? this.paint(job);
-        if (job.state === this.active && this.visible.has(job.cell)) this.attach(tile);
-        this.evict();
+        const tile = this.get(job.state, job.cell, job.density);
+        if (tile) {
+          if (job.state === this.active && this.visible.has(job.cell)) this.attach(tile);
+          this.evict();
+        } else if (this.backend) this.requestWorkerTile(job);
+        else {
+          const painted = this.paint(job);
+          if (job.state === this.active && this.visible.has(job.cell)) this.attach(painted);
+          this.evict();
+        }
       }
       this.schedule();
     });
@@ -325,7 +370,26 @@ export class TileRenderer {
       const commit = this.inkCommit;
       if (!commit) return;
       const job = commit.jobs.shift();
-      if (job) commit.tiles.push(this.createInkTile(job, commit.strokes));
+      if (!job) { this.finishInkCommit(true); return; }
+      if (this.backend) {
+        this.backend.renderTile(job.state.page.id, job.cell, job.density, job.state.index.revisions.get(job.cell) ?? 0,
+          job.state.index.width, job.state.index.height)
+          .then((result) => {
+            if (this.inkCommit !== commit || commit.generation !== this.renderGeneration || this.disposed) { result.bitmap.close(); return; }
+            if (result.revision === (job.state.index.revisions.get(job.cell) ?? 0)) commit.tiles.push(this.tileFromBitmap(job, result));
+            else commit.invalid = true;
+            if (commit.jobs.length > 0) this.scheduleInkCommit();
+            else this.finishInkCommit(true);
+          })
+          .catch((error) => {
+            if (this.inkCommit === commit) {
+              this.backendError?.(error);
+              this.finishInkCommit(false);
+            }
+          });
+        return;
+      }
+      commit.tiles.push(this.createInkTile(job, commit.strokes));
       if (commit.jobs.length > 0) this.scheduleInkCommit();
       else this.finishInkCommit(true);
     });
@@ -334,7 +398,7 @@ export class TileRenderer {
   private finishInkCommit(requested: boolean): void {
     const commit = this.inkCommit;
     if (!commit) return;
-    const valid = requested && !this.disposed && this.active === commit.state
+    const valid = requested && !commit.invalid && !this.disposed && this.active === commit.state
       && commit.tiles.every(tile => tile.revision === (tile.state.index.revisions.get(tile.cell) ?? 0));
     this.inkCommit = null;
     for (const cell of commit.cells) this.heldCells.delete(this.holdKey(commit.state, cell));
@@ -375,6 +439,52 @@ export class TileRenderer {
     const tile = this.createTile(job);
     this.cacheTile(tile);
     return tile;
+  }
+
+  private requestWorkerTile(job: Job): void {
+    if (!this.backend || this.disposed) return;
+    const key = this.key(job.state, job.cell, job.density);
+    if (this.pendingTiles.has(key)) return;
+    this.pendingTiles.add(key);
+    const revision = job.state.index.revisions.get(job.cell) ?? 0;
+    const generation = this.renderGeneration;
+    this.backend.renderTile(job.state.page.id, job.cell, job.density, revision, job.state.index.width, job.state.index.height)
+      .then((result) => {
+        this.pendingTiles.delete(key);
+        if (this.disposed || generation !== this.renderGeneration) { result.bitmap.close(); return; }
+        const currentRevision = job.state.index.revisions.get(job.cell) ?? 0;
+        if (result.revision !== currentRevision || result.density !== job.density) { result.bitmap.close(); this.schedule(); return; }
+        const tile = this.tileFromBitmap(job, result);
+        this.cacheTile(tile);
+        if (job.state === this.active && this.visible.has(job.cell)) this.attach(tile);
+        this.evict();
+        this.schedule();
+      })
+      .catch((error) => {
+        this.pendingTiles.delete(key);
+        this.backendError?.(error);
+        this.schedule();
+      });
+  }
+
+  private tileFromBitmap(job: Job, result: RenderTileResult): Tile {
+    const canvas = document.createElement("canvas");
+    canvas.width = result.canvasWidth;
+    canvas.height = result.canvasHeight;
+    const bitmapContext = canvas.getContext("bitmaprenderer") as ImageBitmapRenderingContext | null;
+    if (bitmapContext) bitmapContext.transferFromImageBitmap(result.bitmap);
+    else {
+      const context = canvas.getContext("2d");
+      if (context) context.drawImage(result.bitmap, 0, 0);
+      result.bitmap.close();
+    }
+    canvas.style.cssText = `position:absolute;left:${-BLEED}px;top:${-BLEED}px;width:${result.canvasWidth / result.density}px;height:${result.canvasHeight / result.density}px`;
+    const node = document.createElement("div");
+    node.dataset.cell = result.cell;
+    node.style.cssText = `position:absolute;overflow:hidden;left:${result.x}px;top:${result.y}px;width:${result.width}px;height:${result.height}px`;
+    node.appendChild(canvas);
+    return { node, canvas, revision: result.revision, pixels: result.canvasWidth * result.canvasHeight,
+      used: ++this.sequence, state: job.state, cell: result.cell, density: result.density };
   }
 
   private createTile(job: Job): Tile {

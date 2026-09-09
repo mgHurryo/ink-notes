@@ -1,4 +1,5 @@
 import { InkNotebook, mergeNotebooks, normalizeNotebook } from "./model";
+import { drawInkStroke } from "./rendering";
 import {
   InkWorkerRequest,
   InkWorkerResponse,
@@ -39,7 +40,10 @@ export class InkWorkerCore {
 
   async handle(request: InkWorkerRequest): Promise<WorkerReply> {
     try {
-      return { response: await this.dispatch(request) };
+      const response = await this.dispatch(request);
+      return response.type === "tile-rendered"
+        ? { response, transfer: [response.bitmap] }
+        : { response };
     } catch (error) {
       return { response: {
         type: "error",
@@ -108,6 +112,10 @@ export class InkWorkerCore {
       });
       return this.response(request, { type: "save-prepared", token, content: serializeNotebook(merged), revision: session.revision });
     }
+    if (request.type === "render-tile") {
+      const rendered = renderTile(session.notebook, request.pageId, request.cell, request.density, request.revision, request.width, request.height);
+      return this.response(request, { type: "tile-rendered", ...rendered });
+    }
     if (request.type === "commit-save") {
       const candidate = session.pendingSave.get(request.token);
       if (!candidate) throw new ProtocolError("missing-session", "Prepared save is no longer available");
@@ -141,6 +149,76 @@ export class InkWorkerCore {
   }
 }
 
+interface RasterCanvas {
+  width: number;
+  height: number;
+  getContext(type: "2d"): unknown;
+  transferToImageBitmap(): ImageBitmap;
+}
+
+interface RasterCanvasConstructor {
+  new(width: number, height: number): RasterCanvas;
+}
+
+interface RenderedTile {
+  pageId: string;
+  cell: string;
+  density: number;
+  revision: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  canvasWidth: number;
+  canvasHeight: number;
+  bitmap: ImageBitmap;
+}
+
+function renderTile(notebook: InkNotebook, pageId: string, cell: string, density: number, revision: number, pageWidth: number, pageHeight: number): RenderedTile {
+  const page = notebook.pages.find((candidate) => candidate.id === pageId);
+  if (!page) throw new Error(`Ink worker page is unavailable: ${pageId}`);
+  const Canvas = (globalThis as unknown as { OffscreenCanvas?: RasterCanvasConstructor }).OffscreenCanvas;
+  if (!Canvas) throw new Error("OffscreenCanvas is not supported by this device");
+  const [column, row] = cell.split(":").map(Number);
+  const x = column * 128;
+  const y = row * 128;
+  const width = Math.min(128, pageWidth - x);
+  const height = Math.min(128, pageHeight - y);
+  if (width <= 0 || height <= 0) throw new Error(`Ink worker tile is outside page bounds: ${cell}`);
+  const safeDensity = Math.max(0.5, Math.min(9, density));
+  const bleedPixels = Math.ceil(4 * safeDensity);
+  const canvasWidth = Math.ceil(width * safeDensity) + bleedPixels * 2;
+  const canvasHeight = Math.ceil(height * safeDensity) + bleedPixels * 2;
+  const canvas = new Canvas(canvasWidth, canvasHeight);
+  const ctx = canvas.getContext("2d") as CanvasRenderingContext2D | null;
+  if (!ctx) throw new Error("Ink worker could not create a 2D tile context");
+  ctx.setTransform(safeDensity, 0, 0, safeDensity, bleedPixels - x * safeDensity, bleedPixels - y * safeDensity);
+  const rect = { x: x - 4, y: y - 4, width: width + 8, height: height + 8 };
+  for (const stroke of page.strokes) {
+    if (strokeTouchesRect(stroke, rect, pageWidth, pageHeight)) {
+      drawInkStroke(ctx, stroke, pageWidth, pageHeight);
+    }
+  }
+  return {
+    pageId, cell, density: safeDensity, revision, x, y, width, height,
+    canvasWidth, canvasHeight, bitmap: canvas.transferToImageBitmap(),
+  };
+}
+
+function strokeTouchesRect(stroke: { points: Array<{ x: number; y: number }>; width: number }, rect: { x: number; y: number; width: number; height: number }, pageWidth: number, pageHeight: number): boolean {
+  if (stroke.points.length === 0) return false;
+  const padding = stroke.width * 0.7 + 4;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const point of stroke.points) {
+    minX = Math.min(minX, point.x * pageWidth);
+    minY = Math.min(minY, point.y * pageHeight);
+    maxX = Math.max(maxX, point.x * pageWidth);
+    maxY = Math.max(maxY, point.y * pageHeight);
+  }
+  return maxX + padding >= rect.x && minX - padding <= rect.x + rect.width
+    && maxY + padding >= rect.y && minY - padding <= rect.y + rect.height;
+}
+
 function parseNotebook(raw: string): InkNotebook {
   try {
     return normalizeNotebook(JSON.parse(raw));
@@ -156,7 +234,18 @@ export function applyNotebookOperation(notebook: InkNotebook, operation: Noteboo
   }
   const page = notebook.pages.find((candidate) => candidate.id === operation.pageId);
   if (!page) return;
-  if (operation.type === "finalize-stroke") {
+  if (operation.type === "start-stroke") {
+    const index = page.strokes.findIndex((stroke) => stroke.id === operation.stroke.id);
+    const stroke = cloneStrokeValue(operation.stroke);
+    if (index >= 0) page.strokes[index] = stroke;
+    else page.strokes.push(stroke);
+  } else if (operation.type === "append-stroke-points") {
+    const stroke = page.strokes.find((candidate) => candidate.id === operation.strokeId);
+    if (stroke) stroke.points.push(...operation.points.map((point) => ({ ...point })));
+  } else if (operation.type === "complete-stroke") {
+    const stroke = page.strokes.find((candidate) => candidate.id === operation.strokeId);
+    if (stroke) stroke.updatedAt = operation.pageUpdatedAt;
+  } else if (operation.type === "finalize-stroke") {
     const index = page.strokes.findIndex((stroke) => stroke.id === operation.stroke.id);
     const stroke = cloneStrokeValue(operation.stroke);
     if (index >= 0) page.strokes[index] = stroke;

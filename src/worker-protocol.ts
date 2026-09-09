@@ -1,6 +1,28 @@
-import type { InkNotebook, InkPage, InkStroke, PaperStyle } from "./model";
+import type { InkNotebook, InkPage, InkPoint, InkStroke, PaperStyle } from "./model";
 
 export type NotebookOperation =
+  | {
+    type: "start-stroke";
+    pageId: string;
+    stroke: InkStroke;
+    pageUpdatedAt: number;
+    notebookUpdatedAt: number;
+  }
+  | {
+    type: "append-stroke-points";
+    pageId: string;
+    strokeId: string;
+    points: InkPoint[];
+    pageUpdatedAt: number;
+    notebookUpdatedAt: number;
+  }
+  | {
+    type: "complete-stroke";
+    pageId: string;
+    strokeId: string;
+    pageUpdatedAt: number;
+    notebookUpdatedAt: number;
+  }
   | {
     type: "finalize-stroke";
     pageId: string;
@@ -39,6 +61,15 @@ export type InkWorkerRequest =
   | RequestBase & { type: "apply-operation"; operation: NotebookOperation; revision: number }
   | RequestBase & { type: "barrier"; minimumRevision: number }
   | RequestBase & { type: "prepare-save"; raw: string; minimumRevision: number }
+  | RequestBase & {
+    type: "render-tile";
+    pageId: string;
+    cell: string;
+    density: number;
+    revision: number;
+    width: number;
+    height: number;
+  }
   | RequestBase & { type: "commit-save"; token: string }
   | RequestBase & { type: "abort-save"; token: string }
   | RequestBase & { type: "merge-external"; raw: string }
@@ -56,6 +87,20 @@ export type InkWorkerResponse =
   | ResponseBase & { type: "operation-applied"; revision: number }
   | ResponseBase & { type: "barrier-complete"; revision: number }
   | ResponseBase & { type: "save-prepared"; token: string; content: string; revision: number }
+  | ResponseBase & {
+    type: "tile-rendered";
+    pageId: string;
+    cell: string;
+    density: number;
+    revision: number;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    canvasWidth: number;
+    canvasHeight: number;
+    bitmap: ImageBitmap;
+  }
   | ResponseBase & { type: "save-committed"; revision: number; merged?: InkNotebook }
   | ResponseBase & { type: "save-aborted" }
   | ResponseBase & { type: "external-merged"; notebook?: InkNotebook; revision: number }

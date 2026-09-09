@@ -2,6 +2,7 @@ import { InkView } from "../src/view";
 import { createInkEmbedProcessor } from "../src/embed";
 import { createNotebook } from "../src/model";
 import type { NotebookStore } from "../src/storage";
+import { InkWorkerService } from "../src/worker-service";
 import { TFile } from "obsidian";
 import type { WorkspaceLeaf } from "obsidian";
 
@@ -15,8 +16,15 @@ page.strokes.push({
   })),
   createdAt: 1, updatedAt: 1,
 });
-const store = { read: async () => notebook, save: async (_file: unknown, value: unknown) => value };
-const view = new InkView({} as WorkspaceLeaf, store as unknown as NotebookStore);
+const rawNotebook = () => JSON.stringify(notebook);
+const store = {
+  read: async () => notebook,
+  readRaw: async () => rawNotebook(),
+  writeIfUnchanged: async (_file: unknown, expected: string, next: string) => expected === rawNotebook() && (Object.assign(notebook, JSON.parse(next)), true),
+  save: async (_file: unknown, value: unknown) => value,
+};
+const workers = new InkWorkerService((message) => console.warn(message));
+const view = new InkView({} as WorkspaceLeaf, store as unknown as NotebookStore, workers);
 void (async () => {
   await view.onOpen();
   await view.onLoadFile({ path: "Ink Notes/Preview.ink", basename: "Preview" } as TFile);
