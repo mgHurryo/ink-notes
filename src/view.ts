@@ -117,6 +117,8 @@ export class InkView extends FileView {
   private overlayScaleY = 1;
   private canvasLogicalWidth = 1;
   private canvasLogicalHeight = 1;
+  private pageBaseWidth = 1;
+  private pageBaseHeight = 1;
   private pageElement!: HTMLElement;
   private pageExtent!: HTMLElement;
   private pageScroller!: HTMLElement;
@@ -141,6 +143,7 @@ export class InkView extends FileView {
   private workerStrokePointIndex = 0;
   private confirmedStrokeOutlines = new Map<string, ConfirmedStrokeOutline>();
   private confirmedPreviewDirty = false;
+  private sealedPreviewStrokeIds = new Set<string>();
   private pendingInkStrokes: InkStroke[] = [];
   private committingInkStrokes: InkStroke[] | null = null;
   private pendingInkPageId: string | null = null;
@@ -614,9 +617,10 @@ export class InkView extends FileView {
     if (!this.canvas || !this.pageElement) return;
     this.layoutPage();
     const rect = this.pageElement.getBoundingClientRect();
-    this.canvasLogicalWidth = Math.max(1, Math.round(rect.width / this.zoom * 64) / 64);
-    this.canvasLogicalHeight = Math.max(1, Math.round(rect.height / this.zoom * 64) / 64);
+    this.canvasLogicalWidth = Math.max(1, Math.round(this.pageBaseWidth * 64) / 64);
+    this.canvasLogicalHeight = Math.max(1, Math.round(this.pageBaseHeight * 64) / 64);
     this.refreshEraserCursor();
+    this.tiles.setDisplayScale(this.zoom);
     this.tiles.setPage(this.currentPage(), this.canvasLogicalWidth, this.canvasLogicalHeight, this.tileExclusion());
     this.updateViewport(true);
   }
@@ -692,23 +696,30 @@ export class InkView extends FileView {
     });
   }
 
-  private resizeOverlay(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, maxPixels = 4_000_000): void {
+  private resizeOverlay(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, maxPixels = 4_000_000): boolean {
     const { x, y, width, height } = this.viewport;
     const resolution = canvasResolution(width, height, window.devicePixelRatio || 1, this.zoom, maxPixels);
+    const left = x * this.zoom + "px", top = y * this.zoom + "px";
+    const displayWidth = width * this.zoom + "px", displayHeight = height * this.zoom + "px";
+    const changed = canvas.width !== resolution.width || canvas.height !== resolution.height
+      || canvas.style.left !== left || canvas.style.top !== top
+      || canvas.style.width !== displayWidth || canvas.style.height !== displayHeight;
     if (canvas.width !== resolution.width) canvas.width = resolution.width;
     if (canvas.height !== resolution.height) canvas.height = resolution.height;
-    canvas.style.left = x + "px"; canvas.style.top = y + "px";
-    canvas.style.width = width + "px"; canvas.style.height = height + "px";
+    canvas.style.left = left; canvas.style.top = top;
+    canvas.style.width = displayWidth; canvas.style.height = displayHeight;
     canvas.style.right = "auto"; canvas.style.bottom = "auto";
     this.overlayScaleX = resolution.width / width; this.overlayScaleY = resolution.height / height;
     ctx.setTransform(this.overlayScaleX, 0, 0, this.overlayScaleY, -x * this.overlayScaleX, -y * this.overlayScaleY);
+    return changed;
   }
 
   private resizePreview(): void {
     this.resizeOverlay(this.previewCanvas, this.previewCtx, OVERLAY_PIXEL_BUDGET);
     if (this.confirmedPreviewCanvas && this.confirmedPreviewCtx) {
-      this.resizeOverlay(this.confirmedPreviewCanvas, this.confirmedPreviewCtx, OVERLAY_PIXEL_BUDGET);
-      this.redrawConfirmedPreview();
+      if (this.resizeOverlay(this.confirmedPreviewCanvas, this.confirmedPreviewCtx, OVERLAY_PIXEL_BUDGET)) {
+        this.redrawConfirmedPreview();
+      }
     }
   }
 
@@ -725,6 +736,9 @@ export class InkView extends FileView {
     this.previewCanvas.classList.toggle("is-highlighter-preview", strokes.every(stroke => stroke.tool === "highlighter"));
     for (const stroke of strokes) {
       const confirmed = outlines.get(stroke.id);
+      if (confirmed) {
+        this.drawConfirmedOutline(this.previewCtx, confirmed.points, stroke.color, stroke.opacity, stroke.width, confirmed.mode);
+      }
       drawImmediateStrokeTail(this.previewCtx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight, confirmed?.sampleCount ?? 0);
     }
   }
@@ -733,6 +747,7 @@ export class InkView extends FileView {
     this.confirmedPreviewDirty = false;
     if (!this.confirmedPreviewCanvas || !this.confirmedPreviewCtx) return;
     const outlines = this.confirmedStrokeOutlines ?? (this.confirmedStrokeOutlines = new Map());
+    const sealed = this.sealedPreviewStrokeIds ?? (this.sealedPreviewStrokeIds = new Set());
     const pending = [...this.pendingInkStrokes];
     const strokes = [...pending];
     if (this.activeStroke && (this.activeStroke.tool === "pen" || this.activeStroke.tool === "highlighter")) strokes.push(this.activeStroke);
@@ -741,6 +756,7 @@ export class InkView extends FileView {
     this.confirmedPreviewCanvas.classList.toggle("is-highlighter-preview",
       confirmedStrokes.length > 0 && confirmedStrokes.every((stroke) => stroke.tool === "highlighter"));
     for (const stroke of confirmedStrokes) {
+      if (sealed.has(stroke.id)) continue;
       const confirmed = outlines.get(stroke.id);
       if (confirmed) {
         this.drawConfirmedOutline(this.confirmedPreviewCtx, confirmed.points, stroke.color, stroke.opacity, stroke.width, confirmed.mode);
@@ -754,6 +770,22 @@ export class InkView extends FileView {
         drawInkStroke(this.confirmedPreviewCtx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
       }
     }
+  }
+
+  private sealActivePreview(): void {
+    if (!this.activeStroke || !this.confirmedPreviewCtx || typeof this.confirmedPreviewCtx.drawImage !== "function") return;
+    // The live layer already contains the Worker-confirmed outline plus its
+    // immediate tail. Copying those pixels is constant with stroke length and
+    // keeps pointerup from rebuilding every pending perfect-freehand path.
+    this.confirmedPreviewCtx.save();
+    this.confirmedPreviewCtx.setTransform(1, 0, 0, 1, 0, 0);
+    this.confirmedPreviewCtx.globalCompositeOperation = "source-over";
+    this.confirmedPreviewCtx.globalAlpha = 1;
+    this.confirmedPreviewCtx.drawImage(this.previewCanvas, 0, 0);
+    this.confirmedPreviewCtx.restore();
+    this.confirmedPreviewCanvas.classList.toggle("is-highlighter-preview",
+      this.pendingInkStrokes.length > 0 && this.pendingInkStrokes.every((stroke) => stroke.tool === "highlighter"));
+    (this.sealedPreviewStrokeIds ??= new Set()).add(this.activeStroke.id);
   }
 
   private drawConfirmedOutline(ctx: CanvasRenderingContext2D, points: Float32Array, color: string, opacity: number, width: number,
@@ -818,8 +850,8 @@ export class InkView extends FileView {
     this.lassoCanvas.height = resolution.height;
     this.lassoCanvas.style.left = "0";
     this.lassoCanvas.style.top = "0";
-    this.lassoCanvas.style.width = `${this.canvasLogicalWidth}px`;
-    this.lassoCanvas.style.height = `${this.canvasLogicalHeight}px`;
+    this.lassoCanvas.style.width = `${this.canvasLogicalWidth * this.zoom}px`;
+    this.lassoCanvas.style.height = `${this.canvasLogicalHeight * this.zoom}px`;
     this.lassoCtx.setTransform(resolution.width / this.canvasLogicalWidth, 0, 0,
       resolution.height / this.canvasLogicalHeight, 0, 0);
     this.lassoCtx.clearRect(0, 0, this.canvasLogicalWidth, this.canvasLogicalHeight);
@@ -908,6 +940,7 @@ export class InkView extends FileView {
       if (this.pendingInkStrokes.length === 0) this.pendingInkPageId = null;
       const outlines = this.confirmedStrokeOutlines ?? (this.confirmedStrokeOutlines = new Map());
       for (const stroke of batch) outlines.delete(stroke.id);
+      for (const stroke of batch) this.sealedPreviewStrokeIds?.delete(stroke.id);
       this.confirmedPreviewDirty = true;
       if (this.viewReady && page === this.currentPage()) {
         this.redrawConfirmedPreview();
@@ -945,6 +978,7 @@ export class InkView extends FileView {
     this.pendingInkStrokes = [];
     this.pendingInkPageId = null;
     this.confirmedStrokeOutlines.clear();
+    this.sealedPreviewStrokeIds.clear();
     this.confirmedPreviewDirty = false;
     this.tiles?.cancelInkCommit();
     if (this.confirmedPreviewCanvas) {
@@ -1157,7 +1191,7 @@ export class InkView extends FileView {
       if (dx === this.lassoDrag.dx && dy === this.lassoDrag.dy) return false;
       this.lassoDrag.dx = dx;
       this.lassoDrag.dy = dy;
-      this.lassoCanvas.style.transform = `translate(${dx * this.canvasLogicalWidth}px, ${dy * this.canvasLogicalHeight}px)`;
+      this.lassoCanvas.style.transform = `translate(${dx * this.canvasLogicalWidth * this.zoom}px, ${dy * this.canvasLogicalHeight * this.zoom}px)`;
       return true;
     }
     const previous = this.lassoPath[this.lassoPath.length - 1];
@@ -1242,6 +1276,11 @@ export class InkView extends FileView {
       this.pushCommand(this.erasedStrokesCommand(page.id, this.erasedStrokes, this.eraserReplacements));
       this.drawInteractiveStrokes(page.strokes, true);
     } else if (this.activeStroke) {
+      // Flush the last pointerup sample into the bounded live tail, then retain
+      // that exact frame without waiting for a tile or Worker response.
+      this.drawPreview();
+      this.sealActivePreview();
+      this.confirmedPreviewDirty = false;
       this.markChanged(page);
       this.queueWorkerOperation({ type: "complete-stroke", pageId: page.id, strokeId: this.activeStroke.id,
         pageUpdatedAt: page.updatedAt, notebookUpdatedAt: this.notebook.updatedAt });
@@ -1427,11 +1466,11 @@ export class InkView extends FileView {
     this.eraserCursor.toggleClass("is-square", mode === "square");
     this.eraserCursor.toggleClass("is-stroke", mode === "stroke");
     const size = mode === "stroke" ? STROKE_ERASER_HIT_RADIUS * 2 : eraserSize;
-    this.eraserCursor.style.width = `${size}px`;
-    this.eraserCursor.style.height = `${size}px`;
+    this.eraserCursor.style.width = `${size * this.zoom}px`;
+    this.eraserCursor.style.height = `${size * this.zoom}px`;
     if (!this.eraserHoverPoint) return;
-    this.eraserCursor.style.left = `${this.eraserHoverPoint.x * this.canvasLogicalWidth}px`;
-    this.eraserCursor.style.top = `${this.eraserHoverPoint.y * this.canvasLogicalHeight}px`;
+    this.eraserCursor.style.left = `${this.eraserHoverPoint.x * this.canvasLogicalWidth * this.zoom}px`;
+    this.eraserCursor.style.top = `${this.eraserHoverPoint.y * this.canvasLogicalHeight * this.zoom}px`;
   }
 
   private addPage(): void {
@@ -1690,7 +1729,6 @@ export class InkView extends FileView {
       if (tool !== "lasso") this.clearSelection();
       this.updateBrushControls();
       this.updateToolButtons();
-      this.renderPage();
       this.refreshEraserCursor();
       if (this.sizePopoverOpen) {
         this.setSizePopoverOpen(true);
@@ -1757,23 +1795,22 @@ export class InkView extends FileView {
     const width = Math.max(1, Math.min(980, this.pageScroller.clientWidth
       - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)));
     const height = width * this.notebook.pageHeight / this.notebook.pageWidth;
-    this.pageElement.style.width = width + "px";
-    this.pageElement.style.height = height + "px";
-    if (supportsLayoutZoom()) {
-      // WebKit can flatten a transformed canvas subtree into a low-resolution
-      // composited texture. Layout zoom keeps live overlays and finalized tile
-      // canvases at their requested device-pixel backing density on iPad.
-      this.pageElement.style.zoom = String(this.zoom);
-      this.pageElement.style.transform = "none";
-    } else {
-      this.pageElement.style.zoom = "";
-      // Avoid creating a composited layer at 100% even on older engines that
-      // do not support layout zoom.
-      this.pageElement.style.transform = this.zoom === 1 ? "none" : "scale(" + this.zoom + ")";
+    this.pageBaseWidth = width;
+    this.pageBaseHeight = height;
+    const displayWidth = width * this.zoom;
+    const displayHeight = height * this.zoom;
+    // Use real layout dimensions instead of CSS zoom/transform. WebKit applies
+    // CSS zoom inconsistently to absolute descendants and hit testing, which
+    // displaced Pencil coordinates and clipped right-hand tiles on iPad.
+    this.pageElement.style.width = displayWidth + "px";
+    this.pageElement.style.height = displayHeight + "px";
+    if (typeof this.pageElement.style.setProperty === "function") {
+      this.pageElement.style.setProperty("--ink-page-scale", String(this.zoom));
     }
-    // Reserve the full scaled page for scrolling in both zoom modes.
-    this.pageExtent.style.width = width * this.zoom + "px";
-    this.pageExtent.style.height = height * this.zoom + "px";
+    this.pageElement.style.zoom = "";
+    this.pageElement.style.transform = "none";
+    this.pageExtent.style.width = displayWidth + "px";
+    this.pageExtent.style.height = displayHeight + "px";
   }
 
   private setZoom(value: number, target?: { x: number; y: number }, anchor?: { x: number; y: number }): void {
@@ -2179,6 +2216,7 @@ export class InkView extends FileView {
     this.eraserReplacementIds.clear();
     this.eraserReplacements = [];
     this.confirmedStrokeOutlines.clear();
+    this.sealedPreviewStrokeIds.clear();
     this.confirmedPreviewDirty = false;
     this.clearSelection();
   }
@@ -2430,10 +2468,6 @@ function boundsForPointSets(pointSets: InkPoint[][]): { minX: number; minY: numb
 
 function notebooksEqual(left: InkNotebook, right: InkNotebook): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
-}
-
-function supportsLayoutZoom(): boolean {
-  return typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("zoom", "1");
 }
 
 function reconcileNotebook(target: InkNotebook, incoming: InkNotebook, selectedPageId: string,

@@ -7,6 +7,9 @@ import { InkView } from "../src/view";
 interface ViewInternals {
   notebook: InkNotebook;
   canvas: HTMLCanvasElement;
+  previewCanvas: HTMLCanvasElement;
+  confirmedPreviewCanvas: HTMLCanvasElement;
+  confirmedPreviewCtx: CanvasRenderingContext2D;
   activeStroke: InkStroke | null;
   activePointerId: number | null;
   pageIndex: number;
@@ -115,6 +118,19 @@ describe("consecutive handwriting input", () => {
     expect(internal.notebook.pages[0].strokes.map((stroke) => stroke.points.map((point) => point.x)))
       .toEqual([[0.1, 0.2], [0.3, 0.4, 0.5]]);
     expect(internal.activePointerId).toBeNull();
+  });
+
+  it("releases pointer ownership before background work so the next Pencil stroke starts immediately", () => {
+    const { internal } = setup();
+    internal.confirmedPreviewCtx = { drawImage: vi.fn(), save: vi.fn(), restore: vi.fn(), setTransform: vi.fn() } as unknown as CanvasRenderingContext2D;
+    internal.previewCanvas = {} as HTMLCanvasElement;
+    internal.confirmedPreviewCanvas = { classList: { toggle: vi.fn() } } as unknown as HTMLCanvasElement;
+    internal.onPointerDown(pointer(10));
+    internal.onPointerUp(pointer(20));
+    expect(internal.activePointerId).toBeNull();
+    internal.onPointerDown(pointer(30));
+    expect(internal.activePointerId).toBe(7);
+    expect(internal.activeStroke?.points[0].x).toBeCloseTo(0.3);
   });
 
   it("finishes real capture loss without treating its coordinates as an ink sample", () => {

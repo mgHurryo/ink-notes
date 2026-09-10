@@ -209,6 +209,7 @@ export class TileRenderer {
   private backend: RenderBackend | null = null;
   private backendError: ((error: unknown) => void) | null = null;
   private pendingTiles = new Map<string, number>();
+  private displayScale = 1;
 
   constructor(private host: HTMLElement) {}
 
@@ -233,6 +234,11 @@ export class TileRenderer {
       this.jobs = [];
     }
     state.index.sync(page.strokes, exclude);
+  }
+
+  setDisplayScale(scale: number): void {
+    this.displayScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+    for (const tile of this.cache.values()) this.sizeTile(tile);
   }
 
   sync(strokes: InkStroke[], exclude?: StrokeExclusion): void {
@@ -579,13 +585,15 @@ export class TileRenderer {
       if (context) context.drawImage(result.bitmap, 0, 0);
       result.bitmap.close();
     }
-    canvas.style.cssText = `position:absolute;left:${-BLEED}px;top:${-BLEED}px;width:${result.canvasWidth / result.density}px;height:${result.canvasHeight / result.density}px`;
+    canvas.style.cssText = "position:absolute";
     const node = document.createElement("div");
     node.dataset.cell = result.cell;
-    node.style.cssText = `position:absolute;overflow:hidden;left:${result.x}px;top:${result.y}px;width:${result.width}px;height:${result.height}px`;
+    node.style.cssText = "position:absolute;overflow:hidden";
     node.appendChild(canvas);
-    return { node, canvas, revision: result.revision, pixels: result.canvasWidth * result.canvasHeight,
+    const tile = { node, canvas, revision: result.revision, pixels: result.canvasWidth * result.canvasHeight,
       used: ++this.sequence, state: job.state, cell: result.cell, density: result.density };
+    this.sizeTile(tile);
+    return tile;
   }
 
   private createTile(job: Job): Tile {
@@ -612,11 +620,10 @@ export class TileRenderer {
     const bleedPixels = Math.ceil(BLEED * density);
     canvas.width = Math.ceil(width * density) + bleedPixels * 2;
     canvas.height = Math.ceil(height * density) + bleedPixels * 2;
-    canvas.style.cssText = "position:absolute;left:" + (-BLEED) + "px;top:" + (-BLEED)
-      + "px;width:" + canvas.width / density + "px;height:" + canvas.height / density + "px";
+    canvas.style.cssText = "position:absolute";
     const node = document.createElement("div");
     node.dataset.cell = cell;
-    node.style.cssText = "position:absolute;overflow:hidden;left:" + x + "px;top:" + y + "px;width:" + width + "px;height:" + height + "px";
+    node.style.cssText = "position:absolute;overflow:hidden";
     node.appendChild(canvas);
     const ctx = canvas.getContext("2d")!;
     if (base) ctx.drawImage(base.canvas, 0, 0);
@@ -625,8 +632,25 @@ export class TileRenderer {
     const rect = { x, y, width, height };
     const strokes = base ? additions : state.index.query(rect);
     for (const stroke of strokes) drawInkStroke(ctx, stroke, state.index.width, state.index.height);
-    return { node, canvas, revision: state.index.revisions.get(cell) ?? 0, pixels: canvas.width * canvas.height,
+    const tile = { node, canvas, revision: state.index.revisions.get(cell) ?? 0, pixels: canvas.width * canvas.height,
       used: ++this.sequence, state, cell, density };
+    this.sizeTile(tile);
+    return tile;
+  }
+
+  private sizeTile(tile: Tile): void {
+    const [column, row] = tile.cell.split(":").map(Number);
+    const x = column * TILE, y = row * TILE;
+    const width = Math.min(TILE, tile.state.index.width - x), height = Math.min(TILE, tile.state.index.height - y);
+    const scale = this.displayScale ?? 1;
+    tile.canvas.style.left = `${-BLEED * scale}px`;
+    tile.canvas.style.top = `${-BLEED * scale}px`;
+    tile.canvas.style.width = `${tile.canvas.width / tile.density * scale}px`;
+    tile.canvas.style.height = `${tile.canvas.height / tile.density * scale}px`;
+    tile.node.style.left = `${x * scale}px`;
+    tile.node.style.top = `${y * scale}px`;
+    tile.node.style.width = `${width * scale}px`;
+    tile.node.style.height = `${height * scale}px`;
   }
 
   private cacheTile(tile: Tile): void {
