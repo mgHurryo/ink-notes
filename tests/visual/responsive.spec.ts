@@ -380,6 +380,36 @@ test("iPad-sized writing stays at full 2x backing density", async ({ browser }) 
   }
 });
 
+test("zoom keeps right-side ink and tile geometry aligned", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 768 });
+  await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  await page.evaluate(() => {
+    const hook = (window as typeof window & { __inkNotesPreview?: { view: object } }).__inkNotesPreview;
+    (hook?.view as { setZoom(value: number): void }).setZoom(1.5);
+  });
+  const paper = page.locator(".ink-page");
+  const box = await paper.boundingBox();
+  if (!box) throw new Error("Ink page has no layout box");
+  const x = box.x + box.width * 0.72;
+  const y = box.y + box.height * 0.3;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + 80, y + 40, { steps: 8 });
+  await page.mouse.up();
+  await expect.poll(async () => page.locator(".ink-confirmed-preview-canvas").evaluate((canvas: HTMLCanvasElement) => {
+    const context = canvas.getContext("2d");
+    if (!context) return 0;
+    return context.getImageData(0, 0, canvas.width, canvas.height).data.some((value, index) => index % 4 === 3 && value > 0) ? 1 : 0;
+  })).toBe(1);
+  await expect.poll(async () => page.locator(".ink-tile-layer [data-cell]").count()).toBeGreaterThan(0);
+  const geometry = await page.locator(".ink-tile-layer [data-cell]").first().evaluate((node: HTMLElement) => ({
+    left: parseFloat(node.style.left), width: parseFloat(node.style.width),
+  }));
+  expect(geometry.left).toBeGreaterThanOrEqual(0);
+  expect(geometry.width).toBeGreaterThanOrEqual(128);
+});
+
 test("large-notebook tile and save work does not block the writing thread", async ({ page }) => {
   await page.setViewportSize({ width: 1024, height: 768 });
   await page.goto("/?performance");

@@ -33,6 +33,15 @@ describe("reference-style editor", () => {
     expect(button("Highlight").getAttribute("aria-pressed")).toBe("true");
     expect(button("Pen").getAttribute("aria-pressed")).toBe("false");
   });
+  it("switches tools without rebuilding or resizing the page", () => {
+    const internal = view as unknown as { renderPage(): void; resizeCanvas(): void };
+    const render = vi.spyOn(internal, "renderPage");
+    const resize = vi.spyOn(internal, "resizeCanvas");
+    button("Erase").click();
+    expect(render).not.toHaveBeenCalled();
+    expect(resize).not.toHaveBeenCalled();
+    expect(button("Erase").getAttribute("aria-pressed")).toBe("true");
+  });
   it("keeps page rail inside the workspace and updates navigation", () => {
     (view as unknown as { addPage(): void }).addPage();
     expect(document.querySelector(".ink-page-status")?.textContent).toBe("2 / 2");

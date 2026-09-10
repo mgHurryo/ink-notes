@@ -207,7 +207,7 @@ it("debounces expensive zoom rasterization while updating the displayed scale im
   expect(v.updateViewport).toHaveBeenLastCalledWith(true);
 });
 
-it("uses layout zoom instead of a transformed canvas subtree when supported", () => {
+it("uses explicit scaled layout without CSS zoom or transform", () => {
   const v = view();
   v.zoom = 2;
   v.notebook = { pageWidth: 1600, pageHeight: 2200 };
@@ -215,12 +215,37 @@ it("uses layout zoom instead of a transformed canvas subtree when supported", ()
   v.pageElement = { style: {} };
   v.pageExtent = { style: {} };
   vi.stubGlobal("getComputedStyle", () => ({ paddingLeft: "20", paddingRight: "20" }));
-  vi.stubGlobal("CSS", { supports: (property: string) => property === "zoom" });
-
   v.layoutPage();
 
-  expect(v.pageElement.style).toMatchObject({ width: "760px", height: "1045px", zoom: "2", transform: "none" });
+  expect(v.pageElement.style).toMatchObject({ width: "1520px", height: "2090px", zoom: "", transform: "none" });
   expect(v.pageExtent.style).toMatchObject({ width: "1520px", height: "2090px" });
+  expect(v.pageBaseWidth).toBe(760);
+  expect(v.pageBaseHeight).toBe(1045);
+});
+
+it("keeps logical coordinates stable while the page uses scaled layout dimensions", () => {
+  const v = view();
+  v.zoom = 2;
+  v.notebook = { pageWidth: 1600, pageHeight: 2200 };
+  v.pageScroller = { clientWidth: 800 };
+  v.pageElement = { style: { setProperty: vi.fn() }, getBoundingClientRect: () => ({ left: 100, top: 50, width: 1520, height: 2090 }) };
+  v.pageExtent = { style: {} };
+  v.canvas = {};
+  v.state = { tool: "pen", eraserMode: "stroke", eraserSize: 32 };
+  v.eraserCursor = { toggleClass: vi.fn(), style: {} };
+  v.tiles = { setDisplayScale: vi.fn(), setPage: vi.fn() };
+  v.currentPage = vi.fn(() => ({ strokes: [] }));
+  v.tileExclusion = vi.fn();
+  v.updateViewport = vi.fn();
+  vi.stubGlobal("getComputedStyle", () => ({ paddingLeft: "20", paddingRight: "20" }));
+
+  v.resizeCanvas();
+
+  expect(v.canvasLogicalWidth).toBe(760);
+  expect(v.canvasLogicalHeight).toBe(1045);
+  expect(v.tiles.setDisplayScale).toHaveBeenCalledWith(2);
+  expect(v.toPoint({ clientX: 860, clientY: 1095, pressure: 0.5 }, v.pageElement.getBoundingClientRect()))
+    .toMatchObject({ x: 0.5, y: 0.5 });
 });
 
 it("does not create a transformed canvas layer at 100% on older engines", () => {
