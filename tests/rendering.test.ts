@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { canvasResolution, drawInkStroke, penOutline } from "../src/rendering";
+import { canvasResolution, drawInkStroke, penOutline, smoothPenPressures } from "../src/rendering";
 import type { InkStroke } from "../src/model";
 
 function stroke(pressure = 0.5): InkStroke {
@@ -37,6 +37,20 @@ describe("canvas density", () => {
 });
 
 describe("continuous pen rendering", () => {
+  it("rejects isolated Pencil pressure drops without flattening sustained pressure", () => {
+    const points = [0.5, 0.5, 0.05, 0.5, 0.5, 0.2, 0.2, 0.2, 0.5].map((pressure, index) => ({
+      x: index / 10, y: 0.5, pressure, t: index,
+    }));
+    expect(smoothPenPressures(points)).toEqual([0.5, 0.5, 0.5, 0.5, 0.5, 0.2, 0.2, 0.2, 0.5]);
+  });
+
+  it("keeps an isolated pressure glitch out of the persisted stroke outline", () => {
+    const stable = stroke(0.5);
+    const glitched = stroke(0.5);
+    glitched.points[50].pressure = 0.05;
+    expect(penOutline(glitched, 800, 1000)).toEqual(penOutline(stable, 800, 1000));
+  });
+
   it("composites the whole pen once and reuses unchanged geometry", () => {
     const ctx = context();
     const ink = stroke();

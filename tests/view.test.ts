@@ -26,14 +26,22 @@ interface ViewInternals {
   duplicateCurrentPage(): void;
   deleteCurrentPage(): void;
   moveCurrentPage(delta: number): void;
+  navigateToPage(pageId: string): void;
   undo(): void;
   redo(): void;
   dirtyRevision: number;
   savedRevision: number;
   activeSave: Promise<void> | null;
+  workerRevision: number;
   eraseAt(point: { x: number; y: number; pressure: number; t: number }, page?: InkNotebook["pages"][number], mode?: "stroke" | "circle" | "square", size?: number): boolean;
   finishLasso(page: InkNotebook["pages"][number]): void;
-  state: { tool: string; smoothing: number; eraserMode: "stroke" | "circle" | "square"; eraserSize: number };
+  state: {
+    tool: string;
+    pen: { color: string; width: number; opacity: number; smoothing: number };
+    highlighter: { color: string; width: number; opacity: number; smoothing: number };
+    eraserMode: "stroke" | "circle" | "square";
+    eraserSize: number;
+  };
 }
 
 function deferred<T>() {
@@ -72,9 +80,9 @@ function setup() {
     drawPreview: vi.fn(),
     commitPreview: vi.fn(),
     requestRender: vi.fn(),
-    tiles: { sync: vi.fn(), commitInteractive: vi.fn(),
+    tiles: { sync: vi.fn(), patchStrokes: vi.fn(), commitInteractive: vi.fn(),
       commitInk: vi.fn((_strokes: unknown, _viewport: unknown, _density: number, complete: (committed: boolean) => void) => complete(true)),
-      pauseInkCommit: vi.fn(), resumeInkCommit: vi.fn(), cancelInkCommit: vi.fn() },
+      removeStrokes: vi.fn(), previewInteractiveCells: vi.fn(), beginInput: vi.fn(), pauseInkCommit: vi.fn(), resumeInkCommit: vi.fn(), cancelInkCommit: vi.fn() },
     canvasLogicalWidth: 100,
     canvasLogicalHeight: 100,
   });
@@ -141,7 +149,7 @@ describe("consecutive handwriting input", () => {
 
   it("smooths a continuous tail while preserving a deliberate turn", () => {
     const { internal } = setup();
-    internal.state.smoothing = 1;
+    internal.state.pen.smoothing = 1;
     internal.onPointerDown(pointer(10, { clientY: 20 }));
     internal.onPointerMove(pointer(12, { clientY: 20 }));
     internal.onPointerMove(pointer(14, { clientY: 20 }));
@@ -162,6 +170,14 @@ describe("consecutive handwriting input", () => {
     internal.onPointerMove(pointer(40, { getCoalescedEvents: () => [pointer(20), pointer(30)] }));
     expect(rect).toHaveBeenCalledOnce();
     expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2, 0.3, 0.4]);
+  });
+
+  it("reads layout once when a Pencil stroke starts", () => {
+    const { internal } = setup();
+    const rect = vi.fn(() => ({ left: 0, top: 0, width: 100, height: 100, x: 0, y: 0, right: 100, bottom: 100, toJSON: () => ({}) }));
+    internal.canvas.getBoundingClientRect = rect;
+    internal.onPointerDown(pointer(10));
+    expect(rect).toHaveBeenCalledOnce();
   });
 
   it("keeps an eraser reference hidden after pointer capture moves outside the page", () => {
@@ -300,7 +316,7 @@ describe("consecutive handwriting input", () => {
     expect(store.save).not.toHaveBeenCalled();
   });
 
-  it("accepts the next Pencil stroke while the previous tile commit is pending", () => {
+  it("keeps rapid Pencil strokes on the overlay until input becomes idle", async () => {
     const { internal } = setup();
     (internal as any).commitPreview = (InkView.prototype as any).commitPreview.bind(internal);
     const callbacks: Array<(committed: boolean) => void> = [];
@@ -310,7 +326,7 @@ describe("consecutive handwriting input", () => {
 
     internal.onPointerDown(pointer(10));
     internal.onPointerUp(pointer(20));
-    expect(callbacks).toHaveLength(1);
+    expect(callbacks).toHaveLength(0);
     expect(tiles.commitInteractive).not.toHaveBeenCalled();
     expect(internal.activePointerId).toBeNull();
 
@@ -319,12 +335,126 @@ describe("consecutive handwriting input", () => {
     internal.onPointerMove(pointer(40));
     internal.onPointerUp(pointer(50));
     expect(internal.notebook.pages[0].strokes).toHaveLength(2);
-
+    expect(callbacks).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(179);
+    expect(callbacks).toHaveLength(0);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(callbacks).toHaveLength(1);
     callbacks[0](true);
-    expect(callbacks).toHaveLength(2);
-    callbacks[1](true);
     expect((internal as any).pendingInkStrokes).toEqual([]);
     expect(tiles.pauseInkCommit).toHaveBeenCalledTimes(2);
+  });
+
+  it("materializes pending ink before an immediate switch to the eraser", () => {
+    const { internal } = setup();
+    (internal as any).commitPreview = (InkView.prototype as any).commitPreview.bind(internal);
+    const tiles = (internal as any).tiles;
+    tiles.patchStrokes.mockReturnValue(["0:0"]);
+
+    internal.onPointerDown(pointer(10));
+    internal.onPointerUp(pointer(20));
+    const completed = internal.notebook.pages[0].strokes[0];
+    internal.state.tool = "eraser";
+    internal.onPointerDown(pointer(15));
+
+    expect(tiles.patchStrokes.mock.calls[0][0]).toEqual([completed]);
+    expect(tiles.patchStrokes.mock.calls[0][1]).toEqual([]);
+    expect(tiles.previewInteractiveCells).toHaveBeenCalledWith(["0:0"], expect.any(Object), 1);
+  });
+
+  it("accepts the next Pencil stroke while a 500ms background tile task is pending", async () => {
+    const { internal } = setup();
+    (internal as any).commitPreview = (InkView.prototype as any).commitPreview.bind(internal);
+    const tiles = (internal as any).tiles;
+    tiles.commitInk.mockImplementation((_strokes: unknown, _viewport: unknown, _density: number,
+      complete: (committed: boolean) => void) => window.setTimeout(() => complete(true), 500));
+
+    internal.onPointerDown(pointer(10));
+    internal.onPointerMove(pointer(20));
+    internal.onPointerUp(pointer(30));
+    (internal as any).startPendingInkCommit(internal.notebook.pages[0]);
+    internal.onPointerDown(pointer(40));
+    internal.onPointerMove(pointer(50));
+
+    expect(internal.activePointerId).toBe(7);
+    expect(internal.notebook.pages[0].strokes).toHaveLength(2);
+    expect((internal as any).requestRender).toHaveBeenCalled();
+    expect(tiles.beginInput).toHaveBeenCalledTimes(2);
+    internal.onPointerUp(pointer(60));
+    await vi.advanceTimersByTimeAsync(500);
+  });
+
+  it("accepts Pencil input while a 500ms Worker save preparation is pending", async () => {
+    const { internal, store } = setup();
+    const worker = {
+      barrier: vi.fn(async () => 1),
+      prepareSave: vi.fn(async () => {
+        if (worker.prepareSave.mock.calls.length === 1) await new Promise((resolve) => window.setTimeout(resolve, 500));
+        return { token: "slow-save", content: "worker-json", revision: 1 };
+      }),
+      commitSave: vi.fn(async () => ({ revision: 1 })),
+      abortSave: vi.fn(),
+      apply: vi.fn(async (revision: number) => ({ type: "operation-applied", revision })),
+    };
+    Object.assign(internal, { workerSession: worker, workerRevision: 1, dirtyRevision: 1 });
+    Object.assign(store, { readRaw: vi.fn(async () => "disk-json"), writeIfUnchanged: vi.fn(async () => true) });
+
+    const saving = internal.save();
+    await Promise.resolve();
+    internal.onPointerDown(pointer(10));
+    internal.onPointerMove(pointer(20));
+    expect(internal.activePointerId).toBe(7);
+    expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2]);
+    internal.onPointerUp(pointer(30));
+    await vi.advanceTimersByTimeAsync(500);
+    await saving;
+    expect(worker.prepareSave).toHaveBeenCalledTimes(2);
+    expect(internal.savedRevision).toBe(internal.dirtyRevision);
+  });
+
+  it("finalizes and flushes the current page before navigation", async () => {
+    const { internal, store, view } = setup();
+    const second = createPage("Second");
+    internal.notebook.pages.push(second);
+    internal.notebook.pageOrder.push(second.id);
+    Object.assign(internal, { viewReady: true });
+    const write = deferred<InkNotebook>();
+    store.save.mockReturnValue(write.promise);
+
+    internal.onPointerDown(pointer(10));
+    internal.onPointerMove(pointer(20));
+    internal.navigateToPage(second.id);
+    await Promise.resolve();
+
+    expect(internal.activePointerId).toBeNull();
+    expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2]);
+    expect(store.save).toHaveBeenCalledOnce();
+    expect(internal.pageIndex).toBe(0);
+
+    write.resolve(structuredClone(internal.notebook));
+    for (let index = 0; index < 12; index++) await Promise.resolve();
+    expect(internal.pageIndex).toBe(1);
+    expect(internal.renderPage).toHaveBeenCalledOnce();
+    expect(view.file).toBeDefined();
+  });
+
+  it("waits for the Worker operation barrier before a clean page navigation", async () => {
+    const { internal } = setup();
+    const second = createPage("Second");
+    internal.notebook.pages.push(second);
+    internal.notebook.pageOrder.push(second.id);
+    const barrier = deferred<number>();
+    const worker = { barrier: vi.fn(() => barrier.promise) };
+    Object.assign(internal, { viewReady: true, workerSession: worker, workerRevision: 7 });
+
+    internal.navigateToPage(second.id);
+    await Promise.resolve();
+    expect(worker.barrier).toHaveBeenCalledWith(7);
+    expect(internal.pageIndex).toBe(0);
+
+    barrier.resolve(7);
+    for (let index = 0; index < 5; index++) await Promise.resolve();
+    expect(internal.pageIndex).toBe(1);
   });
 
   it("waits for a full writing idle interval before autosave work", async () => {
@@ -332,10 +462,96 @@ describe("consecutive handwriting input", () => {
     store.save.mockImplementation(async (_file, notebook) => notebook);
     internal.onPointerDown(pointer(10));
     internal.onPointerUp(pointer(20));
-    await vi.advanceTimersByTimeAsync(999);
+    await vi.advanceTimersByTimeAsync(1499);
     expect(store.save).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(store.save).toHaveBeenCalledOnce();
+  });
+
+  it("checkpoints completed strokes after ten seconds of continuous writing", async () => {
+    const { internal, store } = setup();
+    store.save.mockImplementation(async (_file, notebook) => notebook);
+    internal.onPointerDown(pointer(10));
+    internal.onPointerUp(pointer(20));
+    for (let second = 1; second < 10; second++) {
+      await vi.advanceTimersByTimeAsync(1_000);
+      internal.onPointerDown(pointer(20 + second));
+      internal.onPointerUp(pointer(21 + second));
+    }
+    expect(store.save).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(store.save).toHaveBeenCalledOnce();
+  });
+
+  it("defers a due checkpoint only until the active stroke finishes", async () => {
+    const { internal, store } = setup();
+    store.save.mockImplementation(async (_file, notebook) => notebook);
+    internal.onPointerDown(pointer(10));
+    internal.onPointerUp(pointer(20));
+    for (let second = 1; second < 9; second++) {
+      await vi.advanceTimersByTimeAsync(1_000);
+      internal.onPointerDown(pointer(20 + second));
+      internal.onPointerUp(pointer(21 + second));
+    }
+    await vi.advanceTimersByTimeAsync(1_000);
+    internal.onPointerDown(pointer(30));
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(store.save).not.toHaveBeenCalled();
+    internal.onPointerUp(pointer(40));
+    await Promise.resolve();
+    expect(store.save).toHaveBeenCalledOnce();
+  });
+
+  it("keeps Worker-mode save preparation off the main-thread JSON path", async () => {
+    const { internal, store, view } = setup();
+    const worker = {
+      barrier: vi.fn(async () => 4),
+      prepareSave: vi.fn(async () => ({ token: "save-1", content: "worker-json", revision: 4 })),
+      commitSave: vi.fn(async () => ({ revision: 4 })),
+      abortSave: vi.fn(),
+    };
+    Object.assign(internal, { workerSession: worker, workerRevision: 4, dirtyRevision: 1 });
+    const writeIfUnchanged = vi.fn(async () => true);
+    Object.assign(store, { readRaw: vi.fn(async () => "disk-json"), writeIfUnchanged });
+    const parse = vi.spyOn(JSON, "parse");
+    const stringify = vi.spyOn(JSON, "stringify");
+
+    await internal.save();
+
+    expect(worker.barrier).toHaveBeenCalledWith(4);
+    expect(worker.prepareSave).toHaveBeenCalledWith("disk-json", 1);
+    expect(writeIfUnchanged).toHaveBeenCalledWith(view.file, "disk-json", "worker-json");
+    expect(store.save).not.toHaveBeenCalled();
+    expect(parse).not.toHaveBeenCalled();
+    expect(stringify).not.toHaveBeenCalled();
+    expect((internal as unknown as { saveRevisionWithWorker: Function }).saveRevisionWithWorker.toString())
+      .not.toMatch(/cloneNotebook|mergeNotebooks|JSON\.(?:parse|stringify)/);
+    parse.mockRestore();
+    stringify.mockRestore();
+  });
+
+  it("bounds Worker CAS conflicts at three attempts and preserves dirty state", async () => {
+    const { internal, store } = setup();
+    const worker = {
+      barrier: vi.fn(async () => 2),
+      prepareSave: vi.fn(async (_raw: string, _revision: number) => ({ token: `save-${worker.prepareSave.mock.calls.length}`, content: "next", revision: 2 })),
+      commitSave: vi.fn(),
+      abortSave: vi.fn(async () => undefined),
+    };
+    Object.assign(internal, { workerSession: worker, workerRevision: 2, dirtyRevision: 1 });
+    const readRaw = vi.fn(async () => `disk-${readRaw.mock.calls.length}`);
+    const writeIfUnchanged = vi.fn(async () => false);
+    Object.assign(store, { readRaw, writeIfUnchanged });
+
+    await expect(internal.save()).resolves.toBeUndefined();
+
+    expect(worker.prepareSave).toHaveBeenCalledTimes(3);
+    expect(writeIfUnchanged).toHaveBeenCalledTimes(3);
+    expect(worker.abortSave).toHaveBeenCalledTimes(3);
+    expect(worker.commitSave).not.toHaveBeenCalled();
+    expect(store.save).not.toHaveBeenCalled();
+    expect(internal.savedRevision).toBe(0);
+    expect(internal.dirtyRevision).toBe(1);
   });
 
   it("does not rebuild any UI when a self-save returns equivalent notebook data", async () => {
