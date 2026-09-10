@@ -55,6 +55,7 @@ interface NotebookReconciliation {
 const STROKE_ERASER_HIT_RADIUS = 10;
 const OVERLAY_PIXEL_BUDGET = 12_000_000;
 const SAVE_IDLE_DELAY = 1_000;
+const INK_COMMIT_IDLE_DELAY = 180;
 
 const INK_COLORS = [
   { value: "#1b1b1b", label: "Black" },
@@ -140,6 +141,7 @@ export class InkView extends FileView {
   private renderFrame: number | null = null;
   private resizeRequested = false;
   private zoomRenderTimer: number | undefined;
+  private inkCommitTimer: number | undefined;
 
   constructor(leaf: WorkspaceLeaf, store: NotebookStore) {
     super(leaf);
@@ -182,6 +184,7 @@ export class InkView extends FileView {
     this.renderFrame = null;
     if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
     this.finishPointerInput(false);
+    this.cancelPendingInkCommitTimer();
     if (this.saveTimer !== undefined) {
       window.clearTimeout(this.saveTimer);
       this.saveTimer = undefined;
@@ -204,6 +207,7 @@ export class InkView extends FileView {
 
   async onUnloadFile(file: TFile): Promise<void> {
     this.finishPointerInput(false);
+    this.cancelPendingInkCommitTimer();
     if (this.saveTimer !== undefined) {
       window.clearTimeout(this.saveTimer);
       this.saveTimer = undefined;
@@ -678,7 +682,7 @@ export class InkView extends FileView {
         if (!committed) this.drawStrokes(page.strokes);
         else this.drawPreview();
       }
-      if (this.pendingInkStrokes.length > 0) this.startPendingInkCommit(page);
+      if (this.pendingInkStrokes.length > 0) this.schedulePendingInkCommit(page);
       else if (this.activePointerId === null) {
         this.applyPendingMergedNotebook();
         if (this.externalRefreshPending) {
@@ -689,7 +693,23 @@ export class InkView extends FileView {
     });
   }
 
+  private schedulePendingInkCommit(page: InkPage): void {
+    if (this.pendingInkStrokes.length === 0 || this.pendingInkPageId !== page.id) return;
+    this.cancelPendingInkCommitTimer();
+    this.inkCommitTimer = window.setTimeout(() => {
+      this.inkCommitTimer = undefined;
+      this.startPendingInkCommit(page);
+    }, INK_COMMIT_IDLE_DELAY);
+  }
+
+  private cancelPendingInkCommitTimer(): void {
+    if (this.inkCommitTimer === undefined) return;
+    window.clearTimeout(this.inkCommitTimer);
+    this.inkCommitTimer = undefined;
+  }
+
   private discardPendingInkPreview(): void {
+    this.cancelPendingInkCommitTimer();
     this.committingInkStrokes = null;
     this.pendingInkStrokes = [];
     this.pendingInkPageId = null;
@@ -723,6 +743,7 @@ export class InkView extends FileView {
     if (this.activePointerId !== null) this.finishPointerInput(false);
     const page = this.currentPage();
     const tool = this.state.tool;
+    this.cancelPendingInkCommitTimer();
     if (tool === "pen" || tool === "highlighter") this.tiles.pauseInkCommit();
     else if (this.pendingInkStrokes.length > 0 || this.committingInkStrokes) this.discardPendingInkPreview();
     this.updateViewport(true);
@@ -919,7 +940,7 @@ export class InkView extends FileView {
     if (interaction.tool === "pen" || interaction.tool === "highlighter") {
       this.resizePreview();
       this.drawPreview();
-      this.startPendingInkCommit(page);
+      this.schedulePendingInkCommit(page);
     }
     this.tiles.resumeInkCommit();
     this.applyPendingMergedNotebook();
@@ -1348,8 +1369,19 @@ export class InkView extends FileView {
     const height = width * this.notebook.pageHeight / this.notebook.pageWidth;
     this.pageElement.style.width = width + "px";
     this.pageElement.style.height = height + "px";
-    this.pageElement.style.transform = "scale(" + this.zoom + ")";
-    // Transforms do not grow layout boxes. Reserve the full scaled page for scrolling.
+    if (supportsLayoutZoom()) {
+      // WebKit can flatten a transformed canvas subtree into a low-resolution
+      // composited texture. Layout zoom keeps live overlays and finalized tile
+      // canvases at their requested device-pixel backing density on iPad.
+      this.pageElement.style.zoom = String(this.zoom);
+      this.pageElement.style.transform = "none";
+    } else {
+      this.pageElement.style.zoom = "";
+      // Avoid creating a composited layer at 100% even on older engines that
+      // do not support layout zoom.
+      this.pageElement.style.transform = this.zoom === 1 ? "none" : "scale(" + this.zoom + ")";
+    }
+    // Reserve the full scaled page for scrolling in both zoom modes.
     this.pageExtent.style.width = width * this.zoom + "px";
     this.pageExtent.style.height = height * this.zoom + "px";
   }
@@ -1617,6 +1649,7 @@ export class InkView extends FileView {
   }
 
   private resetInteraction(): void {
+    this.cancelPendingInkCommitTimer();
     this.committingInkStrokes = null;
     this.pendingInkStrokes = [];
     this.pendingInkPageId = null;
@@ -1850,6 +1883,10 @@ function boundsForPointSets(pointSets: InkPoint[][]): { minX: number; minY: numb
 
 function notebooksEqual(left: InkNotebook, right: InkNotebook): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function supportsLayoutZoom(): boolean {
+  return typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("zoom", "1");
 }
 
 function reconcileNotebook(target: InkNotebook, incoming: InkNotebook, selectedPageId: string,

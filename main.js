@@ -407,7 +407,8 @@ function canvasResolution(width, height, dpr, zoom, maxPixels = 16e6) {
   return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
 }
 function penOutline(stroke, width, height) {
-  return R(stroke.points.map((point) => [point.x * width, point.y * height, point.pressure]), {
+  const pressures = smoothPenPressures(stroke.points);
+  return R(stroke.points.map((point, index) => [point.x * width, point.y * height, pressures[index]]), {
     // Preserve the existing diameter: width * (0.55 + pressure * 0.75).
     size: stroke.width * 0.925,
     thinning: 0.75 / 1.85,
@@ -418,6 +419,16 @@ function penOutline(stroke, width, height) {
     start: { cap: true, taper: 0 },
     end: { cap: true, taper: 0 }
   });
+}
+function smoothPenPressures(points) {
+  if (points.length < 3) return points.map((point) => point.pressure);
+  return points.map((point, index) => {
+    if (index === 0 || index === points.length - 1) return point.pressure;
+    return median3(points[index - 1].pressure, point.pressure, points[index + 1].pressure);
+  });
+}
+function median3(a2, b2, c2) {
+  return Math.max(Math.min(a2, b2), Math.min(Math.max(a2, b2), c2));
 }
 function drawInkStroke(ctx, stroke, width, height) {
   if (stroke.points.length === 0) return;
@@ -487,9 +498,9 @@ function drawSmoothPath(ctx, points, width, height) {
 
 // src/tiles.ts
 var TILE = 128;
-var BLEED = 2;
+var BLEED = 4;
 var MAX_PIXELS = 16e6;
-var VISIBLE_PIXEL_BUDGET = 12e6;
+var MAX_TILE_DENSITY = 9;
 function isStrokeSet(exclusion) {
   return exclusion instanceof Set;
 }
@@ -513,7 +524,7 @@ var StrokeIndex = class {
         return;
       }
       if (previous) this.remove(previous);
-      const padding = stroke.width * 0.7 + BLEED / 0.5;
+      const padding = stroke.width * 0.7 + BLEED;
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const p2 of stroke.points) {
         minX = Math.min(minX, p2.x * this.width);
@@ -577,10 +588,8 @@ function cellKeys(rect, width, height) {
   return keys;
 }
 function tileDensity(viewport, density) {
-  return Math.max(0.5, Math.min(
-    Math.ceil(density * 4) / 4,
-    Math.sqrt(VISIBLE_PIXEL_BUDGET / Math.max(1, (viewport.width + TILE * 2) * (viewport.height + TILE * 2)))
-  ));
+  void viewport;
+  return Math.max(0.5, Math.min(MAX_TILE_DENSITY, Math.ceil(density * 4) / 4));
 }
 var TileRenderer = class {
   constructor(host) {
@@ -650,7 +659,7 @@ var TileRenderer = class {
       else jobs.push({ state: this.active, cell, density: this.density });
     }
     this.jobs = this.jobs.filter((job) => !this.isHeld(job));
-    this.inkCommit = { state: this.active, cells, jobs, tiles, onComplete };
+    this.inkCommit = { state: this.active, strokes, cells, jobs, tiles, onComplete };
     if (jobs.length === 0) this.finishInkCommit(true);
     else this.scheduleInkCommit();
   }
@@ -775,7 +784,7 @@ var TileRenderer = class {
       const commit = this.inkCommit;
       if (!commit) return;
       const job = commit.jobs.shift();
-      if (job) commit.tiles.push(this.createTile(job));
+      if (job) commit.tiles.push(this.createInkTile(job, commit.strokes));
       if (commit.jobs.length > 0) this.scheduleInkCommit();
       else this.finishInkCommit(true);
     });
@@ -834,23 +843,37 @@ var TileRenderer = class {
     return tile;
   }
   createTile(job) {
+    return this.createTileFrom(job);
+  }
+  createInkTile(job, strokes) {
+    var _a;
+    const revision = (_a = job.state.index.revisions.get(job.cell)) != null ? _a : 0;
+    const additions = strokes.filter((stroke) => job.state.index.cellsFor([stroke]).includes(job.cell));
+    const previous = this.cache.get(this.key(job.state, job.cell, job.density));
+    const base = previous && previous.revision + additions.length === revision ? previous : void 0;
+    return this.createTileFrom(job, base, additions);
+  }
+  createTileFrom(job, base, additions = []) {
     var _a;
     const { state, cell, density } = job;
     const [column, row] = cell.split(":").map(Number);
     const x2 = column * TILE, y2 = row * TILE;
     const width = Math.min(TILE, state.index.width - x2), height = Math.min(TILE, state.index.height - y2);
     const canvas = document.createElement("canvas");
-    canvas.width = Math.ceil(width * density) + BLEED * 2;
-    canvas.height = Math.ceil(height * density) + BLEED * 2;
-    canvas.style.cssText = "position:absolute;left:" + -BLEED / density + "px;top:" + -BLEED / density + "px;width:" + canvas.width / density + "px;height:" + canvas.height / density + "px";
+    const bleedPixels = Math.ceil(BLEED * density);
+    canvas.width = Math.ceil(width * density) + bleedPixels * 2;
+    canvas.height = Math.ceil(height * density) + bleedPixels * 2;
+    canvas.style.cssText = "position:absolute;left:" + -BLEED + "px;top:" + -BLEED + "px;width:" + canvas.width / density + "px;height:" + canvas.height / density + "px";
     const node = document.createElement("div");
     node.dataset.cell = cell;
     node.style.cssText = "position:absolute;overflow:hidden;left:" + x2 + "px;top:" + y2 + "px;width:" + width + "px;height:" + height + "px";
     node.appendChild(canvas);
     const ctx = canvas.getContext("2d");
-    ctx.setTransform(density, 0, 0, density, BLEED - x2 * density, BLEED - y2 * density);
+    if (base) ctx.drawImage(base.canvas, 0, 0);
+    ctx.setTransform(density, 0, 0, density, bleedPixels - x2 * density, bleedPixels - y2 * density);
     const rect = { x: x2, y: y2, width, height };
-    for (const stroke of state.index.query(rect)) drawInkStroke(ctx, stroke, state.index.width, state.index.height);
+    const strokes = base ? additions : state.index.query(rect);
+    for (const stroke of strokes) drawInkStroke(ctx, stroke, state.index.width, state.index.height);
     return {
       node,
       canvas,
@@ -892,6 +915,7 @@ var VIEW_TYPE_INK = "ink-notes-view";
 var STROKE_ERASER_HIT_RADIUS = 10;
 var OVERLAY_PIXEL_BUDGET = 12e6;
 var SAVE_IDLE_DELAY = 1e3;
+var INK_COMMIT_IDLE_DELAY = 180;
 var INK_COLORS = [
   { value: "#1b1b1b", label: "Black" },
   { value: "#195bff", label: "Blue" },
@@ -995,6 +1019,7 @@ var InkView = class extends import_obsidian.FileView {
     this.renderFrame = null;
     if (this.zoomRenderTimer !== void 0) window.clearTimeout(this.zoomRenderTimer);
     this.finishPointerInput(false);
+    this.cancelPendingInkCommitTimer();
     if (this.saveTimer !== void 0) {
       window.clearTimeout(this.saveTimer);
       this.saveTimer = void 0;
@@ -1015,6 +1040,7 @@ var InkView = class extends import_obsidian.FileView {
   }
   async onUnloadFile(file) {
     this.finishPointerInput(false);
+    this.cancelPendingInkCommitTimer();
     if (this.saveTimer !== void 0) {
       window.clearTimeout(this.saveTimer);
       this.saveTimer = void 0;
@@ -1497,7 +1523,7 @@ var InkView = class extends import_obsidian.FileView {
         if (!committed) this.drawStrokes(page.strokes);
         else this.drawPreview();
       }
-      if (this.pendingInkStrokes.length > 0) this.startPendingInkCommit(page);
+      if (this.pendingInkStrokes.length > 0) this.schedulePendingInkCommit(page);
       else if (this.activePointerId === null) {
         this.applyPendingMergedNotebook();
         if (this.externalRefreshPending) {
@@ -1507,8 +1533,22 @@ var InkView = class extends import_obsidian.FileView {
       }
     });
   }
+  schedulePendingInkCommit(page) {
+    if (this.pendingInkStrokes.length === 0 || this.pendingInkPageId !== page.id) return;
+    this.cancelPendingInkCommitTimer();
+    this.inkCommitTimer = window.setTimeout(() => {
+      this.inkCommitTimer = void 0;
+      this.startPendingInkCommit(page);
+    }, INK_COMMIT_IDLE_DELAY);
+  }
+  cancelPendingInkCommitTimer() {
+    if (this.inkCommitTimer === void 0) return;
+    window.clearTimeout(this.inkCommitTimer);
+    this.inkCommitTimer = void 0;
+  }
   discardPendingInkPreview() {
     var _a;
+    this.cancelPendingInkCommitTimer();
     this.committingInkStrokes = null;
     this.pendingInkStrokes = [];
     this.pendingInkPageId = null;
@@ -1540,6 +1580,7 @@ var InkView = class extends import_obsidian.FileView {
     if (this.activePointerId !== null) this.finishPointerInput(false);
     const page = this.currentPage();
     const tool = this.state.tool;
+    this.cancelPendingInkCommitTimer();
     if (tool === "pen" || tool === "highlighter") this.tiles.pauseInkCommit();
     else if (this.pendingInkStrokes.length > 0 || this.committingInkStrokes) this.discardPendingInkPreview();
     this.updateViewport(true);
@@ -1734,7 +1775,7 @@ var InkView = class extends import_obsidian.FileView {
     if (interaction.tool === "pen" || interaction.tool === "highlighter") {
       this.resizePreview();
       this.drawPreview();
-      this.startPendingInkCommit(page);
+      this.schedulePendingInkCommit(page);
     }
     this.tiles.resumeInkCommit();
     this.applyPendingMergedNotebook();
@@ -2144,7 +2185,13 @@ page: ${this.currentPage().id}
     const height = width * this.notebook.pageHeight / this.notebook.pageWidth;
     this.pageElement.style.width = width + "px";
     this.pageElement.style.height = height + "px";
-    this.pageElement.style.transform = "scale(" + this.zoom + ")";
+    if (supportsLayoutZoom()) {
+      this.pageElement.style.zoom = String(this.zoom);
+      this.pageElement.style.transform = "none";
+    } else {
+      this.pageElement.style.zoom = "";
+      this.pageElement.style.transform = this.zoom === 1 ? "none" : "scale(" + this.zoom + ")";
+    }
     this.pageExtent.style.width = width * this.zoom + "px";
     this.pageExtent.style.height = height * this.zoom + "px";
   }
@@ -2389,6 +2436,7 @@ page: ${this.currentPage().id}
   }
   resetInteraction() {
     var _a;
+    this.cancelPendingInkCommitTimer();
     this.committingInkStrokes = null;
     this.pendingInkStrokes = [];
     this.pendingInkPageId = null;
@@ -2599,6 +2647,9 @@ function boundsForPointSets(pointSets) {
 }
 function notebooksEqual(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+function supportsLayoutZoom() {
+  return typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("zoom", "1");
 }
 function reconcileNotebook(target, incoming, selectedPageId, previousPageIndex) {
   const dimensionsChanged = target.pageWidth !== incoming.pageWidth || target.pageHeight !== incoming.pageHeight;

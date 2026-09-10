@@ -3,9 +3,11 @@ import { drawInkStroke } from "./rendering";
 
 export interface Rect { x: number; y: number; width: number; height: number }
 const TILE = 128;
-const BLEED = 2;
+// Bleed is measured in logical page pixels. Keeping it independent from
+// backing density prevents high-DPR tiles from exposing seams at boundaries.
+const BLEED = 4;
 const MAX_PIXELS = 16_000_000;
-const VISIBLE_PIXEL_BUDGET = 12_000_000;
+const MAX_TILE_DENSITY = 9;
 
 interface IndexedStroke {
   stroke: InkStroke;
@@ -45,7 +47,7 @@ export class StrokeIndex {
         return;
       }
       if (previous) this.remove(previous);
-      const padding = stroke.width * 0.7 + BLEED / 0.5;
+      const padding = stroke.width * 0.7 + BLEED;
       let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
       for (const p of stroke.points) {
         minX = Math.min(minX, p.x * this.width); maxX = Math.max(maxX, p.x * this.width);
@@ -113,6 +115,7 @@ interface Tile { node: HTMLDivElement; canvas: HTMLCanvasElement; revision: numb
 interface Job { state: PageTiles; cell: string; density: number }
 interface InkCommit {
   state: PageTiles;
+  strokes: readonly InkStroke[];
   cells: string[];
   jobs: Job[];
   tiles: Tile[];
@@ -120,8 +123,12 @@ interface InkCommit {
 }
 
 export function tileDensity(viewport: Rect, density: number): number {
-  return Math.max(0.5, Math.min(Math.ceil(density * 4) / 4,
-    Math.sqrt(VISIBLE_PIXEL_BUDGET / Math.max(1, (viewport.width + TILE * 2) * (viewport.height + TILE * 2)))));
+  void viewport;
+  // Tiles are small independent canvases, so a full-viewport pixel cap is not
+  // needed here. Capping their density by viewport area undersampled zoomed
+  // Pencil ink on high-DPR displays even though the visible logical area had
+  // already shrunk with zoom. Cache eviction remains the memory bound.
+  return Math.max(0.5, Math.min(MAX_TILE_DENSITY, Math.ceil(density * 4) / 4));
 }
 
 export class TileRenderer {
@@ -194,7 +201,7 @@ export class TileRenderer {
       else jobs.push({ state: this.active, cell, density: this.density });
     }
     this.jobs = this.jobs.filter(job => !this.isHeld(job));
-    this.inkCommit = { state: this.active, cells, jobs, tiles, onComplete };
+    this.inkCommit = { state: this.active, strokes, cells, jobs, tiles, onComplete };
     if (jobs.length === 0) this.finishInkCommit(true);
     else this.scheduleInkCommit();
   }
@@ -318,7 +325,7 @@ export class TileRenderer {
       const commit = this.inkCommit;
       if (!commit) return;
       const job = commit.jobs.shift();
-      if (job) commit.tiles.push(this.createTile(job));
+      if (job) commit.tiles.push(this.createInkTile(job, commit.strokes));
       if (commit.jobs.length > 0) this.scheduleInkCommit();
       else this.finishInkCommit(true);
     });
@@ -371,24 +378,42 @@ export class TileRenderer {
   }
 
   private createTile(job: Job): Tile {
+    return this.createTileFrom(job);
+  }
+
+  private createInkTile(job: Job, strokes: readonly InkStroke[]): Tile {
+    const revision = job.state.index.revisions.get(job.cell) ?? 0;
+    const additions = strokes.filter((stroke) => job.state.index.cellsFor([stroke]).includes(job.cell));
+    const previous = this.cache.get(this.key(job.state, job.cell, job.density));
+    // A revision advances once for every newly indexed stroke touching this
+    // cell. Only use the delta path when that fully explains the difference;
+    // edits/deletes/remote merges safely fall back to a complete repaint.
+    const base = previous && previous.revision + additions.length === revision ? previous : undefined;
+    return this.createTileFrom(job, base, additions);
+  }
+
+  private createTileFrom(job: Job, base?: Tile, additions: readonly InkStroke[] = []): Tile {
     const { state, cell, density } = job;
     const [column, row] = cell.split(":").map(Number);
     const x = column * TILE, y = row * TILE;
     const width = Math.min(TILE, state.index.width - x), height = Math.min(TILE, state.index.height - y);
     const canvas = document.createElement("canvas");
-    canvas.width = Math.ceil(width * density) + BLEED * 2;
-    canvas.height = Math.ceil(height * density) + BLEED * 2;
-    canvas.style.cssText = "position:absolute;left:" + (-BLEED / density) + "px;top:" + (-BLEED / density)
+    const bleedPixels = Math.ceil(BLEED * density);
+    canvas.width = Math.ceil(width * density) + bleedPixels * 2;
+    canvas.height = Math.ceil(height * density) + bleedPixels * 2;
+    canvas.style.cssText = "position:absolute;left:" + (-BLEED) + "px;top:" + (-BLEED)
       + "px;width:" + canvas.width / density + "px;height:" + canvas.height / density + "px";
     const node = document.createElement("div");
     node.dataset.cell = cell;
     node.style.cssText = "position:absolute;overflow:hidden;left:" + x + "px;top:" + y + "px;width:" + width + "px;height:" + height + "px";
     node.appendChild(canvas);
     const ctx = canvas.getContext("2d")!;
-    ctx.setTransform(density, 0, 0, density, BLEED - x * density, BLEED - y * density);
+    if (base) ctx.drawImage(base.canvas, 0, 0);
+    ctx.setTransform(density, 0, 0, density, bleedPixels - x * density, bleedPixels - y * density);
     // Index bounds already include the bleed; querying adjacent cells again duplicates work.
     const rect = { x, y, width, height };
-    for (const stroke of state.index.query(rect)) drawInkStroke(ctx, stroke, state.index.width, state.index.height);
+    const strokes = base ? additions : state.index.query(rect);
+    for (const stroke of strokes) drawInkStroke(ctx, stroke, state.index.width, state.index.height);
     return { node, canvas, revision: state.index.revisions.get(cell) ?? 0, pixels: canvas.width * canvas.height,
       used: ++this.sequence, state, cell, density };
   }

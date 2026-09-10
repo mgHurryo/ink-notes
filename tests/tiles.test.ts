@@ -65,6 +65,62 @@ describe("interactive tile commits", () => {
     expect(tileDensity({ x: 0, y: 0, width: 1024, height: 1366 }, 2)).toBe(2);
   });
 
+  it("does not undersample high-DPR tiles after zooming in", () => {
+    expect(tileDensity({ x: 0, y: 0, width: 342, height: 455 }, 6)).toBe(6);
+  });
+
+  it("keeps tile bleed in logical pixels at high density", () => {
+    const originalDocument = globalThis.document;
+    const canvas: any = { width: 0, height: 0, style: {}, getContext: vi.fn(() => ({ setTransform: vi.fn() })) };
+    const node: any = { dataset: {} as Record<string, string>, style: {}, appendChild: vi.fn() };
+    vi.stubGlobal("document", { createElement: vi.fn((tag: string) => tag === "canvas" ? canvas : node) });
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    const state = {
+      index: { width: 128, height: 128, query: vi.fn(() => []), revisions: new Map() },
+    };
+    const tile = renderer.createTile({ state, cell: "0:0", density: 4 });
+    expect(canvas.width).toBe(128 * 4 + 32);
+    expect(canvas.style.cssText).toContain("left:-4px");
+    expect(canvas.style.cssText).toContain("top:-4px");
+    expect(canvas.getContext).toHaveBeenCalled();
+    vi.stubGlobal("document", originalDocument);
+  });
+
+  it("composes newly added ink over an exact stale tile without replaying history", () => {
+    const addition = stroke("new", 0.1, 0.1);
+    const state = { id: 3, index: {
+      revisions: new Map([["0:0", 8]]),
+      cellsFor: vi.fn(() => ["0:0"]),
+    } };
+    const base = { revision: 7 };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    renderer.cache = new Map([["3/0:0/2", base]]);
+    renderer.createTileFrom = vi.fn(() => ({ revision: 8 }));
+
+    renderer.createInkTile({ state, cell: "0:0", density: 2 }, [addition]);
+
+    expect(renderer.createTileFrom).toHaveBeenCalledWith(
+      { state, cell: "0:0", density: 2 }, base, [addition],
+    );
+  });
+
+  it("replays a tile when revisions include more than the added ink", () => {
+    const addition = stroke("new", 0.1, 0.1);
+    const state = { id: 3, index: {
+      revisions: new Map([["0:0", 9]]),
+      cellsFor: vi.fn(() => ["0:0"]),
+    } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    renderer.cache = new Map([["3/0:0/2", { revision: 7 }]]);
+    renderer.createTileFrom = vi.fn(() => ({ revision: 9 }));
+
+    renderer.createInkTile({ state, cell: "0:0", density: 2 }, [addition]);
+
+    expect(renderer.createTileFrom).toHaveBeenCalledWith(
+      { state, cell: "0:0", density: 2 }, undefined, [addition],
+    );
+  });
+
   it("defers finished-ink painting to an animation frame", () => {
     const frames: FrameRequestCallback[] = [];
     vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => { frames.push(callback); return 1; }));
@@ -73,15 +129,15 @@ describe("interactive tile commits", () => {
     Object.assign(renderer, {
       active: state, disposed: false, inkCommit: null, inkCommitPaused: false, inkFrame: null,
       heldCells: new Set(), jobs: [], visible: new Set(), cache: new Map(), density: 1,
-      get: vi.fn(() => undefined), createTile: vi.fn(() => ({ state, cell: "0:0", revision: 1 })),
+      get: vi.fn(() => undefined), createInkTile: vi.fn(() => ({ state, cell: "0:0", revision: 1 })),
       finishInkCommit: vi.fn(),
     });
     const complete = vi.fn();
     renderer.commitInk([stroke("ink", 0.1, 0.1)], { x: 0, y: 0, width: 800, height: 1000 }, 2, complete);
-    expect(renderer.createTile).not.toHaveBeenCalled();
+    expect(renderer.createInkTile).not.toHaveBeenCalled();
     expect(complete).not.toHaveBeenCalled();
     frames[0](0);
-    expect(renderer.createTile).toHaveBeenCalledOnce();
+    expect(renderer.createInkTile).toHaveBeenCalledOnce();
     expect(renderer.finishInkCommit).toHaveBeenCalledWith(true);
     vi.unstubAllGlobals();
   });

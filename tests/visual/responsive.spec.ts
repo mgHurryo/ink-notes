@@ -258,6 +258,10 @@ test("iPad-sized writing stays at full 2x backing density", async ({ browser }) 
     const paper = page.locator(".ink-page");
     const box = await paper.boundingBox();
     if (!box) throw new Error("Ink page has no layout box");
+    await expect.poll(async () => paper.evaluate((element: HTMLElement) => ({
+      transform: getComputedStyle(element).transform,
+      zoom: getComputedStyle(element).zoom,
+    }))).toEqual({ transform: "none", zoom: "1" });
     await page.mouse.move(box.x + box.width * 0.25, box.y + box.height * 0.3);
     await page.mouse.down();
     await page.mouse.move(box.x + box.width * 0.55, box.y + box.height * 0.35, { steps: 12 });
