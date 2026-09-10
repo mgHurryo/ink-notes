@@ -39,6 +39,18 @@ describe("NotebookStore", () => {
     expect(raw).toBe(original);
   });
 
+  it("writes only when the Vault text still matches", async () => {
+    let raw = "before";
+    const vault = {
+      process: vi.fn(async (_file: TFile, update: (current: string) => string) => { raw = update(raw); }),
+    };
+    const store = new NotebookStore({ vault } as unknown as App);
+    expect(await store.writeIfUnchanged({ path: "Ink Notes/CAS.ink" } as TFile, "other", "after")).toBe(false);
+    expect(raw).toBe("before");
+    expect(await store.writeIfUnchanged({ path: "Ink Notes/CAS.ink" } as TFile, "before", "after")).toBe(true);
+    expect(raw).toBe("after");
+  });
+
   it("suppresses the matching modify event emitted by its own save", async () => {
     const notebook = createNotebook();
     let raw = JSON.stringify(notebook);

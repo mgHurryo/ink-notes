@@ -5,6 +5,7 @@ export default defineConfig({
   resolve: {
     alias: {
       obsidian: fileURLToPath(new URL("./tests/obsidian.mock.ts", import.meta.url)),
+      "ink-worker-source": fileURLToPath(new URL("./tests/worker-source.mock.ts", import.meta.url)),
     },
   },
 });
