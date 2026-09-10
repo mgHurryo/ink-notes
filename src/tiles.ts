@@ -20,6 +20,7 @@ export interface RenderBackend {
   renderTile(pageId: string, cell: string, density: number, revision: number, width: number, height: number,
     renderGeneration?: number, priority?: "visible" | "prewarm"): Promise<RenderTileResult>;
   cancelGeneration?(renderGeneration: number): void;
+  dispose(): void;
 }
 
 export interface Rect { x: number; y: number; width: number; height: number }

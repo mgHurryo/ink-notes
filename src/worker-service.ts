@@ -29,6 +29,9 @@ interface RecoverySnapshot {
 interface PendingRequest {
   resolve: (response: InkWorkerResponse) => void;
   reject: (error: Error) => void;
+  sessionId: string;
+  generation: number;
+  notebookRevision: number;
 }
 
 export class InkWorkerService {
@@ -125,7 +128,13 @@ export class InkWorkerService {
   private dispatch(message: WorkerRequestInput, transfer: Transferable[] = []): Promise<InkWorkerResponse> {
     const requestId = this.nextRequestId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(requestId, { resolve, reject });
+      this.pending.set(requestId, {
+        resolve,
+        reject,
+        sessionId: message.sessionId,
+        generation: message.generation,
+        notebookRevision: message.notebookRevision,
+      });
       try { this.worker!.postMessage({ ...message, requestId }, transfer); }
       catch (error) {
         this.pending.delete(requestId);
@@ -149,6 +158,11 @@ export class InkWorkerService {
     const pending = this.pending.get(response.requestId);
     if (!pending) return;
     this.pending.delete(response.requestId);
+    if (response.sessionId !== pending.sessionId || response.generation !== pending.generation
+      || response.notebookRevision < pending.notebookRevision) {
+      pending.reject(new InkWorkerRequestError("stale-response", "Ink background worker returned a stale or mismatched response"));
+      return;
+    }
     if (response.type === "error") pending.reject(new InkWorkerRequestError(response.code, response.message));
     else pending.resolve(response);
   }
@@ -215,7 +229,10 @@ export class InkWorkerSession {
   async initializeRaw(raw: string, revision: number): Promise<InkNotebook> {
     this.generation += 1;
     this.initialized = false;
-    const response = await this.service.send({ type: "initialize-raw", sessionId: this.id, generation: this.generation, raw, revision });
+    const response = await this.service.send({
+      type: "initialize-raw", sessionId: this.id, generation: this.generation,
+      notebookRevision: revision, raw, revision,
+    });
     if (response.type !== "initialized") throw unexpected(response);
     this.mirroredRevision = response.revision;
     this.initialized = true;
@@ -230,7 +247,10 @@ export class InkWorkerSession {
       // it may already contain several operations queued after the crash.
       let response: InkWorkerResponse;
       try {
-        response = await this.service.send({ type: "apply-operation", sessionId: this.id, generation: this.generation, revision, operation },
+        response = await this.service.send({
+          type: "apply-operation", sessionId: this.id, generation: this.generation,
+          notebookRevision: revision, revision, operation,
+        },
           false, false, transfer && this.service.canTransfer() ? transfer : []);
       } catch (error) {
         // Recovery reinitializes this session from the authoritative UI model.
@@ -248,21 +268,30 @@ export class InkWorkerSession {
 
   async barrier(minimumRevision: number): Promise<number> {
     await this.operationTail;
-    const response = await this.service.send({ type: "barrier", sessionId: this.id, generation: this.generation, minimumRevision });
+    const response = await this.service.send({
+      type: "barrier", sessionId: this.id, generation: this.generation,
+      notebookRevision: this.mirroredRevision, minimumRevision,
+    });
     if (response.type !== "barrier-complete") throw unexpected(response);
     return response.revision;
   }
 
   async prepareSave(raw: string, minimumRevision: number): Promise<{ token: string; content: string; revision: number }> {
-    const response = await this.service.send({ type: "prepare-save", sessionId: this.id, generation: this.generation, raw, minimumRevision });
+    await this.operationTail;
+    const response = await this.service.send({
+      type: "prepare-save", sessionId: this.id, generation: this.generation,
+      notebookRevision: this.mirroredRevision, raw, minimumRevision,
+    });
     if (response.type !== "save-prepared") throw unexpected(response);
     return response;
   }
 
   async renderTile(pageId: string, cell: string, density: number, revision: number, width: number, height: number,
     renderGeneration = 0, priority: "visible" | "prewarm" = "visible"): Promise<RenderTileResult> {
+    await this.operationTail;
     const response = await this.service.send({
       type: "render-tile", sessionId: this.id, generation: this.generation,
+      notebookRevision: this.mirroredRevision,
       pageId,
       cell, density, revision, renderGeneration, priority, width, height,
     });
@@ -272,23 +301,34 @@ export class InkWorkerSession {
 
   cancelGeneration(renderGeneration: number): void {
     void this.service.send({
-      type: "cancel-render-generation", sessionId: this.id, generation: this.generation, renderGeneration,
+      type: "cancel-render-generation", sessionId: this.id, generation: this.generation,
+      notebookRevision: this.mirroredRevision, renderGeneration,
     }).then(() => undefined, () => undefined);
   }
 
   async commitSave(token: string): Promise<{ revision: number; merged?: InkNotebook }> {
-    const response = await this.service.send({ type: "commit-save", sessionId: this.id, generation: this.generation, token });
+    const response = await this.service.send({
+      type: "commit-save", sessionId: this.id, generation: this.generation,
+      notebookRevision: this.mirroredRevision, token,
+    });
     if (response.type !== "save-committed") throw unexpected(response);
     return response;
   }
 
   async abortSave(token: string): Promise<void> {
-    const response = await this.service.send({ type: "abort-save", sessionId: this.id, generation: this.generation, token });
+    const response = await this.service.send({
+      type: "abort-save", sessionId: this.id, generation: this.generation,
+      notebookRevision: this.mirroredRevision, token,
+    });
     if (response.type !== "save-aborted") throw unexpected(response);
   }
 
   async mergeExternal(raw: string): Promise<InkNotebook | undefined> {
-    const response = await this.service.send({ type: "merge-external", sessionId: this.id, generation: this.generation, raw });
+    await this.operationTail;
+    const response = await this.service.send({
+      type: "merge-external", sessionId: this.id, generation: this.generation,
+      notebookRevision: this.mirroredRevision, raw,
+    });
     if (response.type !== "external-merged") throw unexpected(response);
     return response.notebook;
   }
@@ -300,6 +340,7 @@ export class InkWorkerSession {
       type: "initialize-notebook",
       sessionId: this.id,
       generation: this.generation,
+      notebookRevision: revision,
       notebook,
       revision,
     }, false, true);
@@ -308,13 +349,16 @@ export class InkWorkerSession {
   }
 
   dispose(): void {
-    void this.service.send({ type: "dispose-session", sessionId: this.id, generation: this.generation }, false).catch(() => undefined);
+    void this.service.send({
+      type: "dispose-session", sessionId: this.id, generation: this.generation,
+      notebookRevision: this.mirroredRevision,
+    }, false).catch(() => undefined);
     this.service.removeSession(this.id);
   }
 
   private applied(revision: number): InkWorkerResponse {
     return { type: "operation-applied", requestId: -1, sessionId: this.id,
-      generation: this.generation, revision };
+      generation: this.generation, notebookRevision: revision, revision };
   }
 }
 

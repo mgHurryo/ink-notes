@@ -126,7 +126,7 @@ export class InkWorkerCore {
   constructor(private readonly capabilities: WorkerCapabilities) {}
 
   ready(): InkWorkerResponse {
-    return { type: "ready", requestId: 0, sessionId: "", generation: 0, capabilities: this.capabilities };
+    return { type: "ready", requestId: 0, sessionId: "", generation: 0, notebookRevision: 0, capabilities: this.capabilities };
   }
 
   async handle(request: InkWorkerRequest): Promise<WorkerReply> {
@@ -143,6 +143,7 @@ export class InkWorkerCore {
         requestId: request.requestId,
         sessionId: request.sessionId,
         generation: request.generation,
+        notebookRevision: this.sessions.get(request.sessionId)?.revision ?? request.notebookRevision,
         code: error instanceof ProtocolError ? error.code : "internal",
         message: error instanceof Error ? error.message : String(error),
       } };
@@ -151,6 +152,9 @@ export class InkWorkerCore {
 
   private async dispatch(request: InkWorkerRequest): Promise<InkWorkerResponse> {
     if (request.type === "initialize-raw") {
+      if (request.notebookRevision !== request.revision) {
+        throw new ProtocolError("revision-gap", "Initialize request revision metadata does not match its notebook revision");
+      }
       const notebook = parseNotebook(request.raw);
       this.sessions.set(request.sessionId, {
         generation: request.generation,
@@ -163,6 +167,9 @@ export class InkWorkerCore {
       return this.response(request, { type: "initialized", notebook, revision: request.revision });
     }
     if (request.type === "initialize-notebook") {
+      if (request.notebookRevision !== request.revision) {
+        throw new ProtocolError("revision-gap", "Initialize request revision metadata does not match its notebook revision");
+      }
       const notebook = normalizeNotebook(request.notebook);
       this.sessions.set(request.sessionId, {
         generation: request.generation,
@@ -178,8 +185,14 @@ export class InkWorkerCore {
     const session = this.sessions.get(request.sessionId);
     if (!session) throw new ProtocolError("missing-session", "Ink worker session is not initialized");
     if (session.generation !== request.generation) throw new ProtocolError("stale-generation", "Ink worker request belongs to a stale file generation");
+    if (request.type !== "apply-operation" && request.notebookRevision > session.revision) {
+      throw new ProtocolError("revision-gap", `Worker revision ${session.revision} is behind request revision ${request.notebookRevision}`);
+    }
 
     if (request.type === "apply-operation") {
+      if (request.notebookRevision !== request.revision) {
+        throw new ProtocolError("revision-gap", "Operation revision metadata does not match its notebook revision");
+      }
       if (request.revision !== session.revision + 1) {
         throw new ProtocolError("revision-gap", `Expected revision ${session.revision + 1}, received ${request.revision}`);
       }
@@ -269,11 +282,17 @@ export class InkWorkerCore {
     return this.response(request, { type: "session-disposed" });
   }
 
-  private response<T extends Omit<InkWorkerResponse, "requestId" | "sessionId" | "generation">>(
+  private response<T extends Omit<InkWorkerResponse, "requestId" | "sessionId" | "generation" | "notebookRevision">>(
     request: InkWorkerRequest,
     response: T,
   ): InkWorkerResponse {
-    return { ...response, requestId: request.requestId, sessionId: request.sessionId, generation: request.generation } as InkWorkerResponse;
+    return {
+      ...response,
+      requestId: request.requestId,
+      sessionId: request.sessionId,
+      generation: request.generation,
+      notebookRevision: this.sessions.get(request.sessionId)?.revision ?? request.notebookRevision,
+    } as InkWorkerResponse;
   }
 }
 
@@ -553,16 +572,24 @@ function updateWorkerIndex(index: WorkerPageIndex, page: InkNotebook["pages"][nu
   { type: "replace-notebook" } | { type: "history-restore" } | { type: "page-operation" }>, outlinedStroke?: InkStroke): void {
   if (operation.type === "start-stroke" || operation.type === "finalize-stroke") {
     const stroke = outlinedStroke;
-    if (stroke) index.upsert(stroke, page.strokes.indexOf(stroke));
+    if (stroke) index.upsert(stroke, operation.type === "start-stroke"
+      ? index.getOrder(stroke.id) ?? page.strokes.length - 1
+      : Number.MAX_SAFE_INTEGER);
     if (operation.type === "finalize-stroke") index.updateOrder(page);
-  } else if (operation.type === "append-stroke-points" || operation.type === "complete-stroke") {
+  } else if (operation.type === "complete-stroke") {
     const stroke = outlinedStroke ?? index.getStroke(operation.strokeId);
     if (stroke) index.upsert(stroke, index.getOrder(operation.strokeId) ?? page.strokes.length - 1);
+  } else if (operation.type === "append-stroke-points") {
+    // The indexed entry owns the same mutable Worker stroke reference, so ID
+    // lookup remains O(1). Its spatial cells are recomputed only once when the
+    // stroke completes; active ink is rendered by the separate preview layer.
   } else if (operation.type === "patch-strokes") {
     for (const id of operation.remove) index.remove(id);
+    const positions = new Map(page.strokes.map((stroke, position) => [stroke.id, position]));
+    const strokes = new Map(page.strokes.map((stroke) => [stroke.id, stroke]));
     for (const replacement of operation.upsert) {
-      const stroke = page.strokes.find((candidate) => candidate.id === replacement.id);
-      if (stroke) index.upsert(stroke, page.strokes.indexOf(stroke));
+      const stroke = strokes.get(replacement.id);
+      if (stroke) index.upsert(stroke, positions.get(stroke.id) ?? Number.MAX_SAFE_INTEGER);
     }
     index.updateOrder(page);
   } else if (operation.type === "translate-strokes") {

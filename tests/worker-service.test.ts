@@ -6,6 +6,7 @@ import { InkWorkerService } from "../src/worker-service";
 class FakeWorker {
   static instances: FakeWorker[] = [];
   static transferable = true;
+  static holdApplyResponses = false;
   onmessage: ((event: MessageEvent<InkWorkerResponse>) => void) | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
   terminated = false;
@@ -14,7 +15,7 @@ class FakeWorker {
 
   constructor(_url: string) {
     FakeWorker.instances.push(this);
-    queueMicrotask(() => this.emit({ type: "ready", requestId: 0, sessionId: "", generation: 0,
+    queueMicrotask(() => this.emit({ type: "ready", requestId: 0, sessionId: "", generation: 0, notebookRevision: 0,
       capabilities: { offscreenCanvas: true, imageBitmap: true, transferable: FakeWorker.transferable } }));
   }
 
@@ -28,19 +29,22 @@ class FakeWorker {
     }
     queueMicrotask(() => {
       if (request.type === "initialize-raw") this.emit({ type: "initialized", requestId: request.requestId,
-        sessionId: request.sessionId, generation: request.generation, notebook: JSON.parse(request.raw), revision: request.revision });
+        sessionId: request.sessionId, generation: request.generation, notebookRevision: request.notebookRevision,
+        notebook: JSON.parse(request.raw), revision: request.revision });
       else if (request.type === "initialize-notebook") this.emit({ type: "initialized", requestId: request.requestId,
-        sessionId: request.sessionId, generation: request.generation, notebook: request.notebook, revision: request.revision });
-      else if (request.type === "apply-operation") this.emit({ type: "operation-applied", requestId: request.requestId,
-        sessionId: request.sessionId, generation: request.generation, revision: request.revision });
+        sessionId: request.sessionId, generation: request.generation, notebookRevision: request.notebookRevision,
+        notebook: request.notebook, revision: request.revision });
+      else if (request.type === "apply-operation" && !FakeWorker.holdApplyResponses) this.emit({ type: "operation-applied", requestId: request.requestId,
+        sessionId: request.sessionId, generation: request.generation, notebookRevision: request.notebookRevision,
+        revision: request.revision });
       else if (request.type === "dispose-session") this.emit({ type: "session-disposed", requestId: request.requestId,
-        sessionId: request.sessionId, generation: request.generation });
+        sessionId: request.sessionId, generation: request.generation, notebookRevision: request.notebookRevision });
     });
   }
 
   terminate(): void { this.terminated = true; }
 
-  private emit(response: InkWorkerResponse): void {
+  emit(response: InkWorkerResponse): void {
     this.onmessage?.({ data: response } as MessageEvent<InkWorkerResponse>);
   }
 }
@@ -49,6 +53,7 @@ describe("InkWorkerService recovery", () => {
   beforeEach(() => {
     FakeWorker.instances = [];
     FakeWorker.transferable = true;
+    FakeWorker.holdApplyResponses = false;
     vi.stubGlobal("Worker", FakeWorker);
     vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:ink-worker"), revokeObjectURL: vi.fn() });
   });
@@ -119,6 +124,50 @@ describe("InkWorkerService recovery", () => {
       strokeId: "missing", points, pageUpdatedAt: 2, notebookUpdatedAt: 2 }, [points.buffer]);
     expect(points.byteLength).toBe(6 * Float64Array.BYTES_PER_ELEMENT);
     expect(session.canRenderTiles()).toBe(false);
+    service.dispose();
+  });
+
+  it("serializes operations even when callers enqueue later revisions immediately", async () => {
+    FakeWorker.holdApplyResponses = true;
+    const notebook = createNotebook();
+    const service = new InkWorkerService(vi.fn());
+    const session = service.createSession(() => ({ notebook, revision: 2 }));
+    await session.initializeRaw(JSON.stringify(notebook), 0);
+    const worker = FakeWorker.instances[0];
+    const first = session.apply(1, { type: "set-page", pageId: notebook.pages[0].id, title: "one",
+      pageUpdatedAt: 2, notebookUpdatedAt: 2 });
+    const second = session.apply(2, { type: "set-page", pageId: notebook.pages[0].id, title: "two",
+      pageUpdatedAt: 3, notebookUpdatedAt: 3 });
+    await vi.waitFor(() => expect(worker.requests.filter((request) => request.type === "apply-operation")
+      .map((request) => request.revision)).toEqual([1]));
+    const requestOne = worker.requests.find((request) => request.type === "apply-operation")!;
+    worker.emit({ type: "operation-applied", requestId: requestOne.requestId, sessionId: requestOne.sessionId,
+      generation: requestOne.generation, notebookRevision: 1, revision: 1 });
+    await first;
+    await vi.waitFor(() => expect(worker.requests.filter((request) => request.type === "apply-operation")).toHaveLength(2));
+    const requests = worker.requests.filter((request) => request.type === "apply-operation");
+    expect(requests.map((request) => request.revision)).toEqual([1, 2]);
+    const requestTwo = requests[1];
+    worker.emit({ type: "operation-applied", requestId: requestTwo.requestId, sessionId: requestTwo.sessionId,
+      generation: requestTwo.generation, notebookRevision: 2, revision: 2 });
+    await second;
+    service.dispose();
+  });
+
+  it("rejects a response from the wrong file generation", async () => {
+    FakeWorker.holdApplyResponses = true;
+    const notebook = createNotebook();
+    const service = new InkWorkerService(vi.fn());
+    const session = service.createSession(() => ({ notebook, revision: 1 }));
+    await session.initializeRaw(JSON.stringify(notebook), 0);
+    const worker = FakeWorker.instances[0];
+    const applying = session.apply(1, { type: "set-page", pageId: notebook.pages[0].id, title: "stale",
+      pageUpdatedAt: 2, notebookUpdatedAt: 2 });
+    await vi.waitFor(() => expect(worker.requests.some((candidate) => candidate.type === "apply-operation")).toBe(true));
+    const request = worker.requests.find((candidate) => candidate.type === "apply-operation")!;
+    worker.emit({ type: "operation-applied", requestId: request.requestId, sessionId: request.sessionId,
+      generation: request.generation + 1, notebookRevision: 1, revision: 1 });
+    await expect(applying).rejects.toMatchObject({ code: "stale-response" });
     service.dispose();
   });
 });

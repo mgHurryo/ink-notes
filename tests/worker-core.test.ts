@@ -3,11 +3,18 @@ import { createNotebook, createPage } from "../src/model";
 import { InkWorkerCore } from "../src/worker-core";
 import type { InkWorkerRequest, InkWorkerResponse } from "../src/worker-protocol";
 
-function request<T extends Omit<InkWorkerRequest, "requestId" | "sessionId" | "generation">>(
+type RequestInput = InkWorkerRequest extends infer Request
+  ? Request extends InkWorkerRequest ? Omit<Request, "requestId" | "sessionId" | "generation" | "notebookRevision"> : never
+  : never;
+
+function request<T extends RequestInput>(
   value: T,
   requestId = 1,
+  notebookRevision = "revision" in value && typeof value.revision === "number"
+    ? value.revision
+    : "minimumRevision" in value && typeof value.minimumRevision === "number" ? value.minimumRevision : 0,
 ): InkWorkerRequest {
-  return { ...value, requestId, sessionId: "test", generation: 1 } as InkWorkerRequest;
+  return { ...value, requestId, sessionId: "test", generation: 1, notebookRevision } as InkWorkerRequest;
 }
 
 async function response(core: InkWorkerCore, value: InkWorkerRequest): Promise<InkWorkerResponse> {
@@ -45,6 +52,25 @@ describe("InkWorkerCore persistence mirror", () => {
       .toMatchObject({ type: "error", code: "invalid-format" });
   });
 
+  it("omits equivalent self-save state but returns a real external merge", async () => {
+    const core = new InkWorkerCore({ offscreenCanvas: false, imageBitmap: false });
+    const notebook = createNotebook();
+    await response(core, request({ type: "initialize-notebook", notebook, revision: 0 }));
+    const prepared = await response(core, request({
+      type: "prepare-save", raw: JSON.stringify(notebook), minimumRevision: 0,
+    }, 2));
+    if (prepared.type !== "save-prepared") throw new Error("save was not prepared");
+    expect(await response(core, request({ type: "commit-save", token: prepared.token }, 3, 0)))
+      .toMatchObject({ type: "save-committed", revision: 0, merged: undefined, notebookRevision: 0 });
+
+    const external = structuredClone(notebook);
+    external.pages[0].title = "External title";
+    external.pages[0].updatedAt += 10;
+    external.updatedAt += 10;
+    expect(await response(core, request({ type: "merge-external", raw: JSON.stringify(external) }, 4, 0)))
+      .toMatchObject({ type: "external-merged", notebook: { pages: [{ title: "External title" }] }, notebookRevision: 0 });
+  });
+
   it("rejects revision gaps and stale generations", async () => {
     const core = new InkWorkerCore({ offscreenCanvas: false, imageBitmap: false });
     const notebook = createNotebook();
@@ -54,14 +80,17 @@ describe("InkWorkerCore persistence mirror", () => {
     } }, 2))).toMatchObject({ type: "error", code: "revision-gap" });
     const stale = { ...request({ type: "barrier", minimumRevision: 0 }, 3), generation: 2 } as InkWorkerRequest;
     expect(await response(core, stale)).toMatchObject({ type: "error", code: "stale-generation" });
+    expect(await response(core, request({ type: "apply-operation", revision: 1, operation: {
+      type: "replace-notebook", notebook,
+    } }, 4, 0))).toMatchObject({ type: "error", code: "revision-gap", notebookRevision: 0 });
   });
 
   it("acknowledges render-generation cancellation without changing the notebook revision", async () => {
     const core = new InkWorkerCore({ offscreenCanvas: false, imageBitmap: false, transferable: true });
     const notebook = createNotebook();
     await response(core, request({ type: "initialize-notebook", notebook, revision: 4 }));
-    expect(await response(core, request({ type: "cancel-render-generation", renderGeneration: 8 }, 2)))
-      .toMatchObject({ type: "renders-cancelled", renderGeneration: 8, generation: 1 });
+    expect(await response(core, request({ type: "cancel-render-generation", renderGeneration: 8 }, 2, 4)))
+      .toMatchObject({ type: "renders-cancelled", renderGeneration: 8, generation: 1, notebookRevision: 4 });
     expect(await response(core, request({ type: "barrier", minimumRevision: 4 }, 3)))
       .toMatchObject({ type: "barrier-complete", revision: 4 });
   });
@@ -169,7 +198,7 @@ describe("InkWorkerCore persistence mirror", () => {
       });
       await response(core, request({ type: "initialize-notebook", notebook, revision: 0 }));
       expect(await response(core, request({ type: "render-tile", pageId: page.id, cell: "0:0", density: 2,
-        revision: 1, renderGeneration: 1, priority: "visible", width: 320, height: 440 }, 2)))
+        revision: 1, renderGeneration: 1, priority: "visible", width: 320, height: 440 }, 2, 0)))
         .toMatchObject({ type: "tile-rendered", cell: "0:0" });
       expect(stroke).toHaveBeenCalledOnce();
     } finally {

@@ -23,7 +23,8 @@ scope.onmessage = (event: MessageEvent<InkWorkerRequest>) => {
         && queued.generation === request.generation && queued.renderGeneration < request.renderGeneration) {
         queue.splice(index, 1);
         scope.postMessage({ type: "error", requestId: queued.requestId, sessionId: queued.sessionId,
-          generation: queued.generation, code: "stale-generation", message: "Queued tile belongs to an obsolete render generation" });
+          generation: queued.generation, notebookRevision: queued.notebookRevision,
+          code: "stale-generation", message: "Queued tile belongs to an obsolete render generation" });
       }
     }
   }

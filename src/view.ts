@@ -93,6 +93,8 @@ export class InkView extends FileView {
   private ctx!: CanvasRenderingContext2D;
   private previewCanvas!: HTMLCanvasElement;
   private previewCtx!: CanvasRenderingContext2D;
+  private confirmedPreviewCanvas!: HTMLCanvasElement;
+  private confirmedPreviewCtx!: CanvasRenderingContext2D;
   private lassoCanvas!: HTMLCanvasElement;
   private lassoCtx!: CanvasRenderingContext2D;
   private tiles!: TileRenderer;
@@ -124,6 +126,7 @@ export class InkView extends FileView {
   private activeStroke: InkStroke | null = null;
   private workerStrokePointIndex = 0;
   private confirmedStrokeOutlines = new Map<string, ConfirmedStrokeOutline>();
+  private confirmedPreviewDirty = false;
   private pendingInkStrokes: InkStroke[] = [];
   private committingInkStrokes: InkStroke[] | null = null;
   private pendingInkPageId: string | null = null;
@@ -168,6 +171,7 @@ export class InkView extends FileView {
   private resizeRequested = false;
   private zoomRenderTimer: number | undefined;
   private inkCommitTimer: number | undefined;
+  private pageNavigationGeneration = 0;
 
   constructor(leaf: WorkspaceLeaf, store: NotebookStore, private readonly workers?: InkWorkerService) {
     super(leaf);
@@ -182,12 +186,7 @@ export class InkView extends FileView {
   getIcon(): string { return "pen-line"; }
 
   revealPage(pageId: string): void {
-    this.finishPointerInput(false);
-    const index = this.notebook.pages.findIndex((page) => page.id === pageId);
-    if (index < 0) return;
-    this.pageIndex = index;
-    this.renderPageRail();
-    this.renderPage();
+    this.navigateToPage(pageId);
   }
 
   async onOpen(): Promise<void> {
@@ -206,6 +205,7 @@ export class InkView extends FileView {
   }
 
   async onClose(): Promise<void> {
+    this.pageNavigationGeneration += 1;
     if (this.renderFrame !== null) window.cancelAnimationFrame(this.renderFrame);
     this.renderFrame = null;
     if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
@@ -221,6 +221,7 @@ export class InkView extends FileView {
   }
 
   async onLoadFile(file: TFile): Promise<void> {
+    this.pageNavigationGeneration += 1;
     this.tiles?.setBackend?.(null);
     this.workerSession?.dispose();
     this.workerSession = null;
@@ -254,6 +255,7 @@ export class InkView extends FileView {
   }
 
   async onUnloadFile(file: TFile): Promise<void> {
+    this.pageNavigationGeneration += 1;
     this.finishPointerInput(false);
     this.cancelPendingInkCommitTimer();
     this.clearSaveTimers();
@@ -480,6 +482,9 @@ export class InkView extends FileView {
     this.lassoCanvas.style.display = "none";
     this.lassoCanvas.style.pointerEvents = "none";
     this.lassoCtx = this.lassoCanvas.getContext("2d")!;
+    this.confirmedPreviewCanvas = this.pageElement.createEl("canvas", { cls: "ink-canvas ink-confirmed-preview-canvas" });
+    this.confirmedPreviewCanvas.style.pointerEvents = "none";
+    this.confirmedPreviewCtx = this.confirmedPreviewCanvas.getContext("2d")!;
     this.previewCanvas = this.pageElement.createEl("canvas", { cls: "ink-canvas ink-preview-canvas" });
     this.previewCanvas.style.pointerEvents = "none";
     this.previewCtx = this.previewCanvas.getContext("2d")!;
@@ -524,7 +529,7 @@ export class InkView extends FileView {
       button.createDiv({ cls: `ink-page-thumb-paper ink-paper-${page.paper}` });
       button.createSpan({ text: String(index + 1), cls: "ink-page-thumb-number" });
       button.createSpan({ text: page.title, cls: "ink-page-thumb-title" });
-      button.addEventListener("click", () => { this.finishPointerInput(false); this.pageIndex = index; this.renderPageRail(); this.renderPage(); });
+      button.addEventListener("click", () => this.navigateToPage(page.id));
     });
     rail.querySelector<HTMLElement>(".ink-page-thumb.is-active")?.scrollIntoView?.({ block: "nearest" });
   }
@@ -611,6 +616,7 @@ export class InkView extends FileView {
       this.renderFrame = null;
       this.flushPendingLassoPoint();
       this.flushWorkerStrokePoints();
+      if (this.confirmedPreviewDirty) this.redrawConfirmedPreview();
       const shouldResize = this.resizeRequested;
       this.resizeRequested = false;
       if (shouldResize) this.resizeCanvas();
@@ -633,7 +639,13 @@ export class InkView extends FileView {
     ctx.setTransform(this.overlayScaleX, 0, 0, this.overlayScaleY, -x * this.overlayScaleX, -y * this.overlayScaleY);
   }
 
-  private resizePreview(): void { this.resizeOverlay(this.previewCanvas, this.previewCtx, OVERLAY_PIXEL_BUDGET); }
+  private resizePreview(): void {
+    this.resizeOverlay(this.previewCanvas, this.previewCtx, OVERLAY_PIXEL_BUDGET);
+    if (this.confirmedPreviewCanvas && this.confirmedPreviewCtx) {
+      this.resizeOverlay(this.confirmedPreviewCanvas, this.confirmedPreviewCtx, OVERLAY_PIXEL_BUDGET);
+      this.redrawConfirmedPreview();
+    }
+  }
 
   private drawPreview(): void {
     const outlines = this.confirmedStrokeOutlines ?? (this.confirmedStrokeOutlines = new Map());
@@ -647,58 +659,74 @@ export class InkView extends FileView {
     this.previewCanvas.classList.toggle("is-highlighter-preview", strokes.every(stroke => stroke.tool === "highlighter"));
     for (const stroke of strokes) {
       const confirmed = outlines.get(stroke.id);
-      if (confirmed) this.drawConfirmedOutline(confirmed.points, stroke.color, stroke.opacity, stroke.width, confirmed.mode);
       drawImmediateStrokeTail(this.previewCtx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight, confirmed?.sampleCount ?? 0);
     }
   }
 
-  private drawConfirmedOutline(points: Float32Array, color: string, opacity: number, width: number, mode: "pen" | "highlighter"): void {
+  private redrawConfirmedPreview(): void {
+    this.confirmedPreviewDirty = false;
+    if (!this.confirmedPreviewCanvas || !this.confirmedPreviewCtx) return;
+    const outlines = this.confirmedStrokeOutlines ?? (this.confirmedStrokeOutlines = new Map());
+    const strokes = [...this.pendingInkStrokes];
+    if (this.activeStroke && (this.activeStroke.tool === "pen" || this.activeStroke.tool === "highlighter")) strokes.push(this.activeStroke);
+    this.confirmedPreviewCtx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
+    const confirmedStrokes = strokes.filter((stroke) => outlines.has(stroke.id));
+    this.confirmedPreviewCanvas.classList.toggle("is-highlighter-preview",
+      confirmedStrokes.length > 0 && confirmedStrokes.every((stroke) => stroke.tool === "highlighter"));
+    for (const stroke of confirmedStrokes) {
+      const confirmed = outlines.get(stroke.id)!;
+      this.drawConfirmedOutline(this.confirmedPreviewCtx, confirmed.points, stroke.color, stroke.opacity, stroke.width, confirmed.mode);
+    }
+  }
+
+  private drawConfirmedOutline(ctx: CanvasRenderingContext2D, points: Float32Array, color: string, opacity: number, width: number,
+    mode: "pen" | "highlighter"): void {
     if (points.length < 4) return;
-    this.previewCtx.save();
-    this.previewCtx.globalAlpha = opacity;
+    ctx.save();
+    ctx.globalAlpha = opacity;
     const scaleX = this.canvasLogicalWidth / this.notebook.pageWidth;
     const scaleY = this.canvasLogicalHeight / this.notebook.pageHeight;
-    this.previewCtx.strokeStyle = color;
-    this.previewCtx.fillStyle = color;
-    this.previewCtx.lineCap = "round";
-    this.previewCtx.lineJoin = "round";
+    ctx.strokeStyle = color;
+    ctx.fillStyle = color;
+    ctx.lineCap = "round";
+    ctx.lineJoin = "round";
     if (mode === "highlighter") {
-      this.previewCtx.globalCompositeOperation = "multiply";
-      this.previewCtx.lineWidth = width * (scaleX + scaleY) / 2;
-      this.previewCtx.beginPath();
-      this.previewCtx.moveTo(points[0] * scaleX, points[1] * scaleY);
+      ctx.globalCompositeOperation = "multiply";
+      ctx.lineWidth = width * (scaleX + scaleY) / 2;
+      ctx.beginPath();
+      ctx.moveTo(points[0] * scaleX, points[1] * scaleY);
       for (let index = 2; index < points.length; index += 2) {
         const previousX = points[index - 2] * scaleX;
         const previousY = points[index - 1] * scaleY;
         const pointX = points[index] * scaleX;
         const pointY = points[index + 1] * scaleY;
         const last = index === points.length - 2;
-        this.previewCtx.quadraticCurveTo(previousX, previousY,
+        ctx.quadraticCurveTo(previousX, previousY,
           last ? pointX : (previousX + pointX) / 2,
           last ? pointY : (previousY + pointY) / 2);
       }
-      this.previewCtx.lineTo(points[points.length - 2] * scaleX, points[points.length - 1] * scaleY);
-      this.previewCtx.stroke();
+      ctx.lineTo(points[points.length - 2] * scaleX, points[points.length - 1] * scaleY);
+      ctx.stroke();
     } else {
-      this.previewCtx.globalCompositeOperation = "source-over";
-      this.previewCtx.beginPath();
+      ctx.globalCompositeOperation = "source-over";
+      ctx.beginPath();
       const lastX = points[points.length - 2] * scaleX;
       const lastY = points[points.length - 1] * scaleY;
       const firstX = points[0] * scaleX;
       const firstY = points[1] * scaleY;
-      this.previewCtx.moveTo((lastX + firstX) / 2, (lastY + firstY) / 2);
+      ctx.moveTo((lastX + firstX) / 2, (lastY + firstY) / 2);
       for (let index = 0; index < points.length; index += 2) {
         const next = (index + 2) % points.length;
         const pointX = points[index] * scaleX;
         const pointY = points[index + 1] * scaleY;
         const nextX = points[next] * scaleX;
         const nextY = points[next + 1] * scaleY;
-        this.previewCtx.quadraticCurveTo(pointX, pointY, (pointX + nextX) / 2, (pointY + nextY) / 2);
+        ctx.quadraticCurveTo(pointX, pointY, (pointX + nextX) / 2, (pointY + nextY) / 2);
       }
-      this.previewCtx.closePath();
-      this.previewCtx.fill();
+      ctx.closePath();
+      ctx.fill();
     }
-    this.previewCtx.restore();
+    ctx.restore();
   }
 
   private beginLassoPreview(page: InkPage): void {
@@ -794,9 +822,10 @@ export class InkView extends FileView {
       if (this.pendingInkStrokes.length === 0) this.pendingInkPageId = null;
       const outlines = this.confirmedStrokeOutlines ?? (this.confirmedStrokeOutlines = new Map());
       for (const stroke of batch) outlines.delete(stroke.id);
+      this.confirmedPreviewDirty = true;
       if (this.viewReady && page === this.currentPage()) {
         if (!committed) this.drawStrokes(page.strokes);
-        else this.drawPreview();
+        else { this.redrawConfirmedPreview(); this.drawPreview(); }
       }
       if (this.pendingInkStrokes.length > 0) this.schedulePendingInkCommit(page);
       else if (this.activePointerId === null) {
@@ -830,7 +859,12 @@ export class InkView extends FileView {
     this.pendingInkStrokes = [];
     this.pendingInkPageId = null;
     this.confirmedStrokeOutlines.clear();
+    this.confirmedPreviewDirty = false;
     this.tiles?.cancelInkCommit();
+    if (this.confirmedPreviewCanvas) {
+      this.confirmedPreviewCanvas.width = this.confirmedPreviewCanvas.height = 1;
+      this.confirmedPreviewCanvas.classList.remove("is-highlighter-preview");
+    }
     if (this.previewCanvas) {
       this.previewCanvas.width = this.previewCanvas.height = 1;
       this.previewCanvas.classList.remove("is-highlighter-preview");
@@ -857,14 +891,15 @@ export class InkView extends FileView {
 
   private onPointerDown(event: PointerEvent): void {
     if (event.pointerType === "touch") return;
+    this.pageNavigationGeneration += 1;
     if (this.activePointerId !== null) this.finishPointerInput(false);
     const page = this.currentPage();
     const tool = this.state.tool;
+    const rect = this.pageElement.getBoundingClientRect();
     this.tiles?.beginInput?.();
     this.cancelPendingInkCommitTimer();
     if (tool === "pen" || tool === "highlighter") this.tiles.pauseInkCommit();
     else if (this.pendingInkStrokes.length > 0 || this.committingInkStrokes) this.discardPendingInkPreview();
-    this.updateViewport(true);
     if (this.saveTimer !== undefined) {
       window.clearTimeout(this.saveTimer);
       this.saveTimer = undefined;
@@ -880,7 +915,7 @@ export class InkView extends FileView {
       smoothing: tool === "pen" || tool === "highlighter" ? this.state.smoothing : undefined,
     };
     this.pageElement.setPointerCapture(event.pointerId);
-    const point = this.toPoint(event);
+    const point = this.toPoint(event, rect);
     this.erasedStrokeIds.clear();
     this.erasedCandidateIds.clear();
     this.erasedStrokes = [];
@@ -1049,6 +1084,7 @@ export class InkView extends FileView {
         sampleCount: response.sampleCount ?? stroke.points.length,
         mode: response.outlineMode ?? "pen",
       });
+      this.confirmedPreviewDirty = true;
       this.requestRender();
     });
   }
@@ -1297,10 +1333,39 @@ export class InkView extends FileView {
   }
 
   private changePage(delta: number): void {
+    const index = Math.max(0, Math.min(this.notebook.pages.length - 1, this.pageIndex + delta));
+    const page = this.notebook.pages[index];
+    if (page) this.navigateToPage(page.id);
+  }
+
+  private navigateToPage(pageId: string): void {
+    if (this.currentPage().id === pageId || !this.pageById(pageId)) return;
     this.finishPointerInput(false);
-    this.pageIndex = Math.max(0, Math.min(this.notebook.pages.length - 1, this.pageIndex + delta));
-    this.renderPageRail();
-    this.renderPage();
+    this.clearSaveTimers();
+    const navigationGeneration = ++this.pageNavigationGeneration;
+    const file = this.file;
+    const session = this.workerSession;
+    const workerRevision = this.workerRevision;
+    void (async () => {
+      if (file && (this.dirtyRevision > this.savedRevision || this.activeSave)) {
+        await this.save(file);
+      } else if (session) {
+        // A page can be selected while non-persistent Worker work is still in
+        // flight. Do not tear down the old page's render context before every
+        // operation through this point has been acknowledged.
+        try {
+          await session.barrier(workerRevision);
+        } catch (error) {
+          if (this.workerSession === session) this.disableWorkerSession(error);
+        }
+      }
+      if (navigationGeneration !== this.pageNavigationGeneration || !this.viewReady || file !== this.file) return;
+      const index = this.notebook.pages.findIndex((page) => page.id === pageId);
+      if (index < 0) return;
+      this.pageIndex = index;
+      this.renderPageRail();
+      this.renderPage();
+    })().catch((error) => new Notice(`Ink Notes could not switch pages: ${error instanceof Error ? error.message : String(error)}`));
   }
 
   private openPageMenu(event: MouseEvent): void {
@@ -1966,6 +2031,7 @@ export class InkView extends FileView {
     this.pendingInkPageId = null;
     this.tiles?.cancelInkCommit();
     if (this.previewCanvas) this.previewCanvas.width = this.previewCanvas.height = 1;
+    if (this.confirmedPreviewCanvas) this.confirmedPreviewCanvas.width = this.confirmedPreviewCanvas.height = 1;
     this.touchGesture = null;
     this.pendingMergedNotebook = null;
     this.pendingMergedNotebookIsFinal = false;
@@ -1982,6 +2048,7 @@ export class InkView extends FileView {
     this.eraserReplacementIds.clear();
     this.eraserReplacements = [];
     this.confirmedStrokeOutlines.clear();
+    this.confirmedPreviewDirty = false;
     this.clearSelection();
   }
 

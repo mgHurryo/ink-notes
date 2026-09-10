@@ -26,11 +26,13 @@ interface ViewInternals {
   duplicateCurrentPage(): void;
   deleteCurrentPage(): void;
   moveCurrentPage(delta: number): void;
+  navigateToPage(pageId: string): void;
   undo(): void;
   redo(): void;
   dirtyRevision: number;
   savedRevision: number;
   activeSave: Promise<void> | null;
+  workerRevision: number;
   eraseAt(point: { x: number; y: number; pressure: number; t: number }, page?: InkNotebook["pages"][number], mode?: "stroke" | "circle" | "square", size?: number): boolean;
   finishLasso(page: InkNotebook["pages"][number]): void;
   state: { tool: string; smoothing: number; eraserMode: "stroke" | "circle" | "square"; eraserSize: number };
@@ -162,6 +164,14 @@ describe("consecutive handwriting input", () => {
     internal.onPointerMove(pointer(40, { getCoalescedEvents: () => [pointer(20), pointer(30)] }));
     expect(rect).toHaveBeenCalledOnce();
     expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2, 0.3, 0.4]);
+  });
+
+  it("reads layout once when a Pencil stroke starts", () => {
+    const { internal } = setup();
+    const rect = vi.fn(() => ({ left: 0, top: 0, width: 100, height: 100, x: 0, y: 0, right: 100, bottom: 100, toJSON: () => ({}) }));
+    internal.canvas.getBoundingClientRect = rect;
+    internal.onPointerDown(pointer(10));
+    expect(rect).toHaveBeenCalledOnce();
   });
 
   it("keeps an eraser reference hidden after pointer capture moves outside the page", () => {
@@ -351,6 +361,79 @@ describe("consecutive handwriting input", () => {
     await vi.advanceTimersByTimeAsync(500);
   });
 
+  it("accepts Pencil input while a 500ms Worker save preparation is pending", async () => {
+    const { internal, store } = setup();
+    const worker = {
+      barrier: vi.fn(async () => 1),
+      prepareSave: vi.fn(async () => {
+        if (worker.prepareSave.mock.calls.length === 1) await new Promise((resolve) => window.setTimeout(resolve, 500));
+        return { token: "slow-save", content: "worker-json", revision: 1 };
+      }),
+      commitSave: vi.fn(async () => ({ revision: 1 })),
+      abortSave: vi.fn(),
+      apply: vi.fn(async (revision: number) => ({ type: "operation-applied", revision })),
+    };
+    Object.assign(internal, { workerSession: worker, workerRevision: 1, dirtyRevision: 1 });
+    Object.assign(store, { readRaw: vi.fn(async () => "disk-json"), writeIfUnchanged: vi.fn(async () => true) });
+
+    const saving = internal.save();
+    await Promise.resolve();
+    internal.onPointerDown(pointer(10));
+    internal.onPointerMove(pointer(20));
+    expect(internal.activePointerId).toBe(7);
+    expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2]);
+    internal.onPointerUp(pointer(30));
+    await vi.advanceTimersByTimeAsync(500);
+    await saving;
+    expect(worker.prepareSave).toHaveBeenCalledTimes(2);
+    expect(internal.savedRevision).toBe(internal.dirtyRevision);
+  });
+
+  it("finalizes and flushes the current page before navigation", async () => {
+    const { internal, store, view } = setup();
+    const second = createPage("Second");
+    internal.notebook.pages.push(second);
+    internal.notebook.pageOrder.push(second.id);
+    Object.assign(internal, { viewReady: true });
+    const write = deferred<InkNotebook>();
+    store.save.mockReturnValue(write.promise);
+
+    internal.onPointerDown(pointer(10));
+    internal.onPointerMove(pointer(20));
+    internal.navigateToPage(second.id);
+    await Promise.resolve();
+
+    expect(internal.activePointerId).toBeNull();
+    expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2]);
+    expect(store.save).toHaveBeenCalledOnce();
+    expect(internal.pageIndex).toBe(0);
+
+    write.resolve(structuredClone(internal.notebook));
+    for (let index = 0; index < 12; index++) await Promise.resolve();
+    expect(internal.pageIndex).toBe(1);
+    expect(internal.renderPage).toHaveBeenCalledOnce();
+    expect(view.file).toBeDefined();
+  });
+
+  it("waits for the Worker operation barrier before a clean page navigation", async () => {
+    const { internal } = setup();
+    const second = createPage("Second");
+    internal.notebook.pages.push(second);
+    internal.notebook.pageOrder.push(second.id);
+    const barrier = deferred<number>();
+    const worker = { barrier: vi.fn(() => barrier.promise) };
+    Object.assign(internal, { viewReady: true, workerSession: worker, workerRevision: 7 });
+
+    internal.navigateToPage(second.id);
+    await Promise.resolve();
+    expect(worker.barrier).toHaveBeenCalledWith(7);
+    expect(internal.pageIndex).toBe(0);
+
+    barrier.resolve(7);
+    for (let index = 0; index < 5; index++) await Promise.resolve();
+    expect(internal.pageIndex).toBe(1);
+  });
+
   it("waits for a full writing idle interval before autosave work", async () => {
     const { internal, store } = setup();
     store.save.mockImplementation(async (_file, notebook) => notebook);
@@ -418,6 +501,8 @@ describe("consecutive handwriting input", () => {
     expect(store.save).not.toHaveBeenCalled();
     expect(parse).not.toHaveBeenCalled();
     expect(stringify).not.toHaveBeenCalled();
+    expect((internal as unknown as { saveRevisionWithWorker: Function }).saveRevisionWithWorker.toString())
+      .not.toMatch(/cloneNotebook|mergeNotebooks|JSON\.(?:parse|stringify)/);
     parse.mockRestore();
     stringify.mockRestore();
   });

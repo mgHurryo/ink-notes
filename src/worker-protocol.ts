@@ -78,6 +78,10 @@ interface RequestBase {
   requestId: number;
   sessionId: string;
   generation: number;
+  // File-generation checks protect the session identity; notebookRevision
+  // protects the state within that file for every request, including control
+  // messages that do not otherwise carry an operation or tile revision.
+  notebookRevision: number;
 }
 
 export type InkWorkerRequest =
@@ -107,10 +111,11 @@ interface ResponseBase {
   requestId: number;
   sessionId: string;
   generation: number;
+  notebookRevision: number;
 }
 
 export type InkWorkerResponse =
-  | { type: "ready"; requestId: 0; sessionId: ""; generation: 0; capabilities: WorkerCapabilities }
+  | { type: "ready"; requestId: 0; sessionId: ""; generation: 0; notebookRevision: 0; capabilities: WorkerCapabilities }
   | ResponseBase & { type: "initialized"; notebook: InkNotebook; revision: number }
   | ResponseBase & {
     type: "operation-applied";

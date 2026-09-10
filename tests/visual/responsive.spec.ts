@@ -225,25 +225,31 @@ test("a long highlighter stroke stays complete before pointerup", async ({ page 
   await page.mouse.move(end.x, end.y, { steps: 24 });
 
   const preview = page.locator(".ink-preview-canvas");
+  const previewLayers = page.locator(".ink-confirmed-preview-canvas, .ink-preview-canvas");
   await expect(preview).toHaveClass(/is-highlighter-preview/);
-  await expect.poll(async () => preview.evaluate((canvas: HTMLCanvasElement) => {
-    const context = canvas.getContext("2d");
-    if (!context || canvas.width <= 1) return 0;
-    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
-    let minX = canvas.width, maxX = -1;
-    for (let index = 3; index < pixels.length; index += 4) if (pixels[index] > 0) {
-      const x = ((index - 3) / 4) % canvas.width;
-      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+  await expect.poll(async () => previewLayers.evaluateAll((canvases: HTMLCanvasElement[]) => {
+    let minX = Number.POSITIVE_INFINITY, maxX = -1, width = 1;
+    for (const canvas of canvases) {
+      const context = canvas.getContext("2d");
+      if (!context || canvas.width <= 1) continue;
+      width = canvas.width;
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      for (let index = 3; index < pixels.length; index += 4) if (pixels[index] > 0) {
+        const x = ((index - 3) / 4) % canvas.width;
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+      }
     }
-    return maxX < minX ? 0 : (maxX - minX) / canvas.width;
+    return maxX < minX ? 0 : (maxX - minX) / width;
   })).toBeGreaterThan(0.55);
 
   await page.mouse.up();
   await expect(preview).not.toHaveClass(/is-highlighter-preview/);
-  await expect.poll(async () => preview.evaluate((canvas: HTMLCanvasElement) => {
-    const pixels = canvas.getContext("2d")?.getImageData(0, 0, canvas.width, canvas.height).data;
-    if (!pixels) return -1;
-    for (let index = 3; index < pixels.length; index += 4) if (pixels[index] > 0) return 1;
+  await expect.poll(async () => previewLayers.evaluateAll((canvases: HTMLCanvasElement[]) => {
+    for (const canvas of canvases) {
+      const pixels = canvas.getContext("2d")?.getImageData(0, 0, canvas.width, canvas.height).data;
+      if (!pixels) return -1;
+      for (let index = 3; index < pixels.length; index += 4) if (pixels[index] > 0) return 1;
+    }
     return 0;
   })).toBe(0);
   expect(await preview.evaluate((canvas: HTMLCanvasElement) => canvas.width)).toBeGreaterThan(1);
@@ -324,15 +330,19 @@ test("large-notebook tile and save work does not block the writing thread", asyn
   expect(longTasks, `main-thread long tasks: ${longTasks.join(", ")}`).toEqual([]);
 });
 
-test("Worker and fallback pen/highlighter rasterization remain pixel-equivalent", async ({ page }) => {
+test("Worker and fallback ink operations remain pixel-equivalent at high DPR", async ({ page }) => {
   await page.goto("/");
   await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
   const comparisons = await page.evaluate(async () => {
-    const hook = (window as typeof window & { __inkNotesPreview?: { compareRenderer(mode?: "pen" | "highlighter"): Promise<{
+    type Mode = "pen" | "highlighter" | "stroke-eraser" | "circle-eraser" | "square-eraser" | "lasso";
+    const hook = (window as typeof window & { __inkNotesPreview?: { compareRenderer(mode?: Mode): Promise<{
       compared: number; different: number; inkPixels: number; expectedInkPixels: number; totalPixels: number }> } })
       .__inkNotesPreview;
     if (!hook) throw new Error("Ink preview test hook is unavailable");
-    return [await hook.compareRenderer("pen"), await hook.compareRenderer("highlighter")];
+    const modes: Mode[] = ["pen", "highlighter", "stroke-eraser", "circle-eraser", "square-eraser", "lasso"];
+    const results = [];
+    for (const mode of modes) results.push(await hook.compareRenderer(mode));
+    return results;
   });
   for (const comparison of comparisons) {
     expect(comparison.inkPixels).toBeGreaterThan(0);
