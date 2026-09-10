@@ -80,10 +80,24 @@ describe("interactive tile commits", () => {
     };
     const tile = renderer.createTile({ state, cell: "0:0", density: 4 });
     expect(canvas.width).toBe(128 * 4 + 32);
-    expect(canvas.style.cssText).toContain("left:-4px");
-    expect(canvas.style.cssText).toContain("top:-4px");
+    expect(canvas.style.left).toBe("-4px");
+    expect(canvas.style.top).toBe("-4px");
     expect(canvas.getContext).toHaveBeenCalled();
     vi.stubGlobal("document", originalDocument);
+  });
+
+  it("scales mounted tile geometry without changing its raster density", () => {
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    renderer.displayScale = 2;
+    const tile = {
+      cell: "1:0", density: 4,
+      state: { index: { width: 300, height: 200 } },
+      canvas: { width: 544, height: 544, style: {} },
+      node: { style: {} },
+    };
+    renderer.sizeTile(tile);
+    expect(tile.node.style).toMatchObject({ left: "256px", top: "0px", width: "256px", height: "256px" });
+    expect(tile.canvas.style).toMatchObject({ left: "-8px", top: "-8px", width: "272px", height: "272px" });
   });
 
   it("composes newly added ink over an exact stale tile without replaying history", () => {

@@ -444,9 +444,12 @@
 }
 
 .ink-paper-blank { background-image: none; }
-.ink-paper-ruled { background-image: repeating-linear-gradient(to bottom, transparent 0, transparent 31px, var(--ink-rule) 32px); }
-.ink-paper-grid { background-image: linear-gradient(to right, var(--ink-rule) 1px, transparent 1px), linear-gradient(to bottom, var(--ink-rule) 1px, transparent 1px); background-size: 32px 32px; }
-.ink-paper-dot { background-image: radial-gradient(var(--ink-rule) 1px, transparent 1px); background-size: 24px 24px; }
+.ink-paper-ruled {
+  background-image: linear-gradient(to bottom, transparent calc(31px * var(--ink-page-scale, 1)), var(--ink-rule) calc(32px * var(--ink-page-scale, 1)));
+  background-size: 100% calc(32px * var(--ink-page-scale, 1));
+}
+.ink-paper-grid { background-image: linear-gradient(to right, var(--ink-rule) 1px, transparent 1px), linear-gradient(to bottom, var(--ink-rule) 1px, transparent 1px); background-size: calc(32px * var(--ink-page-scale, 1)) calc(32px * var(--ink-page-scale, 1)); }
+.ink-paper-dot { background-image: radial-gradient(var(--ink-rule) calc(1px * var(--ink-page-scale, 1)), transparent calc(1px * var(--ink-page-scale, 1))); background-size: calc(24px * var(--ink-page-scale, 1)) calc(24px * var(--ink-page-scale, 1)); }
 .ink-canvas { position: absolute; inset: 0; display: block; }
 .ink-lasso-preview-canvas { z-index: 2; will-change: transform; }
 .ink-selection-canvas { z-index: 3; }

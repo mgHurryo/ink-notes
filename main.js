@@ -645,6 +645,7 @@ var TileRenderer = class {
     this.backend = null;
     this.backendError = null;
     this.pendingTiles = /* @__PURE__ */ new Map();
+    this.displayScale = 1;
   }
   setBackend(backend, onError) {
     var _a, _b;
@@ -668,6 +669,10 @@ var TileRenderer = class {
       this.jobs = [];
     }
     state.index.sync(page.strokes, exclude);
+  }
+  setDisplayScale(scale) {
+    this.displayScale = Number.isFinite(scale) && scale > 0 ? scale : 1;
+    for (const tile of this.cache.values()) this.sizeTile(tile);
   }
   sync(strokes, exclude) {
     var _a;
@@ -1062,12 +1067,12 @@ var TileRenderer = class {
       if (context) context.drawImage(result.bitmap, 0, 0);
       result.bitmap.close();
     }
-    canvas.style.cssText = `position:absolute;left:${-BLEED}px;top:${-BLEED}px;width:${result.canvasWidth / result.density}px;height:${result.canvasHeight / result.density}px`;
+    canvas.style.cssText = "position:absolute";
     const node = document.createElement("div");
     node.dataset.cell = result.cell;
-    node.style.cssText = `position:absolute;overflow:hidden;left:${result.x}px;top:${result.y}px;width:${result.width}px;height:${result.height}px`;
+    node.style.cssText = "position:absolute;overflow:hidden";
     node.appendChild(canvas);
-    return {
+    const tile = {
       node,
       canvas,
       revision: result.revision,
@@ -1077,6 +1082,8 @@ var TileRenderer = class {
       cell: result.cell,
       density: result.density
     };
+    this.sizeTile(tile);
+    return tile;
   }
   createTile(job) {
     return this.createTileFrom(job);
@@ -1099,10 +1106,10 @@ var TileRenderer = class {
     const bleedPixels = Math.ceil(BLEED * density);
     canvas.width = Math.ceil(width * density) + bleedPixels * 2;
     canvas.height = Math.ceil(height * density) + bleedPixels * 2;
-    canvas.style.cssText = "position:absolute;left:" + -BLEED + "px;top:" + -BLEED + "px;width:" + canvas.width / density + "px;height:" + canvas.height / density + "px";
+    canvas.style.cssText = "position:absolute";
     const node = document.createElement("div");
     node.dataset.cell = cell;
-    node.style.cssText = "position:absolute;overflow:hidden;left:" + x2 + "px;top:" + y2 + "px;width:" + width + "px;height:" + height + "px";
+    node.style.cssText = "position:absolute;overflow:hidden";
     node.appendChild(canvas);
     const ctx = canvas.getContext("2d");
     if (base) ctx.drawImage(base.canvas, 0, 0);
@@ -1110,7 +1117,7 @@ var TileRenderer = class {
     const rect = { x: x2, y: y2, width, height };
     const strokes = base ? additions : state.index.query(rect);
     for (const stroke of strokes) drawInkStroke(ctx, stroke, state.index.width, state.index.height);
-    return {
+    const tile = {
       node,
       canvas,
       revision: (_a = state.index.revisions.get(cell)) != null ? _a : 0,
@@ -1120,6 +1127,23 @@ var TileRenderer = class {
       cell,
       density
     };
+    this.sizeTile(tile);
+    return tile;
+  }
+  sizeTile(tile) {
+    var _a;
+    const [column, row] = tile.cell.split(":").map(Number);
+    const x2 = column * TILE, y2 = row * TILE;
+    const width = Math.min(TILE, tile.state.index.width - x2), height = Math.min(TILE, tile.state.index.height - y2);
+    const scale = (_a = this.displayScale) != null ? _a : 1;
+    tile.canvas.style.left = `${-BLEED * scale}px`;
+    tile.canvas.style.top = `${-BLEED * scale}px`;
+    tile.canvas.style.width = `${tile.canvas.width / tile.density * scale}px`;
+    tile.canvas.style.height = `${tile.canvas.height / tile.density * scale}px`;
+    tile.node.style.left = `${x2 * scale}px`;
+    tile.node.style.top = `${y2 * scale}px`;
+    tile.node.style.width = `${width * scale}px`;
+    tile.node.style.height = `${height * scale}px`;
   }
   cacheTile(tile) {
     const { state, cell, density } = tile;
@@ -1555,6 +1579,8 @@ var InkView = class extends import_obsidian.FileView {
     this.overlayScaleY = 1;
     this.canvasLogicalWidth = 1;
     this.canvasLogicalHeight = 1;
+    this.pageBaseWidth = 1;
+    this.pageBaseHeight = 1;
     this.eraserHoverPoint = null;
     this.eraserPointerInside = false;
     this.syncing = false;
@@ -1573,6 +1599,7 @@ var InkView = class extends import_obsidian.FileView {
     this.workerStrokePointIndex = 0;
     this.confirmedStrokeOutlines = /* @__PURE__ */ new Map();
     this.confirmedPreviewDirty = false;
+    this.sealedPreviewStrokeIds = /* @__PURE__ */ new Set();
     this.pendingInkStrokes = [];
     this.committingInkStrokes = null;
     this.pendingInkPageId = null;
@@ -2035,9 +2062,10 @@ var InkView = class extends import_obsidian.FileView {
     if (!this.canvas || !this.pageElement) return;
     this.layoutPage();
     const rect = this.pageElement.getBoundingClientRect();
-    this.canvasLogicalWidth = Math.max(1, Math.round(rect.width / this.zoom * 64) / 64);
-    this.canvasLogicalHeight = Math.max(1, Math.round(rect.height / this.zoom * 64) / 64);
+    this.canvasLogicalWidth = Math.max(1, Math.round(this.pageBaseWidth * 64) / 64);
+    this.canvasLogicalHeight = Math.max(1, Math.round(this.pageBaseHeight * 64) / 64);
     this.refreshEraserCursor();
+    this.tiles.setDisplayScale(this.zoom);
     this.tiles.setPage(this.currentPage(), this.canvasLogicalWidth, this.canvasLogicalHeight, this.tileExclusion());
     this.updateViewport(true);
   }
@@ -2115,23 +2143,28 @@ var InkView = class extends import_obsidian.FileView {
   resizeOverlay(canvas, ctx, maxPixels = 4e6) {
     const { x: x2, y: y2, width, height } = this.viewport;
     const resolution = canvasResolution(width, height, window.devicePixelRatio || 1, this.zoom, maxPixels);
+    const left = x2 * this.zoom + "px", top = y2 * this.zoom + "px";
+    const displayWidth = width * this.zoom + "px", displayHeight = height * this.zoom + "px";
+    const changed = canvas.width !== resolution.width || canvas.height !== resolution.height || canvas.style.left !== left || canvas.style.top !== top || canvas.style.width !== displayWidth || canvas.style.height !== displayHeight;
     if (canvas.width !== resolution.width) canvas.width = resolution.width;
     if (canvas.height !== resolution.height) canvas.height = resolution.height;
-    canvas.style.left = x2 + "px";
-    canvas.style.top = y2 + "px";
-    canvas.style.width = width + "px";
-    canvas.style.height = height + "px";
+    canvas.style.left = left;
+    canvas.style.top = top;
+    canvas.style.width = displayWidth;
+    canvas.style.height = displayHeight;
     canvas.style.right = "auto";
     canvas.style.bottom = "auto";
     this.overlayScaleX = resolution.width / width;
     this.overlayScaleY = resolution.height / height;
     ctx.setTransform(this.overlayScaleX, 0, 0, this.overlayScaleY, -x2 * this.overlayScaleX, -y2 * this.overlayScaleY);
+    return changed;
   }
   resizePreview() {
     this.resizeOverlay(this.previewCanvas, this.previewCtx, OVERLAY_PIXEL_BUDGET);
     if (this.confirmedPreviewCanvas && this.confirmedPreviewCtx) {
-      this.resizeOverlay(this.confirmedPreviewCanvas, this.confirmedPreviewCtx, OVERLAY_PIXEL_BUDGET);
-      this.redrawConfirmedPreview();
+      if (this.resizeOverlay(this.confirmedPreviewCanvas, this.confirmedPreviewCtx, OVERLAY_PIXEL_BUDGET)) {
+        this.redrawConfirmedPreview();
+      }
     }
   }
   drawPreview() {
@@ -2146,14 +2179,18 @@ var InkView = class extends import_obsidian.FileView {
     this.previewCanvas.classList.toggle("is-highlighter-preview", strokes.every((stroke) => stroke.tool === "highlighter"));
     for (const stroke of strokes) {
       const confirmed = outlines.get(stroke.id);
+      if (confirmed) {
+        this.drawConfirmedOutline(this.previewCtx, confirmed.points, stroke.color, stroke.opacity, stroke.width, confirmed.mode);
+      }
       drawImmediateStrokeTail(this.previewCtx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight, (_b = confirmed == null ? void 0 : confirmed.sampleCount) != null ? _b : 0);
     }
   }
   redrawConfirmedPreview() {
-    var _a;
+    var _a, _b;
     this.confirmedPreviewDirty = false;
     if (!this.confirmedPreviewCanvas || !this.confirmedPreviewCtx) return;
     const outlines = (_a = this.confirmedStrokeOutlines) != null ? _a : this.confirmedStrokeOutlines = /* @__PURE__ */ new Map();
+    const sealed = (_b = this.sealedPreviewStrokeIds) != null ? _b : this.sealedPreviewStrokeIds = /* @__PURE__ */ new Set();
     const pending = [...this.pendingInkStrokes];
     const strokes = [...pending];
     if (this.activeStroke && (this.activeStroke.tool === "pen" || this.activeStroke.tool === "highlighter")) strokes.push(this.activeStroke);
@@ -2164,6 +2201,7 @@ var InkView = class extends import_obsidian.FileView {
       confirmedStrokes.length > 0 && confirmedStrokes.every((stroke) => stroke.tool === "highlighter")
     );
     for (const stroke of confirmedStrokes) {
+      if (sealed.has(stroke.id)) continue;
       const confirmed = outlines.get(stroke.id);
       if (confirmed) {
         this.drawConfirmedOutline(this.confirmedPreviewCtx, confirmed.points, stroke.color, stroke.opacity, stroke.width, confirmed.mode);
@@ -2174,6 +2212,21 @@ var InkView = class extends import_obsidian.FileView {
         drawInkStroke(this.confirmedPreviewCtx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
       }
     }
+  }
+  sealActivePreview() {
+    var _a;
+    if (!this.activeStroke || !this.confirmedPreviewCtx || typeof this.confirmedPreviewCtx.drawImage !== "function") return;
+    this.confirmedPreviewCtx.save();
+    this.confirmedPreviewCtx.setTransform(1, 0, 0, 1, 0, 0);
+    this.confirmedPreviewCtx.globalCompositeOperation = "source-over";
+    this.confirmedPreviewCtx.globalAlpha = 1;
+    this.confirmedPreviewCtx.drawImage(this.previewCanvas, 0, 0);
+    this.confirmedPreviewCtx.restore();
+    this.confirmedPreviewCanvas.classList.toggle(
+      "is-highlighter-preview",
+      this.pendingInkStrokes.length > 0 && this.pendingInkStrokes.every((stroke) => stroke.tool === "highlighter")
+    );
+    ((_a = this.sealedPreviewStrokeIds) != null ? _a : this.sealedPreviewStrokeIds = /* @__PURE__ */ new Set()).add(this.activeStroke.id);
   }
   drawConfirmedOutline(ctx, points, color, opacity, width, mode) {
     if (points.length < 4) return;
@@ -2243,8 +2296,8 @@ var InkView = class extends import_obsidian.FileView {
     this.lassoCanvas.height = resolution.height;
     this.lassoCanvas.style.left = "0";
     this.lassoCanvas.style.top = "0";
-    this.lassoCanvas.style.width = `${this.canvasLogicalWidth}px`;
-    this.lassoCanvas.style.height = `${this.canvasLogicalHeight}px`;
+    this.lassoCanvas.style.width = `${this.canvasLogicalWidth * this.zoom}px`;
+    this.lassoCanvas.style.height = `${this.canvasLogicalHeight * this.zoom}px`;
     this.lassoCtx.setTransform(
       resolution.width / this.canvasLogicalWidth,
       0,
@@ -2316,7 +2369,7 @@ var InkView = class extends import_obsidian.FileView {
     this.committingInkStrokes = batch;
     this.tiles.patchStrokes(batch, [], page.strokes);
     this.tiles.commitInk(batch, this.viewport, (window.devicePixelRatio || 1) * this.zoom, (committed) => {
-      var _a;
+      var _a, _b;
       if (this.committingInkStrokes !== batch) return;
       this.committingInkStrokes = null;
       if (!committed) {
@@ -2330,6 +2383,7 @@ var InkView = class extends import_obsidian.FileView {
       if (this.pendingInkStrokes.length === 0) this.pendingInkPageId = null;
       const outlines = (_a = this.confirmedStrokeOutlines) != null ? _a : this.confirmedStrokeOutlines = /* @__PURE__ */ new Map();
       for (const stroke of batch) outlines.delete(stroke.id);
+      for (const stroke of batch) (_b = this.sealedPreviewStrokeIds) == null ? void 0 : _b.delete(stroke.id);
       this.confirmedPreviewDirty = true;
       if (this.viewReady && page === this.currentPage()) {
         this.redrawConfirmedPreview();
@@ -2365,6 +2419,7 @@ var InkView = class extends import_obsidian.FileView {
     this.pendingInkStrokes = [];
     this.pendingInkPageId = null;
     this.confirmedStrokeOutlines.clear();
+    this.sealedPreviewStrokeIds.clear();
     this.confirmedPreviewDirty = false;
     (_a = this.tiles) == null ? void 0 : _a.cancelInkCommit();
     if (this.confirmedPreviewCanvas) {
@@ -2570,7 +2625,7 @@ var InkView = class extends import_obsidian.FileView {
       if (dx === this.lassoDrag.dx && dy === this.lassoDrag.dy) return false;
       this.lassoDrag.dx = dx;
       this.lassoDrag.dy = dy;
-      this.lassoCanvas.style.transform = `translate(${dx * this.canvasLogicalWidth}px, ${dy * this.canvasLogicalHeight}px)`;
+      this.lassoCanvas.style.transform = `translate(${dx * this.canvasLogicalWidth * this.zoom}px, ${dy * this.canvasLogicalHeight * this.zoom}px)`;
       return true;
     }
     const previous = this.lassoPath[this.lassoPath.length - 1];
@@ -2657,6 +2712,9 @@ var InkView = class extends import_obsidian.FileView {
       this.pushCommand(this.erasedStrokesCommand(page.id, this.erasedStrokes, this.eraserReplacements));
       this.drawInteractiveStrokes(page.strokes, true);
     } else if (this.activeStroke) {
+      this.drawPreview();
+      this.sealActivePreview();
+      this.confirmedPreviewDirty = false;
       this.markChanged(page);
       this.queueWorkerOperation({
         type: "complete-stroke",
@@ -2833,11 +2891,11 @@ var InkView = class extends import_obsidian.FileView {
     this.eraserCursor.toggleClass("is-square", mode === "square");
     this.eraserCursor.toggleClass("is-stroke", mode === "stroke");
     const size = mode === "stroke" ? STROKE_ERASER_HIT_RADIUS * 2 : eraserSize;
-    this.eraserCursor.style.width = `${size}px`;
-    this.eraserCursor.style.height = `${size}px`;
+    this.eraserCursor.style.width = `${size * this.zoom}px`;
+    this.eraserCursor.style.height = `${size * this.zoom}px`;
     if (!this.eraserHoverPoint) return;
-    this.eraserCursor.style.left = `${this.eraserHoverPoint.x * this.canvasLogicalWidth}px`;
-    this.eraserCursor.style.top = `${this.eraserHoverPoint.y * this.canvasLogicalHeight}px`;
+    this.eraserCursor.style.left = `${this.eraserHoverPoint.x * this.canvasLogicalWidth * this.zoom}px`;
+    this.eraserCursor.style.top = `${this.eraserHoverPoint.y * this.canvasLogicalHeight * this.zoom}px`;
   }
   addPage() {
     this.finishPointerInput(false);
@@ -3134,7 +3192,6 @@ page: ${this.currentPage().id}
       if (tool !== "lasso") this.clearSelection();
       this.updateBrushControls();
       this.updateToolButtons();
-      this.renderPage();
       this.refreshEraserCursor();
       if (this.sizePopoverOpen) {
         this.setSizePopoverOpen(true);
@@ -3202,17 +3259,19 @@ page: ${this.currentPage().id}
     const style = getComputedStyle(this.pageScroller);
     const width = Math.max(1, Math.min(980, this.pageScroller.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)));
     const height = width * this.notebook.pageHeight / this.notebook.pageWidth;
-    this.pageElement.style.width = width + "px";
-    this.pageElement.style.height = height + "px";
-    if (supportsLayoutZoom()) {
-      this.pageElement.style.zoom = String(this.zoom);
-      this.pageElement.style.transform = "none";
-    } else {
-      this.pageElement.style.zoom = "";
-      this.pageElement.style.transform = this.zoom === 1 ? "none" : "scale(" + this.zoom + ")";
+    this.pageBaseWidth = width;
+    this.pageBaseHeight = height;
+    const displayWidth = width * this.zoom;
+    const displayHeight = height * this.zoom;
+    this.pageElement.style.width = displayWidth + "px";
+    this.pageElement.style.height = displayHeight + "px";
+    if (typeof this.pageElement.style.setProperty === "function") {
+      this.pageElement.style.setProperty("--ink-page-scale", String(this.zoom));
     }
-    this.pageExtent.style.width = width * this.zoom + "px";
-    this.pageExtent.style.height = height * this.zoom + "px";
+    this.pageElement.style.zoom = "";
+    this.pageElement.style.transform = "none";
+    this.pageExtent.style.width = displayWidth + "px";
+    this.pageExtent.style.height = displayHeight + "px";
   }
   setZoom(value, target, anchor) {
     if (!Number.isFinite(value)) return;
@@ -3587,6 +3646,7 @@ page: ${this.currentPage().id}
     this.eraserReplacementIds.clear();
     this.eraserReplacements = [];
     this.confirmedStrokeOutlines.clear();
+    this.sealedPreviewStrokeIds.clear();
     this.confirmedPreviewDirty = false;
     this.clearSelection();
   }
@@ -3786,9 +3846,6 @@ function boundsForPointSets(pointSets) {
 }
 function notebooksEqual(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
-}
-function supportsLayoutZoom() {
-  return typeof CSS !== "undefined" && typeof CSS.supports === "function" && CSS.supports("zoom", "1");
 }
 function reconcileNotebook(target, incoming, selectedPageId, previousPageIndex) {
   const dimensionsChanged = target.pageWidth !== incoming.pageWidth || target.pageHeight !== incoming.pageHeight;
