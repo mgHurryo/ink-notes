@@ -1543,7 +1543,13 @@ var InkView = class extends import_obsidian.FileView {
     this.workers = workers;
     this.notebook = createNotebook();
     this.pageIndex = 0;
-    this.state = { tool: "pen", color: "#1b1b1b", width: 3, opacity: 1, smoothing: 0.7, eraserMode: "stroke", eraserSize: 32 };
+    this.state = {
+      tool: "pen",
+      pen: { color: "#1b1b1b", width: 3, opacity: 1, smoothing: 0.7 },
+      highlighter: { color: "#f2c94c", width: 18, opacity: 0.4, smoothing: 0.55 },
+      eraserMode: "stroke",
+      eraserSize: 32
+    };
     this.viewport = { x: 0, y: 0, width: 1, height: 1 };
     this.overlayScaleX = 1;
     this.overlayScaleY = 1;
@@ -1759,41 +1765,16 @@ var InkView = class extends import_obsidian.FileView {
       cls: "ink-size-popover",
       attr: { role: "dialog", "aria-label": "Tool settings", "aria-hidden": "true" }
     });
-    const header = popover.createDiv({ cls: "ink-size-popover-header" });
-    header.createSpan({ cls: "ink-size-popover-title", text: "Tool settings" });
-    header.createSpan({ cls: "ink-control-value", text: formatControlValue("Size", this.state.width) });
-    const input = popover.createEl("input", {
-      attr: {
-        type: "range",
-        min: "1",
-        max: "24",
-        step: "0.5",
-        value: String(this.state.width),
-        "aria-label": "Brush size"
-      }
-    });
-    const widths = this.addToolbarSection(popover, "Widths");
-    for (const width of [2, 4, 8]) {
-      const preset = widths.createEl("button", { cls: "ink-width-preset", attr: { type: "button", title: width + " px", "aria-label": width + " px", "data-width": String(width), "aria-pressed": String(this.state.width === width) } });
-      preset.createSpan({ cls: "ink-width-line" }).style.height = width + "px";
-      preset.addEventListener("click", () => {
-        this.state.width = width;
-        this.updateBrushControls();
-      });
-    }
-    this.addColorPicker(popover);
-    this.addRange(popover, "Opacity", 0.1, 1, 0.05, this.state.opacity, (value) => {
-      this.state.opacity = value;
-    });
-    this.addRange(popover, "Smoothing", 0, 1, 0.05, this.state.smoothing, (value) => {
-      this.state.smoothing = value;
-    });
+    this.addBrushSettings(popover, "pen", "Pen", [2, 4, 8], 24);
+    this.addBrushSettings(popover, "highlighter", "Highlighter", [8, 16, 24], 48);
     const eraser = popover.createDiv({ cls: "ink-eraser-settings" });
     eraser.createDiv({ cls: "ink-size-popover-title", text: "Eraser" });
+    eraser.createDiv({ cls: "ink-settings-label", text: "Mode" });
     const modes = eraser.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
-    for (const [mode, label, iconName] of [["stroke", "Stroke eraser", "eraser"], ["circle", "Circle eraser", "circle"], ["square", "Square eraser", "square"]]) {
+    for (const [mode, label, shortLabel, iconName] of [["stroke", "Stroke eraser", "Stroke", "eraser"], ["circle", "Circle eraser", "Circle", "circle"], ["square", "Square eraser", "Square", "square"]]) {
       const modeButton = modes.createEl("button", { cls: "ink-eraser-mode", attr: { type: "button", role: "radio", title: label, "aria-label": label, "aria-checked": String(this.state.eraserMode === mode), "data-eraser-mode": mode } });
       (0, import_obsidian.setIcon)(modeButton.createSpan({ cls: "ink-button-icon" }), iconName);
+      modeButton.createSpan({ cls: "ink-eraser-mode-label", text: shortLabel });
       modeButton.addEventListener("click", () => {
         this.state.eraserMode = mode;
         this.updateEraserControls();
@@ -1809,13 +1790,11 @@ var InkView = class extends import_obsidian.FileView {
       event.stopPropagation();
       this.setSizePopoverOpen(!this.sizePopoverOpen);
     });
-    input.addEventListener("input", () => {
-      const next = Number(input.value);
-      this.state.width = next;
-      this.updateBrushControls();
-    });
     this.registerDomEvent(document, "pointerdown", (event) => {
-      if (this.sizePopoverOpen && !container.contains(event.target)) close();
+      var _a;
+      const target = event.target;
+      const switchingSettingsTool = (_a = target == null ? void 0 : target.closest) == null ? void 0 : _a.call(target, ".ink-tool-button[aria-haspopup='dialog']");
+      if (this.sizePopoverOpen && !container.contains(target) && !switchingSettingsTool) close();
     });
     this.registerDomEvent(document, "keydown", (event) => {
       var _a;
@@ -1828,6 +1807,7 @@ var InkView = class extends import_obsidian.FileView {
     this.registerDomEvent(window, "scroll", () => this.positionSizePopover(), true);
     this.sizePopover = popover;
     this.sizePopoverButton = button;
+    this.updateBrushControls();
   }
   setSizePopoverOpen(open) {
     if (!this.sizePopover || !this.sizePopoverButton) return;
@@ -1840,9 +1820,10 @@ var InkView = class extends import_obsidian.FileView {
     if (open) {
       this.positionSizePopover();
       window.requestAnimationFrame(() => this.positionSizePopover());
+      const focusTarget = this.state.tool === "eraser" ? ".ink-eraser-mode" : `.ink-brush-settings[data-brush-tool="${this.state.tool}"] input, .ink-brush-settings[data-brush-tool="${this.state.tool}"] button`;
       window.requestAnimationFrame(() => {
         var _a, _b;
-        return (_b = (_a = this.sizePopover) == null ? void 0 : _a.querySelector(this.state.tool === "eraser" ? ".ink-eraser-mode" : "input, button")) == null ? void 0 : _b.focus();
+        return (_b = (_a = this.sizePopover) == null ? void 0 : _a.querySelector(focusTarget)) == null ? void 0 : _b.focus();
       });
     }
   }
@@ -1869,15 +1850,85 @@ var InkView = class extends import_obsidian.FileView {
     section.setAttribute("aria-label", label);
     return section.createDiv({ cls: "ink-toolbar-section-controls" });
   }
-  updateBrushControls() {
-    var _a, _b;
-    this.root.querySelectorAll(".ink-width-preset").forEach((button) => {
-      button.setAttribute("aria-pressed", String(Number(button.dataset.width) === this.state.width));
+  addBrushSettings(parent, tool, label, presets, maximum) {
+    const settings = this.brushSettings(tool);
+    const panel = parent.createDiv({ cls: "ink-brush-settings", attr: { "data-brush-tool": tool } });
+    const header = panel.createDiv({ cls: "ink-size-popover-header" });
+    header.createSpan({ cls: "ink-size-popover-title", text: `${label} settings` });
+    header.createSpan({ cls: "ink-control-value", text: formatControlValue("Size", settings.width) });
+    const preview = panel.createDiv({ cls: "ink-brush-preview", attr: { "aria-hidden": "true" } });
+    preview.createSpan({ cls: "ink-brush-preview-line" });
+    panel.createDiv({ cls: "ink-settings-label", text: "Size" });
+    const input = panel.createEl("input", { attr: {
+      type: "range",
+      min: "1",
+      max: String(maximum),
+      step: "0.5",
+      value: String(settings.width),
+      "aria-label": `${label} size`,
+      "data-control": "size"
+    } });
+    input.addEventListener("input", () => {
+      settings.width = Number(input.value);
+      this.updateBrushControls(tool);
     });
-    const input = (_a = this.sizePopover) == null ? void 0 : _a.querySelector("input[aria-label='Brush size']");
-    if (input) input.value = String(this.state.width);
-    const value = (_b = this.sizePopover) == null ? void 0 : _b.querySelector(".ink-size-popover-header .ink-control-value");
-    if (value) value.textContent = this.state.tool === "eraser" ? formatControlValue("Size", this.state.eraserSize) : formatControlValue("Size", this.state.width);
+    panel.createDiv({ cls: "ink-settings-label ink-settings-label-presets", text: "Presets" });
+    const widths = this.addToolbarSection(panel, `${label}-widths`);
+    for (const width of presets) {
+      const preset = widths.createEl("button", { cls: "ink-width-preset", attr: {
+        type: "button",
+        title: `${width} px`,
+        "aria-label": `${label} ${width} px`,
+        "data-width": String(width),
+        "data-brush-tool": tool,
+        "aria-pressed": String(settings.width === width)
+      } });
+      preset.createSpan({ cls: "ink-width-line" }).style.height = Math.min(width, 24) + "px";
+      preset.addEventListener("click", () => {
+        settings.width = width;
+        this.updateBrushControls(tool);
+      });
+    }
+    this.addColorPicker(panel, tool, label);
+    this.addRange(panel, `${label} opacity`, 0.1, 1, 0.05, settings.opacity, (value) => {
+      settings.opacity = value;
+      this.updateBrushPreview(tool);
+    });
+    this.addRange(panel, `${label} smoothing`, 0, 1, 0.05, settings.smoothing, (value) => {
+      settings.smoothing = value;
+    });
+  }
+  brushSettings(tool) {
+    return this.state[tool];
+  }
+  updateBrushPreview(tool) {
+    var _a;
+    const settings = this.brushSettings(tool);
+    const preview = (_a = this.sizePopover) == null ? void 0 : _a.querySelector(`.ink-brush-settings[data-brush-tool="${tool}"] .ink-brush-preview-line`);
+    if (!preview) return;
+    preview.style.setProperty("--ink-preview-color", settings.color);
+    preview.style.setProperty("--ink-preview-opacity", String(settings.opacity));
+    preview.style.setProperty("--ink-preview-width", `${Math.max(2, Math.min(30, settings.width))}px`);
+  }
+  updateBrushControls(tool = isBrushTool(this.state.tool) ? this.state.tool : null) {
+    var _a, _b, _c, _d;
+    this.root.querySelectorAll(".ink-width-preset").forEach((button) => {
+      const buttonTool = button.dataset.brushTool;
+      button.setAttribute("aria-pressed", String(Number(button.dataset.width) === this.brushSettings(buttonTool).width));
+    });
+    for (const brushTool of ["pen", "highlighter"]) {
+      const panel = (_a = this.sizePopover) == null ? void 0 : _a.querySelector(`.ink-brush-settings[data-brush-tool="${brushTool}"]`);
+      const settings = this.brushSettings(brushTool);
+      const input = panel == null ? void 0 : panel.querySelector('input[data-control="size"]');
+      if (input) input.value = String(settings.width);
+      const value = panel == null ? void 0 : panel.querySelector(".ink-size-popover-header .ink-control-value");
+      if (value) value.textContent = formatControlValue("Size", settings.width);
+      this.updateBrushPreview(brushTool);
+    }
+    (_b = this.sizePopover) == null ? void 0 : _b.toggleClass("is-pen-tool", this.state.tool === "pen");
+    (_c = this.sizePopover) == null ? void 0 : _c.toggleClass("is-highlighter-tool", this.state.tool === "highlighter");
+    (_d = this.sizePopover) == null ? void 0 : _d.toggleClass("is-eraser-tool", this.state.tool === "eraser");
+    if (tool) this.updateColorSwatches(tool);
     this.updateEraserControls();
   }
   updateEraserControls() {
@@ -1941,7 +1992,9 @@ var InkView = class extends import_obsidian.FileView {
     let rail = this.root.querySelector(".ink-page-rail");
     if (!rail) return;
     rail.empty();
-    rail.createDiv({ cls: "ink-rail-heading", text: "Pages" });
+    const header = rail.createDiv({ cls: "ink-rail-header" });
+    header.createDiv({ cls: "ink-rail-heading", text: "Pages" });
+    header.createSpan({ cls: "ink-rail-count", text: `${this.pageIndex + 1} / ${this.notebook.pages.length}` });
     const actions = rail.createDiv({ cls: "ink-rail-actions", attr: { role: "group", "aria-label": "Current page actions" } });
     this.addIconButton(actions, "chevron-up", "Move current page up", () => this.moveCurrentPage(-1), this.pageIndex === 0);
     this.addIconButton(actions, "chevron-down", "Move current page down", () => this.moveCurrentPage(1), this.pageIndex === this.notebook.pages.length - 1);
@@ -2362,6 +2415,7 @@ var InkView = class extends import_obsidian.FileView {
     if (this.activePointerId !== null) this.finishPointerInput(false);
     const page = this.currentPage();
     const tool = this.state.tool;
+    const brush = isBrushTool(tool) ? this.brushSettings(tool) : null;
     const rect = this.pageElement.getBoundingClientRect();
     (_b = (_a = this.tiles) == null ? void 0 : _a.beginInput) == null ? void 0 : _b.call(_a);
     this.cancelPendingInkCommitTimer();
@@ -2379,7 +2433,7 @@ var InkView = class extends import_obsidian.FileView {
       tool,
       eraserMode: tool === "eraser" ? this.state.eraserMode : void 0,
       eraserSize: tool === "eraser" ? this.state.eraserSize : void 0,
-      smoothing: tool === "pen" || tool === "highlighter" ? this.state.smoothing : void 0
+      smoothing: brush == null ? void 0 : brush.smoothing
     };
     this.pageElement.setPointerCapture(event.pointerId);
     const point = this.toPoint(event, rect);
@@ -2419,9 +2473,9 @@ var InkView = class extends import_obsidian.FileView {
       id: newId("stroke"),
       pageId: page.id,
       tool,
-      color: this.state.color,
-      width: this.state.width,
-      opacity: this.state.opacity,
+      color: brush.color,
+      width: brush.width,
+      opacity: brush.opacity,
       points: [point],
       createdAt: Date.now(),
       updatedAt: Date.now()
@@ -2493,7 +2547,7 @@ var InkView = class extends import_obsidian.FileView {
       if (interaction.tool === "eraser") {
         changed = this.eraseAt(point, page, interaction.eraserMode, interaction.eraserSize) || changed;
       } else if (this.activeStroke && this.lastPoint) {
-        const stabilized = stabilizeInkPoint(point, this.lastPoint, this.canvasLogicalWidth, this.canvasLogicalHeight, (_a = interaction.smoothing) != null ? _a : this.state.smoothing);
+        const stabilized = stabilizeInkPoint(point, this.lastPoint, this.canvasLogicalWidth, this.canvasLogicalHeight, (_a = interaction.smoothing) != null ? _a : 0.7);
         if (!stabilized) continue;
         this.activeStroke.points.push(stabilized);
         this.activeStroke.updatedAt = Date.now();
@@ -3071,7 +3125,6 @@ page: ${this.currentPage().id}
     (0, import_obsidian.setIcon)(iconHolder, icon);
     button.createSpan({ cls: "ink-button-text", text: label });
     button.addEventListener("click", () => {
-      var _a;
       this.finishPointerInput(false);
       if (this.state.tool === tool && (tool === "pen" || tool === "highlighter" || tool === "eraser")) {
         this.setSizePopoverOpen(!this.sizePopoverOpen);
@@ -3079,7 +3132,6 @@ page: ${this.currentPage().id}
       }
       this.state.tool = tool;
       if (tool !== "lasso") this.clearSelection();
-      (_a = this.sizePopover) == null ? void 0 : _a.toggleClass("is-eraser-tool", tool === "eraser");
       this.updateBrushControls();
       this.updateToolButtons();
       this.renderPage();
@@ -3099,24 +3151,38 @@ page: ${this.currentPage().id}
     button.addEventListener("click", callback);
     return button;
   }
-  addColorPicker(parent) {
-    const control = parent.createDiv({ cls: "ink-color-control" });
+  addColorPicker(parent, tool, toolLabel) {
+    const settings = this.brushSettings(tool);
+    parent.createDiv({ cls: "ink-settings-label", text: "Color" });
+    const control = parent.createDiv({ cls: "ink-color-control", attr: { "data-brush-tool": tool } });
     const swatches = control.createDiv({ cls: "ink-color-swatches" });
     for (const color of INK_COLORS) {
-      const swatch = swatches.createEl("button", { cls: "ink-color-swatch", attr: { type: "button", title: color.label, "aria-label": color.label, "aria-pressed": String(this.state.color.toLowerCase() === color.value), "data-color": color.value } });
+      const swatch = swatches.createEl("button", { cls: "ink-color-swatch", attr: {
+        type: "button",
+        title: color.label,
+        "aria-label": `${toolLabel} ${color.label.toLowerCase()}`,
+        "aria-pressed": String(settings.color.toLowerCase() === color.value),
+        "data-color": color.value,
+        "data-brush-tool": tool
+      } });
       swatch.style.backgroundColor = color.value;
-      if (this.state.color.toLowerCase() === color.value) swatch.addClass("is-active");
+      if (settings.color.toLowerCase() === color.value) swatch.addClass("is-active");
       swatch.addEventListener("click", () => {
-        this.state.color = color.value;
-        this.updateColorSwatches();
+        settings.color = color.value;
+        this.updateColorSwatches(tool);
       });
     }
     const custom = control.createEl("label", { cls: "ink-custom-color", attr: { title: "Custom color" } });
     (0, import_obsidian.setIcon)(custom.createSpan({ cls: "ink-button-icon" }), "plus");
-    const input = custom.createEl("input", { attr: { type: "color", value: this.state.color, "aria-label": "Custom color" } });
+    const input = custom.createEl("input", { attr: {
+      type: "color",
+      value: settings.color,
+      "aria-label": `${toolLabel} custom color`,
+      "data-brush-tool": tool
+    } });
     input.addEventListener("input", () => {
-      this.state.color = input.value;
-      this.updateColorSwatches();
+      settings.color = input.value;
+      this.updateColorSwatches(tool);
     });
   }
   addRange(parent, name, min, max, step, value, onChange) {
@@ -3320,14 +3386,16 @@ page: ${this.currentPage().id}
       el.setAttribute("aria-pressed", String(active));
     });
   }
-  updateColorSwatches() {
-    const custom = this.root.querySelector('input[type="color"]');
-    if (custom) custom.value = this.state.color;
-    this.root.querySelectorAll(".ink-color-swatch").forEach((swatch) => {
-      const active = swatch.dataset.color === this.state.color.toLowerCase();
+  updateColorSwatches(tool) {
+    const settings = this.brushSettings(tool);
+    const custom = this.root.querySelector(`input[type="color"][data-brush-tool="${tool}"]`);
+    if (custom) custom.value = settings.color;
+    this.root.querySelectorAll(`.ink-color-swatch[data-brush-tool="${tool}"]`).forEach((swatch) => {
+      const active = swatch.dataset.color === settings.color.toLowerCase();
       swatch.toggleClass("is-active", active);
       swatch.setAttribute("aria-pressed", String(active));
     });
+    this.updateBrushPreview(tool);
   }
   addedStrokeCommand(pageId, original) {
     let currentId = original.id;
@@ -3537,6 +3605,9 @@ page: ${this.currentPage().id}
 };
 function distance(a2, b2) {
   return Math.hypot(a2.x - b2.x, a2.y - b2.y);
+}
+function isBrushTool(tool) {
+  return tool === "pen" || tool === "highlighter";
 }
 function pointInsideRect(point, rect) {
   return point.clientX >= rect.left && point.clientX <= rect.right && point.clientY >= rect.top && point.clientY <= rect.bottom;
@@ -3812,7 +3883,8 @@ function constrainDelta(delta, minimum, maximum) {
   return Math.max(-minimum, Math.min(1 - maximum, delta));
 }
 function formatControlValue(name, value) {
-  return name === "Opacity" || name === "Smoothing" ? `${Math.round(value * 100)}%` : `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(1)} px`;
+  const normalized = name.toLowerCase();
+  return normalized.endsWith("opacity") || normalized.endsWith("smoothing") ? `${Math.round(value * 100)}%` : `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(1)} px`;
 }
 
 // src/storage.ts

@@ -35,7 +35,13 @@ interface ViewInternals {
   workerRevision: number;
   eraseAt(point: { x: number; y: number; pressure: number; t: number }, page?: InkNotebook["pages"][number], mode?: "stroke" | "circle" | "square", size?: number): boolean;
   finishLasso(page: InkNotebook["pages"][number]): void;
-  state: { tool: string; smoothing: number; eraserMode: "stroke" | "circle" | "square"; eraserSize: number };
+  state: {
+    tool: string;
+    pen: { color: string; width: number; opacity: number; smoothing: number };
+    highlighter: { color: string; width: number; opacity: number; smoothing: number };
+    eraserMode: "stroke" | "circle" | "square";
+    eraserSize: number;
+  };
 }
 
 function deferred<T>() {
@@ -143,7 +149,7 @@ describe("consecutive handwriting input", () => {
 
   it("smooths a continuous tail while preserving a deliberate turn", () => {
     const { internal } = setup();
-    internal.state.smoothing = 1;
+    internal.state.pen.smoothing = 1;
     internal.onPointerDown(pointer(10, { clientY: 20 }));
     internal.onPointerMove(pointer(12, { clientY: 20 }));
     internal.onPointerMove(pointer(14, { clientY: 20 }));

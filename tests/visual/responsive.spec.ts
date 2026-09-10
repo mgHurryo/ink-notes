@@ -131,13 +131,34 @@ test("page rail and brush popover are keyboard dismissible", async ({ page }) =>
   await page.getByRole("button", { name: "Pen", exact: true }).click();
   const popover = page.getByRole("dialog", { name: "Tool settings" });
   await expect(popover).toBeVisible();
-  await expect(page.getByRole("slider", { name: "Brush size", exact: true })).toBeFocused();
+  await expect(page.getByRole("slider", { name: "Pen size", exact: true })).toBeFocused();
   await expect(page.locator(".ink-notes-view")).toHaveScreenshot("tool-popover-360.png", {
     animations: "disabled", maxDiffPixelRatio: 0.01,
   });
   await page.keyboard.press("Escape");
   await expect(popover).toBeHidden();
   await expect(page.getByRole("button", { name: "Pen", exact: true })).toBeFocused();
+});
+
+test("pen and highlighter keep independent tool settings", async ({ page }) => {
+  await page.goto("/");
+  const pen = page.getByRole("button", { name: "Pen", exact: true });
+  await pen.click();
+  await page.getByRole("slider", { name: "Pen size", exact: true }).fill("6");
+  await page.getByRole("button", { name: "Pen blue", exact: true }).click();
+
+  const highlighter = page.getByRole("button", { name: "Highlight", exact: true });
+  await highlighter.click();
+  await expect(page.getByRole("slider", { name: "Highlighter size", exact: true })).toHaveValue("18");
+  await expect(page.getByRole("button", { name: "Highlighter yellow", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await page.getByRole("slider", { name: "Highlighter size", exact: true }).fill("26");
+  await page.getByRole("button", { name: "Highlighter green", exact: true }).click();
+
+  await pen.click();
+  await expect(page.getByRole("slider", { name: "Pen size", exact: true })).toHaveValue("6");
+  await expect(page.getByRole("button", { name: "Pen blue", exact: true })).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator('input[aria-label="Highlighter size"]')).toHaveValue("26");
+  await expect(page.locator('button[aria-label="Highlighter green"]')).toHaveAttribute("aria-pressed", "true");
 });
 
 test("semantic themes keep toolbar text, borders, and selection readable", async ({ page }) => {
@@ -211,8 +232,8 @@ test("a long highlighter stroke stays complete before pointerup", async ({ page 
   const highlighter = page.getByRole("button", { name: "Highlight", exact: true });
   await highlighter.click();
   await highlighter.click();
-  await page.getByRole("slider", { name: "Brush size", exact: true }).fill("24");
-  await page.getByRole("button", { name: "Yellow", exact: true }).click();
+  await page.getByRole("slider", { name: "Highlighter size", exact: true }).fill("24");
+  await page.getByRole("button", { name: "Highlighter yellow", exact: true }).click();
   await page.keyboard.press("Escape");
 
   const paper = page.locator(".ink-page");
