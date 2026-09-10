@@ -19,7 +19,7 @@ function view(): any {
     canvasLogicalWidth: 800, canvasLogicalHeight: 1000, renderFrame: null, resizeRequested: false,
     currentPage: () => page,
     viewport: { x: 0, y: 0, width: 800, height: 1000 }, zoom: 1,
-    tiles: { sync: vi.fn(), update: vi.fn(), flushVisible: vi.fn(), commitInteractive: vi.fn(), commitInk: vi.fn(),
+    tiles: { sync: vi.fn(), patchStrokes: vi.fn(), update: vi.fn(), flushVisible: vi.fn(), commitInteractive: vi.fn(), commitInk: vi.fn(),
       pauseInkCommit: vi.fn(), resumeInkCommit: vi.fn(), cancelInkCommit: vi.fn() },
   });
   return v;

@@ -10,13 +10,16 @@ export interface RenderTileResult {
   y: number;
   width: number;
   height: number;
+  renderGeneration: number;
   canvasWidth: number;
   canvasHeight: number;
   bitmap: ImageBitmap;
 }
 
 export interface RenderBackend {
-  renderTile(pageId: string, cell: string, density: number, revision: number, width: number, height: number): Promise<RenderTileResult>;
+  renderTile(pageId: string, cell: string, density: number, revision: number, width: number, height: number,
+    renderGeneration?: number, priority?: "visible" | "prewarm"): Promise<RenderTileResult>;
+  cancelGeneration?(renderGeneration: number): void;
 }
 
 export interface Rect { x: number; y: number; width: number; height: number }
@@ -55,32 +58,49 @@ export class StrokeIndex {
     strokes.forEach((stroke, order) => {
       if (stroke === exclude || isStrokeSet(exclude) && exclude.has(stroke.id)) return;
       retained.add(stroke.id);
-      const previous = this.entries.get(stroke.id);
-      const style = [stroke.tool, stroke.color, stroke.width, stroke.opacity].join(":");
-      if (previous?.stroke === stroke && previous.points === stroke.points && previous.count === stroke.points.length
-        && previous.revision === stroke.updatedAt && previous.style === style) {
-        // Compositing order is metadata, not geometry. Updating it must not
-        // invalidate every later tile when an early stroke is removed.
-        previous.order = order;
-        return;
-      }
-      if (previous) this.remove(previous);
-      const padding = stroke.width * 0.7 + BLEED;
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (const p of stroke.points) {
-        minX = Math.min(minX, p.x * this.width); maxX = Math.max(maxX, p.x * this.width);
-        minY = Math.min(minY, p.y * this.height); maxY = Math.max(maxY, p.y * this.height);
-      }
-      const keys = cellKeys({ x: minX - padding, y: minY - padding, width: maxX - minX + padding * 2, height: maxY - minY + padding * 2 }, this.width, this.height);
-      const entry = { stroke, points: stroke.points, count: stroke.points.length, revision: stroke.updatedAt, order, style, cells: keys };
-      this.entries.set(stroke.id, entry);
-      for (const key of keys) {
-        if (!this.cells.has(key)) this.cells.set(key, new Set());
-        this.cells.get(key)!.add(entry);
-        this.bump(key);
-      }
+      this.upsert(stroke, order);
     });
-    for (const [id, entry] of this.entries) if (!retained.has(id)) this.remove(entry);
+    for (const [id, entry] of this.entries) if (!retained.has(id)) this.removeEntry(entry);
+  }
+
+  upsert(stroke: InkStroke, order: number): void {
+    const previous = this.entries.get(stroke.id);
+    const style = [stroke.tool, stroke.color, stroke.width, stroke.opacity].join(":");
+    if (previous?.stroke === stroke && previous.points === stroke.points && previous.count === stroke.points.length
+      && previous.revision === stroke.updatedAt && previous.style === style) {
+      // Compositing order is metadata, not geometry. Updating it must not
+      // invalidate every later tile when an early stroke is removed.
+      previous.order = order;
+      return;
+    }
+    if (previous) this.removeEntry(previous);
+    const padding = stroke.width * 0.7 + BLEED;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const p of stroke.points) {
+      minX = Math.min(minX, p.x * this.width); maxX = Math.max(maxX, p.x * this.width);
+      minY = Math.min(minY, p.y * this.height); maxY = Math.max(maxY, p.y * this.height);
+    }
+    const keys = cellKeys({ x: minX - padding, y: minY - padding, width: maxX - minX + padding * 2, height: maxY - minY + padding * 2 }, this.width, this.height);
+    const entry = { stroke, points: stroke.points, count: stroke.points.length, revision: stroke.updatedAt, order, style, cells: keys };
+    this.entries.set(stroke.id, entry);
+    for (const key of keys) {
+      if (!this.cells.has(key)) this.cells.set(key, new Set());
+      this.cells.get(key)!.add(entry);
+      this.bump(key);
+    }
+  }
+
+  patch(upsert: readonly InkStroke[], remove: readonly string[], order: readonly InkStroke[]): void {
+    for (const id of remove) {
+      const entry = this.entries.get(id);
+      if (entry) this.removeEntry(entry);
+    }
+    const positions = new Map(order.map((stroke, index) => [stroke.id, index]));
+    for (const stroke of upsert) this.upsert(stroke, positions.get(stroke.id) ?? Number.MAX_SAFE_INTEGER);
+    for (const [id, entry] of this.entries) {
+      const position = positions.get(id);
+      if (position !== undefined) entry.order = position;
+    }
   }
 
   query(rect: Rect): InkStroke[] {
@@ -106,7 +126,7 @@ export class StrokeIndex {
     return [...cells];
   }
 
-  private remove(entry: IndexedStroke): void {
+  private removeEntry(entry: IndexedStroke): void {
     this.entries.delete(entry.stroke.id);
     for (const key of entry.cells) {
       const cell = this.cells.get(key);
@@ -130,7 +150,7 @@ export function cellKeys(rect: Rect, width: number, height: number): string[] {
 
 interface PageTiles { page: InkPage; index: StrokeIndex; id: number }
 interface Tile { node: HTMLDivElement; canvas: HTMLCanvasElement; revision: number; pixels: number; used: number; state: PageTiles; cell: string; density: number }
-interface Job { state: PageTiles; cell: string; density: number }
+interface Job { state: PageTiles; cell: string; density: number; priority?: "visible" | "prewarm" }
 interface InkCommit {
   state: PageTiles;
   strokes: readonly InkStroke[];
@@ -170,19 +190,24 @@ export class TileRenderer {
   private renderGeneration = 0;
   private backend: RenderBackend | null = null;
   private backendError: ((error: unknown) => void) | null = null;
-  private pendingTiles = new Set<string>();
+  private pendingTiles = new Map<string, number>();
 
   constructor(private host: HTMLElement) {}
 
   setBackend(backend: RenderBackend | null, onError?: (error: unknown) => void): void {
+    this.renderGeneration += 1;
+    this.backend?.cancelGeneration?.(this.renderGeneration);
     this.backend = backend;
     this.backendError = onError ?? null;
     this.jobs = [];
-    if (!backend) this.pendingTiles.clear();
+    this.pendingTiles.clear();
   }
 
   setPage(page: InkPage, width: number, height: number, exclude?: StrokeExclusion): void {
+    this.renderGeneration += 1;
+    this.backend?.cancelGeneration?.(this.renderGeneration);
     const state = this.state(page, width, height);
+    this.pendingTiles.clear();
     if (state !== this.active) {
       this.cancelInkCommit();
       this.host.replaceChildren();
@@ -194,6 +219,10 @@ export class TileRenderer {
 
   sync(strokes: InkStroke[], exclude?: StrokeExclusion): void {
     this.active?.index.sync(strokes, exclude);
+  }
+
+  patchStrokes(upsert: readonly InkStroke[], remove: readonly string[], order: readonly InkStroke[]): void {
+    this.active?.index.patch(upsert, remove, order);
   }
 
   queryNear(point: InkPoint, radius: number): InkStroke[] {
@@ -212,14 +241,31 @@ export class TileRenderer {
     this.evict();
   }
 
-  commitInteractive(viewport: Rect, density: number, refine = true): void {
+  commitInteractive(viewport: Rect, density: number, refine = true, onComplete: (committed: boolean) => void = () => undefined): void {
     this.cancelInkCommit();
-    // Make all visible content changes coherent at a bounded 1x density. A
-    // second pass keeps that complete frame attached while high-density tiles
-    // are refined incrementally in the background.
-    this.update(viewport, Math.min(1, density), false);
-    this.flushVisible();
-    if (refine) this.update(viewport, density, true);
+    if (!this.active || this.disposed) { onComplete(false); return; }
+    // Keep the previous complete frame mounted while every changed visible
+    // tile is prepared. Attaching the batch only after all jobs finish avoids
+    // the checkerboard/block-by-block effect during lasso and eraser commits.
+    this.renderGeneration += 1;
+    this.backend?.cancelGeneration?.(this.renderGeneration);
+    this.viewport = viewport;
+    this.density = tileDensity(viewport, refine ? density : Math.min(1, density));
+    this.visible = new Set(cellKeys(viewport, this.active.index.width, this.active.index.height));
+    for (const node of Array.from(this.host.children)) {
+      if (!this.visible.has((node as HTMLElement).dataset.cell ?? "")) node.remove();
+    }
+    const jobs: Job[] = [];
+    for (const cell of this.visible) {
+      if (!this.get(this.active, cell, this.density)) jobs.push({ state: this.active, cell, density: this.density, priority: "visible" });
+    }
+    if (jobs.length === 0) { onComplete(true); return; }
+    const cells = jobs.map((job) => job.cell);
+    for (const cell of cells) this.heldCells.add(this.holdKey(this.active, cell));
+    this.jobs = this.jobs.filter(job => !this.isHeld(job));
+    this.inkCommit = { state: this.active, strokes: [], cells, jobs, tiles: [], onComplete,
+      invalid: false, generation: this.renderGeneration };
+    this.scheduleInkCommit();
   }
 
   commitInk(strokes: readonly InkStroke[], viewport: Rect, density: number, onComplete: (committed: boolean) => void): void {
@@ -244,12 +290,22 @@ export class TileRenderer {
 
   pauseInkCommit(): void {
     this.renderGeneration += 1;
+    this.backend?.cancelGeneration?.(this.renderGeneration);
     this.inkCommitPaused = true;
     if (this.frame !== null) cancelAnimationFrame(this.frame);
     this.frame = null;
     if (this.inkFrame !== null) cancelAnimationFrame(this.inkFrame);
     this.inkFrame = null;
     if (this.inkCommit) this.abortInkCommit(true);
+  }
+
+  beginInput(): void {
+    this.renderGeneration += 1;
+    this.backend?.cancelGeneration?.(this.renderGeneration);
+    if (this.frame !== null) cancelAnimationFrame(this.frame);
+    this.frame = null;
+    this.jobs = [];
+    this.pendingTiles.clear();
   }
 
   resumeInkCommit(): void {
@@ -276,7 +332,7 @@ export class TileRenderer {
       if (fallback) this.attach(fallback);
       // Missing newly exposed tiles get a cheap preview during motion.
       if (!exact && (refine || !fallback)) {
-        const job = { state: this.active, cell, density: refine ? this.density : Math.min(1, this.density) };
+        const job = { state: this.active, cell, density: refine ? this.density : Math.min(1, this.density), priority: "visible" as const };
         if (!this.isHeld(job)) this.jobs.push(job);
       }
     }
@@ -296,7 +352,7 @@ export class TileRenderer {
       state.index.sync(page.strokes);
       // Preload only the same visible region, not entire neighboring pages.
       for (const cell of cellKeys(this.viewport, state.index.width, state.index.height)) {
-        if (!this.get(state, cell, this.density)) this.jobs.push({ state, cell, density: this.density });
+        if (!this.get(state, cell, this.density)) this.jobs.push({ state, cell, density: this.density, priority: "prewarm" });
       }
     }
     this.schedule();
@@ -304,6 +360,8 @@ export class TileRenderer {
 
   dispose(): void {
     this.disposed = true;
+    this.renderGeneration += 1;
+    this.backend?.cancelGeneration?.(this.renderGeneration);
     if (this.frame !== null) cancelAnimationFrame(this.frame);
     this.abortInkCommit(false);
     for (const [key, tile] of this.cache) this.drop(key, tile);
@@ -372,10 +430,12 @@ export class TileRenderer {
       const job = commit.jobs.shift();
       if (!job) { this.finishInkCommit(true); return; }
       if (this.backend) {
+        const generation = this.renderGeneration;
         this.backend.renderTile(job.state.page.id, job.cell, job.density, job.state.index.revisions.get(job.cell) ?? 0,
-          job.state.index.width, job.state.index.height)
+          job.state.index.width, job.state.index.height, generation, job.priority ?? "visible")
           .then((result) => {
-            if (this.inkCommit !== commit || commit.generation !== this.renderGeneration || this.disposed) { result.bitmap.close(); return; }
+            if (this.inkCommit !== commit || commit.generation !== this.renderGeneration || result.renderGeneration !== generation
+              || result.pageId !== job.state.page.id || result.cell !== job.cell || this.disposed) { result.bitmap.close(); return; }
             if (result.revision === (job.state.index.revisions.get(job.cell) ?? 0)) commit.tiles.push(this.tileFromBitmap(job, result));
             else commit.invalid = true;
             if (commit.jobs.length > 0) this.scheduleInkCommit();
@@ -383,6 +443,7 @@ export class TileRenderer {
           })
           .catch((error) => {
             if (this.inkCommit === commit) {
+              if (isStaleRenderError(error)) { this.finishInkCommit(false); return; }
               this.backendError?.(error);
               this.finishInkCommit(false);
             }
@@ -444,16 +505,20 @@ export class TileRenderer {
   private requestWorkerTile(job: Job): void {
     if (!this.backend || this.disposed) return;
     const key = this.key(job.state, job.cell, job.density);
-    if (this.pendingTiles.has(key)) return;
-    this.pendingTiles.add(key);
+    if (this.pendingTiles.get(key) === this.renderGeneration) return;
     const revision = job.state.index.revisions.get(job.cell) ?? 0;
     const generation = this.renderGeneration;
-    this.backend.renderTile(job.state.page.id, job.cell, job.density, revision, job.state.index.width, job.state.index.height)
+    this.pendingTiles.set(key, generation);
+    this.backend.renderTile(job.state.page.id, job.cell, job.density, revision, job.state.index.width, job.state.index.height,
+      generation, job.priority ?? "visible")
       .then((result) => {
-        this.pendingTiles.delete(key);
-        if (this.disposed || generation !== this.renderGeneration) { result.bitmap.close(); return; }
+        if (this.pendingTiles.get(key) === generation) this.pendingTiles.delete(key);
+        if (this.disposed || generation !== this.renderGeneration || result.pageId !== job.state.page.id || result.cell !== job.cell) {
+          result.bitmap.close();
+          return;
+        }
         const currentRevision = job.state.index.revisions.get(job.cell) ?? 0;
-        if (result.revision !== currentRevision || result.density !== job.density) { result.bitmap.close(); this.schedule(); return; }
+        if (result.revision !== currentRevision || result.density !== job.density || result.renderGeneration !== generation) { result.bitmap.close(); this.schedule(); return; }
         const tile = this.tileFromBitmap(job, result);
         this.cacheTile(tile);
         if (job.state === this.active && this.visible.has(job.cell)) this.attach(tile);
@@ -461,7 +526,8 @@ export class TileRenderer {
         this.schedule();
       })
       .catch((error) => {
-        this.pendingTiles.delete(key);
+        if (this.pendingTiles.get(key) === generation) this.pendingTiles.delete(key);
+        if (isStaleRenderError(error)) { this.schedule(); return; }
         this.backendError?.(error);
         this.schedule();
       });
@@ -549,4 +615,8 @@ export class TileRenderer {
     tile.node.remove(); tile.canvas.width = tile.canvas.height = 1;
     this.pixels -= tile.pixels; this.cache.delete(key);
   }
+}
+
+function isStaleRenderError(error: unknown): boolean {
+  return typeof error === "object" && error !== null && (error as { code?: unknown }).code === "stale-generation";
 }

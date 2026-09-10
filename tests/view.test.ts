@@ -72,9 +72,9 @@ function setup() {
     drawPreview: vi.fn(),
     commitPreview: vi.fn(),
     requestRender: vi.fn(),
-    tiles: { sync: vi.fn(), commitInteractive: vi.fn(),
+    tiles: { sync: vi.fn(), patchStrokes: vi.fn(), commitInteractive: vi.fn(),
       commitInk: vi.fn((_strokes: unknown, _viewport: unknown, _density: number, complete: (committed: boolean) => void) => complete(true)),
-      pauseInkCommit: vi.fn(), resumeInkCommit: vi.fn(), cancelInkCommit: vi.fn() },
+      beginInput: vi.fn(), pauseInkCommit: vi.fn(), resumeInkCommit: vi.fn(), cancelInkCommit: vi.fn() },
     canvasLogicalWidth: 100,
     canvasLogicalHeight: 100,
   });
@@ -329,6 +329,28 @@ describe("consecutive handwriting input", () => {
     expect(tiles.pauseInkCommit).toHaveBeenCalledTimes(2);
   });
 
+  it("accepts the next Pencil stroke while a 500ms background tile task is pending", async () => {
+    const { internal } = setup();
+    (internal as any).commitPreview = (InkView.prototype as any).commitPreview.bind(internal);
+    const tiles = (internal as any).tiles;
+    tiles.commitInk.mockImplementation((_strokes: unknown, _viewport: unknown, _density: number,
+      complete: (committed: boolean) => void) => window.setTimeout(() => complete(true), 500));
+
+    internal.onPointerDown(pointer(10));
+    internal.onPointerMove(pointer(20));
+    internal.onPointerUp(pointer(30));
+    (internal as any).startPendingInkCommit(internal.notebook.pages[0]);
+    internal.onPointerDown(pointer(40));
+    internal.onPointerMove(pointer(50));
+
+    expect(internal.activePointerId).toBe(7);
+    expect(internal.notebook.pages[0].strokes).toHaveLength(2);
+    expect((internal as any).requestRender).toHaveBeenCalled();
+    expect(tiles.beginInput).toHaveBeenCalledTimes(2);
+    internal.onPointerUp(pointer(60));
+    await vi.advanceTimersByTimeAsync(500);
+  });
+
   it("waits for a full writing idle interval before autosave work", async () => {
     const { internal, store } = setup();
     store.save.mockImplementation(async (_file, notebook) => notebook);
@@ -338,6 +360,90 @@ describe("consecutive handwriting input", () => {
     expect(store.save).not.toHaveBeenCalled();
     await vi.advanceTimersByTimeAsync(1);
     expect(store.save).toHaveBeenCalledOnce();
+  });
+
+  it("checkpoints completed strokes after ten seconds of continuous writing", async () => {
+    const { internal, store } = setup();
+    store.save.mockImplementation(async (_file, notebook) => notebook);
+    internal.onPointerDown(pointer(10));
+    internal.onPointerUp(pointer(20));
+    for (let second = 1; second < 10; second++) {
+      await vi.advanceTimersByTimeAsync(1_000);
+      internal.onPointerDown(pointer(20 + second));
+      internal.onPointerUp(pointer(21 + second));
+    }
+    expect(store.save).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(store.save).toHaveBeenCalledOnce();
+  });
+
+  it("defers a due checkpoint only until the active stroke finishes", async () => {
+    const { internal, store } = setup();
+    store.save.mockImplementation(async (_file, notebook) => notebook);
+    internal.onPointerDown(pointer(10));
+    internal.onPointerUp(pointer(20));
+    for (let second = 1; second < 9; second++) {
+      await vi.advanceTimersByTimeAsync(1_000);
+      internal.onPointerDown(pointer(20 + second));
+      internal.onPointerUp(pointer(21 + second));
+    }
+    await vi.advanceTimersByTimeAsync(1_000);
+    internal.onPointerDown(pointer(30));
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(store.save).not.toHaveBeenCalled();
+    internal.onPointerUp(pointer(40));
+    await Promise.resolve();
+    expect(store.save).toHaveBeenCalledOnce();
+  });
+
+  it("keeps Worker-mode save preparation off the main-thread JSON path", async () => {
+    const { internal, store, view } = setup();
+    const worker = {
+      barrier: vi.fn(async () => 4),
+      prepareSave: vi.fn(async () => ({ token: "save-1", content: "worker-json", revision: 4 })),
+      commitSave: vi.fn(async () => ({ revision: 4 })),
+      abortSave: vi.fn(),
+    };
+    Object.assign(internal, { workerSession: worker, workerRevision: 4, dirtyRevision: 1 });
+    const writeIfUnchanged = vi.fn(async () => true);
+    Object.assign(store, { readRaw: vi.fn(async () => "disk-json"), writeIfUnchanged });
+    const parse = vi.spyOn(JSON, "parse");
+    const stringify = vi.spyOn(JSON, "stringify");
+
+    await internal.save();
+
+    expect(worker.barrier).toHaveBeenCalledWith(4);
+    expect(worker.prepareSave).toHaveBeenCalledWith("disk-json", 1);
+    expect(writeIfUnchanged).toHaveBeenCalledWith(view.file, "disk-json", "worker-json");
+    expect(store.save).not.toHaveBeenCalled();
+    expect(parse).not.toHaveBeenCalled();
+    expect(stringify).not.toHaveBeenCalled();
+    parse.mockRestore();
+    stringify.mockRestore();
+  });
+
+  it("bounds Worker CAS conflicts at three attempts and preserves dirty state", async () => {
+    const { internal, store } = setup();
+    const worker = {
+      barrier: vi.fn(async () => 2),
+      prepareSave: vi.fn(async (_raw: string, _revision: number) => ({ token: `save-${worker.prepareSave.mock.calls.length}`, content: "next", revision: 2 })),
+      commitSave: vi.fn(),
+      abortSave: vi.fn(async () => undefined),
+    };
+    Object.assign(internal, { workerSession: worker, workerRevision: 2, dirtyRevision: 1 });
+    const readRaw = vi.fn(async () => `disk-${readRaw.mock.calls.length}`);
+    const writeIfUnchanged = vi.fn(async () => false);
+    Object.assign(store, { readRaw, writeIfUnchanged });
+
+    await expect(internal.save()).resolves.toBeUndefined();
+
+    expect(worker.prepareSave).toHaveBeenCalledTimes(3);
+    expect(writeIfUnchanged).toHaveBeenCalledTimes(3);
+    expect(worker.abortSave).toHaveBeenCalledTimes(3);
+    expect(worker.commitSave).not.toHaveBeenCalled();
+    expect(store.save).not.toHaveBeenCalled();
+    expect(internal.savedRevision).toBe(0);
+    expect(internal.dirtyRevision).toBe(1);
   });
 
   it("does not rebuild any UI when a self-save returns equivalent notebook data", async () => {

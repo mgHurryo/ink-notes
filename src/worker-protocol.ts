@@ -1,5 +1,10 @@
 import type { InkNotebook, InkPage, InkPoint, InkStroke, PaperStyle } from "./model";
 
+// Six doubles per sample keeps the hot path structured-clone free without
+// dropping Pencil metadata. The layout is x, y, pressure, tiltX, tiltY,
+// timestamp; NaN represents an unavailable optional tilt value.
+export type PackedStrokePoints = Float64Array;
+
 export type NotebookOperation =
   | {
     type: "start-stroke";
@@ -12,7 +17,7 @@ export type NotebookOperation =
     type: "append-stroke-points";
     pageId: string;
     strokeId: string;
-    points: InkPoint[];
+    points: PackedStrokePoints;
     pageUpdatedAt: number;
     notebookUpdatedAt: number;
   }
@@ -40,6 +45,15 @@ export type NotebookOperation =
     notebookUpdatedAt: number;
   }
   | {
+    type: "translate-strokes";
+    pageId: string;
+    strokeIds: string[];
+    dx: number;
+    dy: number;
+    pageUpdatedAt: number;
+    notebookUpdatedAt: number;
+  }
+  | {
     type: "set-page";
     pageId: string;
     title?: string;
@@ -47,6 +61,17 @@ export type NotebookOperation =
     pageUpdatedAt: number;
     notebookUpdatedAt: number;
   }
+  | {
+    type: "page-operation";
+    action: "add" | "duplicate" | "delete" | "reorder" | "restore";
+    page?: InkPage;
+    pageId?: string;
+    deletedAt?: number;
+    pageOrder: string[];
+    pageOrderUpdatedAt: number;
+    notebookUpdatedAt: number;
+  }
+  | { type: "history-restore"; notebook: InkNotebook }
   | { type: "replace-notebook"; notebook: InkNotebook };
 
 interface RequestBase {
@@ -67,9 +92,12 @@ export type InkWorkerRequest =
     cell: string;
     density: number;
     revision: number;
+    renderGeneration: number;
+    priority: "visible" | "prewarm";
     width: number;
     height: number;
   }
+  | RequestBase & { type: "cancel-render-generation"; renderGeneration: number }
   | RequestBase & { type: "commit-save"; token: string }
   | RequestBase & { type: "abort-save"; token: string }
   | RequestBase & { type: "merge-external"; raw: string }
@@ -84,7 +112,14 @@ interface ResponseBase {
 export type InkWorkerResponse =
   | { type: "ready"; requestId: 0; sessionId: ""; generation: 0; capabilities: WorkerCapabilities }
   | ResponseBase & { type: "initialized"; notebook: InkNotebook; revision: number }
-  | ResponseBase & { type: "operation-applied"; revision: number }
+  | ResponseBase & {
+    type: "operation-applied";
+    revision: number;
+    strokeId?: string;
+    sampleCount?: number;
+    outline?: Float32Array;
+    outlineMode?: "pen" | "highlighter";
+  }
   | ResponseBase & { type: "barrier-complete"; revision: number }
   | ResponseBase & { type: "save-prepared"; token: string; content: string; revision: number }
   | ResponseBase & {
@@ -99,17 +134,20 @@ export type InkWorkerResponse =
     height: number;
     canvasWidth: number;
     canvasHeight: number;
+    renderGeneration: number;
     bitmap: ImageBitmap;
   }
   | ResponseBase & { type: "save-committed"; revision: number; merged?: InkNotebook }
   | ResponseBase & { type: "save-aborted" }
   | ResponseBase & { type: "external-merged"; notebook?: InkNotebook; revision: number }
   | ResponseBase & { type: "session-disposed" }
+  | ResponseBase & { type: "renders-cancelled"; renderGeneration: number }
   | ResponseBase & { type: "error"; code: WorkerErrorCode; message: string };
 
 export interface WorkerCapabilities {
   offscreenCanvas: boolean;
   imageBitmap: boolean;
+  transferable?: boolean;
 }
 
 export type WorkerErrorCode = "invalid-format" | "stale-generation" | "revision-gap" | "missing-session" | "internal";

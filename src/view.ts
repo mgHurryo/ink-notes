@@ -13,7 +13,7 @@ import {
 import { NotebookStore } from "./storage";
 import { canvasResolution, drawInkStroke } from "./rendering";
 import { Rect, TileRenderer } from "./tiles";
-import type { NotebookOperation } from "./worker-protocol";
+import type { InkWorkerResponse, NotebookOperation } from "./worker-protocol";
 import { InkWorkerRequestError, InkWorkerService, InkWorkerSession } from "./worker-service";
 
 export const VIEW_TYPE_INK = "ink-notes-view";
@@ -33,6 +33,7 @@ type EraserMode = "stroke" | "circle" | "square";
 interface EditCommand {
   undo: () => void;
   redo: () => void;
+  rebuild?: boolean;
 }
 
 interface InteractionContext {
@@ -43,6 +44,12 @@ interface InteractionContext {
   eraserMode?: EraserMode;
   eraserSize?: number;
   smoothing?: number;
+}
+
+interface ConfirmedStrokeOutline {
+  points: Float32Array;
+  sampleCount: number;
+  mode: "pen" | "highlighter";
 }
 
 interface NotebookReconciliation {
@@ -111,10 +118,12 @@ export class InkView extends FileView {
   private externalRefreshPending = false;
   private saveTimer: number | undefined;
   private maxSaveTimer: number | undefined;
+  private maxSaveDue = false;
   private workerSession: InkWorkerSession | null = null;
   private workerFallbackReported = false;
   private activeStroke: InkStroke | null = null;
   private workerStrokePointIndex = 0;
+  private confirmedStrokeOutlines = new Map<string, ConfirmedStrokeOutline>();
   private pendingInkStrokes: InkStroke[] = [];
   private committingInkStrokes: InkStroke[] | null = null;
   private pendingInkPageId: string | null = null;
@@ -215,8 +224,11 @@ export class InkView extends FileView {
     this.tiles?.setBackend?.(null);
     this.workerSession?.dispose();
     this.workerSession = null;
+    this.workerRevision = 0;
     if (this.workers) {
-      const session = this.workers.createSession(() => ({ notebook: this.notebook, revision: this.dirtyRevision }));
+      // The Worker revision includes transient start/append operations that do
+      // not advance the persisted dirty revision until pointerup.
+      const session = this.workers.createSession(() => ({ notebook: this.notebook, revision: this.workerRevision }));
       try {
         this.notebook = await session.initializeRaw(await this.store.readRaw(file), 0);
         this.workerSession = session;
@@ -577,7 +589,6 @@ export class InkView extends FileView {
 
   private drawInteractiveStrokes(strokes: InkStroke[], refine = false): void {
     if (!this.ctx || !this.pageElement) return;
-    this.tiles.sync(strokes);
     this.tiles.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine);
     this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
     this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
@@ -625,6 +636,7 @@ export class InkView extends FileView {
   private resizePreview(): void { this.resizeOverlay(this.previewCanvas, this.previewCtx, OVERLAY_PIXEL_BUDGET); }
 
   private drawPreview(): void {
+    const outlines = this.confirmedStrokeOutlines ?? (this.confirmedStrokeOutlines = new Map());
     const strokes = [...this.pendingInkStrokes];
     if (this.activeStroke && (this.activeStroke.tool === "pen" || this.activeStroke.tool === "highlighter")) strokes.push(this.activeStroke);
     this.previewCtx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
@@ -633,14 +645,67 @@ export class InkView extends FileView {
       return;
     }
     this.previewCanvas.classList.toggle("is-highlighter-preview", strokes.every(stroke => stroke.tool === "highlighter"));
-    for (const stroke of strokes) drawInkStroke(this.previewCtx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    for (const stroke of strokes) {
+      const confirmed = outlines.get(stroke.id);
+      if (confirmed) this.drawConfirmedOutline(confirmed.points, stroke.color, stroke.opacity, stroke.width, confirmed.mode);
+      drawImmediateStrokeTail(this.previewCtx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight, confirmed?.sampleCount ?? 0);
+    }
+  }
+
+  private drawConfirmedOutline(points: Float32Array, color: string, opacity: number, width: number, mode: "pen" | "highlighter"): void {
+    if (points.length < 4) return;
+    this.previewCtx.save();
+    this.previewCtx.globalAlpha = opacity;
+    const scaleX = this.canvasLogicalWidth / this.notebook.pageWidth;
+    const scaleY = this.canvasLogicalHeight / this.notebook.pageHeight;
+    this.previewCtx.strokeStyle = color;
+    this.previewCtx.fillStyle = color;
+    this.previewCtx.lineCap = "round";
+    this.previewCtx.lineJoin = "round";
+    if (mode === "highlighter") {
+      this.previewCtx.globalCompositeOperation = "multiply";
+      this.previewCtx.lineWidth = width * (scaleX + scaleY) / 2;
+      this.previewCtx.beginPath();
+      this.previewCtx.moveTo(points[0] * scaleX, points[1] * scaleY);
+      for (let index = 2; index < points.length; index += 2) {
+        const previousX = points[index - 2] * scaleX;
+        const previousY = points[index - 1] * scaleY;
+        const pointX = points[index] * scaleX;
+        const pointY = points[index + 1] * scaleY;
+        const last = index === points.length - 2;
+        this.previewCtx.quadraticCurveTo(previousX, previousY,
+          last ? pointX : (previousX + pointX) / 2,
+          last ? pointY : (previousY + pointY) / 2);
+      }
+      this.previewCtx.lineTo(points[points.length - 2] * scaleX, points[points.length - 1] * scaleY);
+      this.previewCtx.stroke();
+    } else {
+      this.previewCtx.globalCompositeOperation = "source-over";
+      this.previewCtx.beginPath();
+      const lastX = points[points.length - 2] * scaleX;
+      const lastY = points[points.length - 1] * scaleY;
+      const firstX = points[0] * scaleX;
+      const firstY = points[1] * scaleY;
+      this.previewCtx.moveTo((lastX + firstX) / 2, (lastY + firstY) / 2);
+      for (let index = 0; index < points.length; index += 2) {
+        const next = (index + 2) % points.length;
+        const pointX = points[index] * scaleX;
+        const pointY = points[index + 1] * scaleY;
+        const nextX = points[next] * scaleX;
+        const nextY = points[next + 1] * scaleY;
+        this.previewCtx.quadraticCurveTo(pointX, pointY, (pointX + nextX) / 2, (pointY + nextY) / 2);
+      }
+      this.previewCtx.closePath();
+      this.previewCtx.fill();
+    }
+    this.previewCtx.restore();
   }
 
   private beginLassoPreview(page: InkPage): void {
     const drag = this.lassoDrag;
     if (!drag || !this.lassoCanvas) return;
     const selected = new Set(drag.strokes.map((stroke) => stroke.id));
-    this.tiles.sync(page.strokes, selected);
+    this.tiles.patchStrokes([], [...selected], page.strokes);
     this.tiles.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, false);
     const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight,
       window.devicePixelRatio || 1, this.zoom, 4_000_000);
@@ -678,12 +743,17 @@ export class InkView extends FileView {
   }
 
   private commitLassoPreview(page: InkPage): void {
-    this.tiles.sync(page.strokes);
-    // Commit a complete 1x fallback before dropping the moving preview. The
-    // high-density tiles can then refine progressively without visible holes.
-    this.tiles.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom);
-    this.hideLassoPreview();
-    this.drawStrokes(page.strokes);
+    this.tiles.patchStrokes(this.selectedStrokes(), [], page.strokes);
+    // Keep the transformed vector preview visible until the replacement tiles
+    // are complete, then swap the affected frame atomically.
+    this.tiles.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true, () => {
+      this.hideLassoPreview();
+      if (this.viewReady && page === this.currentPage()) {
+        this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
+        this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+        this.drawPreview();
+      }
+    });
   }
 
   private hideLassoPreview(): void {
@@ -715,13 +785,15 @@ export class InkView extends FileView {
       || this.pendingInkPageId !== page.id || page !== this.currentPage()) return;
     const batch = [...this.pendingInkStrokes];
     this.committingInkStrokes = batch;
-    this.tiles.sync(page.strokes, this.tileExclusion());
+    this.tiles.patchStrokes(batch, [], page.strokes);
     this.tiles.commitInk(batch, this.viewport, (window.devicePixelRatio || 1) * this.zoom, (committed) => {
       if (this.committingInkStrokes !== batch) return;
       this.committingInkStrokes = null;
       const ids = new Set(batch.map(stroke => stroke.id));
       this.pendingInkStrokes = this.pendingInkStrokes.filter(stroke => !ids.has(stroke.id));
       if (this.pendingInkStrokes.length === 0) this.pendingInkPageId = null;
+      const outlines = this.confirmedStrokeOutlines ?? (this.confirmedStrokeOutlines = new Map());
+      for (const stroke of batch) outlines.delete(stroke.id);
       if (this.viewReady && page === this.currentPage()) {
         if (!committed) this.drawStrokes(page.strokes);
         else this.drawPreview();
@@ -757,6 +829,7 @@ export class InkView extends FileView {
     this.committingInkStrokes = null;
     this.pendingInkStrokes = [];
     this.pendingInkPageId = null;
+    this.confirmedStrokeOutlines.clear();
     this.tiles?.cancelInkCommit();
     if (this.previewCanvas) {
       this.previewCanvas.width = this.previewCanvas.height = 1;
@@ -787,6 +860,7 @@ export class InkView extends FileView {
     if (this.activePointerId !== null) this.finishPointerInput(false);
     const page = this.currentPage();
     const tool = this.state.tool;
+    this.tiles?.beginInput?.();
     this.cancelPendingInkCommitTimer();
     if (tool === "pen" || tool === "highlighter") this.tiles.pauseInkCommit();
     else if (this.pendingInkStrokes.length > 0 || this.committingInkStrokes) this.discardPendingInkPreview();
@@ -920,7 +994,6 @@ export class InkView extends FileView {
         const stabilized = stabilizeInkPoint(point, this.lastPoint, this.canvasLogicalWidth, this.canvasLogicalHeight, interaction.smoothing ?? this.state.smoothing);
         if (!stabilized) continue;
         this.activeStroke.points.push(stabilized);
-        beautifyStrokeTail(this.activeStroke.points, this.canvasLogicalWidth, this.canvasLogicalHeight, interaction.smoothing ?? this.state.smoothing);
         this.activeStroke.updatedAt = Date.now();
         this.lastPoint = stabilized;
         changed = true;
@@ -962,11 +1035,21 @@ export class InkView extends FileView {
     const interaction = this.interaction;
     if (!stroke || !interaction || (interaction.tool !== "pen" && interaction.tool !== "highlighter")) return;
     if (this.workerStrokePointIndex >= stroke.points.length) return;
-    const points = stroke.points.slice(this.workerStrokePointIndex).map((point) => ({ ...point }));
+    const points = packStrokePoints(stroke.points, this.workerStrokePointIndex);
     this.workerStrokePointIndex = stroke.points.length;
     this.queueWorkerOperation({
       type: "append-stroke-points", pageId: stroke.pageId, strokeId: stroke.id, points,
       pageUpdatedAt: stroke.updatedAt, notebookUpdatedAt: this.notebook.updatedAt,
+    }, [points.buffer], (response) => {
+      if (response.type !== "operation-applied" || !response.outline || response.strokeId !== stroke.id
+        || (this.activeStroke?.id !== stroke.id && !this.pendingInkStrokes.some((candidate) => candidate.id === stroke.id))) return;
+      const outlines = this.confirmedStrokeOutlines ?? (this.confirmedStrokeOutlines = new Map());
+      outlines.set(stroke.id, {
+        points: response.outline,
+        sampleCount: response.sampleCount ?? stroke.points.length,
+        mode: response.outlineMode ?? "pen",
+      });
+      this.requestRender();
     });
   }
 
@@ -992,7 +1075,7 @@ export class InkView extends FileView {
       return;
     }
     if (interaction.tool === "eraser" && this.erasedStrokes.length > 0) {
-      this.markChanged(page, true, false);
+      this.markChanged(page);
       const replacementIds = new Set(this.eraserReplacements.map((stroke) => stroke.id));
       this.queueWorkerOperation({
         type: "patch-strokes",
@@ -1006,7 +1089,7 @@ export class InkView extends FileView {
       this.pushCommand(this.erasedStrokesCommand(page.id, this.erasedStrokes, this.eraserReplacements));
       this.drawInteractiveStrokes(page.strokes, true);
     } else if (this.activeStroke) {
-      this.markChanged(page, true, false);
+      this.markChanged(page);
       this.queueWorkerOperation({ type: "complete-stroke", pageId: page.id, strokeId: this.activeStroke.id,
         pageUpdatedAt: page.updatedAt, notebookUpdatedAt: this.notebook.updatedAt });
       this.pushCommand(this.addedStrokeCommand(page.id, this.activeStroke));
@@ -1153,6 +1236,7 @@ export class InkView extends FileView {
       if (this.eraserReplacementIds.delete(stroke.id)) this.eraserReplacements = this.eraserReplacements.filter((candidate) => candidate.id !== stroke.id);
     }
     this.deleteStrokes(page, removed.map((stroke) => stroke.id));
+    const replacements: InkStroke[] = [];
     if (mode !== "stroke") {
       const now = Date.now();
       for (const stroke of removed) {
@@ -1160,12 +1244,14 @@ export class InkView extends FileView {
         for (const points of segments) {
           const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, createdAt: now, updatedAt: now };
           page.strokes.push(replacement);
+          replacements.push(replacement);
           this.eraserReplacementIds.add(replacement.id);
           this.eraserReplacements.push(cloneStroke(replacement));
         }
       }
       page.strokes.sort((left, right) => left.createdAt - right.createdAt);
     }
+    if (page === this.currentPage()) this.tiles?.patchStrokes(replacements, removed.map((stroke) => stroke.id), page.strokes);
     return true;
   }
 
@@ -1201,7 +1287,8 @@ export class InkView extends FileView {
     this.notebook.pageOrderUpdatedAt = now;
     this.notebook.updatedAt = now;
     this.dirtyRevision += 1;
-    this.queueWorkerSnapshot();
+    this.queueWorkerOperation({ type: "page-operation", action: "add", page: clonePage(page),
+      pageOrder: [...this.notebook.pageOrder], pageOrderUpdatedAt: now, notebookUpdatedAt: now });
     this.pageIndex = this.notebook.pages.length - 1;
     this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, page.id);
     this.renderPageRail();
@@ -1223,9 +1310,12 @@ export class InkView extends FileView {
       const before = page.paper;
       page.paper = paper;
       this.markChanged(page);
+      this.queueWorkerOperation({ type: "set-page", pageId: page.id, paper,
+        pageUpdatedAt: page.updatedAt, notebookUpdatedAt: this.notebook.updatedAt });
       this.pushCommand({
         undo: () => this.setPagePaper(page.id, before),
         redo: () => this.setPagePaper(page.id, paper),
+        rebuild: true,
       });
       this.renderPageRail(); this.renderPage(); this.scheduleSave();
     }));
@@ -1251,9 +1341,12 @@ export class InkView extends FileView {
     const before = page.title;
     page.title = title;
     this.markChanged(page);
+    this.queueWorkerOperation({ type: "set-page", pageId: page.id, title,
+      pageUpdatedAt: page.updatedAt, notebookUpdatedAt: this.notebook.updatedAt });
     this.pushCommand({
       undo: () => this.setPageTitle(page.id, before),
       redo: () => this.setPageTitle(page.id, title),
+      rebuild: true,
     });
     this.renderPageRail();
     this.renderPage();
@@ -1270,7 +1363,8 @@ export class InkView extends FileView {
     const page = clonePageAsNew(source, `${source.title} copy`, now);
     this.notebook.pages.splice(insertionIndex, 0, page);
     this.pageIndex += 1;
-    this.finishPageOrderChange(now);
+    this.finishPageOrderChange(now, { type: "page-operation", action: "duplicate", page: clonePage(page),
+      pageOrder: this.notebook.pages.map((candidate) => candidate.id), pageOrderUpdatedAt: now, notebookUpdatedAt: now });
     this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, page.id);
     this.renderAll();
     this.scheduleSave();
@@ -1286,7 +1380,8 @@ export class InkView extends FileView {
     const now = Date.now();
     this.notebook.deletedPages[deleted.id] = now;
     this.pageIndex = Math.min(this.pageIndex, this.notebook.pages.length - 1);
-    this.finishPageOrderChange(now);
+    this.finishPageOrderChange(now, { type: "page-operation", action: "delete", pageId: deleted.id, deletedAt: now,
+      pageOrder: this.notebook.pages.map((candidate) => candidate.id), pageOrderUpdatedAt: now, notebookUpdatedAt: now });
     this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, this.currentPage().id);
     this.clearSelection();
     this.renderAll();
@@ -1302,24 +1397,28 @@ export class InkView extends FileView {
     const [page] = this.notebook.pages.splice(this.pageIndex, 1);
     this.notebook.pages.splice(target, 0, page);
     this.pageIndex = target;
-    this.finishPageOrderChange(Date.now());
+    const now = Date.now();
+    this.finishPageOrderChange(now, { type: "page-operation", action: "reorder",
+      pageOrder: this.notebook.pages.map((candidate) => candidate.id), pageOrderUpdatedAt: now, notebookUpdatedAt: now });
     this.pushNotebookCommand(before, cloneNotebook(this.notebook), pageId, pageId);
     this.renderAll();
     this.scheduleSave();
   }
 
-  private finishPageOrderChange(now: number): void {
+  private finishPageOrderChange(now: number, operation?: NotebookOperation): void {
     this.notebook.pageOrder = this.notebook.pages.map((page) => page.id);
     this.notebook.pageOrderUpdatedAt = now;
     this.notebook.updatedAt = now;
     this.dirtyRevision += 1;
-    this.queueWorkerSnapshot();
+    this.queueWorkerOperation(operation ?? { type: "page-operation", action: "reorder",
+      pageOrder: [...this.notebook.pageOrder], pageOrderUpdatedAt: now, notebookUpdatedAt: now });
   }
 
   private pushNotebookCommand(before: InkNotebook, after: InkNotebook, beforePageId: string, afterPageId: string): void {
     this.pushCommand({
       undo: () => this.restoreNotebookState(before, beforePageId),
       redo: () => this.restoreNotebookState(after, afterPageId),
+      rebuild: true,
     });
   }
 
@@ -1328,7 +1427,10 @@ export class InkView extends FileView {
     const next = cloneNotebook(snapshot);
     const now = Date.now();
     const nextIds = new Set(next.pages.map((page) => page.id));
-    const deletedPages = { ...current.deletedPages, ...next.deletedPages };
+    const deletedPages = { ...current.deletedPages };
+    for (const [pageId, deletedAt] of Object.entries(next.deletedPages)) {
+      deletedPages[pageId] = Math.max(deletedPages[pageId] ?? 0, deletedAt);
+    }
     for (const page of current.pages) {
       if (!nextIds.has(page.id)) deletedPages[page.id] = Math.max(deletedPages[page.id] ?? 0, now);
     }
@@ -1346,14 +1448,14 @@ export class InkView extends FileView {
     this.notebook = next;
     this.pageIndex = Math.max(0, next.pages.findIndex((page) => page.id === selectedId));
     this.dirtyRevision += 1;
-    this.queueWorkerSnapshot();
+    this.queueWorkerOperation({ type: "history-restore", notebook: cloneNotebook(this.notebook) });
   }
 
   private setPagePaper(pageId: string, paper: PaperStyle): void {
     const page = this.pageById(pageId);
     if (!page) return;
     page.paper = paper;
-    this.markChanged(page, true, false);
+    this.markChanged(page);
     this.queueWorkerOperation({
       type: "set-page", pageId, paper,
       pageUpdatedAt: page.updatedAt, notebookUpdatedAt: this.notebook.updatedAt,
@@ -1364,7 +1466,7 @@ export class InkView extends FileView {
     const page = this.pageById(pageId);
     if (!page) return;
     page.title = title;
-    this.markChanged(page, true, false);
+    this.markChanged(page);
     this.queueWorkerOperation({
       type: "set-page", pageId, title,
       pageUpdatedAt: page.updatedAt, notebookUpdatedAt: this.notebook.updatedAt,
@@ -1504,6 +1606,11 @@ export class InkView extends FileView {
   }
 
   private scheduleSave(): void {
+    if (this.maxSaveDue && this.activePointerId === null) {
+      this.maxSaveDue = false;
+      void this.save();
+      return;
+    }
     if (this.saveTimer !== undefined) window.clearTimeout(this.saveTimer);
     this.saveTimer = window.setTimeout(() => {
       this.saveTimer = undefined;
@@ -1513,7 +1620,7 @@ export class InkView extends FileView {
       this.maxSaveTimer = window.setTimeout(() => {
         this.maxSaveTimer = undefined;
         if (this.activePointerId !== null) {
-          this.scheduleSave();
+          this.maxSaveDue = true;
           return;
         }
         void this.save();
@@ -1530,6 +1637,7 @@ export class InkView extends FileView {
 
   private async save(file = this.file): Promise<void> {
     if (!file) return;
+    this.maxSaveDue = false;
     this.clearSaveTimers();
     if (this.activeSave) {
       this.saveRequested = true;
@@ -1622,7 +1730,7 @@ export class InkView extends FileView {
     if (!command) return;
     command.undo();
     this.redoStack.push(command);
-    this.afterCommand();
+    this.afterCommand(command);
   }
 
   private redo(): void {
@@ -1630,7 +1738,7 @@ export class InkView extends FileView {
     if (!command) return;
     command.redo();
     this.undoStack.push(command);
-    this.afterCommand();
+    this.afterCommand(command);
   }
 
   private pushCommand(command: EditCommand): void {
@@ -1639,11 +1747,12 @@ export class InkView extends FileView {
     this.updateHistoryButtons();
   }
 
-  private afterCommand(): void {
+  private afterCommand(command: EditCommand): void {
     this.discardPendingInkPreview();
     this.clearSelection();
     this.updateHistoryButtons();
-    this.renderAll();
+    if (command.rebuild) this.renderAll();
+    else this.drawInteractiveStrokes(this.currentPage().strokes, true);
     this.scheduleSave();
   }
 
@@ -1674,13 +1783,18 @@ export class InkView extends FileView {
 
   private addedStrokeCommand(pageId: string, original: InkStroke): EditCommand {
     let currentId = original.id;
-    const template = cloneStroke(original);
+    // Keep the immutable finalized stroke by reference. Cloning every point at
+    // pointerup makes the next Pencil down wait behind an O(stroke length)
+    // copy; redo can clone later, outside the input hot path.
+    let template = original;
     return {
       undo: () => {
         const page = this.pageById(pageId);
         if (!page) return;
+        template = page.strokes.find((stroke) => stroke.id === currentId) ?? template;
         this.deleteStrokes(page, [currentId]);
         this.markChanged(page);
+        this.queueStrokePatch(page, [], [currentId]);
       },
       redo: () => {
         const page = this.pageById(pageId);
@@ -1689,6 +1803,7 @@ export class InkView extends FileView {
         currentId = restored.id;
         page.strokes.push(restored);
         this.markChanged(page);
+        this.queueStrokePatch(page, [restored], []);
       },
     };
   }
@@ -1705,6 +1820,7 @@ export class InkView extends FileView {
         page.strokes.push(...currentOriginals.map(cloneStroke));
         page.strokes.sort((left, right) => left.createdAt - right.createdAt);
         this.markChanged(page);
+        this.queueStrokePatch(page, currentOriginals, currentReplacements.map((stroke) => stroke.id));
       },
       redo: () => {
         const page = this.pageById(pageId);
@@ -1714,6 +1830,7 @@ export class InkView extends FileView {
         page.strokes.push(...currentReplacements.map(cloneStroke));
         page.strokes.sort((left, right) => left.createdAt - right.createdAt);
         this.markChanged(page);
+        this.queueStrokePatch(page, currentReplacements, currentOriginals.map((stroke) => stroke.id));
       },
     };
   }
@@ -1737,13 +1854,13 @@ export class InkView extends FileView {
           undo: () => this.applyStrokePoints(pageId, before),
           redo: () => this.applyStrokePoints(pageId, after),
         });
-        this.markChanged(page, false, false);
+        this.markChanged(page);
         this.queueWorkerOperation({
-          type: "patch-strokes",
+          type: "translate-strokes",
           pageId: page.id,
-          upsert: movedStrokes.map(cloneStroke),
-          remove: [],
-          deletedStrokeIds: [...page.deletedStrokeIds],
+          strokeIds: movedStrokes.map((stroke) => stroke.id),
+          dx: drag.dx,
+          dy: drag.dy,
           pageUpdatedAt: page.updatedAt,
           notebookUpdatedAt: this.notebook.updatedAt,
         });
@@ -1771,6 +1888,7 @@ export class InkView extends FileView {
       }
     }
     this.markChanged(page);
+    this.queueStrokePatch(page, page.strokes.filter((stroke) => pointsById.has(stroke.id)), []);
   }
 
   private deleteStrokes(page: InkPage, ids: string[]): void {
@@ -1779,25 +1897,33 @@ export class InkView extends FileView {
     page.deletedStrokeIds = [...new Set([...page.deletedStrokeIds, ...ids])];
   }
 
-  private markChanged(page: InkPage, syncTiles = true, syncWorker = true): void {
+  private markChanged(page: InkPage): void {
     const now = Date.now();
     page.updatedAt = now;
     this.notebook.updatedAt = now;
     this.dirtyRevision += 1;
-    if (syncTiles && page === this.currentPage()) this.tiles?.sync(page.strokes, this.tileExclusion());
-    if (syncWorker) this.queueWorkerSnapshot();
   }
 
-  private queueWorkerSnapshot(): void {
-    if (!this.workerSession) return;
-    this.queueWorkerOperation({ type: "replace-notebook", notebook: cloneNotebook(this.notebook) });
+  private queueStrokePatch(page: InkPage, upsert: readonly InkStroke[], remove: readonly string[]): void {
+    if (page === this.currentPage()) this.tiles?.patchStrokes(upsert, remove, page.strokes);
+    this.queueWorkerOperation({
+      type: "patch-strokes",
+      pageId: page.id,
+      upsert: upsert.map(cloneStroke),
+      remove: [...remove],
+      deletedStrokeIds: [...page.deletedStrokeIds],
+      pageUpdatedAt: page.updatedAt,
+      notebookUpdatedAt: this.notebook.updatedAt,
+    });
   }
 
-  private queueWorkerOperation(operation: NotebookOperation): void {
+  private queueWorkerOperation(operation: NotebookOperation, transfer?: Transferable[], onApplied?: (response: InkWorkerResponse) => void): void {
     const session = this.workerSession;
     if (!session) return;
     const revision = ++this.workerRevision;
-    void session.apply(revision, operation).catch((error) => {
+    void session.apply(revision, operation, transfer).then((response) => {
+      if (this.workerSession === session) onApplied?.(response);
+    }).catch((error) => {
       if (this.workerSession === session) this.disableWorkerSession(error);
     });
   }
@@ -1810,7 +1936,7 @@ export class InkView extends FileView {
     }
     this.workerSession?.dispose();
     this.workerSession = null;
-    if (this.workerFallbackReported) return;
+    if (this.workerFallbackReported || this.workers?.isDisabled()) return;
     this.workerFallbackReported = true;
     new Notice(`Ink Notes background processing is unavailable; using reduced-performance mode: ${error instanceof Error ? error.message : String(error)}`);
   }
@@ -1844,6 +1970,7 @@ export class InkView extends FileView {
     this.pendingMergedNotebook = null;
     this.pendingMergedNotebookIsFinal = false;
     this.externalRefreshPending = false;
+    this.maxSaveDue = false;
     this.eraserHoverPoint = null;
     this.eraserPointerInside = false;
     this.activeStroke = null;
@@ -1854,6 +1981,7 @@ export class InkView extends FileView {
     this.erasedStrokes = [];
     this.eraserReplacementIds.clear();
     this.eraserReplacements = [];
+    this.confirmedStrokeOutlines.clear();
     this.clearSelection();
   }
 
@@ -2041,6 +2169,58 @@ function clonePageAsNew(page: InkPage, title: string, now = Date.now()): InkPage
 
 function clonePoints(points: InkPoint[]): InkPoint[] {
   return points.map((point) => ({ ...point }));
+}
+
+function packStrokePoints(points: readonly InkPoint[], start: number): Float64Array {
+  const packed = new Float64Array((points.length - start) * 6);
+  let offset = 0;
+  for (let index = start; index < points.length; index++) {
+    const point = points[index];
+    packed[offset++] = point.x;
+    packed[offset++] = point.y;
+    packed[offset++] = point.pressure;
+    packed[offset++] = point.tiltX ?? Number.NaN;
+    packed[offset++] = point.tiltY ?? Number.NaN;
+    packed[offset++] = point.t;
+  }
+  return packed;
+}
+
+function drawImmediateStrokeTail(ctx: CanvasRenderingContext2D, stroke: InkStroke, width: number, height: number, confirmedSamples: number): void {
+  // Keep lightweight test doubles and legacy snapshots readable. Real strokes
+  // always carry a point array and use the incremental pressure-line path.
+  if (!Array.isArray(stroke.points)) {
+    drawInkStroke(ctx, stroke, width, height);
+    return;
+  }
+  const start = Math.max(0, Math.min(stroke.points.length - 1, confirmedSamples - 1));
+  if (stroke.points.length === 0 || start >= stroke.points.length) return;
+  ctx.save();
+  ctx.globalAlpha = stroke.opacity;
+  ctx.strokeStyle = stroke.color;
+  ctx.fillStyle = stroke.color;
+  ctx.lineCap = "round";
+  ctx.lineJoin = "round";
+  ctx.globalCompositeOperation = stroke.tool === "highlighter" ? "multiply" : "source-over";
+  if (stroke.points.length === 1 || start === stroke.points.length - 1 && start === 0) {
+    const point = stroke.points[start];
+    const diameter = stroke.tool === "highlighter" ? stroke.width : stroke.width * (0.55 + point.pressure * 0.75);
+    ctx.beginPath();
+    ctx.arc(point.x * width, point.y * height, diameter / 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+    return;
+  }
+  for (let index = start + 1; index < stroke.points.length; index++) {
+    const previous = stroke.points[index - 1];
+    const point = stroke.points[index];
+    ctx.lineWidth = stroke.tool === "highlighter" ? stroke.width : stroke.width * (0.55 + point.pressure * 0.75);
+    ctx.beginPath();
+    ctx.moveTo(previous.x * width, previous.y * height);
+    ctx.lineTo(point.x * width, point.y * height);
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 function restoredStroke(stroke: InkStroke): InkStroke {
