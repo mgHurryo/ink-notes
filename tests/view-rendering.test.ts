@@ -19,8 +19,8 @@ function view(): any {
     canvasLogicalWidth: 800, canvasLogicalHeight: 1000, renderFrame: null, resizeRequested: false,
     currentPage: () => page,
     viewport: { x: 0, y: 0, width: 800, height: 1000 }, zoom: 1,
-    tiles: { sync: vi.fn(), update: vi.fn(), flushVisible: vi.fn(), commitInteractive: vi.fn(), commitInk: vi.fn(),
-      pauseInkCommit: vi.fn(), resumeInkCommit: vi.fn(), cancelInkCommit: vi.fn() },
+    tiles: { sync: vi.fn(), patchStrokes: vi.fn(), update: vi.fn(), flushVisible: vi.fn(), commitInteractive: vi.fn(), commitInk: vi.fn(),
+      removeStrokes: vi.fn(), previewInteractiveCells: vi.fn(), pauseInkCommit: vi.fn(), resumeInkCommit: vi.fn(), cancelInkCommit: vi.fn() },
   });
   return v;
 }
@@ -63,6 +63,24 @@ it("keeps a finished pen visible while tiles commit asynchronously", () => {
   expect(v.previewCtx.clearRect).toHaveBeenCalled();
 });
 
+it("keeps completed overlay ink when a new pointer cancels its tile commit", () => {
+  const v = view();
+  const stroke = { id: "pending", tool: "pen" };
+  v.pendingInkStrokes = [stroke];
+  v.pendingInkPageId = "page";
+  v.drawPreview = vi.fn();
+  v.drawStrokes = vi.fn();
+  let complete!: (committed: boolean) => void;
+  v.tiles.commitInk.mockImplementation((_strokes: unknown, _viewport: unknown, _density: unknown, callback: typeof complete) => { complete = callback; });
+  v.startPendingInkCommit(v.currentPage());
+  v.activePointerId = 7;
+  complete(false);
+  expect(v.pendingInkStrokes).toEqual([stroke]);
+  expect(v.drawPreview).toHaveBeenCalledOnce();
+  expect(v.drawStrokes).not.toHaveBeenCalled();
+  expect(window.setTimeout).not.toHaveBeenCalled();
+});
+
 it("keeps a long highlighter stroke on the immediate preview layer", () => {
   const v = view();
   v.activeStroke = { tool: "highlighter" };
@@ -79,14 +97,55 @@ it("keeps a long highlighter stroke on the immediate preview layer", () => {
 it("keeps a finished highlighter in the pending preview", () => {
   const v = view();
   const stroke = { id: "marker", tool: "highlighter" };
+  const confirmedCtx = { clearRect: vi.fn() };
+  const confirmedCanvas = { classList: { toggle: vi.fn() } };
+  v.confirmedPreviewCtx = confirmedCtx;
+  v.confirmedPreviewCanvas = confirmedCanvas;
   v.activeStroke = stroke;
   v.commitPreview();
   v.activeStroke = null;
-  v.drawPreview();
+  v.redrawConfirmedPreview();
   expect(v.pendingInkStrokes).toEqual([stroke]);
-  expect(drawInkStroke).toHaveBeenCalledWith(v.previewCtx, stroke, 800, 1000);
-  expect(v.previewCanvas.classList.toggle).toHaveBeenCalledWith("is-highlighter-preview", true);
+  expect(drawInkStroke).toHaveBeenCalledWith(confirmedCtx, stroke, 800, 1000);
+  expect(confirmedCanvas.classList.toggle).toHaveBeenCalledWith("is-highlighter-preview", true);
   expect(v.tiles.commitInteractive).not.toHaveBeenCalled();
+});
+
+it("redraws Worker-confirmed geometry separately from the incremental input tail", () => {
+  const v = view();
+  const context = () => ({ clearRect: vi.fn(), save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), moveTo: vi.fn(),
+    lineTo: vi.fn(), quadraticCurveTo: vi.fn(), closePath: vi.fn(), fill: vi.fn(), stroke: vi.fn(), arc: vi.fn() });
+  const tail = context();
+  const confirmed = context();
+  const stroke = {
+    id: "split-preview", pageId: "page", tool: "pen", color: "#000", opacity: 1, width: 4,
+    points: [
+      { x: 0.1, y: 0.1, pressure: 0.4, t: 1 },
+      { x: 0.2, y: 0.2, pressure: 0.5, t: 2 },
+      { x: 0.3, y: 0.25, pressure: 0.6, t: 3 },
+    ],
+  };
+  Object.assign(v, {
+    previewCtx: tail,
+    confirmedPreviewCtx: confirmed,
+    confirmedPreviewCanvas: { classList: { toggle: vi.fn() } },
+    notebook: { pageWidth: 800, pageHeight: 1000 },
+    activeStroke: stroke,
+    confirmedStrokeOutlines: new Map([[stroke.id, {
+      points: new Float32Array([80, 100, 120, 120, 160, 180, 100, 160]), sampleCount: 2, mode: "pen",
+    }]]),
+  });
+
+  v.drawPreview();
+  expect(drawInkStroke).toHaveBeenCalledWith(tail, expect.objectContaining({
+    id: stroke.id,
+    points: stroke.points.slice(1),
+  }), 800, 1000);
+  expect(confirmed.fill).not.toHaveBeenCalled();
+
+  v.redrawConfirmedPreview();
+  expect(confirmed.fill).toHaveBeenCalledOnce();
+  expect(confirmed.clearRect).toHaveBeenCalledOnce();
 });
 
 it("allocates overlays with the mobile high-density pixel budget", () => {
@@ -101,15 +160,18 @@ it("allocates overlays with the mobile high-density pixel budget", () => {
   expect(canvas).toMatchObject({ width: 1600, height: 2000 });
 });
 
-it("commits eraser changes as a coherent fallback frame", () => {
+it("repaints only changed eraser cells during the interaction", () => {
   const v = view();
   v.pageElement = {};
   v.ctx = { clearRect: vi.fn() };
   v.drawSelection = vi.fn();
   v.interaction = { tool: "eraser" };
+  v.eraserPreviewCells = new Set(["1:2", "2:2"]);
   v.requestRender();
   vi.mocked(window.requestAnimationFrame).mock.calls[0][0](0);
-  expect(v.tiles.commitInteractive).toHaveBeenCalledWith(v.viewport, 1, false);
+  expect(v.tiles.previewInteractiveCells).toHaveBeenCalledWith(["1:2", "2:2"], v.viewport, 1);
+  expect(v.eraserPreviewCells.size).toBe(0);
+  expect(v.tiles.commitInteractive).not.toHaveBeenCalled();
   expect(v.tiles.update).not.toHaveBeenCalled();
 });
 

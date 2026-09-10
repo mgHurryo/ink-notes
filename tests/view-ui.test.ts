@@ -52,27 +52,48 @@ describe("reference-style editor", () => {
     expect(document.querySelector(".ink-page-status")?.textContent).toBe("2 / 2");
   });
   it("synchronizes preset, slider and custom-color selection", () => {
-    button("8 px").click();
+    button("Pen 8 px").click();
     button("Pen").click();
-    const size = document.querySelector<HTMLInputElement>('input[aria-label="Brush size"]')!;
+    const size = document.querySelector<HTMLInputElement>('input[aria-label="Pen size"]')!;
     expect(size.value).toBe("8");
     size.value = "5.5";
     size.dispatchEvent(new Event("input"));
-    expect(button("8 px").getAttribute("aria-pressed")).toBe("false");
-    expect(document.querySelector(".ink-size-popover-header .ink-control-value")?.textContent).toBe("5.5 px");
-    const color = document.querySelector<HTMLInputElement>('input[type="color"]')!;
+    expect(button("Pen 8 px").getAttribute("aria-pressed")).toBe("false");
+    expect(document.querySelector('.ink-brush-settings[data-brush-tool="pen"] .ink-size-popover-header .ink-control-value')?.textContent).toBe("5.5 px");
+    const color = document.querySelector<HTMLInputElement>('input[aria-label="Pen custom color"]')!;
     color.value = "#abcdef";
     color.dispatchEvent(new Event("input"));
-    expect(document.querySelector('.ink-color-swatch[aria-pressed="true"]')).toBeNull();
+    expect(document.querySelector('.ink-color-swatch[data-brush-tool="pen"][aria-pressed="true"]')).toBeNull();
+  });
+  it("keeps pen and highlighter settings independent", () => {
+    button("Pen").click();
+    const penSize = document.querySelector<HTMLInputElement>('input[aria-label="Pen size"]')!;
+    penSize.value = "6";
+    penSize.dispatchEvent(new Event("input"));
+    button("Pen blue").click();
+
+    button("Highlight").click();
+    const highlighterSize = document.querySelector<HTMLInputElement>('input[aria-label="Highlighter size"]')!;
+    expect(highlighterSize.value).toBe("18");
+    expect(button("Highlighter yellow").getAttribute("aria-pressed")).toBe("true");
+    highlighterSize.value = "24";
+    highlighterSize.dispatchEvent(new Event("input"));
+    button("Highlighter green").click();
+
+    button("Pen").click();
+    expect(penSize.value).toBe("6");
+    expect(button("Pen blue").getAttribute("aria-pressed")).toBe("true");
+    expect(highlighterSize.value).toBe("24");
+    expect(button("Highlighter green").getAttribute("aria-pressed")).toBe("true");
   });
   it("exposes smoothing for pen tools without adding another persistent control", () => {
     button("Pen").click();
-    const smoothing = document.querySelector<HTMLInputElement>('input[aria-label="Smoothing"]')!;
+    const smoothing = document.querySelector<HTMLInputElement>('input[aria-label="Pen smoothing"]')!;
     expect(smoothing).toBeTruthy();
     expect(smoothing.value).toBe("0.7");
     smoothing.value = "0.9";
     smoothing.dispatchEvent(new Event("input"));
-    expect(document.querySelector(".ink-size-popover-header .ink-control-value")?.textContent).toBe("3 px");
+    expect(document.querySelector('.ink-brush-settings[data-brush-tool="pen"] .ink-size-popover-header .ink-control-value')?.textContent).toBe("3 px");
     button("Erase").click();
     expect(smoothing.offsetParent).toBeNull();
   });

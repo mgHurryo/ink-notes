@@ -142,34 +142,117 @@ describe("interactive tile commits", () => {
     vi.unstubAllGlobals();
   });
 
-  it("flushes a bounded fallback before scheduling density refinement", () => {
-    const renderer = Object.create(TileRenderer.prototype) as {
-      update: ReturnType<typeof vi.fn>;
-      flushVisible: ReturnType<typeof vi.fn>;
-      commitInteractive(viewport: { x: number; y: number; width: number; height: number }, density: number): void;
-    };
-    renderer.update = vi.fn();
-    renderer.flushVisible = vi.fn();
+  it("keeps the old frame mounted while preparing a coherent replacement batch", () => {
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    const active = { id: 1, index: { width: 400, height: 600, revisions: new Map() } };
+    const cancelGeneration = vi.fn();
+    Object.assign(renderer, { active, disposed: false, inkCommit: null, inkFrame: null, renderGeneration: 4,
+      backend: { cancelGeneration }, host: { children: [] }, cache: new Map(), heldCells: new Set(), jobs: [],
+      get: vi.fn(() => undefined), scheduleInkCommit: vi.fn() });
     const viewport = { x: 0, y: 0, width: 400, height: 600 };
     renderer.commitInteractive(viewport, 3);
-    expect(renderer.update.mock.calls).toEqual([[viewport, 1, false], [viewport, 3, true]]);
-    expect(renderer.flushVisible).toHaveBeenCalledOnce();
-    expect(renderer.update.mock.invocationCallOrder[0]).toBeLessThan(renderer.flushVisible.mock.invocationCallOrder[0]);
-    expect(renderer.flushVisible.mock.invocationCallOrder[0]).toBeLessThan(renderer.update.mock.invocationCallOrder[1]);
+    expect(cancelGeneration).toHaveBeenCalledWith(5);
+    expect(renderer.inkCommit.density).toBeUndefined();
+    expect(renderer.inkCommit.jobs.length).toBeGreaterThan(1);
+    expect(renderer.inkCommit.jobs.every((job: any) => job.density === 3)).toBe(true);
+    expect(renderer.host.children).toEqual([]);
+    expect(renderer.scheduleInkCommit).toHaveBeenCalledOnce();
   });
 
   it("does not spend work on density refinement during an active gesture", () => {
-    const renderer = Object.create(TileRenderer.prototype) as {
-      update: ReturnType<typeof vi.fn>;
-      flushVisible: ReturnType<typeof vi.fn>;
-      commitInteractive(viewport: { x: number; y: number; width: number; height: number }, density: number, refine: boolean): void;
-    };
-    renderer.update = vi.fn();
-    renderer.flushVisible = vi.fn();
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    const active = { id: 1, index: { width: 400, height: 600, revisions: new Map() } };
+    Object.assign(renderer, { active, disposed: false, inkCommit: null, inkFrame: null, renderGeneration: 0,
+      backend: null, host: { children: [] }, cache: new Map(), heldCells: new Set(), jobs: [],
+      get: vi.fn(() => undefined), scheduleInkCommit: vi.fn() });
     const viewport = { x: 0, y: 0, width: 400, height: 600 };
     renderer.commitInteractive(viewport, 3, false);
-    expect(renderer.update).toHaveBeenCalledOnce();
-    expect(renderer.update).toHaveBeenCalledWith(viewport, 1, false);
-    expect(renderer.flushVisible).toHaveBeenCalledOnce();
+    expect(renderer.inkCommit.jobs.every((job: any) => job.density === 1)).toBe(true);
+    expect(renderer.scheduleInkCommit).toHaveBeenCalledOnce();
+  });
+
+  it("repaints only visible cells changed by an active eraser", () => {
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    const active = { id: 1, index: { width: 512, height: 512, revisions: new Map([["0:0", 2], ["3:3", 2]]) } };
+    const visibleTile = { cell: "0:0" };
+    Object.assign(renderer, {
+      active, disposed: false, cache: new Map(), pixels: 0, density: 1,
+      get: vi.fn(() => undefined), paint: vi.fn(() => visibleTile), attach: vi.fn(), evict: vi.fn(),
+    });
+
+    renderer.previewInteractiveCells(["0:0", "3:3"], { x: 0, y: 0, width: 128, height: 128 }, 3);
+
+    expect(renderer.paint).toHaveBeenCalledOnce();
+    expect(renderer.paint).toHaveBeenCalledWith(expect.objectContaining({ cell: "0:0", density: 3 }));
+    expect(renderer.attach).toHaveBeenCalledWith(visibleTile);
+  });
+
+  it("does not let an obsolete tile completion clear a newer pending request", async () => {
+    const requests: Array<{ resolve: (value: any) => void }> = [];
+    const backend = { renderTile: vi.fn(() => new Promise((resolve) => requests.push({ resolve }))) };
+    const state = { id: 7, page: { id: "page" }, index: { width: 128, height: 128, revisions: new Map([["0:0", 1]]) } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, { backend, disposed: false, renderGeneration: 1, pendingTiles: new Map(),
+      cache: new Map(), sequence: 0, pixels: 0, visible: new Set(["0:0"]), active: state,
+      schedule: vi.fn(), backendError: vi.fn() });
+    const job = { state, cell: "0:0", density: 2, priority: "visible" };
+    renderer.requestWorkerTile(job);
+    renderer.renderGeneration = 2;
+    renderer.requestWorkerTile(job);
+    const key = "7/0:0/2";
+    const oldBitmap = { close: vi.fn() };
+    requests[0].resolve({ pageId: "page", cell: "0:0", density: 2, revision: 1, renderGeneration: 1,
+      x: 0, y: 0, width: 128, height: 128, canvasWidth: 264, canvasHeight: 264, bitmap: oldBitmap });
+    await Promise.resolve();
+    expect(oldBitmap.close).toHaveBeenCalledOnce();
+    expect(renderer.pendingTiles.get(key)).toBe(2);
+
+    renderer.disposed = true;
+    const currentBitmap = { close: vi.fn() };
+    requests[1].resolve({ pageId: "page", cell: "0:0", density: 2, revision: 1, renderGeneration: 2,
+      x: 0, y: 0, width: 128, height: 128, canvasWidth: 264, canvasHeight: 264, bitmap: currentBitmap });
+    await Promise.resolve();
+    expect(currentBitmap.close).toHaveBeenCalledOnce();
+    expect(renderer.pendingTiles.has(key)).toBe(false);
+  });
+
+  it("cancels the previous backend when switching render backends", () => {
+    const oldBackend = { renderTile: vi.fn(), cancelGeneration: vi.fn() };
+    const nextBackend = { renderTile: vi.fn(), cancelGeneration: vi.fn() };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, { backend: oldBackend, renderGeneration: 3, jobs: [], pendingTiles: new Map() });
+    renderer.setBackend(nextBackend);
+    expect(oldBackend.cancelGeneration).toHaveBeenCalledWith(4);
+    expect(nextBackend.cancelGeneration).not.toHaveBeenCalled();
+  });
+
+  it("advances and cancels a render generation only once per ink pointerdown", () => {
+    const cancelGeneration = vi.fn();
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, {
+      backend: { cancelGeneration }, renderGeneration: 3, frame: null, inkFrame: null,
+      jobs: [{ cell: "0:0" }], pendingTiles: new Map([["tile", 3]]), inkCommit: null,
+    });
+    renderer.beginInput();
+    renderer.pauseInkCommit();
+    expect(renderer.renderGeneration).toBe(4);
+    expect(cancelGeneration).toHaveBeenCalledOnce();
+    expect(cancelGeneration).toHaveBeenCalledWith(4);
+    expect(renderer.jobs).toEqual([]);
+    expect(renderer.inkCommitPaused).toBe(true);
+  });
+
+  it("evicts least-recently-used tile canvases beyond the pixel budget", () => {
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    const firstCanvas = { width: 4_000, height: 2_500 };
+    const secondCanvas = { width: 3_000, height: 2_500 };
+    const first = { used: 1, pixels: 10_000_000, node: { parentElement: null, remove: vi.fn() }, canvas: firstCanvas };
+    const second = { used: 2, pixels: 7_500_000, node: { parentElement: null, remove: vi.fn() }, canvas: secondCanvas };
+    Object.assign(renderer, { cache: new Map([["first", first], ["second", second]]), pixels: 17_500_000, host: {} });
+    renderer.evict();
+    expect(first.node.remove).toHaveBeenCalledOnce();
+    expect(firstCanvas).toEqual({ width: 1, height: 1 });
+    expect(renderer.cache.has("first")).toBe(false);
+    expect(renderer.pixels).toBe(7_500_000);
   });
 });
