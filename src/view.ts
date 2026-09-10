@@ -67,6 +67,7 @@ const SAVE_IDLE_DELAY = 1_500;
 const SAVE_MAX_DELAY = 10_000;
 const SAVE_CONFLICT_RETRIES = 3;
 const INK_COMMIT_IDLE_DELAY = 180;
+const LIVE_TAIL_SAMPLE_LIMIT = 32;
 
 class SaveConflictError extends Error {
   constructor(message: string) {
@@ -153,6 +154,7 @@ export class InkView extends FileView {
   private erasedStrokes: InkStroke[] = [];
   private eraserReplacementIds = new Set<string>();
   private eraserReplacements: InkStroke[] = [];
+  private eraserPreviewCells = new Set<string>();
   private lassoPath: InkPoint[] = [];
   private selectedStrokeIds = new Set<string>();
   private lassoDrag: {
@@ -599,6 +601,15 @@ export class InkView extends FileView {
     this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
 
+  private drawEraserInteraction(): void {
+    if (!this.ctx || !this.pageElement) return;
+    const cells = [...this.eraserPreviewCells];
+    this.eraserPreviewCells.clear();
+    this.tiles.previewInteractiveCells(cells, this.viewport, (window.devicePixelRatio || 1) * this.zoom);
+    this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
+    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+  }
+
   private onViewportMotion(): void {
     this.updateViewport(false);
     if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
@@ -621,7 +632,7 @@ export class InkView extends FileView {
       this.resizeRequested = false;
       if (shouldResize) this.resizeCanvas();
       else if (this.lassoDrag) this.drawLassoInteraction();
-      else if (this.interaction?.tool === "eraser") this.drawInteractiveStrokes(this.currentPage().strokes);
+      else if (this.interaction?.tool === "eraser") this.drawEraserInteraction();
       else if (this.hasInkPreview()) this.drawPreview();
       else this.drawStrokes(this.currentPage().strokes);
     });
@@ -649,8 +660,9 @@ export class InkView extends FileView {
 
   private drawPreview(): void {
     const outlines = this.confirmedStrokeOutlines ?? (this.confirmedStrokeOutlines = new Map());
-    const strokes = [...this.pendingInkStrokes];
-    if (this.activeStroke && (this.activeStroke.tool === "pen" || this.activeStroke.tool === "highlighter")) strokes.push(this.activeStroke);
+    const strokes = this.activeStroke && (this.activeStroke.tool === "pen" || this.activeStroke.tool === "highlighter")
+      ? [this.activeStroke]
+      : [];
     this.previewCtx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
     if (strokes.length === 0) {
       this.previewCanvas.classList.remove("is-highlighter-preview");
@@ -667,15 +679,26 @@ export class InkView extends FileView {
     this.confirmedPreviewDirty = false;
     if (!this.confirmedPreviewCanvas || !this.confirmedPreviewCtx) return;
     const outlines = this.confirmedStrokeOutlines ?? (this.confirmedStrokeOutlines = new Map());
-    const strokes = [...this.pendingInkStrokes];
+    const pending = [...this.pendingInkStrokes];
+    const strokes = [...pending];
     if (this.activeStroke && (this.activeStroke.tool === "pen" || this.activeStroke.tool === "highlighter")) strokes.push(this.activeStroke);
     this.confirmedPreviewCtx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
-    const confirmedStrokes = strokes.filter((stroke) => outlines.has(stroke.id));
+    const confirmedStrokes = strokes.filter((stroke) => outlines.has(stroke.id) || pending.includes(stroke));
     this.confirmedPreviewCanvas.classList.toggle("is-highlighter-preview",
       confirmedStrokes.length > 0 && confirmedStrokes.every((stroke) => stroke.tool === "highlighter"));
     for (const stroke of confirmedStrokes) {
-      const confirmed = outlines.get(stroke.id)!;
-      this.drawConfirmedOutline(this.confirmedPreviewCtx, confirmed.points, stroke.color, stroke.opacity, stroke.width, confirmed.mode);
+      const confirmed = outlines.get(stroke.id);
+      if (confirmed) {
+        this.drawConfirmedOutline(this.confirmedPreviewCtx, confirmed.points, stroke.color, stroke.opacity, stroke.width, confirmed.mode);
+        if (pending.includes(stroke)) {
+          drawImmediateStrokeTail(this.confirmedPreviewCtx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight, confirmed.sampleCount);
+        }
+      } else {
+        // Worker-less fallback and very short taps still become visible in the
+        // same pointerup task; the delayed tile transaction is never the only
+        // representation of completed ink.
+        drawInkStroke(this.confirmedPreviewCtx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
+      }
     }
   }
 
@@ -684,15 +707,15 @@ export class InkView extends FileView {
     if (points.length < 4) return;
     ctx.save();
     ctx.globalAlpha = opacity;
-    const scaleX = this.canvasLogicalWidth / this.notebook.pageWidth;
-    const scaleY = this.canvasLogicalHeight / this.notebook.pageHeight;
+    const scaleX = this.canvasLogicalWidth;
+    const scaleY = this.canvasLogicalHeight;
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
     ctx.lineCap = "round";
     ctx.lineJoin = "round";
     if (mode === "highlighter") {
       ctx.globalCompositeOperation = "multiply";
-      ctx.lineWidth = width * (scaleX + scaleY) / 2;
+      ctx.lineWidth = width;
       ctx.beginPath();
       ctx.moveTo(points[0] * scaleX, points[1] * scaleY);
       for (let index = 2; index < points.length; index += 2) {
@@ -817,6 +840,15 @@ export class InkView extends FileView {
     this.tiles.commitInk(batch, this.viewport, (window.devicePixelRatio || 1) * this.zoom, (committed) => {
       if (this.committingInkStrokes !== batch) return;
       this.committingInkStrokes = null;
+      if (!committed) {
+        // A new pointerdown intentionally cancels unfinished tile work. Keep
+        // the completed strokes on the sharp overlay and retry them with the
+        // next idle batch instead of synchronously replaying the whole page.
+        this.tiles.removeStrokes(batch.map((stroke) => stroke.id));
+        if (this.viewReady && page === this.currentPage()) this.drawPreview();
+        if (this.activePointerId === null) this.schedulePendingInkCommit(page);
+        return;
+      }
       const ids = new Set(batch.map(stroke => stroke.id));
       this.pendingInkStrokes = this.pendingInkStrokes.filter(stroke => !ids.has(stroke.id));
       if (this.pendingInkStrokes.length === 0) this.pendingInkPageId = null;
@@ -824,8 +856,8 @@ export class InkView extends FileView {
       for (const stroke of batch) outlines.delete(stroke.id);
       this.confirmedPreviewDirty = true;
       if (this.viewReady && page === this.currentPage()) {
-        if (!committed) this.drawStrokes(page.strokes);
-        else { this.redrawConfirmedPreview(); this.drawPreview(); }
+        this.redrawConfirmedPreview();
+        this.drawPreview();
       }
       if (this.pendingInkStrokes.length > 0) this.schedulePendingInkCommit(page);
       else if (this.activePointerId === null) {
@@ -871,6 +903,23 @@ export class InkView extends FileView {
     }
   }
 
+  private materializePendingInkPreview(page: InkPage): void {
+    if (this.pendingInkPageId !== page.id) {
+      this.discardPendingInkPreview();
+      return;
+    }
+    const pending = [...new Map([
+      ...this.pendingInkStrokes,
+      ...(this.committingInkStrokes ?? []),
+    ].map((stroke) => [stroke.id, stroke])).values()];
+    this.discardPendingInkPreview();
+    if (pending.length === 0) return;
+    const cells = this.tiles.patchStrokes(pending, [], page.strokes);
+    // A tool switch must not make recently completed ink disappear or become
+    // impossible for the eraser to hit while its background commit is pending.
+    this.tiles.previewInteractiveCells(cells, this.viewport, (window.devicePixelRatio || 1) * this.zoom);
+  }
+
   private drawSelection(width: number, height: number): void {
     const ctx = this.ctx;
     ctx.save();
@@ -899,7 +948,7 @@ export class InkView extends FileView {
     this.tiles?.beginInput?.();
     this.cancelPendingInkCommitTimer();
     if (tool === "pen" || tool === "highlighter") this.tiles.pauseInkCommit();
-    else if (this.pendingInkStrokes.length > 0 || this.committingInkStrokes) this.discardPendingInkPreview();
+    else if (this.pendingInkStrokes.length > 0 || this.committingInkStrokes) this.materializePendingInkPreview(page);
     if (this.saveTimer !== undefined) {
       window.clearTimeout(this.saveTimer);
       this.saveTimer = undefined;
@@ -921,6 +970,7 @@ export class InkView extends FileView {
     this.erasedStrokes = [];
     this.eraserReplacementIds.clear();
     this.eraserReplacements = [];
+    this.eraserPreviewCells.clear();
     if (tool === "eraser") {
       this.updateEraserHover(point, true);
       if (this.eraseAt(point, page)) this.requestRender();
@@ -963,6 +1013,8 @@ export class InkView extends FileView {
       type: "start-stroke",
       pageId: page.id,
       stroke: { ...this.activeStroke, points: [{ ...point }] },
+      previewWidth: this.canvasLogicalWidth,
+      previewHeight: this.canvasLogicalHeight,
       pageUpdatedAt: page.updatedAt,
       notebookUpdatedAt: this.notebook.updatedAt,
     });
@@ -1074,14 +1126,18 @@ export class InkView extends FileView {
     this.workerStrokePointIndex = stroke.points.length;
     this.queueWorkerOperation({
       type: "append-stroke-points", pageId: stroke.pageId, strokeId: stroke.id, points,
+      previewWidth: this.canvasLogicalWidth, previewHeight: this.canvasLogicalHeight,
       pageUpdatedAt: stroke.updatedAt, notebookUpdatedAt: this.notebook.updatedAt,
     }, [points.buffer], (response) => {
       if (response.type !== "operation-applied" || !response.outline || response.strokeId !== stroke.id
         || (this.activeStroke?.id !== stroke.id && !this.pendingInkStrokes.some((candidate) => candidate.id === stroke.id))) return;
       const outlines = this.confirmedStrokeOutlines ?? (this.confirmedStrokeOutlines = new Map());
+      const previous = outlines.get(stroke.id);
+      const sampleCount = response.sampleCount ?? stroke.points.length;
+      if (previous && previous.sampleCount >= sampleCount) return;
       outlines.set(stroke.id, {
         points: response.outline,
-        sampleCount: response.sampleCount ?? stroke.points.length,
+        sampleCount,
         mode: response.outlineMode ?? "pen",
       });
       this.confirmedPreviewDirty = true;
@@ -1093,12 +1149,18 @@ export class InkView extends FileView {
     const interaction = this.interaction;
     if (!interaction) return;
     const page = this.pageById(interaction.pageId);
-    this.interaction = null;
-    this.refreshEraserCursor();
-    if (!page) { this.activePointerId = null; this.tiles.resumeInkCommit(); return; }
+    if (!page) {
+      this.interaction = null;
+      this.refreshEraserCursor();
+      this.activePointerId = null;
+      this.tiles.resumeInkCommit();
+      return;
+    }
     this.flushPendingLassoPoint();
     this.flushWorkerStrokePoints();
     this.commitPreview(page);
+    this.interaction = null;
+    this.refreshEraserCursor();
     if (this.activeStroke && this.renderFrame !== null && !this.resizeRequested) {
       window.cancelAnimationFrame(this.renderFrame);
       this.renderFrame = null;
@@ -1135,6 +1197,7 @@ export class InkView extends FileView {
     this.workerStrokePointIndex = 0;
     this.lastPoint = null;
     this.pendingLassoPoint = null;
+    this.eraserPreviewCells.clear();
     if (interaction.tool === "pen" || interaction.tool === "highlighter") {
       this.resizePreview();
       this.drawPreview();
@@ -1287,7 +1350,11 @@ export class InkView extends FileView {
       }
       page.strokes.sort((left, right) => left.createdAt - right.createdAt);
     }
-    if (page === this.currentPage()) this.tiles?.patchStrokes(replacements, removed.map((stroke) => stroke.id), page.strokes);
+    if (page === this.currentPage()) {
+      for (const cell of this.tiles?.patchStrokes(replacements, removed.map((stroke) => stroke.id), page.strokes) ?? []) {
+        this.eraserPreviewCells.add(cell);
+      }
+    }
     return true;
   }
 
@@ -2260,34 +2327,13 @@ function drawImmediateStrokeTail(ctx: CanvasRenderingContext2D, stroke: InkStrok
     drawInkStroke(ctx, stroke, width, height);
     return;
   }
-  const start = Math.max(0, Math.min(stroke.points.length - 1, confirmedSamples - 1));
-  if (stroke.points.length === 0 || start >= stroke.points.length) return;
-  ctx.save();
-  ctx.globalAlpha = stroke.opacity;
-  ctx.strokeStyle = stroke.color;
-  ctx.fillStyle = stroke.color;
-  ctx.lineCap = "round";
-  ctx.lineJoin = "round";
-  ctx.globalCompositeOperation = stroke.tool === "highlighter" ? "multiply" : "source-over";
-  if (stroke.points.length === 1 || start === stroke.points.length - 1 && start === 0) {
-    const point = stroke.points[start];
-    const diameter = stroke.tool === "highlighter" ? stroke.width : stroke.width * (0.55 + point.pressure * 0.75);
-    ctx.beginPath();
-    ctx.arc(point.x * width, point.y * height, diameter / 2, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.restore();
-    return;
-  }
-  for (let index = start + 1; index < stroke.points.length; index++) {
-    const previous = stroke.points[index - 1];
-    const point = stroke.points[index];
-    ctx.lineWidth = stroke.tool === "highlighter" ? stroke.width : stroke.width * (0.55 + point.pressure * 0.75);
-    ctx.beginPath();
-    ctx.moveTo(previous.x * width, previous.y * height);
-    ctx.lineTo(point.x * width, point.y * height);
-    ctx.stroke();
-  }
-  ctx.restore();
+  if (stroke.points.length === 0 || confirmedSamples >= stroke.points.length) return;
+  // Use the same renderer as committed ink, but keep main-thread work bounded.
+  // One confirmed sample is retained as seam context so curves do not become
+  // disconnected while Worker refinement catches up.
+  const seam = Math.max(0, confirmedSamples - 1);
+  const start = Math.max(seam, stroke.points.length - LIVE_TAIL_SAMPLE_LIMIT);
+  drawInkStroke(ctx, { ...stroke, points: stroke.points.slice(start) }, width, height);
 }
 
 function restoredStroke(stroke: InkStroke): InkStroke {

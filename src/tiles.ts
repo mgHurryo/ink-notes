@@ -64,7 +64,7 @@ export class StrokeIndex {
     for (const [id, entry] of this.entries) if (!retained.has(id)) this.removeEntry(entry);
   }
 
-  upsert(stroke: InkStroke, order: number): void {
+  upsert(stroke: InkStroke, order: number): string[] {
     const previous = this.entries.get(stroke.id);
     const style = [stroke.tool, stroke.color, stroke.width, stroke.opacity].join(":");
     if (previous?.stroke === stroke && previous.points === stroke.points && previous.count === stroke.points.length
@@ -72,7 +72,7 @@ export class StrokeIndex {
       // Compositing order is metadata, not geometry. Updating it must not
       // invalidate every later tile when an early stroke is removed.
       previous.order = order;
-      return;
+      return [];
     }
     if (previous) this.removeEntry(previous);
     const padding = stroke.width * 0.7 + BLEED;
@@ -89,18 +89,35 @@ export class StrokeIndex {
       this.cells.get(key)!.add(entry);
       this.bump(key);
     }
+    return keys;
   }
 
-  patch(upsert: readonly InkStroke[], remove: readonly string[], order: readonly InkStroke[]): void {
+  patch(upsert: readonly InkStroke[], remove: readonly string[], order: readonly InkStroke[]): string[] {
+    const changed = new Set<string>();
     for (const id of remove) {
       const entry = this.entries.get(id);
-      if (entry) this.removeEntry(entry);
+      if (entry) {
+        for (const cell of entry.cells) changed.add(cell);
+        this.removeEntry(entry);
+      }
     }
     const positions = new Map(order.map((stroke, index) => [stroke.id, index]));
-    for (const stroke of upsert) this.upsert(stroke, positions.get(stroke.id) ?? Number.MAX_SAFE_INTEGER);
+    for (const stroke of upsert) {
+      const previous = this.entries.get(stroke.id);
+      for (const cell of previous?.cells ?? []) changed.add(cell);
+      for (const cell of this.upsert(stroke, positions.get(stroke.id) ?? Number.MAX_SAFE_INTEGER)) changed.add(cell);
+    }
     for (const [id, entry] of this.entries) {
       const position = positions.get(id);
       if (position !== undefined) entry.order = position;
+    }
+    return [...changed];
+  }
+
+  remove(ids: readonly string[]): void {
+    for (const id of ids) {
+      const entry = this.entries.get(id);
+      if (entry) this.removeEntry(entry);
     }
   }
 
@@ -222,12 +239,30 @@ export class TileRenderer {
     this.active?.index.sync(strokes, exclude);
   }
 
-  patchStrokes(upsert: readonly InkStroke[], remove: readonly string[], order: readonly InkStroke[]): void {
-    this.active?.index.patch(upsert, remove, order);
+  patchStrokes(upsert: readonly InkStroke[], remove: readonly string[], order: readonly InkStroke[]): string[] {
+    return this.active?.index.patch(upsert, remove, order) ?? [];
+  }
+
+  removeStrokes(ids: readonly string[]): void {
+    this.active?.index.remove(ids);
   }
 
   queryNear(point: InkPoint, radius: number): InkStroke[] {
     return this.active?.index.queryNear(point, radius) ?? [];
+  }
+
+  previewInteractiveCells(cells: readonly string[], viewport: Rect, density: number): void {
+    if (!this.active || this.disposed || cells.length === 0) return;
+    this.viewport = viewport;
+    this.density = tileDensity(viewport, density);
+    this.visible = new Set(cellKeys(viewport, this.active.index.width, this.active.index.height));
+    for (const cell of new Set(cells)) {
+      if (!this.visible.has(cell)) continue;
+      const exact = this.get(this.active, cell, this.density);
+      const tile = exact ?? this.paint({ state: this.active, cell, density: this.density, priority: "visible" });
+      this.attach(tile);
+    }
+    this.evict();
   }
 
   flushVisible(): void {
@@ -290,11 +325,10 @@ export class TileRenderer {
   }
 
   pauseInkCommit(): void {
-    this.renderGeneration += 1;
-    this.backend?.cancelGeneration?.(this.renderGeneration);
     this.inkCommitPaused = true;
-    if (this.frame !== null) cancelAnimationFrame(this.frame);
-    this.frame = null;
+    // beginInput() already invalidates ordinary tile jobs and advances the
+    // render generation. Avoid posting a second cancellation for the same
+    // pointerdown; only the coherent ink transaction still needs pausing.
     if (this.inkFrame !== null) cancelAnimationFrame(this.inkFrame);
     this.inkFrame = null;
     if (this.inkCommit) this.abortInkCommit(true);

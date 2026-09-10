@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createNotebook, createPage } from "../src/model";
 import { InkWorkerCore } from "../src/worker-core";
 import type { InkWorkerRequest, InkWorkerResponse } from "../src/worker-protocol";
+import { penOutline } from "../src/rendering";
 
 type RequestInput = InkWorkerRequest extends infer Request
   ? Request extends InkWorkerRequest ? Omit<Request, "requestId" | "sessionId" | "generation" | "notebookRevision"> : never
@@ -118,6 +119,28 @@ describe("InkWorkerCore persistence mirror", () => {
     const points = JSON.parse(prepared.content).pages[0].strokes[0].points;
     expect(points).toHaveLength(2);
     expect(points[1]).toMatchObject({ tiltX: 12, tiltY: -8, t: 2 });
+  });
+
+  it("calculates normalized live outlines at the displayed canvas size", async () => {
+    const core = new InkWorkerCore({ offscreenCanvas: false, imageBitmap: false });
+    const notebook = createNotebook();
+    const page = notebook.pages[0];
+    const stroke = {
+      id: "display-sized", pageId: page.id, tool: "pen" as const, color: "#000", width: 6, opacity: 1,
+      points: [
+        { x: 0.2, y: 0.2, pressure: 0.5, t: 1 },
+        { x: 0.7, y: 0.7, pressure: 0.5, t: 2 },
+      ], createdAt: 1, updatedAt: 2,
+    };
+    await response(core, request({ type: "initialize-notebook", notebook, revision: 0 }));
+    const applied = await response(core, request({ type: "apply-operation", revision: 1, operation: {
+      type: "start-stroke", pageId: page.id, stroke, previewWidth: 400, previewHeight: 600,
+      pageUpdatedAt: 2, notebookUpdatedAt: 2,
+    } }, 2));
+    if (applied.type !== "operation-applied" || !applied.outline) throw new Error("outline was not returned");
+    const expected = penOutline(stroke, 400, 600).flatMap(([x, y]) => [x / 400, y / 600]);
+    expect(applied.outline).toHaveLength(expected.length);
+    expected.forEach((value, index) => expect(applied.outline![index]).toBeCloseTo(value, 6));
   });
 
   it("applies translation as one operation and persists the moved geometry", async () => {

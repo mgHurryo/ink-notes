@@ -76,7 +76,7 @@ function setup() {
     requestRender: vi.fn(),
     tiles: { sync: vi.fn(), patchStrokes: vi.fn(), commitInteractive: vi.fn(),
       commitInk: vi.fn((_strokes: unknown, _viewport: unknown, _density: number, complete: (committed: boolean) => void) => complete(true)),
-      beginInput: vi.fn(), pauseInkCommit: vi.fn(), resumeInkCommit: vi.fn(), cancelInkCommit: vi.fn() },
+      removeStrokes: vi.fn(), previewInteractiveCells: vi.fn(), beginInput: vi.fn(), pauseInkCommit: vi.fn(), resumeInkCommit: vi.fn(), cancelInkCommit: vi.fn() },
     canvasLogicalWidth: 100,
     canvasLogicalHeight: 100,
   });
@@ -337,6 +337,23 @@ describe("consecutive handwriting input", () => {
     callbacks[0](true);
     expect((internal as any).pendingInkStrokes).toEqual([]);
     expect(tiles.pauseInkCommit).toHaveBeenCalledTimes(2);
+  });
+
+  it("materializes pending ink before an immediate switch to the eraser", () => {
+    const { internal } = setup();
+    (internal as any).commitPreview = (InkView.prototype as any).commitPreview.bind(internal);
+    const tiles = (internal as any).tiles;
+    tiles.patchStrokes.mockReturnValue(["0:0"]);
+
+    internal.onPointerDown(pointer(10));
+    internal.onPointerUp(pointer(20));
+    const completed = internal.notebook.pages[0].strokes[0];
+    internal.state.tool = "eraser";
+    internal.onPointerDown(pointer(15));
+
+    expect(tiles.patchStrokes.mock.calls[0][0]).toEqual([completed]);
+    expect(tiles.patchStrokes.mock.calls[0][1]).toEqual([]);
+    expect(tiles.previewInteractiveCells).toHaveBeenCalledWith(["0:0"], expect.any(Object), 1);
   });
 
   it("accepts the next Pencil stroke while a 500ms background tile task is pending", async () => {

@@ -273,6 +273,65 @@ test("a long highlighter stroke stays complete before pointerup", async ({ page 
   })).toBeGreaterThan(0);
 });
 
+test("pen contact and release are visible without waiting for tile commit", async ({ page }) => {
+  await page.setViewportSize({ width: 720, height: 900 });
+  await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  const paper = page.locator(".ink-page");
+  const box = await paper.boundingBox();
+  if (!box) throw new Error("Ink page has no layout box");
+  const point = { x: box.x + box.width * 0.82, y: box.y + box.height * 0.62 };
+  const alphaNearPoint = () => page.locator(".ink-confirmed-preview-canvas, .ink-preview-canvas, .ink-tile-layer canvas")
+    .evaluateAll((canvases: HTMLCanvasElement[], clientPoint) => {
+      let alpha = 0;
+      for (const canvas of canvases) {
+        const context = canvas.getContext("2d");
+        const rect = canvas.getBoundingClientRect();
+        if (!context || rect.width <= 0 || rect.height <= 0 || canvas.width <= 1) continue;
+        const centerX = Math.round((clientPoint.x - rect.left) / rect.width * canvas.width);
+        const centerY = Math.round((clientPoint.y - rect.top) / rect.height * canvas.height);
+        const x = Math.max(0, centerX - 8), y = Math.max(0, centerY - 8);
+        const width = Math.min(17, canvas.width - x), height = Math.min(17, canvas.height - y);
+        if (width <= 0 || height <= 0) continue;
+        const pixels = context.getImageData(x, y, width, height).data;
+        for (let index = 3; index < pixels.length; index += 4) alpha += pixels[index];
+      }
+      return alpha;
+    }, point);
+
+  await page.mouse.move(point.x, point.y);
+  await page.mouse.down();
+  expect(await alphaNearPoint()).toBeGreaterThan(0);
+  await page.mouse.up();
+  expect(await alphaNearPoint()).toBeGreaterThan(0);
+});
+
+test("stroke eraser updates mounted tiles before pointerup", async ({ page }) => {
+  await page.setViewportSize({ width: 720, height: 900 });
+  await page.goto("/");
+  await expect.poll(() => page.locator(".ink-tile-layer canvas").count()).toBeGreaterThan(0);
+  await page.getByRole("button", { name: "Erase", exact: true }).click();
+  const box = await page.locator(".ink-page").boundingBox();
+  if (!box) throw new Error("Ink page has no layout box");
+  await page.mouse.move(box.x + box.width * 0.49, box.y + box.height * 0.31);
+  await page.mouse.down();
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+  const liveTiles = await page.locator(".ink-tile-layer canvas").evaluateAll((canvases: HTMLCanvasElement[]) => {
+    let count = 0, alpha = 0;
+    for (const canvas of canvases) {
+      const context = canvas.getContext("2d");
+      if (!context) continue;
+      count++;
+      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      for (let index = 3; index < pixels.length; index += 4) alpha += pixels[index];
+    }
+    return { count, alpha };
+  });
+  expect(liveTiles.count).toBeGreaterThan(0);
+  expect(liveTiles.alpha).toBe(0);
+  await page.mouse.up();
+});
+
 test("iPad-sized writing stays at full 2x backing density", async ({ browser }) => {
   const context = await browser.newContext({ viewport: { width: 1024, height: 1366 }, deviceScaleFactor: 2,
     baseURL: previewUrl });

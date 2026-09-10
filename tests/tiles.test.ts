@@ -171,6 +171,22 @@ describe("interactive tile commits", () => {
     expect(renderer.scheduleInkCommit).toHaveBeenCalledOnce();
   });
 
+  it("repaints only visible cells changed by an active eraser", () => {
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    const active = { id: 1, index: { width: 512, height: 512, revisions: new Map([["0:0", 2], ["3:3", 2]]) } };
+    const visibleTile = { cell: "0:0" };
+    Object.assign(renderer, {
+      active, disposed: false, cache: new Map(), pixels: 0, density: 1,
+      get: vi.fn(() => undefined), paint: vi.fn(() => visibleTile), attach: vi.fn(), evict: vi.fn(),
+    });
+
+    renderer.previewInteractiveCells(["0:0", "3:3"], { x: 0, y: 0, width: 128, height: 128 }, 3);
+
+    expect(renderer.paint).toHaveBeenCalledOnce();
+    expect(renderer.paint).toHaveBeenCalledWith(expect.objectContaining({ cell: "0:0", density: 3 }));
+    expect(renderer.attach).toHaveBeenCalledWith(visibleTile);
+  });
+
   it("does not let an obsolete tile completion clear a newer pending request", async () => {
     const requests: Array<{ resolve: (value: any) => void }> = [];
     const backend = { renderTile: vi.fn(() => new Promise((resolve) => requests.push({ resolve }))) };
@@ -208,6 +224,22 @@ describe("interactive tile commits", () => {
     renderer.setBackend(nextBackend);
     expect(oldBackend.cancelGeneration).toHaveBeenCalledWith(4);
     expect(nextBackend.cancelGeneration).not.toHaveBeenCalled();
+  });
+
+  it("advances and cancels a render generation only once per ink pointerdown", () => {
+    const cancelGeneration = vi.fn();
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, {
+      backend: { cancelGeneration }, renderGeneration: 3, frame: null, inkFrame: null,
+      jobs: [{ cell: "0:0" }], pendingTiles: new Map([["tile", 3]]), inkCommit: null,
+    });
+    renderer.beginInput();
+    renderer.pauseInkCommit();
+    expect(renderer.renderGeneration).toBe(4);
+    expect(cancelGeneration).toHaveBeenCalledOnce();
+    expect(cancelGeneration).toHaveBeenCalledWith(4);
+    expect(renderer.jobs).toEqual([]);
+    expect(renderer.inkCommitPaused).toBe(true);
   });
 
   it("evicts least-recently-used tile canvases beyond the pixel budget", () => {

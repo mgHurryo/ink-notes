@@ -10,6 +10,8 @@ export type NotebookOperation =
     type: "start-stroke";
     pageId: string;
     stroke: InkStroke;
+    previewWidth?: number;
+    previewHeight?: number;
     pageUpdatedAt: number;
     notebookUpdatedAt: number;
   }
@@ -18,6 +20,8 @@ export type NotebookOperation =
     pageId: string;
     strokeId: string;
     points: PackedStrokePoints;
+    previewWidth?: number;
+    previewHeight?: number;
     pageUpdatedAt: number;
     notebookUpdatedAt: number;
   }

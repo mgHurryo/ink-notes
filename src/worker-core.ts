@@ -526,19 +526,28 @@ export function applyNotebookOperation(notebook: InkNotebook, operation: Noteboo
   page.updatedAt = operation.pageUpdatedAt;
   notebook.updatedAt = operation.notebookUpdatedAt;
   if (!outlinedStroke || outlinedStroke.tool !== "pen" && outlinedStroke.tool !== "highlighter") return undefined;
-  const signature = `${outlinedStroke.updatedAt}:${outlinedStroke.points.length}:${outlinedStroke.width}:${notebook.pageWidth}:${notebook.pageHeight}`;
+  const previewWidth = operation.type === "start-stroke" || operation.type === "append-stroke-points"
+    ? Math.max(1, operation.previewWidth ?? notebook.pageWidth)
+    : notebook.pageWidth;
+  const previewHeight = operation.type === "start-stroke" || operation.type === "append-stroke-points"
+    ? Math.max(1, operation.previewHeight ?? notebook.pageHeight)
+    : notebook.pageHeight;
+  const signature = `${outlinedStroke.updatedAt}:${outlinedStroke.points.length}:${outlinedStroke.width}:${previewWidth}:${previewHeight}`;
   if (outlinedStroke.tool === "highlighter") {
     const line = new Float32Array(outlinedStroke.points.length * 2);
     for (let index = 0; index < outlinedStroke.points.length; index++) {
-      line[index * 2] = outlinedStroke.points[index].x * notebook.pageWidth;
-      line[index * 2 + 1] = outlinedStroke.points[index].y * notebook.pageHeight;
+      // Operation outlines use normalized coordinates. This keeps the live
+      // preview independent from the persisted notebook dimensions while the
+      // stroke width is still calculated for the actual displayed canvas.
+      line[index * 2] = outlinedStroke.points[index].x;
+      line[index * 2 + 1] = outlinedStroke.points[index].y;
     }
     return { strokeId: outlinedStroke.id, sampleCount: outlinedStroke.points.length, points: line, mode: "highlighter", stroke: outlinedStroke };
   }
   const cached = cache?.get(outlinedStroke.id);
   let outline = cached?.signature === signature ? cached.points : undefined;
   if (!outline) {
-    const generated = penOutline(outlinedStroke, notebook.pageWidth, notebook.pageHeight);
+    const generated = penOutline(outlinedStroke, previewWidth, previewHeight);
     outline = new Float32Array(generated.length * 2);
     for (let index = 0; index < generated.length; index++) {
       outline[index * 2] = generated[index][0];
@@ -550,7 +559,12 @@ export function applyNotebookOperation(notebook: InkNotebook, operation: Noteboo
       while (cache.size > OUTLINE_CACHE_LIMIT) cache.delete(cache.keys().next().value as string);
     }
   }
-  return { strokeId: outlinedStroke.id, sampleCount: outlinedStroke.points.length, points: outline, mode: "pen", stroke: outlinedStroke };
+  const normalized = new Float32Array(outline.length);
+  for (let index = 0; index < outline.length; index += 2) {
+    normalized[index] = outline[index] / previewWidth;
+    normalized[index + 1] = outline[index + 1] / previewHeight;
+  }
+  return { strokeId: outlinedStroke.id, sampleCount: outlinedStroke.points.length, points: normalized, mode: "pen", stroke: outlinedStroke };
 }
 
 function invalidateOperationOutlines(cache: OutlineCache, operation: NotebookOperation): void {
