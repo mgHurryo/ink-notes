@@ -1603,6 +1603,7 @@ var InkView = class extends import_obsidian.FileView {
     this.committingInkStrokes = null;
     this.pendingInkPageId = null;
     this.activePointerId = null;
+    this.stylusTouchInput = false;
     this.interaction = null;
     this.interactionGeneration = 0;
     this.lastPoint = null;
@@ -2006,10 +2007,11 @@ var InkView = class extends import_obsidian.FileView {
     this.registerDomEvent(this.pageScroller, "scroll", () => this.onViewportMotion(), { passive: true });
     this.registerDomEvent(this.pageScroller, "touchstart", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
-    this.registerDomEvent(this.pageScroller, "touchend", (event) => this.onTouchStart(event));
-    this.registerDomEvent(this.pageScroller, "touchcancel", () => {
+    this.registerDomEvent(this.pageScroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
+    this.registerDomEvent(this.pageScroller, "touchcancel", (event) => {
+      this.onStylusTouch(event);
       this.touchGesture = null;
-    });
+    }, { passive: false });
     const observer = new ResizeObserver(() => this.resizeCanvas());
     observer.observe(this.pageScroller);
     this.register(() => observer.disconnect());
@@ -2445,12 +2447,12 @@ var InkView = class extends import_obsidian.FileView {
     if (bounds) ctx.strokeRect(bounds.minX * width, bounds.minY * height, (bounds.maxX - bounds.minX) * width, (bounds.maxY - bounds.minY) * height);
     ctx.restore();
   }
-  onPointerDown(event) {
+  onPointerDown(event, source = "pointer") {
     var _a, _b;
-    if (event.pointerType === "touch") return;
+    if (event.pointerType === "touch" || source === "pointer" && event.pointerType === "pen" && this.stylusTouchInput) return;
     this.pageNavigationGeneration += 1;
     if (this.activePointerId !== null) this.finishPointerInput(false);
-    this.capturePointer(event.pointerId);
+    if (source === "pointer") this.capturePointer(event.pointerId);
     const page = this.currentPage();
     const tool = this.state.tool;
     const brush = isBrushTool(tool) ? this.brushSettings(tool) : null;
@@ -2467,6 +2469,8 @@ var InkView = class extends import_obsidian.FileView {
     this.interaction = {
       generation: ++this.interactionGeneration,
       pointerId: event.pointerId,
+      pointerType: event.pointerType,
+      source,
       pageId: page.id,
       tool,
       eraserMode: tool === "eraser" ? this.state.eraserMode : void 0,
@@ -2537,9 +2541,10 @@ var InkView = class extends import_obsidian.FileView {
     const rect = this.pageElement.getBoundingClientRect();
     this.updateEraserHover(this.toPoint(event, rect), pointInsideRect(event, rect));
   }
-  onPointerMove(event) {
-    var _a;
+  onPointerMove(event, source = "pointer") {
+    var _a, _b;
     if (event.pointerType === "touch") return;
+    if (this.interaction && ((_a = this.interaction.source) != null ? _a : "pointer") !== source) return;
     const rect = this.pageElement.getBoundingClientRect();
     const point = this.toPoint(event, rect);
     const inside = pointInsideRect(event, rect);
@@ -2548,24 +2553,26 @@ var InkView = class extends import_obsidian.FileView {
       return;
     }
     if (this.activePointerId !== event.pointerId) return;
-    if (((_a = this.interaction) == null ? void 0 : _a.tool) === "eraser") this.updateEraserHover(point, inside);
+    if (((_b = this.interaction) == null ? void 0 : _b.tool) === "eraser") this.updateEraserHover(point, inside);
     this.applyPointerSamples(event, rect);
   }
-  onPointerUp(event) {
-    if (this.activePointerId !== event.pointerId) return;
+  onPointerUp(event, source = "pointer") {
+    var _a, _b;
+    if (this.activePointerId !== event.pointerId || ((_b = (_a = this.interaction) == null ? void 0 : _a.source) != null ? _b : "pointer") !== source) return;
     const rect = this.pageElement.getBoundingClientRect();
     const point = this.toPoint(event, rect);
     const inside = pointInsideRect(event, rect);
     this.applyPointerSamples(event, rect);
     try {
-      this.releasePointer(event.pointerId);
+      if (source === "pointer") this.releasePointer(event.pointerId);
     } finally {
       this.finishPointerInput(true);
     }
     this.updateEraserHover(point, inside);
   }
-  onPointerCancel(event) {
-    if (this.activePointerId !== event.pointerId) return;
+  onPointerCancel(event, source = "pointer") {
+    var _a, _b;
+    if (this.activePointerId !== event.pointerId || ((_b = (_a = this.interaction) == null ? void 0 : _a.source) != null ? _b : "pointer") !== source) return;
     this.eraserPointerInside = false;
     this.finishPointerInput(false);
   }
@@ -2752,7 +2759,8 @@ var InkView = class extends import_obsidian.FileView {
     if (this.activePointerId !== event.pointerId) return;
   }
   onDocumentPointerEnd(event) {
-    if (this.activePointerId === event.pointerId) this.finishPointerInput(false);
+    var _a;
+    if (((_a = this.interaction) == null ? void 0 : _a.source) !== "stylus-touch" && this.activePointerId === event.pointerId) this.finishPointerInput(false);
   }
   registerPointerEndEvents() {
     var _a, _b;
@@ -2799,11 +2807,13 @@ var InkView = class extends import_obsidian.FileView {
     this.setZoom(this.zoom * (event.deltaY > 0 ? 0.92 : 1.08), { x: event.clientX, y: event.clientY });
   }
   onTouchStart(event) {
+    if (this.onStylusTouch(event)) return;
+    if (event.cancelable && event.touches.length < 2) event.preventDefault();
     this.touchGesture = null;
-    if (this.activePointerId !== null || event.touches.length < 1 || event.touches.length > 2) return;
+    const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus");
+    if (this.activePointerId !== null || touches.length < 1 || touches.length > 2) return;
     event.preventDefault();
-    const a2 = event.touches.item(0);
-    const b2 = event.touches.item(1);
+    const [a2, b2] = touches;
     if (!a2) return;
     const x2 = b2 ? (a2.clientX + b2.clientX) / 2 : a2.clientX;
     const y2 = b2 ? (a2.clientY + b2.clientY) / 2 : a2.clientY;
@@ -2819,13 +2829,14 @@ var InkView = class extends import_obsidian.FileView {
     };
   }
   onTouchMove(event) {
+    if (this.onStylusTouch(event)) return;
     if (this.activePointerId !== null) {
       this.touchGesture = null;
       return;
     }
     const gesture = this.touchGesture;
     if (!gesture) return;
-    const touches = Array.from(event.touches);
+    const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus");
     const a2 = touches.find((touch) => touch.identifier === gesture.ids[0]);
     const b2 = touches.find((touch) => touch.identifier === gesture.ids[1]);
     if (touches.length !== gesture.ids.length || !a2 || gesture.ids.length === 2 && !b2) {
@@ -2850,6 +2861,34 @@ var InkView = class extends import_obsidian.FileView {
       { x: (a2.clientX + b2.clientX) / 2, y: (a2.clientY + b2.clientY) / 2 },
       { x: gesture.pageX, y: gesture.pageY }
     );
+  }
+  onStylusTouch(event) {
+    var _a;
+    const touch = Array.from((_a = event.changedTouches) != null ? _a : []).find((candidate) => candidate.touchType === "stylus" && this.pageElement.contains(candidate.target));
+    if (!touch) return false;
+    if (event.cancelable) event.preventDefault();
+    this.touchGesture = null;
+    const sample = stylusTouchSample(touch);
+    const interaction = this.interaction;
+    if (event.type === "touchstart") {
+      this.stylusTouchInput = true;
+      if ((interaction == null ? void 0 : interaction.source) === "pointer" && interaction.pointerType === "pen") {
+        const pointerId = interaction.pointerId;
+        interaction.source = "stylus-touch";
+        interaction.pointerId = touch.identifier;
+        this.activePointerId = touch.identifier;
+        this.releasePointer(pointerId);
+      } else {
+        this.onPointerDown(sample, "stylus-touch");
+      }
+    } else if ((interaction == null ? void 0 : interaction.source) === "stylus-touch" && interaction.pointerId === touch.identifier) {
+      if (event.type === "touchmove") this.onPointerMove(sample, "stylus-touch");
+      else if (event.type === "touchend") {
+        this.onPointerUp(sample, "stylus-touch");
+        return false;
+      } else if (event.type === "touchcancel") this.onPointerCancel(sample, "stylus-touch");
+    }
+    return true;
   }
   toPoint(event, rect = this.pageElement.getBoundingClientRect()) {
     return {
@@ -3697,6 +3736,31 @@ function isBrushTool(tool) {
 }
 function pointInsideRect(point, rect) {
   return point.clientX >= rect.left && point.clientX <= rect.right && point.clientY >= rect.top && point.clientY <= rect.bottom;
+}
+function stylusTouchSample(touch) {
+  const altitude = touch.altitudeAngle;
+  const azimuth = touch.azimuthAngle;
+  let tiltX = 0;
+  let tiltY = 0;
+  if (typeof altitude === "number" && altitude >= 0 && altitude <= Math.PI / 2 && typeof azimuth === "number" && azimuth >= 0 && azimuth <= Math.PI * 2) {
+    if (altitude === 0) {
+      tiltX = azimuth === Math.PI / 2 || azimuth === Math.PI * 1.5 ? 0 : Math.sign(Math.cos(azimuth)) * 90;
+      tiltY = azimuth === 0 || azimuth === Math.PI || azimuth === Math.PI * 2 ? 0 : Math.sign(Math.sin(azimuth)) * 90;
+    } else {
+      const slope = 1 / Math.tan(altitude);
+      tiltX = Math.atan(Math.cos(azimuth) * slope) * 180 / Math.PI;
+      tiltY = Math.atan(Math.sin(azimuth) * slope) * 180 / Math.PI;
+    }
+  }
+  return {
+    pointerId: touch.identifier,
+    pointerType: "pen",
+    clientX: touch.clientX,
+    clientY: touch.clientY,
+    pressure: touch.force,
+    tiltX,
+    tiltY
+  };
 }
 function stabilizeInkPoint(point, previous, width, height, smoothing) {
   if (width <= 1 || height <= 1) return distance(point, previous) >= 2e-4 ? point : null;
