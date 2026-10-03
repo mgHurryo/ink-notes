@@ -10,6 +10,7 @@ function stroke(pressure = 0.5): InkStroke {
 function context(): CanvasRenderingContext2D {
   vi.stubGlobal("Path2D", class {
     moveTo = vi.fn();
+    lineTo = vi.fn();
     quadraticCurveTo = vi.fn();
     closePath = vi.fn();
   });
@@ -37,6 +38,14 @@ describe("canvas density", () => {
 });
 
 describe("continuous pen rendering", () => {
+  it("keeps a sparsely sampled fast corner at its recorded position", () => {
+    const ink = stroke();
+    ink.points = [[0.1, 0.3], [0.5, 0.3], [0.5, 0.7]].map(([x, y], index) => ({ x, y, pressure: 0.5, t: index }));
+    const outline = penOutline(ink, 800, 1000);
+    const nearestCorner = Math.min(...outline.map(([x, y]) => Math.hypot(x - 400, y - 300)));
+    expect(nearestCorner).toBeLessThan(ink.width);
+  });
+
   it("rejects isolated Pencil pressure drops without flattening sustained pressure", () => {
     const points = [0.5, 0.5, 0.05, 0.5, 0.5, 0.2, 0.2, 0.2, 0.5].map((pressure, index) => ({
       x: index / 10, y: 0.5, pressure, t: index,
