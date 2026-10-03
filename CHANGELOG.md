@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.2.0-beta.4 - 2026-09-10
+
+- Replace WebKit CSS zoom and transformed page rendering with explicit scaled layout dimensions so Apple Pencil input remains aligned with the page and right-side ink stays visible while zoomed.
+- Keep tile, overlay, lasso, eraser cursor, and paper geometry on one display scale without changing persistent notebook coordinates or raster-density limits.
+- Stop rebuilding the page when switching tools, preventing visible full-editor resets and unnecessary tile work.
+- Seal the final live stroke frame immediately on pointer-up so the next Pencil contact does not wait for Worker refinement, tile commits, serialization, or Vault writes.
+
 ## 0.2.0-beta.3 - 2026-09-10
 
 - Keep iPad ink canvases out of WebKit's transformed-subtree rasterization path and preserve exact high-DPR tile density at every zoom level.
