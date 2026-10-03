@@ -94,6 +94,7 @@ const SAVE_CONFLICT_RETRIES = 3;
 const INK_COMMIT_IDLE_DELAY = 180;
 const LIVE_TAIL_SAMPLE_LIMIT = 32;
 const COMPLETED_PREVIEW_SAMPLE_LIMIT = 256;
+const DEFAULT_PEN_SMOOTHING = 0.25;
 
 class SaveConflictError extends Error {
   constructor(message: string) {
@@ -116,7 +117,7 @@ export class InkView extends FileView {
   private pageIndex = 0;
   private state: ToolState = {
     tool: "pen",
-    pen: { color: "#1b1b1b", width: 3, opacity: 1, smoothing: 0.7 },
+    pen: { color: "#1b1b1b", width: 3, opacity: 1, smoothing: DEFAULT_PEN_SMOOTHING },
     highlighter: { color: "#f2c94c", width: 18, opacity: 0.4, smoothing: 0.55 },
     eraserMode: "stroke",
     eraserSize: 32,
@@ -825,18 +826,11 @@ export class InkView extends FileView {
     } else {
       ctx.globalCompositeOperation = "source-over";
       ctx.beginPath();
-      const lastX = points[points.length - 2] * scaleX;
-      const lastY = points[points.length - 1] * scaleY;
-      const firstX = points[0] * scaleX;
-      const firstY = points[1] * scaleY;
-      ctx.moveTo((lastX + firstX) / 2, (lastY + firstY) / 2);
-      for (let index = 0; index < points.length; index += 2) {
-        const next = (index + 2) % points.length;
-        const pointX = points[index] * scaleX;
-        const pointY = points[index + 1] * scaleY;
-        const nextX = points[next] * scaleX;
-        const nextY = points[next + 1] * scaleY;
-        ctx.quadraticCurveTo(pointX, pointY, (pointX + nextX) / 2, (pointY + nextY) / 2);
+      // Match the polygon used by committed ink; further curve fitting can
+      // round away fast corners even when the Worker preserved their position.
+      ctx.moveTo(points[0] * scaleX, points[1] * scaleY);
+      for (let index = 2; index < points.length; index += 2) {
+        ctx.lineTo(points[index] * scaleX, points[index + 1] * scaleY);
       }
       ctx.closePath();
       ctx.fill();
@@ -1178,7 +1172,7 @@ export class InkView extends FileView {
       if (interaction.tool === "eraser") {
         changed = this.eraseAt(point, page, interaction.eraserMode, interaction.eraserSize) || changed;
       } else if (this.activeStroke && this.lastPoint) {
-        const stabilized = stabilizeInkPoint(point, this.lastPoint, this.canvasLogicalWidth, this.canvasLogicalHeight, interaction.smoothing ?? 0.7);
+        const stabilized = stabilizeInkPoint(point, this.lastPoint, this.canvasLogicalWidth, this.canvasLogicalHeight, interaction.smoothing ?? DEFAULT_PEN_SMOOTHING);
         if (!stabilized) continue;
         this.activeStroke.points.push(stabilized);
         this.activeStroke.updatedAt = Date.now();
@@ -2372,6 +2366,9 @@ function stylusTouchSample(touch: StylusTouch): InkPointerSample {
 }
 
 function stabilizeInkPoint(point: InkPoint, previous: InkPoint, width: number, height: number, smoothing: number): InkPoint | null {
+  // Zero is a real opt-out: retain small deliberate marks and their pressure,
+  // while still ignoring repeated positions from duplicate input samples.
+  if (smoothing <= 0) return distance(point, previous) > 0 ? point : null;
   if (width <= 1 || height <= 1) return distance(point, previous) >= 0.0002 ? point : null;
   const dx = (point.x - previous.x) * width;
   const dy = (point.y - previous.y) * height;
@@ -2560,11 +2557,11 @@ function drawImmediateStrokeTail(ctx: CanvasRenderingContext2D, stroke: InkStrok
     return;
   }
   if (stroke.points.length === 0 || confirmedSamples >= stroke.points.length) return;
-  // Use the same renderer as committed ink, but keep main-thread work bounded.
-  // One confirmed sample is retained as seam context so curves do not become
-  // disconnected while Worker refinement catches up.
-  const seam = Math.max(0, confirmedSamples - 1);
-  const start = Math.max(seam, stroke.points.length - LIVE_TAIL_SAMPLE_LIMIT);
+  // The canvas is cleared each frame, so every sample not covered by the
+  // Worker outline must be redrawn. Truncating this tail erases live ink when
+  // fast input outruns the Worker or the host has no Worker support.
+  // Retain one confirmed sample as seam context for the uncovered geometry.
+  const start = Math.max(0, confirmedSamples - 1);
   drawInkStroke(ctx, { ...stroke, points: stroke.points.slice(start) }, width, height);
 }
 

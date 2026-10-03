@@ -115,7 +115,7 @@ describe("reference-style editor", () => {
     button("Pen").click();
     const smoothing = document.querySelector<HTMLInputElement>('input[aria-label="Pen smoothing"]')!;
     expect(smoothing).toBeTruthy();
-    expect(smoothing.value).toBe("0.7");
+    expect(smoothing.value).toBe("0.25");
     smoothing.value = "0.9";
     smoothing.dispatchEvent(new Event("input"));
     expect(document.querySelector('.ink-brush-settings[data-brush-tool="pen"] .ink-size-popover-header .ink-control-value')?.textContent).toBe("3 px");

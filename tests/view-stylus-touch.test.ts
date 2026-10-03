@@ -100,6 +100,7 @@ beforeEach(async () => {
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
   vi.stubGlobal("Path2D", class {
     moveTo = vi.fn();
+    lineTo = vi.fn();
     quadraticCurveTo = vi.fn();
     closePath = vi.fn();
   });
