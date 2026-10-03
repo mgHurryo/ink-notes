@@ -20,7 +20,8 @@ function view(): any {
     currentPage: () => page,
     viewport: { x: 0, y: 0, width: 800, height: 1000 }, zoom: 1,
     tiles: { sync: vi.fn(), patchStrokes: vi.fn(), update: vi.fn(), flushVisible: vi.fn(), commitInteractive: vi.fn(), commitInk: vi.fn(),
-      removeStrokes: vi.fn(), previewInteractiveCells: vi.fn(), pauseInkCommit: vi.fn(), resumeInkCommit: vi.fn(), cancelInkCommit: vi.fn() },
+      removeStrokes: vi.fn(), previewInteractiveCells: vi.fn(), pauseInkCommit: vi.fn(), resumeInkCommit: vi.fn(), cancelInkCommit: vi.fn(),
+      setDisplayScale: vi.fn() },
   });
   return v;
 }
@@ -196,11 +197,13 @@ it("debounces expensive zoom rasterization while updating the displayed scale im
   v.pageElement = { style: {}, getBoundingClientRect: () => ({ left: 0, top: 0, width: 800 * v.zoom, height: 1000 * v.zoom }) };
   v.pageScroller = { clientWidth: 800, clientHeight: 600, scrollLeft: 0, scrollTop: 0,
     getBoundingClientRect: () => ({ left: 0, top: 0 }) };
-  v.layoutPage = vi.fn(() => { v.pageElement.style.transform = `scale(${v.zoom})`; });
+  v.layoutPage = vi.fn(() => { v.pageElement.style.width = `${800 * v.zoom}px`; });
   v.requestRender = vi.fn();
   v.updateViewport = vi.fn();
   v.setZoom(2); v.setZoom(3);
-  expect(v.pageElement.style.transform).toBe("scale(3)");
+  expect(v.pageElement.style.width).toBe("2400px");
+  expect(v.tiles.setDisplayScale).toHaveBeenNthCalledWith(1, 2);
+  expect(v.tiles.setDisplayScale).toHaveBeenNthCalledWith(2, 3);
   expect(window.clearTimeout).toHaveBeenCalledWith(2);
   expect(v.requestRender).not.toHaveBeenCalled();
   (vi.mocked(window.setTimeout).mock.calls[1][0] as () => void)();
@@ -217,10 +220,26 @@ it("uses explicit scaled layout without CSS zoom or transform", () => {
   vi.stubGlobal("getComputedStyle", () => ({ paddingLeft: "20", paddingRight: "20" }));
   v.layoutPage();
 
-  expect(v.pageElement.style).toMatchObject({ width: "1520px", height: "2090px", zoom: "", transform: "none" });
+  expect(v.pageElement.style).toMatchObject({ left: "0px", width: "1520px", height: "2090px", zoom: "", transform: "none" });
   expect(v.pageExtent.style).toMatchObject({ width: "1520px", height: "2090px" });
   expect(v.pageBaseWidth).toBe(760);
   expect(v.pageBaseHeight).toBe(1045);
+});
+
+it("keeps wide-screen centering space inside the zoomable scroll track", () => {
+  const v = view();
+  v.zoom = 1.5;
+  v.notebook = { pageWidth: 1600, pageHeight: 2200 };
+  v.pageScroller = { clientWidth: 1366 };
+  v.pageElement = { style: {} };
+  v.pageExtent = { style: {} };
+  vi.stubGlobal("getComputedStyle", () => ({ paddingLeft: "28", paddingRight: "28" }));
+
+  v.layoutPage();
+
+  expect(v.pageElement.style).toMatchObject({ left: "165px", width: "1470px", height: "2021.25px" });
+  expect(v.pageExtent.style).toMatchObject({ width: "1800px", height: "2021.25px" });
+  expect(v.pageBaseWidth).toBe(980);
 });
 
 it("keeps logical coordinates stable while the page uses scaled layout dimensions", () => {

@@ -403,11 +403,52 @@ test("zoom keeps right-side ink and tile geometry aligned", async ({ page }) => 
     return context.getImageData(0, 0, canvas.width, canvas.height).data.some((value, index) => index % 4 === 3 && value > 0) ? 1 : 0;
   })).toBe(1);
   await expect.poll(async () => page.locator(".ink-tile-layer [data-cell]").count()).toBeGreaterThan(0);
-  const geometry = await page.locator(".ink-tile-layer [data-cell]").first().evaluate((node: HTMLElement) => ({
-    left: parseFloat(node.style.left), width: parseFloat(node.style.width),
+  const geometry = await page.locator(".ink-tile-layer [data-cell]").evaluateAll((nodes: HTMLElement[]) => ({
+    minLeft: Math.min(...nodes.map((node) => parseFloat(node.style.left))),
+    maxWidth: Math.max(...nodes.map((node) => parseFloat(node.style.width))),
   }));
-  expect(geometry.left).toBeGreaterThanOrEqual(0);
-  expect(geometry.width).toBeGreaterThanOrEqual(128);
+  expect(geometry.minLeft).toBeGreaterThanOrEqual(0);
+  expect(geometry.maxWidth).toBeCloseTo(128 * 1.5, 5);
+});
+
+test("wide centered page keeps edge pinch anchors under the moving midpoint", async ({ page }) => {
+  await page.setViewportSize({ width: 1366, height: 1024 });
+  for (const pageX of [0.15, 0.85]) {
+    await page.goto("/");
+    await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+    const drift = await page.evaluate((anchorX) => {
+      type GestureView = {
+        zoom: number;
+        pageElement: HTMLElement;
+        onTouchStart(event: TouchEvent): void;
+        onTouchMove(event: TouchEvent): void;
+      };
+      const view = (window as typeof window & { __inkNotesPreview?: { view: object } })
+        .__inkNotesPreview?.view as GestureView;
+      const event = (points: number[][]) => {
+        const touches = points.map(([identifier, clientX, clientY]) => ({ identifier, clientX, clientY }));
+        return { touches: Object.assign(touches, { item: (index: number) => touches[index] ?? null }),
+          preventDefault: () => undefined } as unknown as TouchEvent;
+      };
+      const before = view.pageElement.getBoundingClientRect();
+      const startX = before.left + before.width * anchorX;
+      const startY = 420;
+      const targetX = startX + (anchorX < 0.5 ? 20 : -20);
+      const targetY = 390;
+      const anchorY = (startY - before.top) / before.height;
+      view.onTouchStart(event([[1, startX - 40, startY], [2, startX + 40, startY]]));
+      view.onTouchMove(event([[1, targetX - 60, targetY], [2, targetX + 60, targetY]]));
+      const after = view.pageElement.getBoundingClientRect();
+      return {
+        x: Math.abs((targetX - after.left) / after.width - anchorX) * after.width,
+        y: Math.abs((targetY - after.top) / after.height - anchorY) * after.height,
+        zoom: view.zoom,
+      };
+    }, pageX);
+    expect(drift.zoom).toBe(1.5);
+    expect(drift.x).toBeLessThanOrEqual(1);
+    expect(drift.y).toBeLessThanOrEqual(1);
+  }
 });
 
 test("large-notebook tile and save work does not block the writing thread", async ({ page }) => {

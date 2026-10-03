@@ -3257,12 +3257,17 @@ page: ${this.currentPage().id}
   }
   layoutPage() {
     const style = getComputedStyle(this.pageScroller);
-    const width = Math.max(1, Math.min(980, this.pageScroller.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)));
+    const paddingLeft = parseFloat(style.paddingLeft) || 0;
+    const paddingRight = parseFloat(style.paddingRight) || 0;
+    const availableWidth = Math.max(1, this.pageScroller.clientWidth - paddingLeft - paddingRight);
+    const width = Math.min(980, availableWidth);
+    const horizontalGutter = Math.max(0, (availableWidth - width) / 2);
     const height = width * this.notebook.pageHeight / this.notebook.pageWidth;
     this.pageBaseWidth = width;
     this.pageBaseHeight = height;
     const displayWidth = width * this.zoom;
     const displayHeight = height * this.zoom;
+    this.pageElement.style.left = horizontalGutter + "px";
     this.pageElement.style.width = displayWidth + "px";
     this.pageElement.style.height = displayHeight + "px";
     if (typeof this.pageElement.style.setProperty === "function") {
@@ -3270,7 +3275,7 @@ page: ${this.currentPage().id}
     }
     this.pageElement.style.zoom = "";
     this.pageElement.style.transform = "none";
-    this.pageExtent.style.width = displayWidth + "px";
+    this.pageExtent.style.width = displayWidth + horizontalGutter * 2 + "px";
     this.pageExtent.style.height = displayHeight + "px";
   }
   setZoom(value, target, anchor) {
@@ -3283,6 +3288,7 @@ page: ${this.currentPage().id}
     if (nextZoom !== this.zoom) {
       this.zoom = nextZoom;
       this.layoutPage();
+      this.tiles.setDisplayScale(this.zoom);
     }
     const after = this.pageElement.getBoundingClientRect();
     this.pageScroller.scrollLeft += after.left + anchor.x * after.width - target.x;

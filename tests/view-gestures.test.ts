@@ -7,7 +7,9 @@ import { InkView } from "../src/view";
 // Exercise the real view handlers with scroll bounds and centered-page geometry.
 function setup(viewportWidth = 800) {
   const view = Object.create(InkView.prototype) as any;
-  const width = viewportWidth - 48;
+  const availableWidth = viewportWidth - 48;
+  const width = Math.min(980, availableWidth);
+  const horizontalGutter = Math.max(0, (availableWidth - width) / 2);
   const height = width * 1.4;
   const viewportHeight = Math.min(600, height);
   let left = 0;
@@ -27,13 +29,17 @@ function setup(viewportWidth = 800) {
     clientHeight: viewportHeight,
     getBoundingClientRect: () => ({ left: 90, top: 120 }),
     get scrollLeft() { return left; },
-    set scrollLeft(value: number) { left = Math.max(0, Math.min(width * view.zoom + 48 - viewportWidth, value)); },
+    set scrollLeft(value: number) {
+      left = Math.max(0, Math.min(width * view.zoom + horizontalGutter * 2 - availableWidth, value));
+    },
     get scrollTop() { return top; },
     set scrollTop(value: number) { top = Math.max(0, Math.min(height * view.zoom + 48 - viewportHeight, value)); },
   };
   view.pageElement = {
     getBoundingClientRect: () => ({
-      left: 90 + 24 + Math.max(0, (width - width * view.zoom) / 2) - left,
+      left: 90 + 24
+        + Math.max(0, (availableWidth - width * view.zoom - horizontalGutter * 2) / 2)
+        + horizontalGutter - left,
       top: 120 + 24 - top,
       width: width * view.zoom,
       height: height * view.zoom,
@@ -42,6 +48,7 @@ function setup(viewportWidth = 800) {
   view.resizeCanvas = vi.fn();
   view.layoutPage = vi.fn();
   view.onViewportMotion = vi.fn();
+  view.tiles = { setDisplayScale: vi.fn() };
   const point = (x: number, y: number) => {
     const rect = view.pageElement.getBoundingClientRect();
     return { x: (x - rect.left) / rect.width, y: (y - rect.top) / rect.height };
@@ -73,6 +80,19 @@ describe("page touch navigation", () => {
     expect(view.zoom).toBe(2);
     expect(point(240, 390).x).toBeCloseTo(anchor.x);
     expect(point(240, 390).y).toBeCloseTo(anchor.y);
+  });
+
+  it.each([0.15, 0.85])("keeps a %d page anchor under the fingers on a centered wide page", (pageX) => {
+    const { view, point } = setup(1366);
+    const rect = view.pageElement.getBoundingClientRect();
+    const startX = rect.left + rect.width * pageX;
+    const targetX = startX + (pageX < 0.5 ? 20 : -20);
+    const anchor = point(startX, 420);
+    view.onTouchStart(touchEvent([[1, startX - 40, 420], [2, startX + 40, 420]]));
+    view.onTouchMove(touchEvent([[1, targetX - 60, 390], [2, targetX + 60, 390]]));
+    expect(view.zoom).toBe(1.5);
+    expect(point(targetX, 390).x).toBeCloseTo(anchor.x);
+    expect(point(targetX, 390).y).toBeCloseTo(anchor.y);
   });
 
   it("pans with two fingers without changing their distance", () => {

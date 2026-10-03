@@ -1792,8 +1792,11 @@ export class InkView extends FileView {
 
   private layoutPage(): void {
     const style = getComputedStyle(this.pageScroller);
-    const width = Math.max(1, Math.min(980, this.pageScroller.clientWidth
-      - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight)));
+    const paddingLeft = parseFloat(style.paddingLeft) || 0;
+    const paddingRight = parseFloat(style.paddingRight) || 0;
+    const availableWidth = Math.max(1, this.pageScroller.clientWidth - paddingLeft - paddingRight);
+    const width = Math.min(980, availableWidth);
+    const horizontalGutter = Math.max(0, (availableWidth - width) / 2);
     const height = width * this.notebook.pageHeight / this.notebook.pageWidth;
     this.pageBaseWidth = width;
     this.pageBaseHeight = height;
@@ -1802,6 +1805,7 @@ export class InkView extends FileView {
     // Use real layout dimensions instead of CSS zoom/transform. WebKit applies
     // CSS zoom inconsistently to absolute descendants and hit testing, which
     // displaced Pencil coordinates and clipped right-hand tiles on iPad.
+    this.pageElement.style.left = horizontalGutter + "px";
     this.pageElement.style.width = displayWidth + "px";
     this.pageElement.style.height = displayHeight + "px";
     if (typeof this.pageElement.style.setProperty === "function") {
@@ -1809,7 +1813,10 @@ export class InkView extends FileView {
     }
     this.pageElement.style.zoom = "";
     this.pageElement.style.transform = "none";
-    this.pageExtent.style.width = displayWidth + "px";
+    // Keep the initial centering space inside the scrollable track. Without
+    // these gutters, a capped wide-screen page loses its auto margins as soon
+    // as it grows and edge pinch anchors are clamped toward the center.
+    this.pageExtent.style.width = displayWidth + horizontalGutter * 2 + "px";
     this.pageExtent.style.height = displayHeight + "px";
   }
 
@@ -1823,6 +1830,7 @@ export class InkView extends FileView {
     if (nextZoom !== this.zoom) {
       this.zoom = nextZoom;
       this.layoutPage();
+      this.tiles.setDisplayScale(this.zoom);
     }
     const after = this.pageElement.getBoundingClientRect();
     this.pageScroller.scrollLeft += after.left + anchor.x * after.width - target.x;
