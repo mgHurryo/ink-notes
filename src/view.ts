@@ -556,6 +556,7 @@ export class InkView extends FileView {
     this.registerDomEvent(this.pageElement, "pointerup", (event) => this.onPointerUp(event));
     this.registerDomEvent(this.pageElement, "pointercancel", (event) => this.onPointerCancel(event));
     this.registerDomEvent(this.pageElement, "lostpointercapture", (event) => this.onLostPointerCapture(event));
+    this.registerPointerEndEvents();
     this.registerDomEvent(this.pageElement, "wheel", (event) => this.onWheel(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "scroll", () => this.onViewportMotion(), { passive: true });
     this.registerDomEvent(this.pageScroller, "touchstart", (event) => this.onTouchStart(event), { passive: false });
@@ -1009,10 +1010,10 @@ export class InkView extends FileView {
     if (event.pointerType === "touch") return;
     this.pageNavigationGeneration += 1;
     if (this.activePointerId !== null) this.finishPointerInput(false);
-    // Publish the new interaction only after capture succeeds. WebKit can
-    // synchronously deliver a stale capture-loss event while recapturing a
-    // reused Pencil pointer id; it must not be allowed to finish this stroke.
-    this.pageElement.setPointerCapture(event.pointerId);
+    // Direct-manipulation pens normally have implicit capture. Explicit
+    // capture is only a best-effort fallback because WebKit can transiently
+    // reject a reused Pencil pointer id while the previous capture unwinds.
+    this.capturePointer(event.pointerId);
     const page = this.currentPage();
     const tool = this.state.tool;
     const brush = isBrushTool(tool) ? this.brushSettings(tool) : null;
@@ -1121,8 +1122,11 @@ export class InkView extends FileView {
     const point = this.toPoint(event, rect);
     const inside = pointInsideRect(event, rect);
     this.applyPointerSamples(event, rect);
-    this.finishPointerInput(true);
-    if (this.pageElement.hasPointerCapture(event.pointerId)) this.pageElement.releasePointerCapture(event.pointerId);
+    try {
+      this.releasePointer(event.pointerId);
+    } finally {
+      this.finishPointerInput(true);
+    }
     this.updateEraserHover(point, inside);
   }
 
@@ -1319,9 +1323,57 @@ export class InkView extends FileView {
 
   private onLostPointerCapture(event: PointerEvent): void {
     if (this.activePointerId !== event.pointerId) return;
-    // A delayed release from the previous stroke must not finish a recaptured pen.
-    if (this.pageElement.hasPointerCapture(event.pointerId)) return;
-    this.finishPointerInput(false);
+    // Capture loss is not contact loss. In particular, WebKit may deliver the
+    // previous stroke's event after a reused Pencil pointer has already begun.
+    // pointerup/pointercancel own finalization; the next pointerdown also
+    // finalizes any genuinely abandoned interaction before starting its own.
+  }
+
+  private onDocumentPointerEnd(event: PointerEvent): void {
+    // pageElement handles ordinary endings first. This catches an uncaptured
+    // Pencil released elsewhere in the document after capture was unavailable.
+    if (this.activePointerId === event.pointerId) this.finishPointerInput(false);
+  }
+
+  private registerPointerEndEvents(): void {
+    let owner = this.pageElement.ownerDocument;
+    const end = (event: PointerEvent) => this.onDocumentPointerEnd(event);
+    const bind = () => {
+      owner.addEventListener("pointerup", end);
+      owner.addEventListener("pointercancel", end);
+    };
+    const unbind = () => {
+      owner.removeEventListener("pointerup", end);
+      owner.removeEventListener("pointercancel", end);
+    };
+    bind();
+    const stopMigration = this.pageElement.onWindowMigrated?.(() => {
+      if (owner === this.pageElement.ownerDocument) return;
+      unbind();
+      owner = this.pageElement.ownerDocument;
+      bind();
+    });
+    this.register(() => {
+      stopMigration?.();
+      unbind();
+    });
+  }
+
+  private capturePointer(pointerId: number): void {
+    if (this.pageElement.hasPointerCapture(pointerId)) return;
+    try {
+      this.pageElement.setPointerCapture(pointerId);
+    } catch (error) {
+      if (!isPointerCaptureError(error)) throw error;
+    }
+  }
+
+  private releasePointer(pointerId: number): void {
+    try {
+      if (this.pageElement.hasPointerCapture(pointerId)) this.pageElement.releasePointerCapture(pointerId);
+    } catch (error) {
+      if (!isPointerCaptureError(error)) throw error;
+    }
   }
 
   private onWheel(event: WheelEvent): void {
@@ -2585,6 +2637,13 @@ function pointInPolygon(point: InkPoint, polygon: InkPoint[]): boolean {
 
 function constrainDelta(delta: number, minimum: number, maximum: number): number {
   return Math.max(-minimum, Math.min(1 - maximum, delta));
+}
+
+function isPointerCaptureError(error: unknown): boolean {
+  // instanceof misses DOMExceptions originating in another Obsidian window.
+  if (Object.prototype.toString.call(error) !== "[object DOMException]") return false;
+  const name = (error as DOMException).name;
+  return name === "NotFoundError" || name === "InvalidStateError";
 }
 
 function formatControlValue(name: string, value: number): string {

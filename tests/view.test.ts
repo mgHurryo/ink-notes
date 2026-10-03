@@ -18,6 +18,7 @@ interface ViewInternals {
   onPointerUp(event: PointerEvent): void;
   onPointerCancel(event: PointerEvent): void;
   onLostPointerCapture(event: PointerEvent): void;
+  onDocumentPointerEnd(event: PointerEvent): void;
   onUnloadFile(file: TFile): Promise<void>;
   drawStrokes(strokes: InkStroke[]): void;
   renderAll: () => void;
@@ -139,37 +140,81 @@ describe("consecutive handwriting input", () => {
     expect(internal.activePointerId).toBeNull();
   });
 
-  it("does not pause pending ink when pointer capture cannot start", () => {
-    const { internal } = setup();
-    internal.canvas.setPointerCapture = () => { throw new DOMException("inactive pointer", "InvalidStateError"); };
-
-    expect(() => internal.onPointerDown(pointer(10))).toThrowError("inactive pointer");
-    expect((internal as any).tiles.beginInput).not.toHaveBeenCalled();
-    expect((internal as any).tiles.pauseInkCommit).not.toHaveBeenCalled();
-    expect(internal.activePointerId).toBeNull();
-  });
-
-  it("releases pointer ownership before background work so the next Pencil stroke starts immediately", () => {
+  it.each(["InvalidStateError", "NotFoundError"])("accepts a reused Pencil pointer when recapture fails with %s", (name) => {
     const { internal } = setup();
     internal.onPointerDown(pointer(10));
     internal.onPointerUp(pointer(20));
+    internal.canvas.setPointerCapture = () => { throw new DOMException("inactive pointer", name); };
+
+    expect(() => internal.onPointerDown(pointer(30))).not.toThrow();
+    internal.onPointerMove(pointer(40));
+    internal.onPointerUp(pointer(50));
+
+    expect(internal.notebook.pages[0].strokes.map((stroke) => stroke.points.map((point) => point.x)))
+      .toEqual([[0.1, 0.2], [0.3, 0.4, 0.5]]);
+    expect(internal.activePointerId).toBeNull();
+  });
+
+  it("keeps a reused Pencil pointer alive when the previous capture loss arrives late", () => {
+    const { internal, captured } = setup();
+    internal.onPointerDown(pointer(10));
+    internal.onPointerUp(pointer(20));
+
+    internal.canvas.setPointerCapture = () => { captured.clear(); };
+    internal.onPointerDown(pointer(30));
+    internal.onLostPointerCapture(pointer(20, { pressure: 0, buttons: 0 }));
+    internal.onPointerMove(pointer(40));
+    internal.onPointerUp(pointer(50));
+
+    expect(internal.notebook.pages[0].strokes.map((stroke) => stroke.points.map((point) => point.x)))
+      .toEqual([[0.1, 0.2], [0.3, 0.4, 0.5]]);
+    expect(internal.activePointerId).toBeNull();
+  });
+
+  it("releases DOM pointer capture before completed-preview work", () => {
+    const { internal, captured } = setup();
+    const order: string[] = [];
+    internal.canvas.releasePointerCapture = (id: number) => {
+      captured.delete(id);
+      order.push("release");
+    };
+    Object.assign(internal, {
+      retainActivePreview: () => {
+        order.push("preview");
+      },
+    });
+    internal.onPointerDown(pointer(10));
+    internal.onPointerUp(pointer(20));
+    expect(order).toEqual(["release", "preview"]);
     expect(internal.activePointerId).toBeNull();
     internal.onPointerDown(pointer(30));
     expect(internal.activePointerId).toBe(7);
     expect(internal.activeStroke?.points[0].x).toBeCloseTo(0.3);
   });
 
-  it("finishes real capture loss without treating its coordinates as an ink sample", () => {
+  it("does not treat capture loss as contact loss", () => {
     const { internal, captured } = setup();
     internal.onPointerDown(pointer(10));
     internal.onPointerMove(pointer(20));
     captured.clear();
     internal.onLostPointerCapture(pointer(0));
-    expect(internal.activePointerId).toBeNull();
-    internal.onPointerDown(pointer(30));
+    expect(internal.activePointerId).toBe(7);
+    internal.onPointerMove(pointer(30));
     internal.onPointerUp(pointer(40));
-    expect(internal.notebook.pages[0].strokes.map((stroke) => stroke.points.map((point) => point.x)))
-      .toEqual([[0.1, 0.2], [0.3, 0.4]]);
+    expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2, 0.3, 0.4]);
+  });
+
+  it("finishes an uncaptured Pencil stroke when it is released outside the page", () => {
+    const { internal, captured } = setup();
+    internal.canvas.setPointerCapture = () => { throw new DOMException("inactive pointer", "InvalidStateError"); };
+    internal.onPointerDown(pointer(10));
+    internal.onPointerMove(pointer(20));
+    captured.clear();
+    internal.onLostPointerCapture(pointer(20));
+    internal.onDocumentPointerEnd(pointer(90));
+
+    expect(internal.activePointerId).toBeNull();
+    expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2]);
   });
 
   it("does not sample pointercancel coordinates", () => {
