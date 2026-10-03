@@ -225,6 +225,32 @@ it("redraws Worker-confirmed geometry separately from the incremental input tail
   expect(confirmed.clearRect).toHaveBeenCalledOnce();
 });
 
+it.each([0, 8, 72, 96])("keeps every unconfirmed live sample when the Worker has confirmed %s of 96", (sampleCount) => {
+  const v = view();
+  const stroke = {
+    id: "rapid-preview", pageId: "page", tool: "pen", color: "#000", opacity: 1, width: 4,
+    points: Array.from({ length: 96 }, (_, index) => ({
+      x: 0.1 + index / 160, y: 0.2 + Math.sin(index / 10) / 20, pressure: 0.5, t: index,
+    })),
+  };
+  Object.assign(v, {
+    previewCtx: drawingContext(),
+    activeStroke: stroke,
+    confirmedStrokeOutlines: new Map(sampleCount === 0 ? [] : [[stroke.id, {
+      points: new Float32Array([0.1, 0.2, 0.2, 0.2, 0.2, 0.21, 0.1, 0.21]), sampleCount, mode: "pen",
+    }]]),
+  });
+
+  v.drawPreview();
+
+  if (sampleCount === stroke.points.length) {
+    expect(drawInkStroke).not.toHaveBeenCalled();
+  } else {
+    const rendered = vi.mocked(drawInkStroke).mock.calls.at(-1)?.[1];
+    expect(rendered?.points).toEqual(stroke.points.slice(Math.max(0, sampleCount - 1)));
+  }
+});
+
 it("allocates overlays with the mobile high-density pixel budget", () => {
   const v = view();
   const canvas = { width: 1, height: 1, style: {} };

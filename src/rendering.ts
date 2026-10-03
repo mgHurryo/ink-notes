@@ -26,7 +26,9 @@ export function penOutline(stroke: InkStroke, width: number, height: number): nu
     size: stroke.width * 0.925,
     thinning: 0.75 / 1.85,
     simulatePressure: false,
-    streamline: 0.35,
+    // Input is already stabilized by the user's smoothing control. A second
+    // position filter pulls sparse fast corners away from the saved trajectory.
+    streamline: 0,
     smoothing: 0.65,
     last: true,
     start: { cap: true, taper: 0 },
@@ -88,12 +90,12 @@ function createPenPath(stroke: InkStroke, width: number, height: number): Path2D
   const outline = penOutline(stroke, width, height);
   if (outline.length > 0) {
     const first = outline[0];
-    const last = outline[outline.length - 1];
-    path.moveTo((last[0] + first[0]) / 2, (last[1] + first[1]) / 2);
-    for (let index = 0; index < outline.length; index++) {
+    // The outline already contains rounded caps and pressure geometry. Fitting
+    // another curve across sparse vertices cuts handwritten corners off.
+    path.moveTo(first[0], first[1]);
+    for (let index = 1; index < outline.length; index++) {
       const point = outline[index];
-      const next = outline[(index + 1) % outline.length];
-      path.quadraticCurveTo(point[0], point[1], (point[0] + next[0]) / 2, (point[1] + next[1]) / 2);
+      path.lineTo(point[0], point[1]);
     }
     path.closePath();
   }

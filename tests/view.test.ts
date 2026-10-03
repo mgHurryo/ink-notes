@@ -248,6 +248,19 @@ describe("consecutive handwriting input", () => {
     expect(points[points.length - 1].y).toBeCloseTo(0.5);
   });
 
+  it("preserves short moves and pressure exactly when smoothing is disabled", () => {
+    const { internal } = setup();
+    internal.state.pen.smoothing = 0;
+    internal.onPointerDown(pointer(10, { clientY: 20, pressure: 0.2 }));
+    internal.onPointerMove(pointer(10.25, { clientY: 20, pressure: 0.8 }));
+    internal.onPointerMove(pointer(12, { clientY: 20, pressure: 0.4 }));
+    internal.onPointerUp(pointer(12, { clientY: 22, pressure: 0.6 }));
+    const points = internal.notebook.pages[0].strokes[0].points;
+    expect(points.map(({ x, y, pressure }) => [x, y, pressure])).toEqual([
+      [0.1, 0.2, 0.2], [0.1025, 0.2, 0.8], [0.12, 0.2, 0.4], [0.12, 0.22, 0.6],
+    ]);
+  });
+
   it("reads layout once for all coalesced samples in one pointer event", () => {
     const { internal } = setup();
     const rect = vi.fn(() => ({ left: 0, top: 0, width: 100, height: 100, x: 0, y: 0, right: 100, bottom: 100, toJSON: () => ({}) }));
