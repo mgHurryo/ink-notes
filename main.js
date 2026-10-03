@@ -2001,6 +2001,7 @@ var InkView = class extends import_obsidian.FileView {
     this.registerDomEvent(this.pageElement, "pointerup", (event) => this.onPointerUp(event));
     this.registerDomEvent(this.pageElement, "pointercancel", (event) => this.onPointerCancel(event));
     this.registerDomEvent(this.pageElement, "lostpointercapture", (event) => this.onLostPointerCapture(event));
+    this.registerPointerEndEvents();
     this.registerDomEvent(this.pageElement, "wheel", (event) => this.onWheel(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "scroll", () => this.onViewportMotion(), { passive: true });
     this.registerDomEvent(this.pageScroller, "touchstart", (event) => this.onTouchStart(event), { passive: false });
@@ -2449,7 +2450,7 @@ var InkView = class extends import_obsidian.FileView {
     if (event.pointerType === "touch") return;
     this.pageNavigationGeneration += 1;
     if (this.activePointerId !== null) this.finishPointerInput(false);
-    this.pageElement.setPointerCapture(event.pointerId);
+    this.capturePointer(event.pointerId);
     const page = this.currentPage();
     const tool = this.state.tool;
     const brush = isBrushTool(tool) ? this.brushSettings(tool) : null;
@@ -2556,8 +2557,11 @@ var InkView = class extends import_obsidian.FileView {
     const point = this.toPoint(event, rect);
     const inside = pointInsideRect(event, rect);
     this.applyPointerSamples(event, rect);
-    this.finishPointerInput(true);
-    if (this.pageElement.hasPointerCapture(event.pointerId)) this.pageElement.releasePointerCapture(event.pointerId);
+    try {
+      this.releasePointer(event.pointerId);
+    } finally {
+      this.finishPointerInput(true);
+    }
     this.updateEraserHover(point, inside);
   }
   onPointerCancel(event) {
@@ -2746,8 +2750,48 @@ var InkView = class extends import_obsidian.FileView {
   }
   onLostPointerCapture(event) {
     if (this.activePointerId !== event.pointerId) return;
-    if (this.pageElement.hasPointerCapture(event.pointerId)) return;
-    this.finishPointerInput(false);
+  }
+  onDocumentPointerEnd(event) {
+    if (this.activePointerId === event.pointerId) this.finishPointerInput(false);
+  }
+  registerPointerEndEvents() {
+    var _a, _b;
+    let owner = this.pageElement.ownerDocument;
+    const end = (event) => this.onDocumentPointerEnd(event);
+    const bind = () => {
+      owner.addEventListener("pointerup", end);
+      owner.addEventListener("pointercancel", end);
+    };
+    const unbind = () => {
+      owner.removeEventListener("pointerup", end);
+      owner.removeEventListener("pointercancel", end);
+    };
+    bind();
+    const stopMigration = (_b = (_a = this.pageElement).onWindowMigrated) == null ? void 0 : _b.call(_a, () => {
+      if (owner === this.pageElement.ownerDocument) return;
+      unbind();
+      owner = this.pageElement.ownerDocument;
+      bind();
+    });
+    this.register(() => {
+      stopMigration == null ? void 0 : stopMigration();
+      unbind();
+    });
+  }
+  capturePointer(pointerId) {
+    if (this.pageElement.hasPointerCapture(pointerId)) return;
+    try {
+      this.pageElement.setPointerCapture(pointerId);
+    } catch (error) {
+      if (!isPointerCaptureError(error)) throw error;
+    }
+  }
+  releasePointer(pointerId) {
+    try {
+      if (this.pageElement.hasPointerCapture(pointerId)) this.pageElement.releasePointerCapture(pointerId);
+    } catch (error) {
+      if (!isPointerCaptureError(error)) throw error;
+    }
   }
   onWheel(event) {
     if (!event.ctrlKey && !event.metaKey) return;
@@ -3937,6 +3981,11 @@ function pointInPolygon(point, polygon) {
 }
 function constrainDelta(delta, minimum, maximum) {
   return Math.max(-minimum, Math.min(1 - maximum, delta));
+}
+function isPointerCaptureError(error) {
+  if (Object.prototype.toString.call(error) !== "[object DOMException]") return false;
+  const name = error.name;
+  return name === "NotFoundError" || name === "InvalidStateError";
 }
 function formatControlValue(name, value) {
   const normalized = name.toLowerCase();
