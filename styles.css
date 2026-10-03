@@ -429,16 +429,16 @@
 .ink-page-extent {
   position: relative;
   margin-inline: auto;
-  overflow: hidden;
-  border-radius: 2px;
-  box-shadow: var(--ink-shadow-paper);
 }
 
 .ink-page {
   position: absolute;
   left: 0;
   top: 0;
+  overflow: hidden;
+  border-radius: 2px;
   background-color: #fff;
+  box-shadow: var(--ink-shadow-paper);
   transform-origin: top left;
   color-scheme: light;
 }

@@ -120,11 +120,37 @@ describe("consecutive handwriting input", () => {
     expect(internal.activePointerId).toBeNull();
   });
 
+  it("ignores stale capture loss dispatched while recapturing a reused Pencil pointer", () => {
+    const { internal, captured } = setup();
+    internal.onPointerDown(pointer(10));
+    internal.onPointerUp(pointer(20));
+
+    internal.canvas.setPointerCapture = (id: number) => {
+      captured.delete(id);
+      internal.onLostPointerCapture(pointer(20, { pointerId: id }));
+      captured.add(id);
+    };
+    internal.onPointerDown(pointer(30));
+    internal.onPointerMove(pointer(40));
+    internal.onPointerUp(pointer(50));
+
+    expect(internal.notebook.pages[0].strokes.map((stroke) => stroke.points.map((point) => point.x)))
+      .toEqual([[0.1, 0.2], [0.3, 0.4, 0.5]]);
+    expect(internal.activePointerId).toBeNull();
+  });
+
+  it("does not pause pending ink when pointer capture cannot start", () => {
+    const { internal } = setup();
+    internal.canvas.setPointerCapture = () => { throw new DOMException("inactive pointer", "InvalidStateError"); };
+
+    expect(() => internal.onPointerDown(pointer(10))).toThrowError("inactive pointer");
+    expect((internal as any).tiles.beginInput).not.toHaveBeenCalled();
+    expect((internal as any).tiles.pauseInkCommit).not.toHaveBeenCalled();
+    expect(internal.activePointerId).toBeNull();
+  });
+
   it("releases pointer ownership before background work so the next Pencil stroke starts immediately", () => {
     const { internal } = setup();
-    internal.confirmedPreviewCtx = { drawImage: vi.fn(), save: vi.fn(), restore: vi.fn(), setTransform: vi.fn() } as unknown as CanvasRenderingContext2D;
-    internal.previewCanvas = {} as HTMLCanvasElement;
-    internal.confirmedPreviewCanvas = { classList: { toggle: vi.fn() } } as unknown as HTMLCanvasElement;
     internal.onPointerDown(pointer(10));
     internal.onPointerUp(pointer(20));
     expect(internal.activePointerId).toBeNull();
