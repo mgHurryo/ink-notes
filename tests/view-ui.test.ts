@@ -26,6 +26,22 @@ afterEach(async () => {
 });
 
 describe("reference-style editor", () => {
+  it.each([null, 7])("cancels native touchstart and empty touchend defaults during pointer %s", (pointerId) => {
+    const paper = document.querySelector<HTMLElement>(".ink-page")!;
+    const internal = view as unknown as { activePointerId: number | null; touchGesture: unknown };
+    internal.activePointerId = pointerId;
+    for (const type of ["touchstart", "touchend"]) {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      const touches = type === "touchstart" ? [{ identifier: 7, clientX: 100, clientY: 100 }] : [];
+      Object.defineProperty(event, "touches", { value: Object.assign(touches, { item: (index: number) => touches[index] ?? null }) });
+      paper.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+      expect(internal.activePointerId).toBe(pointerId);
+    }
+    expect(internal.touchGesture).toBeNull();
+    internal.activePointerId = null;
+  });
+
   it("starts with a collapsed rail and switches primary tools", () => {
     expect(document.querySelector(".ink-notes-view")?.classList.contains("ink-rail-hidden")).toBe(true);
     expect(button("Pen").getAttribute("aria-pressed")).toBe("true");

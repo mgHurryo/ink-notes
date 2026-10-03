@@ -367,6 +367,184 @@ test("pen contact and release stay visible through a late Worker response", asyn
   expect(await alphaNearPoint()).toBeGreaterThan(0);
 });
 
+test("consecutive Pencil contacts cancel native touch defaults and retain every stroke", async ({ browser }) => {
+  const context = await browser.newContext({ viewport: { width: 1024, height: 1366 }, deviceScaleFactor: 2,
+    baseURL: previewUrl });
+  const page = await context.newPage();
+  try {
+    await page.goto("/");
+    await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+    const strokes = await page.evaluate(() => {
+      type PreviewView = {
+        addPage(): void;
+        currentPage(): { strokes: { points: unknown[] }[] };
+        pageElement: HTMLElement;
+        confirmedPreviewCanvas: HTMLCanvasElement;
+      };
+      const view = (window as typeof window & { __inkNotesPreview: { view: object } }).__inkNotesPreview.view as PreviewView;
+      view.addPage();
+      const paper = view.pageElement;
+      const box = paper.getBoundingClientRect();
+      const results = [];
+      for (let index = 0; index < 20; index++) {
+        const clientY = box.top + 200 + index * 20;
+        const pointer = (type: string, sample: number) => paper.dispatchEvent(new PointerEvent(type, {
+          bubbles: true, pointerId: 1, pointerType: "pen", isPrimary: true,
+          buttons: type === "pointerup" ? 0 : 1, pressure: type === "pointerup" ? 0 : 0.5,
+          clientX: box.left + 140 + sample * 5, clientY,
+        }));
+        const touch = (type: string) => {
+          const contact = new Touch({ identifier: 1, target: paper, clientX: box.left + 140, clientY });
+          const contacts = type === "touchend" ? [] : [contact];
+          const event = new TouchEvent(type, { bubbles: true, cancelable: true,
+            touches: contacts, targetTouches: contacts, changedTouches: [contact] });
+          paper.dispatchEvent(event);
+          return event.defaultPrevented;
+        };
+        pointer("pointerdown", 0);
+        const startCanceled = touch("touchstart");
+        for (let sample = 1; sample <= 16; sample++) pointer("pointermove", sample);
+        pointer("pointerup", 16);
+        const endCanceled = touch("touchend");
+        const canvas = view.confirmedPreviewCanvas;
+        const rect = canvas.getBoundingClientRect();
+        const x = Math.round((box.left + 180 - rect.left) / rect.width * canvas.width);
+        const y = Math.round((clientY - rect.top) / rect.height * canvas.height);
+        const pixels = canvas.getContext("2d")!.getImageData(x - 4, y - 4, 9, 9).data;
+        const inkPixels = pixels.filter((value, position) => position % 4 === 3 && value > 0).length;
+        results.push({ startCanceled, endCanceled, points: view.currentPage().strokes[index].points.length, inkPixels });
+      }
+      return results;
+    });
+    expect(strokes).toHaveLength(20);
+    for (const stroke of strokes) {
+      expect(stroke.startCanceled).toBe(true);
+      expect(stroke.endCanceled).toBe(true);
+      expect(stroke.points).toBeGreaterThanOrEqual(16);
+      expect(stroke.inkPixels).toBeGreaterThan(0);
+    }
+  } finally {
+    await context.close();
+  }
+});
+
+for (const inputMode of ["touch-only", "mixed"] as const) {
+  test(`${inputMode} Pencil streams retain all rapid strokes without duplicates`, async ({ browser }) => {
+    const context = await browser.newContext({ viewport: { width: 1024, height: 1366 }, deviceScaleFactor: 2,
+      baseURL: previewUrl });
+    const page = await context.newPage();
+    try {
+      await page.goto("/");
+      await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+      const strokes = await page.evaluate(async (mode) => {
+        type PreviewView = {
+          addPage(): void;
+          currentPage(): { strokes: { points: { pressure: number }[] }[] };
+          pageElement: HTMLElement;
+          confirmedPreviewCanvas: HTMLCanvasElement;
+          activePointerId: number | null;
+        };
+        const view = (window as typeof window & { __inkNotesPreview: { view: object } }).__inkNotesPreview.view as PreviewView;
+        view.addPage();
+        const paper = view.pageElement;
+        const box = paper.getBoundingClientRect();
+        const results = [];
+        for (let index = 0; index < 20; index++) {
+          const clientY = box.top + 200 + index * 20;
+          const sequence = mode === "touch-only" ? "touch-only" : ["pe-first", "te-first", "pe-missing"][index % 3];
+          const pointer = (type: string, sample: number) => paper.dispatchEvent(new PointerEvent(type, {
+            bubbles: true, pointerId: 1, pointerType: "pen", isPrimary: true,
+            buttons: type === "pointerup" ? 0 : 1, pressure: type === "pointerup" ? 0 : 0.65,
+            clientX: box.left + 140 + sample * 5, clientY,
+          }));
+          const touch = (type: string, sample: number) => {
+            const contact = new Touch({ identifier: 7, target: paper,
+              clientX: box.left + 140 + sample * 5, clientY, force: type === "touchend" ? 0 : 0.65 });
+            // Chromium does not expose the iOS Touch.touchType discriminator.
+            Object.defineProperty(contact, "touchType", { value: "stylus" });
+            const contacts = type === "touchend" ? [] : [contact];
+            const event = new TouchEvent(type, { bubbles: true, cancelable: true,
+              touches: contacts, targetTouches: contacts, changedTouches: [contact] });
+            paper.dispatchEvent(event);
+            return event.defaultPrevented;
+          };
+          if (sequence === "pe-first") pointer("pointerdown", 0);
+          const startCanceled = touch("touchstart", 0);
+          if (sequence === "te-first") pointer("pointerdown", 0);
+          for (let sample = 1; sample <= 16; sample++) {
+            if (sequence === "pe-first") pointer("pointermove", sample);
+            touch("touchmove", sample);
+            if (sequence === "te-first") pointer("pointermove", sample);
+          }
+          if (sequence === "pe-first") pointer("pointerup", 16);
+          const endCanceled = touch("touchend", 16);
+          if (sequence === "te-first") pointer("pointerup", 16);
+          const modelCountBeforeDuplicate = view.currentPage().strokes.length;
+          const activeAfterEnd = view.activePointerId;
+          // A duplicate Pointer stream must not create a ghost after Touch owns input.
+          pointer("pointerdown", 16);
+          pointer("pointerup", 16);
+          const canvas = view.confirmedPreviewCanvas;
+          const rect = canvas.getBoundingClientRect();
+          const x = Math.round((box.left + 180 - rect.left) / rect.width * canvas.width);
+          const y = Math.round((clientY - rect.top) / rect.height * canvas.height);
+          const pixels = canvas.getContext("2d")!.getImageData(x - 4, y - 4, 9, 9).data;
+          const inkPixels = pixels.filter((value, position) => position % 4 === 3 && value > 0).length;
+          const stroke = view.currentPage().strokes[index];
+          results.push({ sequence, startCanceled, endCanceled, modelCountBeforeDuplicate,
+            modelCount: view.currentPage().strokes.length, activeAfterEnd,
+            points: stroke?.points.length ?? 0, pressure: stroke?.points[0]?.pressure, inkPixels });
+          await new Promise((resolve) => setTimeout(resolve, 20));
+        }
+        return results;
+      }, inputMode);
+      expect(strokes).toHaveLength(20);
+      for (const [index, stroke] of strokes.entries()) {
+        expect(stroke.startCanceled).toBe(true);
+        expect(stroke.endCanceled).toBe(true);
+        expect(stroke.modelCountBeforeDuplicate).toBe(index + 1);
+        expect(stroke.modelCount).toBe(index + 1);
+        expect(stroke.activeAfterEnd).toBeNull();
+        expect(stroke.points).toBeGreaterThanOrEqual(16);
+        expect(stroke.points).toBeLessThanOrEqual(18);
+        expect(stroke.pressure).toBeCloseTo(0.65, 5);
+        expect(stroke.inkPixels).toBeGreaterThan(0);
+      }
+    } finally {
+      await context.close();
+    }
+  });
+}
+
+test("Pencil Touch handling leaves sibling text input defaults available", async ({ page }) => {
+  await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  const result = await page.evaluate(() => {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.setAttribute("aria-label", "Sibling text fixture");
+    document.body.append(input);
+    input.focus();
+    const cancellations = [];
+    for (const type of ["touchstart", "touchmove", "touchend"]) {
+      const contact = new Touch({ identifier: 7, target: input, clientX: 10, clientY: 10, force: 0.65 });
+      Object.defineProperty(contact, "touchType", { value: "stylus" });
+      const contacts = type === "touchend" ? [] : [contact];
+      const event = new TouchEvent(type, { bubbles: true, cancelable: true,
+        touches: contacts, targetTouches: contacts, changedTouches: [contact] });
+      input.dispatchEvent(event);
+      cancellations.push(event.defaultPrevented);
+    }
+    return { cancellations, focused: document.activeElement === input, disabled: input.disabled, readOnly: input.readOnly };
+  });
+  expect(result.cancellations).toEqual([false, false, false]);
+  expect(result.focused).toBe(true);
+  expect(result.disabled).toBe(false);
+  expect(result.readOnly).toBe(false);
+  await page.getByRole("textbox", { name: "Sibling text fixture" }).fill("Text editing remains available");
+  await expect(page.getByRole("textbox", { name: "Sibling text fixture" })).toHaveValue("Text editing remains available");
+});
+
 test("stroke eraser updates mounted tiles before pointerup", async ({ page }) => {
   await page.setViewportSize({ width: 720, height: 900 });
   await page.goto("/");

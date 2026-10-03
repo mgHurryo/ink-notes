@@ -58,7 +58,7 @@ function setup(viewportWidth = 800) {
 
 function touchEvent(points: number[][]) {
   const touches = points.map(([identifier, clientX, clientY]) => ({ identifier, clientX, clientY }));
-  return { touches: Object.assign(touches, { item: (index: number) => touches[index] ?? null }), preventDefault: vi.fn() };
+  return { touches: Object.assign(touches, { item: (index: number) => touches[index] ?? null }), cancelable: true, preventDefault: vi.fn() };
 }
 
 describe("page touch navigation", () => {
@@ -182,7 +182,9 @@ describe("page touch navigation", () => {
   it("does not move the page while a pen stroke is active", () => {
     const { view } = setup();
     view.activePointerId = 5;
-    view.onTouchStart(touchEvent([[1, 300, 400]]));
+    const pencilTouch = touchEvent([[1, 300, 400]]);
+    view.onTouchStart(pencilTouch);
+    expect(pencilTouch.preventDefault).toHaveBeenCalledOnce();
     expect(view.touchGesture).toBeNull();
     view.activePointerId = null;
     view.onTouchStart(touchEvent([[1, 300, 400]]));
@@ -190,5 +192,23 @@ describe("page touch navigation", () => {
     view.onTouchMove(touchEvent([[1, 250, 300]]));
     expect(view.touchGesture).toBeNull();
     expect(view.pageScroller.scrollTop).toBe(0);
+  });
+
+  it.each([null, 5])("cancels the native touch ending even with no remaining contacts and pointer %s", (pointerId) => {
+    const { view } = setup();
+    view.activePointerId = pointerId;
+    const end = touchEvent([]);
+    view.onTouchStart(end);
+    expect(end.preventDefault).toHaveBeenCalledOnce();
+    expect(view.activePointerId).toBe(pointerId);
+    expect(view.touchGesture).toBeNull();
+  });
+
+  it("leaves three-contact system gestures uncanceled", () => {
+    const { view } = setup();
+    const gesture = touchEvent([[1, 300, 400], [2, 400, 400], [3, 500, 400]]);
+    view.onTouchStart(gesture);
+    expect(gesture.preventDefault).not.toHaveBeenCalled();
+    expect(view.touchGesture).toBeNull();
   });
 });
