@@ -75,6 +75,7 @@ const SAVE_MAX_DELAY = 10_000;
 const SAVE_CONFLICT_RETRIES = 3;
 const INK_COMMIT_IDLE_DELAY = 180;
 const LIVE_TAIL_SAMPLE_LIMIT = 32;
+const COMPLETED_PREVIEW_SAMPLE_LIMIT = 256;
 
 class SaveConflictError extends Error {
   constructor(message: string) {
@@ -142,8 +143,6 @@ export class InkView extends FileView {
   private activeStroke: InkStroke | null = null;
   private workerStrokePointIndex = 0;
   private confirmedStrokeOutlines = new Map<string, ConfirmedStrokeOutline>();
-  private confirmedPreviewDirty = false;
-  private sealedPreviewStrokeIds = new Set<string>();
   private pendingInkStrokes: InkStroke[] = [];
   private committingInkStrokes: InkStroke[] | null = null;
   private pendingInkPageId: string | null = null;
@@ -685,7 +684,6 @@ export class InkView extends FileView {
       this.renderFrame = null;
       this.flushPendingLassoPoint();
       this.flushWorkerStrokePoints();
-      if (this.confirmedPreviewDirty) this.redrawConfirmedPreview();
       const shouldResize = this.resizeRequested;
       this.resizeRequested = false;
       if (shouldResize) this.resizeCanvas();
@@ -744,48 +742,33 @@ export class InkView extends FileView {
   }
 
   private redrawConfirmedPreview(): void {
-    this.confirmedPreviewDirty = false;
     if (!this.confirmedPreviewCanvas || !this.confirmedPreviewCtx) return;
-    const outlines = this.confirmedStrokeOutlines ?? (this.confirmedStrokeOutlines = new Map());
-    const sealed = this.sealedPreviewStrokeIds ?? (this.sealedPreviewStrokeIds = new Set());
-    const pending = [...this.pendingInkStrokes];
-    const strokes = [...pending];
-    if (this.activeStroke && (this.activeStroke.tool === "pen" || this.activeStroke.tool === "highlighter")) strokes.push(this.activeStroke);
+    const strokes = [...this.pendingInkStrokes];
     this.confirmedPreviewCtx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
-    const confirmedStrokes = strokes.filter((stroke) => outlines.has(stroke.id) || pending.includes(stroke));
     this.confirmedPreviewCanvas.classList.toggle("is-highlighter-preview",
-      confirmedStrokes.length > 0 && confirmedStrokes.every((stroke) => stroke.tool === "highlighter"));
-    for (const stroke of confirmedStrokes) {
-      if (sealed.has(stroke.id)) continue;
-      const confirmed = outlines.get(stroke.id);
-      if (confirmed) {
-        this.drawConfirmedOutline(this.confirmedPreviewCtx, confirmed.points, stroke.color, stroke.opacity, stroke.width, confirmed.mode);
-        if (pending.includes(stroke)) {
-          drawImmediateStrokeTail(this.confirmedPreviewCtx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight, confirmed.sampleCount);
-        }
-      } else {
-        // Worker-less fallback and very short taps still become visible in the
-        // same pointerup task; the delayed tile transaction is never the only
-        // representation of completed ink.
-        drawInkStroke(this.confirmedPreviewCtx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
-      }
-    }
+      strokes.length > 0 && strokes.every((stroke) => stroke.tool === "highlighter"));
+    for (const stroke of strokes) this.drawCompletedPreviewStroke(this.confirmedPreviewCtx, stroke);
   }
 
-  private sealActivePreview(): void {
-    if (!this.activeStroke || !this.confirmedPreviewCtx || typeof this.confirmedPreviewCtx.drawImage !== "function") return;
-    // The live layer already contains the Worker-confirmed outline plus its
-    // immediate tail. Copying those pixels is constant with stroke length and
-    // keeps pointerup from rebuilding every pending perfect-freehand path.
-    this.confirmedPreviewCtx.save();
-    this.confirmedPreviewCtx.setTransform(1, 0, 0, 1, 0, 0);
-    this.confirmedPreviewCtx.globalCompositeOperation = "source-over";
-    this.confirmedPreviewCtx.globalAlpha = 1;
-    this.confirmedPreviewCtx.drawImage(this.previewCanvas, 0, 0);
-    this.confirmedPreviewCtx.restore();
+  private retainActivePreview(): void {
+    if (!this.activeStroke || !this.confirmedPreviewCanvas || !this.confirmedPreviewCtx) return;
+    this.drawCompletedPreviewStroke(this.confirmedPreviewCtx, this.activeStroke);
     this.confirmedPreviewCanvas.classList.toggle("is-highlighter-preview",
       this.pendingInkStrokes.length > 0 && this.pendingInkStrokes.every((stroke) => stroke.tool === "highlighter"));
-    (this.sealedPreviewStrokeIds ??= new Set()).add(this.activeStroke.id);
+  }
+
+  private drawCompletedPreviewStroke(ctx: CanvasRenderingContext2D, stroke: InkStroke): void {
+    const outlines = this.confirmedStrokeOutlines ?? (this.confirmedStrokeOutlines = new Map());
+    const confirmed = outlines.get(stroke.id);
+    const firstBoundedTailSample = Math.max(0, stroke.points.length - LIVE_TAIL_SAMPLE_LIMIT);
+    if (!confirmed || confirmed.sampleCount <= firstBoundedTailSample) {
+      // Worker-less and delayed-Worker strokes need a complete synchronous
+      // representation. Bound the temporary geometry so pointerup stays fast.
+      drawInkStroke(ctx, boundedPreviewStroke(stroke), this.canvasLogicalWidth, this.canvasLogicalHeight);
+      return;
+    }
+    this.drawConfirmedOutline(ctx, boundedPreviewOutline(confirmed.points), stroke.color, stroke.opacity, stroke.width, confirmed.mode);
+    drawImmediateStrokeTail(ctx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight, confirmed.sampleCount);
   }
 
   private drawConfirmedOutline(ctx: CanvasRenderingContext2D, points: Float32Array, color: string, opacity: number, width: number,
@@ -940,8 +923,6 @@ export class InkView extends FileView {
       if (this.pendingInkStrokes.length === 0) this.pendingInkPageId = null;
       const outlines = this.confirmedStrokeOutlines ?? (this.confirmedStrokeOutlines = new Map());
       for (const stroke of batch) outlines.delete(stroke.id);
-      for (const stroke of batch) this.sealedPreviewStrokeIds?.delete(stroke.id);
-      this.confirmedPreviewDirty = true;
       if (this.viewReady && page === this.currentPage()) {
         this.redrawConfirmedPreview();
         this.drawPreview();
@@ -978,8 +959,6 @@ export class InkView extends FileView {
     this.pendingInkStrokes = [];
     this.pendingInkPageId = null;
     this.confirmedStrokeOutlines.clear();
-    this.sealedPreviewStrokeIds.clear();
-    this.confirmedPreviewDirty = false;
     this.tiles?.cancelInkCommit();
     if (this.confirmedPreviewCanvas) {
       this.confirmedPreviewCanvas.width = this.confirmedPreviewCanvas.height = 1;
@@ -1030,6 +1009,10 @@ export class InkView extends FileView {
     if (event.pointerType === "touch") return;
     this.pageNavigationGeneration += 1;
     if (this.activePointerId !== null) this.finishPointerInput(false);
+    // Publish the new interaction only after capture succeeds. WebKit can
+    // synchronously deliver a stale capture-loss event while recapturing a
+    // reused Pencil pointer id; it must not be allowed to finish this stroke.
+    this.pageElement.setPointerCapture(event.pointerId);
     const page = this.currentPage();
     const tool = this.state.tool;
     const brush = isBrushTool(tool) ? this.brushSettings(tool) : null;
@@ -1052,7 +1035,6 @@ export class InkView extends FileView {
       eraserSize: tool === "eraser" ? this.state.eraserSize : undefined,
       smoothing: brush?.smoothing,
     };
-    this.pageElement.setPointerCapture(event.pointerId);
     const point = this.toPoint(event, rect);
     this.erasedStrokeIds.clear();
     this.erasedCandidateIds.clear();
@@ -1229,7 +1211,6 @@ export class InkView extends FileView {
         sampleCount,
         mode: response.outlineMode ?? "pen",
       });
-      this.confirmedPreviewDirty = true;
       this.requestRender();
     });
   }
@@ -1276,11 +1257,9 @@ export class InkView extends FileView {
       this.pushCommand(this.erasedStrokesCommand(page.id, this.erasedStrokes, this.eraserReplacements));
       this.drawInteractiveStrokes(page.strokes, true);
     } else if (this.activeStroke) {
-      // Flush the last pointerup sample into the bounded live tail, then retain
-      // that exact frame without waiting for a tile or Worker response.
-      this.drawPreview();
-      this.sealActivePreview();
-      this.confirmedPreviewDirty = false;
+      // Retain a complete vector preview without copying the full high-density
+      // overlay. Late Worker responses update only the live stroke layer.
+      this.retainActivePreview();
       this.markChanged(page);
       this.queueWorkerOperation({ type: "complete-stroke", pageId: page.id, strokeId: this.activeStroke.id,
         pageUpdatedAt: page.updatedAt, notebookUpdatedAt: this.notebook.updatedAt });
@@ -2224,8 +2203,6 @@ export class InkView extends FileView {
     this.eraserReplacementIds.clear();
     this.eraserReplacements = [];
     this.confirmedStrokeOutlines.clear();
-    this.sealedPreviewStrokeIds.clear();
-    this.confirmedPreviewDirty = false;
     this.clearSelection();
   }
 
@@ -2448,6 +2425,26 @@ function drawImmediateStrokeTail(ctx: CanvasRenderingContext2D, stroke: InkStrok
   const seam = Math.max(0, confirmedSamples - 1);
   const start = Math.max(seam, stroke.points.length - LIVE_TAIL_SAMPLE_LIMIT);
   drawInkStroke(ctx, { ...stroke, points: stroke.points.slice(start) }, width, height);
+}
+
+function boundedPreviewStroke(stroke: InkStroke): InkStroke {
+  if (!Array.isArray(stroke.points) || stroke.points.length <= COMPLETED_PREVIEW_SAMPLE_LIMIT) return stroke;
+  const last = stroke.points.length - 1;
+  const points = Array.from({ length: COMPLETED_PREVIEW_SAMPLE_LIMIT }, (_, index) =>
+    stroke.points[Math.round(index * last / (COMPLETED_PREVIEW_SAMPLE_LIMIT - 1))]);
+  return { ...stroke, points };
+}
+
+function boundedPreviewOutline(points: Float32Array): Float32Array {
+  const pointCount = points.length / 2;
+  if (pointCount <= COMPLETED_PREVIEW_SAMPLE_LIMIT) return points;
+  const bounded = new Float32Array(COMPLETED_PREVIEW_SAMPLE_LIMIT * 2);
+  for (let index = 0; index < COMPLETED_PREVIEW_SAMPLE_LIMIT; index++) {
+    const source = Math.round(index * (pointCount - 1) / (COMPLETED_PREVIEW_SAMPLE_LIMIT - 1)) * 2;
+    bounded[index * 2] = points[source];
+    bounded[index * 2 + 1] = points[source + 1];
+  }
+  return bounded;
 }
 
 function restoredStroke(stroke: InkStroke): InkStroke {

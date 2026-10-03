@@ -1548,6 +1548,7 @@ var SAVE_MAX_DELAY = 1e4;
 var SAVE_CONFLICT_RETRIES = 3;
 var INK_COMMIT_IDLE_DELAY = 180;
 var LIVE_TAIL_SAMPLE_LIMIT = 32;
+var COMPLETED_PREVIEW_SAMPLE_LIMIT = 256;
 var SaveConflictError = class extends Error {
   constructor(message) {
     super(message);
@@ -1598,8 +1599,6 @@ var InkView = class extends import_obsidian.FileView {
     this.activeStroke = null;
     this.workerStrokePointIndex = 0;
     this.confirmedStrokeOutlines = /* @__PURE__ */ new Map();
-    this.confirmedPreviewDirty = false;
-    this.sealedPreviewStrokeIds = /* @__PURE__ */ new Set();
     this.pendingInkStrokes = [];
     this.committingInkStrokes = null;
     this.pendingInkPageId = null;
@@ -2130,7 +2129,6 @@ var InkView = class extends import_obsidian.FileView {
       this.renderFrame = null;
       this.flushPendingLassoPoint();
       this.flushWorkerStrokePoints();
-      if (this.confirmedPreviewDirty) this.redrawConfirmedPreview();
       const shouldResize = this.resizeRequested;
       this.resizeRequested = false;
       if (shouldResize) this.resizeCanvas();
@@ -2186,47 +2184,34 @@ var InkView = class extends import_obsidian.FileView {
     }
   }
   redrawConfirmedPreview() {
-    var _a, _b;
-    this.confirmedPreviewDirty = false;
     if (!this.confirmedPreviewCanvas || !this.confirmedPreviewCtx) return;
-    const outlines = (_a = this.confirmedStrokeOutlines) != null ? _a : this.confirmedStrokeOutlines = /* @__PURE__ */ new Map();
-    const sealed = (_b = this.sealedPreviewStrokeIds) != null ? _b : this.sealedPreviewStrokeIds = /* @__PURE__ */ new Set();
-    const pending = [...this.pendingInkStrokes];
-    const strokes = [...pending];
-    if (this.activeStroke && (this.activeStroke.tool === "pen" || this.activeStroke.tool === "highlighter")) strokes.push(this.activeStroke);
+    const strokes = [...this.pendingInkStrokes];
     this.confirmedPreviewCtx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
-    const confirmedStrokes = strokes.filter((stroke) => outlines.has(stroke.id) || pending.includes(stroke));
     this.confirmedPreviewCanvas.classList.toggle(
       "is-highlighter-preview",
-      confirmedStrokes.length > 0 && confirmedStrokes.every((stroke) => stroke.tool === "highlighter")
+      strokes.length > 0 && strokes.every((stroke) => stroke.tool === "highlighter")
     );
-    for (const stroke of confirmedStrokes) {
-      if (sealed.has(stroke.id)) continue;
-      const confirmed = outlines.get(stroke.id);
-      if (confirmed) {
-        this.drawConfirmedOutline(this.confirmedPreviewCtx, confirmed.points, stroke.color, stroke.opacity, stroke.width, confirmed.mode);
-        if (pending.includes(stroke)) {
-          drawImmediateStrokeTail(this.confirmedPreviewCtx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight, confirmed.sampleCount);
-        }
-      } else {
-        drawInkStroke(this.confirmedPreviewCtx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
-      }
-    }
+    for (const stroke of strokes) this.drawCompletedPreviewStroke(this.confirmedPreviewCtx, stroke);
   }
-  sealActivePreview() {
-    var _a;
-    if (!this.activeStroke || !this.confirmedPreviewCtx || typeof this.confirmedPreviewCtx.drawImage !== "function") return;
-    this.confirmedPreviewCtx.save();
-    this.confirmedPreviewCtx.setTransform(1, 0, 0, 1, 0, 0);
-    this.confirmedPreviewCtx.globalCompositeOperation = "source-over";
-    this.confirmedPreviewCtx.globalAlpha = 1;
-    this.confirmedPreviewCtx.drawImage(this.previewCanvas, 0, 0);
-    this.confirmedPreviewCtx.restore();
+  retainActivePreview() {
+    if (!this.activeStroke || !this.confirmedPreviewCanvas || !this.confirmedPreviewCtx) return;
+    this.drawCompletedPreviewStroke(this.confirmedPreviewCtx, this.activeStroke);
     this.confirmedPreviewCanvas.classList.toggle(
       "is-highlighter-preview",
       this.pendingInkStrokes.length > 0 && this.pendingInkStrokes.every((stroke) => stroke.tool === "highlighter")
     );
-    ((_a = this.sealedPreviewStrokeIds) != null ? _a : this.sealedPreviewStrokeIds = /* @__PURE__ */ new Set()).add(this.activeStroke.id);
+  }
+  drawCompletedPreviewStroke(ctx, stroke) {
+    var _a;
+    const outlines = (_a = this.confirmedStrokeOutlines) != null ? _a : this.confirmedStrokeOutlines = /* @__PURE__ */ new Map();
+    const confirmed = outlines.get(stroke.id);
+    const firstBoundedTailSample = Math.max(0, stroke.points.length - LIVE_TAIL_SAMPLE_LIMIT);
+    if (!confirmed || confirmed.sampleCount <= firstBoundedTailSample) {
+      drawInkStroke(ctx, boundedPreviewStroke(stroke), this.canvasLogicalWidth, this.canvasLogicalHeight);
+      return;
+    }
+    this.drawConfirmedOutline(ctx, boundedPreviewOutline(confirmed.points), stroke.color, stroke.opacity, stroke.width, confirmed.mode);
+    drawImmediateStrokeTail(ctx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight, confirmed.sampleCount);
   }
   drawConfirmedOutline(ctx, points, color, opacity, width, mode) {
     if (points.length < 4) return;
@@ -2369,7 +2354,7 @@ var InkView = class extends import_obsidian.FileView {
     this.committingInkStrokes = batch;
     this.tiles.patchStrokes(batch, [], page.strokes);
     this.tiles.commitInk(batch, this.viewport, (window.devicePixelRatio || 1) * this.zoom, (committed) => {
-      var _a, _b;
+      var _a;
       if (this.committingInkStrokes !== batch) return;
       this.committingInkStrokes = null;
       if (!committed) {
@@ -2383,8 +2368,6 @@ var InkView = class extends import_obsidian.FileView {
       if (this.pendingInkStrokes.length === 0) this.pendingInkPageId = null;
       const outlines = (_a = this.confirmedStrokeOutlines) != null ? _a : this.confirmedStrokeOutlines = /* @__PURE__ */ new Map();
       for (const stroke of batch) outlines.delete(stroke.id);
-      for (const stroke of batch) (_b = this.sealedPreviewStrokeIds) == null ? void 0 : _b.delete(stroke.id);
-      this.confirmedPreviewDirty = true;
       if (this.viewReady && page === this.currentPage()) {
         this.redrawConfirmedPreview();
         this.drawPreview();
@@ -2419,8 +2402,6 @@ var InkView = class extends import_obsidian.FileView {
     this.pendingInkStrokes = [];
     this.pendingInkPageId = null;
     this.confirmedStrokeOutlines.clear();
-    this.sealedPreviewStrokeIds.clear();
-    this.confirmedPreviewDirty = false;
     (_a = this.tiles) == null ? void 0 : _a.cancelInkCommit();
     if (this.confirmedPreviewCanvas) {
       this.confirmedPreviewCanvas.width = this.confirmedPreviewCanvas.height = 1;
@@ -2468,6 +2449,7 @@ var InkView = class extends import_obsidian.FileView {
     if (event.pointerType === "touch") return;
     this.pageNavigationGeneration += 1;
     if (this.activePointerId !== null) this.finishPointerInput(false);
+    this.pageElement.setPointerCapture(event.pointerId);
     const page = this.currentPage();
     const tool = this.state.tool;
     const brush = isBrushTool(tool) ? this.brushSettings(tool) : null;
@@ -2490,7 +2472,6 @@ var InkView = class extends import_obsidian.FileView {
       eraserSize: tool === "eraser" ? this.state.eraserSize : void 0,
       smoothing: brush == null ? void 0 : brush.smoothing
     };
-    this.pageElement.setPointerCapture(event.pointerId);
     const point = this.toPoint(event, rect);
     this.erasedStrokeIds.clear();
     this.erasedCandidateIds.clear();
@@ -2666,7 +2647,6 @@ var InkView = class extends import_obsidian.FileView {
         sampleCount,
         mode: (_d = response.outlineMode) != null ? _d : "pen"
       });
-      this.confirmedPreviewDirty = true;
       this.requestRender();
     });
   }
@@ -2712,9 +2692,7 @@ var InkView = class extends import_obsidian.FileView {
       this.pushCommand(this.erasedStrokesCommand(page.id, this.erasedStrokes, this.eraserReplacements));
       this.drawInteractiveStrokes(page.strokes, true);
     } else if (this.activeStroke) {
-      this.drawPreview();
-      this.sealActivePreview();
-      this.confirmedPreviewDirty = false;
+      this.retainActivePreview();
       this.markChanged(page);
       this.queueWorkerOperation({
         type: "complete-stroke",
@@ -3652,8 +3630,6 @@ page: ${this.currentPage().id}
     this.eraserReplacementIds.clear();
     this.eraserReplacements = [];
     this.confirmedStrokeOutlines.clear();
-    this.sealedPreviewStrokeIds.clear();
-    this.confirmedPreviewDirty = false;
     this.clearSelection();
   }
   renderAll() {
@@ -3829,6 +3805,23 @@ function drawImmediateStrokeTail(ctx, stroke, width, height, confirmedSamples) {
   const seam = Math.max(0, confirmedSamples - 1);
   const start = Math.max(seam, stroke.points.length - LIVE_TAIL_SAMPLE_LIMIT);
   drawInkStroke(ctx, { ...stroke, points: stroke.points.slice(start) }, width, height);
+}
+function boundedPreviewStroke(stroke) {
+  if (!Array.isArray(stroke.points) || stroke.points.length <= COMPLETED_PREVIEW_SAMPLE_LIMIT) return stroke;
+  const last = stroke.points.length - 1;
+  const points = Array.from({ length: COMPLETED_PREVIEW_SAMPLE_LIMIT }, (_2, index) => stroke.points[Math.round(index * last / (COMPLETED_PREVIEW_SAMPLE_LIMIT - 1))]);
+  return { ...stroke, points };
+}
+function boundedPreviewOutline(points) {
+  const pointCount = points.length / 2;
+  if (pointCount <= COMPLETED_PREVIEW_SAMPLE_LIMIT) return points;
+  const bounded = new Float32Array(COMPLETED_PREVIEW_SAMPLE_LIMIT * 2);
+  for (let index = 0; index < COMPLETED_PREVIEW_SAMPLE_LIMIT; index++) {
+    const source = Math.round(index * (pointCount - 1) / (COMPLETED_PREVIEW_SAMPLE_LIMIT - 1)) * 2;
+    bounded[index * 2] = points[source];
+    bounded[index * 2 + 1] = points[source + 1];
+  }
+  return bounded;
 }
 function restoredStroke(stroke) {
   const now = Date.now();

@@ -294,15 +294,50 @@ test("a long highlighter stroke stays complete before pointerup", async ({ page 
   })).toBeGreaterThan(0);
 });
 
-test("pen contact and release are visible without waiting for tile commit", async ({ page }) => {
+test("pen contact and release stay visible through a late Worker response", async ({ page }) => {
   await page.setViewportSize({ width: 720, height: 900 });
   await page.goto("/");
   await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  await page.evaluate(() => {
+    type Session = {
+      apply(revision: number, operation: { type?: string }, transfer?: Transferable[]): Promise<unknown>;
+    };
+    type PreviewView = { workerSession: Session | null; tiles: { commitInk(...args: unknown[]): void } };
+    type PreviewWindow = typeof window & {
+      __inkNotesPreview?: { view: object };
+      __inkReleaseLateAppends?: () => void;
+    };
+    const scope = window as PreviewWindow;
+    const view = scope.__inkNotesPreview?.view as PreviewView;
+    const session = view.workerSession;
+    if (!session) throw new Error("Worker session is unavailable");
+    const apply = session.apply.bind(session);
+    const releaseQueue: Array<() => void> = [];
+    let released = false;
+    scope.__inkReleaseLateAppends = () => {
+      released = true;
+      for (const release of releaseQueue.splice(0)) release();
+    };
+    session.apply = async (revision, operation, transfer) => {
+      const response = await apply(revision, operation, transfer);
+      if (operation.type === "append-stroke-points" && !released) {
+        await new Promise<void>((resolve) => releaseQueue.push(resolve));
+      }
+      if (operation.type === "append-stroke-points") {
+        document.documentElement.dataset.inkLateAppend = "true";
+      }
+      return response;
+    };
+    // Leave the completed stroke entirely on the overlay while checking the
+    // gap between pointerup and the asynchronous tile transaction.
+    view.tiles.commitInk = () => undefined;
+  });
   const paper = page.locator(".ink-page");
   const box = await paper.boundingBox();
   if (!box) throw new Error("Ink page has no layout box");
+  const start = { x: box.x + box.width * 0.72, y: box.y + box.height * 0.58 };
   const point = { x: box.x + box.width * 0.82, y: box.y + box.height * 0.62 };
-  const alphaNearPoint = () => page.locator(".ink-confirmed-preview-canvas, .ink-preview-canvas, .ink-tile-layer canvas")
+  const alphaNearPoint = () => page.locator(".ink-confirmed-preview-canvas, .ink-preview-canvas")
     .evaluateAll((canvases: HTMLCanvasElement[], clientPoint) => {
       let alpha = 0;
       for (const canvas of canvases) {
@@ -320,10 +355,15 @@ test("pen contact and release are visible without waiting for tile commit", asyn
       return alpha;
     }, point);
 
-  await page.mouse.move(point.x, point.y);
+  await page.mouse.move(start.x, start.y);
   await page.mouse.down();
+  await page.mouse.move(point.x, point.y, { steps: 8 });
   expect(await alphaNearPoint()).toBeGreaterThan(0);
   await page.mouse.up();
+  expect(await alphaNearPoint()).toBeGreaterThan(0);
+  await page.evaluate(() => (window as typeof window & { __inkReleaseLateAppends?: () => void }).__inkReleaseLateAppends?.());
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-late-append")).toBe("true");
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   expect(await alphaNearPoint()).toBeGreaterThan(0);
 });
 
