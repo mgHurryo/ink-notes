@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TFile, WorkspaceLeaf } from "obsidian";
 import { InkNotebook, InkStroke, createNotebook, createPage } from "../src/model";
 import { NotebookStore } from "../src/storage";
+import type { InkWorkerResponse, NotebookOperation } from "../src/worker-protocol";
 import { InkView } from "../src/view";
 
 interface ViewInternals {
@@ -39,6 +40,7 @@ interface ViewInternals {
   workerRevision: number;
   eraseAt(point: { x: number; y: number; pressure: number; t: number }, page?: InkNotebook["pages"][number], mode?: "stroke" | "circle" | "square", size?: number): boolean;
   finishLasso(page: InkNotebook["pages"][number]): void;
+  queueWorkerOperation(operation: NotebookOperation, transfer?: Transferable[], onApplied?: (response: InkWorkerResponse) => void): void;
   state: {
     tool: string;
     pen: { color: string; width: number; opacity: number; smoothing: number };
@@ -929,5 +931,56 @@ describe("consecutive handwriting input", () => {
     expect(internal.notebook.pages).toHaveLength(1);
     expect(internal.notebook.pages[0].id).toBe(pageId);
     expect(internal.notebook.deletedPages).toEqual({});
+  });
+});
+
+describe("stroke geometry optimization", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", globalThis);
+  });
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function lastStroke(internal: ViewInternals): InkStroke {
+    const strokes = internal.notebook.pages[0].strokes;
+    return strokes[strokes.length - 1];
+  }
+
+  function queuedOperations(internal: ViewInternals): NotebookOperation[] {
+    return (internal.queueWorkerOperation as unknown as { mock: { calls: Array<[NotebookOperation]> } })
+      .mock.calls.map((call) => call[0]);
+  }
+
+  it("publishes refined stroke geometry to the worker when the pen lifts", () => {
+    const { internal } = setup();
+    internal.queueWorkerOperation = vi.fn();
+    internal.onPointerDown(pointer(10));
+    for (const x of [12, 14, 16, 40, 42, 44, 46, 48]) internal.onPointerMove(pointer(x));
+    internal.onPointerUp(pointer(50));
+
+    const patch = queuedOperations(internal).find((operation) => operation.type === "patch-strokes");
+    expect(patch).toBeDefined();
+    const stroke = lastStroke(internal);
+    if (!patch || patch.type !== "patch-strokes") return;
+    expect(patch.remove).toEqual([]);
+    expect(patch.upsert).toHaveLength(1);
+    expect(patch.upsert[0].id).toBe(stroke.id);
+    expect(patch.upsert[0].points).toEqual(stroke.points);
+  });
+
+  it("keeps the captured geometry byte-exact when smoothing is disabled", () => {
+    const { internal } = setup();
+    internal.state.pen.smoothing = 0;
+    internal.queueWorkerOperation = vi.fn();
+    internal.onPointerDown(pointer(10));
+    internal.onPointerMove(pointer(30));
+    internal.onPointerUp(pointer(50));
+
+    expect(queuedOperations(internal).some((operation) => operation.type === "patch-strokes")).toBe(false);
+    expect(lastStroke(internal).points.map((point) => point.x)).toEqual([0.1, 0.3, 0.5]);
   });
 });

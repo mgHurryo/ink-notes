@@ -496,6 +496,101 @@ function drawSmoothPath(ctx, points, width, height) {
   ctx.lineTo(last.x * width, last.y * height);
 }
 
+// src/stroke-geometry.ts
+var DEFAULT_MINIMUM_SAMPLE_DISTANCE = 1.25;
+var DEFAULT_CORNER_TURN_DEGREES = 60;
+var DEFAULT_CORNER_ARC_LENGTH = 14;
+function optimizeStrokePoints(points, options = {}) {
+  var _a;
+  const strength = clampUnit((_a = options.strength) != null ? _a : 0);
+  if (strength <= 0 || points.length < 3) return points;
+  const scaleX = positiveOr(options.scaleX, DEFAULT_PAGE_WIDTH);
+  const scaleY = positiveOr(options.scaleY, DEFAULT_PAGE_HEIGHT);
+  const kept = deduplicateSamples(points, positiveOr(options.minimumSampleDistance, DEFAULT_MINIMUM_SAMPLE_DISTANCE), scaleX, scaleY);
+  if (kept.length < 3) return kept;
+  const corners = detectCorners(
+    kept,
+    positiveOr(options.cornerArcLength, DEFAULT_CORNER_ARC_LENGTH),
+    positiveOr(options.cornerTurnDegrees, DEFAULT_CORNER_TURN_DEGREES),
+    scaleX,
+    scaleY
+  );
+  const passes = Math.max(1, Math.min(3, Math.round(strength * 4)));
+  return relaxBetweenCorners(kept, corners, passes, scaleX, scaleY);
+}
+function deduplicateSamples(points, minimumSampleDistance, scaleX, scaleY) {
+  const kept = [{ ...points[0] }];
+  for (let index = 1; index < points.length; index++) {
+    const last = kept[kept.length - 1];
+    const isFinalSample = index === points.length - 1;
+    if (isFinalSample || scaledDistance(last, points[index], scaleX, scaleY) >= minimumSampleDistance) {
+      kept.push({ ...points[index] });
+    }
+  }
+  return kept;
+}
+function detectCorners(points, arcLength, turnDegrees, scaleX, scaleY) {
+  const corners = new Array(points.length).fill(false);
+  const straightnessLimit = Math.cos(turnDegrees * Math.PI / 180);
+  for (let index = 1; index < points.length - 1; index++) {
+    const start = walkArc(points, index, arcLength, -1, scaleX, scaleY);
+    const end = walkArc(points, index, arcLength, 1, scaleX, scaleY);
+    const incomingX = (points[index].x - points[start].x) * scaleX;
+    const incomingY = (points[index].y - points[start].y) * scaleY;
+    const outgoingX = (points[end].x - points[index].x) * scaleX;
+    const outgoingY = (points[end].y - points[index].y) * scaleY;
+    const incomingLength = Math.hypot(incomingX, incomingY);
+    const outgoingLength = Math.hypot(outgoingX, outgoingY);
+    if (incomingLength === 0 || outgoingLength === 0) continue;
+    const straightness = (incomingX * outgoingX + incomingY * outgoingY) / (incomingLength * outgoingLength);
+    if (straightness <= straightnessLimit) corners[index] = true;
+  }
+  return corners;
+}
+function walkArc(points, index, arcLength, direction, scaleX, scaleY) {
+  let travelled = 0;
+  let cursor = index;
+  while (cursor > 0 && cursor < points.length - 1 && travelled < arcLength) {
+    const next = cursor + direction;
+    travelled += scaledDistance(points[cursor], points[next], scaleX, scaleY);
+    cursor = next;
+  }
+  return cursor;
+}
+var STRAIGHT_EPSILON = 0.01;
+function relaxBetweenCorners(points, corners, passes, scaleX, scaleY) {
+  let current = points;
+  for (let pass = 0; pass < passes; pass++) {
+    const next = current.map((point) => ({ ...point }));
+    for (let index = 1; index < current.length - 1; index++) {
+      if (corners[index] || corners[index - 1] || corners[index + 1]) continue;
+      const before = current[index - 1];
+      const point = current[index];
+      const after = current[index + 1];
+      if (Math.abs((before.x - 2 * point.x + after.x) * scaleX) < STRAIGHT_EPSILON && Math.abs((before.y - 2 * point.y + after.y) * scaleY) < STRAIGHT_EPSILON) continue;
+      next[index] = {
+        x: before.x * 0.25 + point.x * 0.5 + after.x * 0.25,
+        y: before.y * 0.25 + point.y * 0.5 + after.y * 0.25,
+        pressure: before.pressure * 0.25 + point.pressure * 0.5 + after.pressure * 0.25,
+        tiltX: point.tiltX,
+        tiltY: point.tiltY,
+        t: point.t
+      };
+    }
+    current = next;
+  }
+  return current;
+}
+function scaledDistance(a2, b2, scaleX, scaleY) {
+  return Math.hypot((a2.x - b2.x) * scaleX, (a2.y - b2.y) * scaleY);
+}
+function clampUnit(value) {
+  return Number.isFinite(value) ? Math.max(0, Math.min(1, value)) : 0;
+}
+function positiveOr(value, fallback) {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
 // src/tiles.ts
 var TILE = 128;
 var BLEED = 4;
@@ -2695,8 +2790,9 @@ var InkView = class extends import_obsidian.FileView {
       this.pushCommand(this.erasedStrokesCommand(page.id, this.erasedStrokes, this.eraserReplacements));
       this.drawInteractiveStrokes(page.strokes, true);
     } else if (this.activeStroke) {
-      this.retainActivePreview();
       this.markChanged(page);
+      this.optimizeFinalizedStroke(page, interaction);
+      this.retainActivePreview();
       this.queueWorkerOperation({
         type: "complete-stroke",
         pageId: page.id,
@@ -2724,6 +2820,28 @@ var InkView = class extends import_obsidian.FileView {
       this.externalRefreshPending = false;
       void this.reloadFromDisk().catch((error) => new import_obsidian.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
     }
+  }
+  optimizeFinalizedStroke(page, interaction) {
+    var _a;
+    const stroke = this.activeStroke;
+    if (!stroke || stroke.tool !== "pen" && stroke.tool !== "highlighter") return;
+    const optimized = optimizeStrokePoints(stroke.points, {
+      strength: (_a = interaction.smoothing) != null ? _a : DEFAULT_PEN_SMOOTHING,
+      scaleX: this.notebook.pageWidth,
+      scaleY: this.notebook.pageHeight
+    });
+    if (optimized === stroke.points) return;
+    stroke.points = optimized;
+    stroke.updatedAt = page.updatedAt;
+    this.queueWorkerOperation({
+      type: "patch-strokes",
+      pageId: stroke.pageId,
+      upsert: [cloneStroke(stroke)],
+      remove: [],
+      deletedStrokeIds: [...page.deletedStrokeIds],
+      pageUpdatedAt: page.updatedAt,
+      notebookUpdatedAt: this.notebook.updatedAt
+    });
   }
   applyPendingMergedNotebook() {
     if (!this.pendingMergedNotebook || this.activePointerId !== null || this.pendingInkStrokes.length > 0) return;
