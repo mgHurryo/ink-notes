@@ -12,6 +12,7 @@ import {
 } from "./model";
 import { NotebookStore } from "./storage";
 import { canvasResolution, drawInkStroke } from "./rendering";
+import { optimizeStrokePoints } from "./stroke-geometry";
 import { Rect, TileRenderer } from "./tiles";
 import type { InkWorkerResponse, NotebookOperation } from "./worker-protocol";
 import { InkWorkerRequestError, InkWorkerService, InkWorkerSession } from "./worker-service";
@@ -1280,10 +1281,11 @@ export class InkView extends FileView {
       this.pushCommand(this.erasedStrokesCommand(page.id, this.erasedStrokes, this.eraserReplacements));
       this.drawInteractiveStrokes(page.strokes, true);
     } else if (this.activeStroke) {
+      this.markChanged(page);
+      this.optimizeFinalizedStroke(page, interaction);
       // Retain a complete vector preview without copying the full high-density
       // overlay. Late Worker responses update only the live stroke layer.
       this.retainActivePreview();
-      this.markChanged(page);
       this.queueWorkerOperation({ type: "complete-stroke", pageId: page.id, strokeId: this.activeStroke.id,
         pageUpdatedAt: page.updatedAt, notebookUpdatedAt: this.notebook.updatedAt });
       this.pushCommand(this.addedStrokeCommand(page.id, this.activeStroke));
@@ -1306,6 +1308,33 @@ export class InkView extends FileView {
       this.externalRefreshPending = false;
       void this.reloadFromDisk().catch((error) => new Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
     }
+  }
+
+  private optimizeFinalizedStroke(page: InkPage, interaction: InteractionContext): void {
+    const stroke = this.activeStroke;
+    if (!stroke || (stroke.tool !== "pen" && stroke.tool !== "highlighter")) return;
+    const optimized = optimizeStrokePoints(stroke.points, {
+      strength: interaction.smoothing ?? DEFAULT_PEN_SMOOTHING,
+      scaleX: this.notebook.pageWidth,
+      scaleY: this.notebook.pageHeight,
+    });
+    // The optimizer hands back the input reference when there is nothing to
+    // change (disabled smoothing, dots, ticks), so this stays byte-exact.
+    if (optimized === stroke.points) return;
+    stroke.points = optimized;
+    stroke.updatedAt = page.updatedAt;
+    // Streaming pushed the raw captured samples to the Worker while drawing.
+    // Publish the refined geometry so committed tiles, saves and other devices
+    // all converge on the optimized trajectory.
+    this.queueWorkerOperation({
+      type: "patch-strokes",
+      pageId: stroke.pageId,
+      upsert: [cloneStroke(stroke)],
+      remove: [],
+      deletedStrokeIds: [...page.deletedStrokeIds],
+      pageUpdatedAt: page.updatedAt,
+      notebookUpdatedAt: this.notebook.updatedAt,
+    });
   }
 
   private applyPendingMergedNotebook(): void {
