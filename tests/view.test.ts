@@ -13,6 +13,7 @@ interface ViewInternals {
   confirmedPreviewCtx: CanvasRenderingContext2D;
   activeStroke: InkStroke | null;
   activePointerId: number | null;
+  confirmedStrokeOutlines: Map<string, { points: Float32Array; sampleCount: number; mode: "pen" | "highlighter" }>;
   pageIndex: number;
   onPointerDown(event: PointerEvent): void;
   onPointerMove(event: PointerEvent): void;
@@ -982,5 +983,21 @@ describe("stroke geometry optimization", () => {
 
     expect(queuedOperations(internal).some((operation) => operation.type === "patch-strokes")).toBe(false);
     expect(lastStroke(internal).points.map((point) => point.x)).toEqual([0.1, 0.3, 0.5]);
+  });
+
+  it("retains a preview outline built from the refined geometry", () => {
+    const { internal } = setup();
+    internal.queueWorkerOperation = vi.fn();
+    internal.onPointerDown(pointer(10));
+    for (const x of [12, 14, 16, 40, 42, 44, 46, 48]) internal.onPointerMove(pointer(x));
+    internal.onPointerUp(pointer(50));
+
+    const stroke = lastStroke(internal);
+    const outline = internal.confirmedStrokeOutlines.get(stroke.id);
+    expect(outline).toBeDefined();
+    // No late raw append may override the refined preview.
+    expect(outline!.sampleCount).toBe(Number.MAX_SAFE_INTEGER);
+    expect(outline!.mode).toBe("pen");
+    expect(outline!.points.length).toBeGreaterThanOrEqual(4);
   });
 });

@@ -11,7 +11,7 @@ import {
   newId,
 } from "./model";
 import { NotebookStore } from "./storage";
-import { canvasResolution, drawInkStroke } from "./rendering";
+import { canvasResolution, drawInkStroke, penOutline } from "./rendering";
 import { optimizeStrokePoints } from "./stroke-geometry";
 import { Rect, TileRenderer } from "./tiles";
 import type { InkWorkerResponse, NotebookOperation } from "./worker-protocol";
@@ -1317,6 +1317,7 @@ export class InkView extends FileView {
       strength: interaction.smoothing ?? DEFAULT_PEN_SMOOTHING,
       scaleX: this.notebook.pageWidth,
       scaleY: this.notebook.pageHeight,
+      nibWidth: stroke.width,
     });
     // The optimizer hands back the input reference when there is nothing to
     // change (disabled smoothing, dots, ticks), so this stays byte-exact.
@@ -1335,6 +1336,31 @@ export class InkView extends FileView {
       pageUpdatedAt: page.updatedAt,
       notebookUpdatedAt: this.notebook.updatedAt,
     });
+    this.retainRefinedPreviewOutline(stroke);
+  }
+
+  private retainRefinedPreviewOutline(stroke: InkStroke): void {
+    // Writing produces many short strokes in quick succession. Rendering the
+    // retained preview from the refined points (with a sample count no late
+    // raw append can override) keeps the overlay identical to the committed
+    // tiles, so each finished stroke never visibly settles or jumps.
+    if (stroke.tool === "highlighter") {
+      const line = new Float32Array(stroke.points.length * 2);
+      for (let index = 0; index < stroke.points.length; index++) {
+        line[index * 2] = stroke.points[index].x;
+        line[index * 2 + 1] = stroke.points[index].y;
+      }
+      this.confirmedStrokeOutlines.set(stroke.id, { points: line, sampleCount: Number.MAX_SAFE_INTEGER, mode: "highlighter" });
+      return;
+    }
+    const generated = penOutline(stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    if (generated.length < 2) return;
+    const normalized = new Float32Array(generated.length * 2);
+    for (let index = 0; index < generated.length; index++) {
+      normalized[index * 2] = generated[index][0] / this.canvasLogicalWidth;
+      normalized[index * 2 + 1] = generated[index][1] / this.canvasLogicalHeight;
+    }
+    this.confirmedStrokeOutlines.set(stroke.id, { points: normalized, sampleCount: Number.MAX_SAFE_INTEGER, mode: "pen" });
   }
 
   private applyPendingMergedNotebook(): void {
