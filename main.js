@@ -3940,9 +3940,9 @@ function stabilizeInkPoint(point, previous, width, height, smoothing) {
   const pixels = Math.hypot(dx, dy);
   const strength = Math.max(0, Math.min(1, smoothing));
   if (pixels < 0.35 + strength * 0.65) return null;
-  const minimumWeight = 0.78 - strength * 0.48;
-  const mediumWeight = 0.92 - strength * 0.27;
-  const weight = pixels < 4 ? minimumWeight : pixels < 8 ? mediumWeight : 1;
+  const minimumWeight = 0.9 - strength * 0.4;
+  const mediumWeight = 0.95 - strength * 0.2;
+  const weight = pixels < 2 ? minimumWeight : pixels < 5 ? mediumWeight : 1;
   const pressureDelta = point.pressure - previous.pressure;
   const pressureWeight = Math.max(0.2, 0.82 - strength * 0.52);
   return {

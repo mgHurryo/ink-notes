@@ -237,6 +237,18 @@ describe("consecutive handwriting input", () => {
     expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2, 0.3]);
   });
 
+  it("tracks deliberate small moves closely while light smoothing is on", () => {
+    const { internal } = setup();
+    internal.onPointerDown(pointer(10));
+    internal.onPointerMove(pointer(13));
+    internal.onPointerMove(pointer(16));
+    const points = internal.notebook.pages[0].strokes[0].points;
+    // 3px steps render at >= 88% of the pen movement: the ink must not
+    // visibly lag the nib during slow, precise writing.
+    expect(points[1].x).toBeGreaterThanOrEqual(0.1 + 0.03 * 0.88);
+    expect(points[2].x).toBeGreaterThanOrEqual(0.1 + 0.06 * 0.88);
+  });
+
   it("smooths a continuous tail while preserving a deliberate turn", () => {
     const { internal } = setup();
     internal.state.pen.smoothing = 1;

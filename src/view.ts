@@ -2437,11 +2437,13 @@ function stabilizeInkPoint(point: InkPoint, previous: InkPoint, width: number, h
   const pixels = Math.hypot(dx, dy);
   const strength = Math.max(0, Math.min(1, smoothing));
   if (pixels < 0.35 + strength * 0.65) return null;
-  // Slow input exposes sensor and pressure noise most strongly. Blend only
-  // short moves; quick strokes and deliberate corners remain responsive.
-  const minimumWeight = 0.78 - strength * 0.48;
-  const mediumWeight = 0.92 - strength * 0.27;
-  const weight = pixels < 4 ? minimumWeight : pixels < 8 ? mediumWeight : 1;
+  // Slow writing must track the pen: blending small moves used to hold back
+  // a third of a visible step, which reads as the ink lagging the nib. The
+  // finalize optimizer removes the residual jitter non-causally, so capture
+  // only takes the edge off sub-2px noise and stays exact from 5px up.
+  const minimumWeight = 0.9 - strength * 0.4;
+  const mediumWeight = 0.95 - strength * 0.2;
+  const weight = pixels < 2 ? minimumWeight : pixels < 5 ? mediumWeight : 1;
   const pressureDelta = point.pressure - previous.pressure;
   const pressureWeight = Math.max(0.2, 0.82 - strength * 0.52);
   return {
