@@ -13,7 +13,7 @@ import {
 import { NotebookStore } from "./storage";
 import { canvasResolution, drawInkStroke } from "./rendering";
 import { Rect, TileRenderer } from "./tiles";
-import { StrokeModeler, StrokeModelInput, StrokeModelResult } from "./stroke-modeler";
+import { StrokeModeler, StrokeModelInput, StrokeModelResult, StrokeModelParams, DEFAULT_STROKE_MODEL_PARAMS, strokeModelParamsForSmoothStrength } from "./stroke-modeler";
 import type { InkWorkerResponse, NotebookOperation } from "./worker-protocol";
 import { InkWorkerRequestError, InkWorkerService, InkWorkerSession } from "./worker-service";
 
@@ -25,6 +25,9 @@ interface BrushSettings {
   color: string;
   width: number;
   opacity: number;
+  /** Pen only: 0 keeps ink direct (raw samples, no modeling); 1..100 is
+   *  the user-selected stroke-modeler strength. */
+  smooth?: number;
 }
 
 interface ToolState {
@@ -98,6 +101,12 @@ const COMPLETED_PREVIEW_SAMPLE_LIMIT = 256;
 // Modeled pen samples are deduplicated against this page-pixel radius so a
 // resting pen (which the model reports at 180 Hz) cannot bloat the stroke.
 const PEN_CAPTURE_MIN_DISTANCE = 0.01;
+// A median inter-sample interval above this (ms) marks a sparse input stream
+// whose raw polyline looks segmented; the stroke modeler then intervenes even
+// with smooth disabled. ~24 ms ≈ devices delivering fewer than ~40 Hz.
+const SPARSE_SAMPLE_INTERVAL_MS = 24;
+const PEN_SAMPLE_INTERVAL_WINDOW = 32;
+const PEN_SPARSE_MIN_INTERVALS = 8;
 
 /** Capture-time state for modeling one active pen stroke. */
 interface PenCapture {
@@ -134,7 +143,7 @@ export class InkView extends FileView {
   private pageIndex = 0;
   private state: ToolState = {
     tool: "pen",
-    pen: { color: "#1b1b1b", width: 3, opacity: 1 },
+    pen: { color: "#1b1b1b", width: 3, opacity: 1, smooth: 0 },
     highlighter: { color: "#f2c94c", width: 18, opacity: 0.4 },
     eraserMode: "stroke",
     eraserSize: 32,
@@ -179,6 +188,13 @@ export class InkView extends FileView {
   private activeStroke: InkStroke | null = null;
   private workerStrokePointIndex = 0;
   private penModeler: PenCapture | null = null;
+  /** Active while pointerrawupdate delivers pen samples; tracks the newest
+   *  consumed timestamp so pointermove batches cannot replay eaten samples. */
+  private rawUpdateCapture: { pointerId: number; lastTime: number } | null = null;
+  /** Recent inter-sample intervals (ms), the device-rate history that drives
+   *  the sparse-input auto-intervention. */
+  private penSampleIntervals: number[] = [];
+  private lastPenSampleTime: number | null = null;
   private confirmedStrokeOutlines = new Map<string, ConfirmedStrokeOutline>();
   private pendingInkStrokes: InkStroke[] = [];
   private committingInkStrokes: InkStroke[] | null = null;
@@ -512,6 +528,13 @@ export class InkView extends FileView {
       settings.opacity = value;
       this.updateBrushPreview(tool);
     });
+    if (tool === "pen") {
+      // 0 keeps ink direct (raw samples, no modeling); 1..100 is the stroke
+      // modeler strength. Sparse low-rate devices also auto-engage at 0.
+      this.addRange(panel, "Smooth", 0, 100, 1, settings.smooth ?? 0, (value) => {
+        settings.smooth = value;
+      });
+    }
   }
 
   private brushSettings(tool: BrushTool): BrushSettings {
@@ -586,6 +609,12 @@ export class InkView extends FileView {
     this.registerDomEvent(this.pageElement, "pointerenter", (event) => this.onPointerEnter(event));
     this.registerDomEvent(this.pageElement, "pointerdown", (event) => this.onPointerDown(event));
     this.registerDomEvent(this.pageElement, "pointermove", (event) => this.onPointerMove(event));
+    // Chromium hosts (Obsidian desktop) stream every hardware pen sample as it
+    // arrives instead of batching it into the next frame's pointermove. WebKit
+    // (iPad) never exposes the event, so the gate keeps iPad behavior unchanged.
+    if ("onpointerrawupdate" in window) {
+      this.registerDomEvent(this.pageElement, "pointerrawupdate" as keyof HTMLElementEventMap, (event) => this.onPointerRawUpdate(event as InkPointerSample));
+    }
     this.registerDomEvent(this.pageElement, "pointerleave", () => {
       this.eraserPointerInside = false;
       this.refreshEraserCursor();
@@ -1118,7 +1147,7 @@ export class InkView extends FileView {
       updatedAt: Date.now(),
     };
     this.workerStrokePointIndex = 1;
-    if (tool === "pen") this.startPenModeler(event, point);
+    if (tool === "pen" && this.shouldModelPenStroke()) this.startPenModeler(event, point, this.penModelerParams());
     this.queueWorkerOperation({
       type: "start-stroke",
       pageId: page.id,
@@ -1147,12 +1176,36 @@ export class InkView extends FileView {
     const point = this.toPoint(event, rect);
     const inside = pointInsideRect(event, rect);
     if (this.activePointerId === null) {
+      // Hover samples are device-rate history too; skip them while raw
+      // updates own the pointer, or the coalesced replay double-counts.
+      if (this.rawUpdateCapture?.pointerId !== event.pointerId) this.recordPenSampleIntervals(this.pointerSamples(event));
       this.updateEraserHover(point, inside);
       return;
     }
     if (this.activePointerId !== event.pointerId) return;
     if (this.interaction?.tool === "eraser") this.updateEraserHover(point, inside);
+    // While pointerrawupdate owns this pointer, its samples already reached the
+    // stroke; replaying the frame-aligned batch would duplicate them.
+    if (this.rawUpdateCapture?.pointerId === event.pointerId) return;
     this.applyPointerSamples(event, rect, "move");
+  }
+
+  /** Consumes Chromium raw hardware samples so ink forms at full pen rate
+   *  instead of waiting for the next frame-aligned pointermove batch. */
+  private onPointerRawUpdate(event: InkPointerSample): void {
+    if (this.activePointerId === null || event.pointerId !== this.activePointerId) return;
+    const interaction = this.interaction;
+    if (!interaction || (interaction.source ?? "pointer") !== "pointer") return;
+    if (interaction.tool !== "pen" && interaction.tool !== "highlighter") return;
+    // Timestamps drive the pointermove dedup; without one the coalesced replay
+    // could feed the modeler an out-of-order sample and force raw capture.
+    if (typeof event.timeStamp !== "number" || !Number.isFinite(event.timeStamp)) {
+      this.rawUpdateCapture = null;
+      return;
+    }
+    if (this.rawUpdateCapture && this.rawUpdateCapture.pointerId !== event.pointerId) return;
+    if (!this.rawUpdateCapture) this.rawUpdateCapture = { pointerId: event.pointerId, lastTime: event.timeStamp - 1 };
+    this.applyPointerSamples(event);
   }
 
   private onPointerUp(event: InkPointerSample, source: InteractionContext["source"] = "pointer"): void {
@@ -1186,11 +1239,29 @@ export class InkView extends FileView {
       this.requestRender();
       return;
     }
+    let feed = samples;
+    const raw = this.rawUpdateCapture;
+    if (raw && raw.pointerId === event.pointerId && (interaction.tool === "pen" || interaction.tool === "highlighter")) {
+      // Raw updates already consumed the leading samples of every coalesced
+      // batch; replaying them would send the modeler backwards in time and
+      // degrade the whole stroke to raw capture.
+      let newest = raw.lastTime;
+      feed = [];
+      for (const sample of samples) {
+        const time = sample.timeStamp;
+        if (typeof time === "number" && time <= raw.lastTime) continue;
+        feed.push(sample);
+        if (typeof time === "number" && time > newest) newest = time;
+      }
+      raw.lastTime = newest;
+      if (feed.length === 0) return;
+    }
+    this.recordPenSampleIntervals(feed);
     let changed = false;
     if (interaction.tool === "pen" && this.penModeler && !this.penModeler.fallback) {
-      changed = this.appendModeledPenPoints(samples, rect, phase);
+      changed = this.appendModeledPenPoints(feed, rect, phase);
     } else {
-      for (const sample of samples) {
+      for (const sample of feed) {
         const point = this.toPoint(sample, rect);
         if (interaction.tool === "eraser") {
           changed = this.eraseAt(point, page, interaction.eraserMode, interaction.eraserSize) || changed;
@@ -1301,10 +1372,47 @@ export class InkView extends FileView {
     this.updatePenModeler({ ...capture.lastInput, eventType: "up" }, true);
   }
 
-  private startPenModeler(event: InkPointerSample, point: InkPoint): void {
+  /** Ink stays direct (raw samples, probe-style) unless the user picked a
+   *  smooth strength or the device itself samples too sparsely. */
+  private shouldModelPenStroke(): boolean {
+    if ((this.state.pen.smooth ?? 0) > 0) return true;
+    return this.penInputSparse();
+  }
+
+  /** Sparse devices get the proven default tuning; an explicit strength maps
+   *  through the slider curve. */
+  private penModelerParams(): StrokeModelParams {
+    const smooth = this.state.pen.smooth ?? 0;
+    return smooth > 0 ? strokeModelParamsForSmoothStrength(smooth) : DEFAULT_STROKE_MODEL_PARAMS;
+  }
+
+  private penInputSparse(): boolean {
+    if (this.penSampleIntervals.length < PEN_SPARSE_MIN_INTERVALS) return false;
+    const sorted = [...this.penSampleIntervals].sort((a, b) => a - b);
+    return sorted[Math.floor(sorted.length / 2)] > SPARSE_SAMPLE_INTERVAL_MS;
+  }
+
+  /** Feeds the device-rate history from one batch of consumed samples. */
+  private recordPenSampleIntervals(samples: InkPointerSample[]): void {
+    for (const sample of samples) {
+      const time = sample.timeStamp;
+      if (typeof time !== "number" || !Number.isFinite(time)) continue;
+      if (this.lastPenSampleTime !== null) {
+        const interval = time - this.lastPenSampleTime;
+        // Clock jumps and frame hiccups are not device rate.
+        if (interval > 0 && interval < 1000) {
+          this.penSampleIntervals.push(interval);
+          if (this.penSampleIntervals.length > PEN_SAMPLE_INTERVAL_WINDOW) this.penSampleIntervals.shift();
+        }
+      }
+      this.lastPenSampleTime = time;
+    }
+  }
+
+  private startPenModeler(event: InkPointerSample, point: InkPoint, params: StrokeModelParams): void {
     const pageWidth = this.notebook.pageWidth;
     const pageHeight = this.notebook.pageHeight;
-    const modeler = new StrokeModeler();
+    const modeler = new StrokeModeler(params);
     const input: StrokeModelInput = {
       eventType: "down",
       position: { x: point.x * pageWidth, y: point.y * pageHeight },
@@ -1398,6 +1506,7 @@ export class InkView extends FileView {
       this.refreshEraserCursor();
       this.activePointerId = null;
       this.penModeler = null;
+      this.rawUpdateCapture = null;
       this.tiles.resumeInkCommit();
       return;
     }
@@ -1445,6 +1554,7 @@ export class InkView extends FileView {
     this.workerStrokePointIndex = 0;
     this.lastPoint = null;
     this.penModeler = null;
+    this.rawUpdateCapture = null;
     this.pendingLassoPoint = null;
     this.eraserPreviewCells.clear();
     if (interaction.tool === "pen" || interaction.tool === "highlighter") {
@@ -2837,6 +2947,7 @@ function isPointerCaptureError(error: unknown): boolean {
 
 function formatControlValue(name: string, value: number): string {
   const normalized = name.toLowerCase();
+  if (normalized === "smooth") return value === 0 ? "Direct" : String(value);
   return normalized.endsWith("opacity")
     ? `${Math.round(value * 100)}%`
     : `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(1)} px`;

@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.6.0-beta.1 - 2026-10-06
+
+- Make direct capture the pen default: ink stores and renders every delivered sample exactly as the digitizer reported it, in the style of the apple-pencil-capability-probe writing pad. The 0.5.0 stroke modeler no longer runs unless asked.
+- Add a Smooth slider (0-100) to the pen brush settings. 0 is direct ink; 1-100 selects the stroke modeler strength, with 50 reproducing the upstream reference tuning, lower values snappier and higher values calmer. Stroke ends still land on the lift point at every strength.
+- Auto-rescue sparse devices: when recent samples show a median interval above ~24 ms (below ~40 Hz), the next pen stroke engages the modeler automatically even with the dial at 0, because raw polylines from low-rate devices look segmented. The first stroke after opening a notebook is always direct (no history yet).
+- Capture pen samples through pointerrawupdate where the host exposes it (Obsidian desktop / Chromium): each hardware sample reaches the ink pipeline immediately instead of waiting for the frame-aligned pointermove batch, with timestamp dedup so coalesced replays never double-feed. iPad WebKit does not expose the event and is unaffected.
+- No notebook schema change; existing notebooks render exactly as before. Real-device (iPad/Pencil, Windows pen) writing feel is not verified for these changes.
+
 ## 0.5.0-beta.1 - 2026-10-06
 
 - Model pen strokes at capture time with a TypeScript port of the causal core of Google's open-source ink-stroke-modeler: digitizer wobble smoothing, 180 Hz resampling, spring-drag position modeling and an end-of-stroke catch-up that lands stroke tails exactly on the lift position. Stored points are only ever appended and never rewritten, preserving the raw-capture guarantee that finished ink always matches its committed tiles.
