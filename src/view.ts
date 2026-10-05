@@ -792,7 +792,9 @@ export class InkView extends FileView {
       drawInkStroke(ctx, boundedPreviewStroke(stroke), this.canvasLogicalWidth, this.canvasLogicalHeight);
       return;
     }
-    this.drawConfirmedOutline(ctx, boundedPreviewOutline(confirmed.points), stroke.color, stroke.opacity, stroke.width, confirmed.mode);
+    // Unbounded: the outline already exists, so rendering every vertex costs
+    // one fill and matches the committed tiles exactly.
+    this.drawConfirmedOutline(ctx, confirmed.points, stroke.color, stroke.opacity, stroke.width, confirmed.mode);
     drawImmediateStrokeTail(ctx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight, confirmed.sampleCount);
   }
 
@@ -827,11 +829,17 @@ export class InkView extends FileView {
     } else {
       ctx.globalCompositeOperation = "source-over";
       ctx.beginPath();
-      // Match the polygon used by committed ink; further curve fitting can
-      // round away fast corners even when the Worker preserved their position.
-      ctx.moveTo(points[0] * scaleX, points[1] * scaleY);
-      for (let index = 2; index < points.length; index += 2) {
-        ctx.lineTo(points[index] * scaleX, points[index + 1] * scaleY);
+      // Same closed midpoint-quadratic as the Worker's committed tiles and the
+      // immediate tail, so live ink, retained previews and tiles render one
+      // identical geometry instead of the preview switching to a faceted
+      // polygon the moment the pen lifts.
+      const firstX = points[0] * scaleX, firstY = points[1] * scaleY;
+      const lastX = points[points.length - 2] * scaleX, lastY = points[points.length - 1] * scaleY;
+      ctx.moveTo((lastX + firstX) / 2, (lastY + firstY) / 2);
+      for (let index = 0; index < points.length; index += 2) {
+        const next = (index + 2) % points.length;
+        const x = points[index] * scaleX, y = points[index + 1] * scaleY;
+        ctx.quadraticCurveTo(x, y, (x + points[next] * scaleX) / 2, (y + points[next + 1] * scaleY) / 2);
       }
       ctx.closePath();
       ctx.fill();
@@ -1548,7 +1556,11 @@ export class InkView extends FileView {
     return {
       x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
       y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
-      pressure: event.pressure > 0 ? event.pressure : 0.5,
+      // Lift events (and some coalesced samples) report pressure 0. Inherit
+      // the previous sample's pressure instead of a 0.5 default: a pressure
+      // jump at the tail makes the outline end in a thin line with a
+      // full-width round cap dot.
+      pressure: event.pressure > 0 ? event.pressure : (this.lastPoint?.pressure ?? 0.5),
       tiltX: event.tiltX,
       tiltY: event.tiltY,
       t: Date.now(),
@@ -2626,18 +2638,6 @@ function boundedPreviewStroke(stroke: InkStroke): InkStroke {
   const points = Array.from({ length: COMPLETED_PREVIEW_SAMPLE_LIMIT }, (_, index) =>
     stroke.points[Math.round(index * last / (COMPLETED_PREVIEW_SAMPLE_LIMIT - 1))]);
   return { ...stroke, points };
-}
-
-function boundedPreviewOutline(points: Float32Array): Float32Array {
-  const pointCount = points.length / 2;
-  if (pointCount <= COMPLETED_PREVIEW_SAMPLE_LIMIT) return points;
-  const bounded = new Float32Array(COMPLETED_PREVIEW_SAMPLE_LIMIT * 2);
-  for (let index = 0; index < COMPLETED_PREVIEW_SAMPLE_LIMIT; index++) {
-    const source = Math.round(index * (pointCount - 1) / (COMPLETED_PREVIEW_SAMPLE_LIMIT - 1)) * 2;
-    bounded[index * 2] = points[source];
-    bounded[index * 2 + 1] = points[source + 1];
-  }
-  return bounded;
 }
 
 function restoredStroke(stroke: InkStroke): InkStroke {

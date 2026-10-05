@@ -505,6 +505,8 @@ var NIB_SAMPLE_FRACTION = 0.35;
 var MINIMUM_CORNER_ARC = 8;
 var MAXIMUM_CORNER_ARC = 38;
 var CORNER_ARC_FRACTION = 0.12;
+var MINIMUM_JITTER_LIMIT = 1.2;
+var JITTER_NIB_FRACTION = 0.5;
 var DEFAULT_CORNER_TURN_DEGREES = 60;
 function optimizeStrokePoints(points, options = {}) {
   var _a;
@@ -528,7 +530,8 @@ function optimizeStrokePoints(points, options = {}) {
     scaleY
   );
   const passes = Math.max(1, Math.min(3, Math.round(strength * 4)));
-  return relaxBetweenCorners(kept, corners, passes, scaleX, scaleY);
+  const jitterLimit = Math.max(MINIMUM_JITTER_LIMIT, nibWidth * JITTER_NIB_FRACTION);
+  return relaxBetweenCorners(kept, corners, passes, scaleX, scaleY, jitterLimit);
 }
 function adaptiveCornerArc(points, scaleX, scaleY) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
@@ -545,8 +548,15 @@ function deduplicateSamples(points, minimumSampleDistance, scaleX, scaleY) {
   const kept = [{ ...points[0] }];
   for (let index = 1; index < points.length; index++) {
     const last = kept[kept.length - 1];
-    const isFinalSample = index === points.length - 1;
-    if (isFinalSample || scaledDistance(last, points[index], scaleX, scaleY) >= minimumSampleDistance) {
+    if (index === points.length - 1) {
+      if (scaledDistance(last, points[index], scaleX, scaleY) < minimumSampleDistance) {
+        kept[kept.length - 1] = { ...points[index] };
+      } else {
+        kept.push({ ...points[index] });
+      }
+      continue;
+    }
+    if (scaledDistance(last, points[index], scaleX, scaleY) >= minimumSampleDistance) {
       kept.push({ ...points[index] });
     }
   }
@@ -581,7 +591,7 @@ function walkArc(points, index, arcLength, direction, scaleX, scaleY) {
   return cursor;
 }
 var STRAIGHT_EPSILON = 0.01;
-function relaxBetweenCorners(points, corners, passes, scaleX, scaleY) {
+function relaxBetweenCorners(points, corners, passes, scaleX, scaleY, jitterLimit) {
   let current = points;
   for (let pass = 0; pass < passes; pass++) {
     const next = current.map((point) => ({ ...point }));
@@ -591,6 +601,9 @@ function relaxBetweenCorners(points, corners, passes, scaleX, scaleY) {
       const point = current[index];
       const after = current[index + 1];
       if (Math.abs((before.x - 2 * point.x + after.x) * scaleX) < STRAIGHT_EPSILON && Math.abs((before.y - 2 * point.y + after.y) * scaleY) < STRAIGHT_EPSILON) continue;
+      const deviationX = ((before.x + after.x) * 0.5 - point.x) * scaleX;
+      const deviationY = ((before.y + after.y) * 0.5 - point.y) * scaleY;
+      if (Math.hypot(deviationX, deviationY) > jitterLimit) continue;
       next[index] = {
         x: before.x * 0.25 + point.x * 0.5 + after.x * 0.25,
         y: before.y * 0.25 + point.y * 0.5 + after.y * 0.25,
@@ -2332,7 +2345,7 @@ var InkView = class extends import_obsidian.FileView {
       drawInkStroke(ctx, boundedPreviewStroke(stroke), this.canvasLogicalWidth, this.canvasLogicalHeight);
       return;
     }
-    this.drawConfirmedOutline(ctx, boundedPreviewOutline(confirmed.points), stroke.color, stroke.opacity, stroke.width, confirmed.mode);
+    this.drawConfirmedOutline(ctx, confirmed.points, stroke.color, stroke.opacity, stroke.width, confirmed.mode);
     drawImmediateStrokeTail(ctx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight, confirmed.sampleCount);
   }
   drawConfirmedOutline(ctx, points, color, opacity, width, mode) {
@@ -2368,9 +2381,13 @@ var InkView = class extends import_obsidian.FileView {
     } else {
       ctx.globalCompositeOperation = "source-over";
       ctx.beginPath();
-      ctx.moveTo(points[0] * scaleX, points[1] * scaleY);
-      for (let index = 2; index < points.length; index += 2) {
-        ctx.lineTo(points[index] * scaleX, points[index + 1] * scaleY);
+      const firstX = points[0] * scaleX, firstY = points[1] * scaleY;
+      const lastX = points[points.length - 2] * scaleX, lastY = points[points.length - 1] * scaleY;
+      ctx.moveTo((lastX + firstX) / 2, (lastY + firstY) / 2);
+      for (let index = 0; index < points.length; index += 2) {
+        const next = (index + 2) % points.length;
+        const x2 = points[index] * scaleX, y2 = points[index + 1] * scaleY;
+        ctx.quadraticCurveTo(x2, y2, (x2 + points[next] * scaleX) / 2, (y2 + points[next + 1] * scaleY) / 2);
       }
       ctx.closePath();
       ctx.fill();
@@ -3045,10 +3062,15 @@ var InkView = class extends import_obsidian.FileView {
     return true;
   }
   toPoint(event, rect = this.pageElement.getBoundingClientRect()) {
+    var _a, _b;
     return {
       x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)),
       y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)),
-      pressure: event.pressure > 0 ? event.pressure : 0.5,
+      // Lift events (and some coalesced samples) report pressure 0. Inherit
+      // the previous sample's pressure instead of a 0.5 default: a pressure
+      // jump at the tail makes the outline end in a thin line with a
+      // full-width round cap dot.
+      pressure: event.pressure > 0 ? event.pressure : (_b = (_a = this.lastPoint) == null ? void 0 : _a.pressure) != null ? _b : 0.5,
       tiltX: event.tiltX,
       tiltY: event.tiltY,
       t: Date.now()
@@ -4073,17 +4095,6 @@ function boundedPreviewStroke(stroke) {
   const last = stroke.points.length - 1;
   const points = Array.from({ length: COMPLETED_PREVIEW_SAMPLE_LIMIT }, (_2, index) => stroke.points[Math.round(index * last / (COMPLETED_PREVIEW_SAMPLE_LIMIT - 1))]);
   return { ...stroke, points };
-}
-function boundedPreviewOutline(points) {
-  const pointCount = points.length / 2;
-  if (pointCount <= COMPLETED_PREVIEW_SAMPLE_LIMIT) return points;
-  const bounded = new Float32Array(COMPLETED_PREVIEW_SAMPLE_LIMIT * 2);
-  for (let index = 0; index < COMPLETED_PREVIEW_SAMPLE_LIMIT; index++) {
-    const source = Math.round(index * (pointCount - 1) / (COMPLETED_PREVIEW_SAMPLE_LIMIT - 1)) * 2;
-    bounded[index * 2] = points[source];
-    bounded[index * 2 + 1] = points[source + 1];
-  }
-  return bounded;
 }
 function restoredStroke(stroke) {
   const now = Date.now();
