@@ -1164,3 +1164,60 @@ describe("direct ink capture", () => {
     expect(internal.penModeler).toBeNull();
   });
 });
+
+describe("modeled tail and sparse history", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", globalThis);
+  });
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function lastStroke(internal: ViewInternals): InkStroke {
+    const strokes = internal.notebook.pages[0].strokes;
+    return strokes[strokes.length - 1];
+  }
+
+  it("stores no catch-up micro-cluster when the pen stops before lifting", () => {
+    const { internal } = setup();
+    internal.queueWorkerOperation = vi.fn();
+    // Fast entry, deceleration into a full stop, then a lift that barely
+    // moves: the modeler's end-of-stroke catch-up used to append a tail of
+    // sub-pixel points that rendered as a dot past the stroke end.
+    internal.onPointerDown(pointer(10));
+    internal.onPointerMove(pointer(30));
+    internal.onPointerMove(pointer(30.02));
+    internal.onPointerMove(pointer(30.04));
+    internal.onPointerUp(pointer(30.06));
+
+    const pagePx = 16; // clientX units are 1/100 of the 100-unit canvas
+    const points = lastStroke(internal).points;
+    expect(points.length).toBeGreaterThanOrEqual(2);
+    for (let index = 1; index < points.length; index++) {
+      const gap = Math.hypot(points[index].x - points[index - 1].x, points[index].y - points[index - 1].y) * 1600;
+      expect(gap).toBeGreaterThanOrEqual(0.3);
+    }
+    // The tail still ends on the lift spot within the dedup radius.
+    const lift = 30.06 * pagePx;
+    const end = points[points.length - 1].x * 1600;
+    expect(Math.abs(end - lift)).toBeLessThan(0.5);
+  });
+
+  it("does not flag tap-and-pause rhythm as a sparse device", () => {
+    const { internal } = setup();
+    internal.state.pen.smooth = 0;
+    internal.queueWorkerOperation = vi.fn();
+    internal.updateEraserHover = vi.fn();
+    // Taps or letter pauses used to feed 300-500 ms "intervals" into the
+    // history, tripping the sparse threshold and silently re-engaging the
+    // modeler no matter where the Smooth dial was set.
+    for (let index = 0; index < 12; index++) {
+      internal.onPointerMove(pointer(index, { timeStamp: 1_000 + index * 400 }));
+    }
+    internal.onPointerDown(pointer(10, { timeStamp: 6_000 }));
+    expect(internal.penModeler).toBeNull();
+  });
+});
