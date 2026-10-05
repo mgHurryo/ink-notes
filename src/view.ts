@@ -829,17 +829,12 @@ export class InkView extends FileView {
     } else {
       ctx.globalCompositeOperation = "source-over";
       ctx.beginPath();
-      // Same closed midpoint-quadratic as the Worker's committed tiles and the
-      // immediate tail, so live ink, retained previews and tiles render one
-      // identical geometry instead of the preview switching to a faceted
-      // polygon the moment the pen lifts.
-      const firstX = points[0] * scaleX, firstY = points[1] * scaleY;
-      const lastX = points[points.length - 2] * scaleX, lastY = points[points.length - 1] * scaleY;
-      ctx.moveTo((lastX + firstX) / 2, (lastY + firstY) / 2);
-      for (let index = 0; index < points.length; index += 2) {
-        const next = (index + 2) % points.length;
-        const x = points[index] * scaleX, y = points[index + 1] * scaleY;
-        ctx.quadraticCurveTo(x, y, (x + points[next] * scaleX) / 2, (y + points[next + 1] * scaleY) / 2);
+      // The outline is the final ink shape; render it as a plain polygon so
+      // live ink, retained previews and committed tiles all keep sparse
+      // fast-written corners exactly where the pen turned.
+      ctx.moveTo(points[0] * scaleX, points[1] * scaleY);
+      for (let index = 2; index < points.length; index += 2) {
+        ctx.lineTo(points[index] * scaleX, points[index + 1] * scaleY);
       }
       ctx.closePath();
       ctx.fill();

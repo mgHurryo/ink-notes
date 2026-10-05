@@ -90,16 +90,14 @@ function createPenPath(stroke: InkStroke, width: number, height: number): Path2D
   const outline = penOutline(stroke, width, height);
   if (outline.length > 0) {
     const first = outline[0];
-    const last = outline[outline.length - 1];
-    // Same closed midpoint-quadratic rendering the Worker uses for committed
-    // tiles, so fallback, embed and preview outlines match tile geometry. The
-    // outline itself already carries rounded caps and pressure geometry from
-    // the stabilized input; this smooths its dense vertices, not the input.
-    path.moveTo((last[0] + first[0]) / 2, (last[1] + first[1]) / 2);
-    for (let index = 0; index < outline.length; index++) {
+    // The outline already contains rounded caps and pressure geometry and is
+    // the final ink shape. Render it as a plain polygon: with dense input it
+    // is already smooth, and curve fitting across the long segments of a
+    // sparsely sampled fast stroke would cut its corners into arcs.
+    path.moveTo(first[0], first[1]);
+    for (let index = 1; index < outline.length; index++) {
       const point = outline[index];
-      const next = outline[(index + 1) % outline.length];
-      path.quadraticCurveTo(point[0], point[1], (point[0] + next[0]) / 2, (point[1] + next[1]) / 2);
+      path.lineTo(point[0], point[1]);
     }
     path.closePath();
   }

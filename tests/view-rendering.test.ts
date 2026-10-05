@@ -385,7 +385,7 @@ it("does not create a transformed canvas layer at 100% on older engines", () => 
   expect(v.pageElement.style.zoom).toBe("");
 });
 
-it("renders retained pen previews with the same closed midpoint-quadratic as tiles", () => {
+it("renders retained pen previews as the same faithful polygon as committed tiles", () => {
   const v = view();
   const ctx = drawingContext();
   const stroke = { id: "pen", tool: "pen", color: "#111111", opacity: 1, width: 3, points: [
@@ -397,7 +397,7 @@ it("renders retained pen previews with the same closed midpoint-quadratic as til
   }]]);
   v.drawCompletedPreviewStroke(ctx, stroke);
   expect(ctx.closePath).toHaveBeenCalled();
-  expect(ctx.quadraticCurveTo).toHaveBeenCalled();
-  expect(ctx.lineTo).not.toHaveBeenCalled();
+  expect(ctx.lineTo).toHaveBeenCalled();
+  expect(ctx.quadraticCurveTo).not.toHaveBeenCalled();
   expect(ctx.fill).toHaveBeenCalled();
 });
