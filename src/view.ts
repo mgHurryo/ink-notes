@@ -98,9 +98,13 @@ const SAVE_CONFLICT_RETRIES = 3;
 const INK_COMMIT_IDLE_DELAY = 180;
 const LIVE_TAIL_SAMPLE_LIMIT = 32;
 const COMPLETED_PREVIEW_SAMPLE_LIMIT = 256;
-// Modeled pen samples are deduplicated against this page-pixel radius so a
-// resting pen (which the model reports at 180 Hz) cannot bloat the stroke.
-const PEN_CAPTURE_MIN_DISTANCE = 0.01;
+// Modeled pen samples are deduplicated against this page-pixel radius. The
+// radius must exceed the modeler's end-of-stroke catch-up step sizes: those
+// converging (and overshoot-reversing) micro-segments otherwise reach the
+// outline renderer whole, whose (size*smoothing)^2 outline-point gate then
+// misconnects the end-cap arc into a visible dot past the tail. 0.35 page px
+// stays far below one nib width while collapsing that cluster.
+const PEN_CAPTURE_MIN_DISTANCE = 0.35;
 // A median inter-sample interval above this (ms) marks a sparse input stream
 // whose raw polyline looks segmented; the stroke modeler then intervenes even
 // with smooth disabled. ~24 ms ≈ devices delivering fewer than ~40 Hz.
@@ -1322,7 +1326,7 @@ export class InkView extends FileView {
   }
 
   /** Runs one modeler input and appends its results, guarding stroke bloat. */
-  private updatePenModeler(input: StrokeModelInput, isLift: boolean): boolean {
+  private updatePenModeler(input: StrokeModelInput, _isLift: boolean): boolean {
     const capture = this.penModeler!;
     const stroke = this.activeStroke!;
     let results: StrokeModelResult[];
@@ -1334,12 +1338,14 @@ export class InkView extends FileView {
       capture.fallback = true;
       return false;
     }
-    capture.lastInput = isLift ? null : input;
+    capture.lastInput = _isLift ? null : input;
     let changed = false;
-    for (let index = 0; index < results.length; index++) {
-      const result = results[index];
-      const isFinalLiftPoint = isLift && index === results.length - 1;
-      if (!isFinalLiftPoint && Math.hypot(result.position.x - capture.lastStored.x, result.position.y - capture.lastStored.y) < PEN_CAPTURE_MIN_DISTANCE) continue;
+    for (const result of results) {
+      // One radius for every modeled result, the final lift point included:
+      // exempting the landing is what used to append the catch-up cluster's
+      // degenerate tail. The stroke then ends within 0.35 page px of the
+      // lift, which is far below one nib width.
+      if (Math.hypot(result.position.x - capture.lastStored.x, result.position.y - capture.lastStored.y) < PEN_CAPTURE_MIN_DISTANCE) continue;
       capture.lastStored = { x: result.position.x, y: result.position.y };
       const point: InkPoint = {
         x: result.position.x / capture.pageWidth,
@@ -1399,8 +1405,10 @@ export class InkView extends FileView {
       if (typeof time !== "number" || !Number.isFinite(time)) continue;
       if (this.lastPenSampleTime !== null) {
         const interval = time - this.lastPenSampleTime;
-        // Clock jumps and frame hiccups are not device rate.
-        if (interval > 0 && interval < 1000) {
+        // Above ~120 ms is a human pause (between strokes or hover bursts),
+        // not device rate; counting it would flag every normal writing
+        // session as sparse and silently re-engage the modeler.
+        if (interval > 0 && interval < 120) {
           this.penSampleIntervals.push(interval);
           if (this.penSampleIntervals.length > PEN_SAMPLE_INTERVAL_WINDOW) this.penSampleIntervals.shift();
         }
