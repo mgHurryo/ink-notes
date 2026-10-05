@@ -1889,7 +1889,7 @@ var SAVE_CONFLICT_RETRIES = 3;
 var INK_COMMIT_IDLE_DELAY = 180;
 var LIVE_TAIL_SAMPLE_LIMIT = 32;
 var COMPLETED_PREVIEW_SAMPLE_LIMIT = 256;
-var PEN_CAPTURE_MIN_DISTANCE = 0.01;
+var PEN_CAPTURE_MIN_DISTANCE = 0.35;
 var SPARSE_SAMPLE_INTERVAL_MS = 24;
 var PEN_SAMPLE_INTERVAL_WINDOW = 32;
 var PEN_SPARSE_MIN_INTERVALS = 8;
@@ -3025,7 +3025,7 @@ var InkView = class extends import_obsidian.FileView {
     return changed;
   }
   /** Runs one modeler input and appends its results, guarding stroke bloat. */
-  updatePenModeler(input, isLift) {
+  updatePenModeler(input, _isLift) {
     var _a;
     const capture = this.penModeler;
     const stroke = this.activeStroke;
@@ -3036,12 +3036,10 @@ var InkView = class extends import_obsidian.FileView {
       capture.fallback = true;
       return false;
     }
-    capture.lastInput = isLift ? null : input;
+    capture.lastInput = _isLift ? null : input;
     let changed = false;
-    for (let index = 0; index < results.length; index++) {
-      const result = results[index];
-      const isFinalLiftPoint = isLift && index === results.length - 1;
-      if (!isFinalLiftPoint && Math.hypot(result.position.x - capture.lastStored.x, result.position.y - capture.lastStored.y) < PEN_CAPTURE_MIN_DISTANCE) continue;
+    for (const result of results) {
+      if (Math.hypot(result.position.x - capture.lastStored.x, result.position.y - capture.lastStored.y) < PEN_CAPTURE_MIN_DISTANCE) continue;
       capture.lastStored = { x: result.position.x, y: result.position.y };
       const point = {
         x: result.position.x / capture.pageWidth,
@@ -3095,7 +3093,7 @@ var InkView = class extends import_obsidian.FileView {
       if (typeof time !== "number" || !Number.isFinite(time)) continue;
       if (this.lastPenSampleTime !== null) {
         const interval = time - this.lastPenSampleTime;
-        if (interval > 0 && interval < 1e3) {
+        if (interval > 0 && interval < 120) {
           this.penSampleIntervals.push(interval);
           if (this.penSampleIntervals.length > PEN_SAMPLE_INTERVAL_WINDOW) this.penSampleIntervals.shift();
         }
