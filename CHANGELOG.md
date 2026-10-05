@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.4.0-beta.1 - 2026-10-06
+
+- Store and render strokes exactly as the pen reported them. The finalize-time stroke optimizer (sub-nib sample dedupe, corner detection, corner-preserving relaxation) and the capture-time point stabilization are removed, ending the regression chain that traded cut corners, missing stroke halves, thin tails and preview settle across 0.3.0-beta.1–.3.
+- Remove the per-brush smoothing dial: every captured sample is kept verbatim, and only exact duplicate positions from repeated input events are skipped. Handwriting captured on one device now matches the committed tiles, retained previews and saved file byte-for-byte on every device, with no republish step after the pen lifts.
+- Real-device (iPad/Pencil) writing feel is not verified for this raw-capture change; the smoothing dial no longer exists, so jitter filtering cannot be re-enabled from settings.
+
 ## 0.3.0-beta.3 - 2026-10-05
 
 - Repair the reported stroke-tail artifact: lift events inherit the previous sample's pressure instead of jumping to a fixed value, and a pen-up sample inside the minimum spacing replaces the previous point instead of appending a degenerate segment, so strokes no longer end in a suddenly-thinning line with a detached dot.

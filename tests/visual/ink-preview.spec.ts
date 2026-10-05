@@ -104,8 +104,10 @@ for (const mode of ["no-worker", "lagging-worker"] as const) {
       return { strokes: view.currentPage().strokes.length,
         points: view.currentPage().strokes.at(-1)?.points.length, active: view.activePointerId };
     });
-    // The preview starts with one demonstration stroke.
-    expect(result).toMatchObject({ strokes: 2, points: 97, active: null });
+    // The preview starts with one demonstration stroke. Raw capture keeps the
+    // lift sample too: it reports a sub-pixel jitter offset from the last move
+    // instead of the exact same position, so it is a real (tiny) sample.
+    expect(result).toMatchObject({ strokes: 2, points: 98, active: null });
   });
 }
 
