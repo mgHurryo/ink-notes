@@ -185,6 +185,34 @@ describe("optimizeStrokePoints", () => {
     expect(optimized.every((point) => point.pressure >= 0.05 && point.pressure <= 1)).toBe(true);
   });
 
+  it("scales sample spacing with the nib width", () => {
+    const samples: Array<[number, number]> = [];
+    for (let index = 0; index <= 30; index++) {
+      // ~4.8 page-unit spacing: real detail for a hairline, redundancy for a highlighter.
+      samples.push([0.2 + index * 0.003, 0.3 + Math.sin(index) * 0.001]);
+    }
+    const points = path(samples);
+    const hairline = optimizeStrokePoints(points, { strength: 0.5, ...SCALE, nibWidth: 1 });
+    const wide = optimizeStrokePoints(points, { strength: 0.5, ...SCALE, nibWidth: 18 });
+    expect(hairline.length).toBe(points.length);
+    expect(wide.length).toBeLessThan(points.length);
+  });
+
+  it("protects the same hook at small and large handwriting sizes", () => {
+    const buildHook = (scale: number): InkPoint[] => {
+      const samples: Array<[number, number]> = [];
+      const step = 0.02 * scale;
+      for (let index = 0; index <= 6; index++) samples.push([0.5, 0.3 + index * step]);
+      samples.push([0.5 - 0.003 * scale, 0.3 + 6 * step - 0.004 * scale]);
+      samples.push([0.5 - 0.007 * scale, 0.3 + 6 * step - 0.012 * scale]);
+      return path(samples);
+    };
+    for (const scale of [0.5, 3]) {
+      const optimized = optimizeStrokePoints(buildHook(scale), { strength: 0.25, ...SCALE });
+      expect(sharpestTurn(optimized)).toBeGreaterThan(100);
+    }
+  });
+
   it("is deterministic for identical input", () => {
     const samples: Array<[number, number]> = [];
     for (let index = 0; index <= 20; index++) samples.push([0.2 + index * 0.02, 0.3 + Math.sin(index) * 0.003]);
