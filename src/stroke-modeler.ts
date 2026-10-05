@@ -89,6 +89,33 @@ export const DEFAULT_STROKE_MODEL_PARAMS: StrokeModelParams = {
   },
 };
 
+/**
+ * Maps a user-facing smooth strength (1..100) to modeler parameters.
+ * Strength 50 reproduces the upstream reference tuning exactly. Lower
+ * values stiffen the modeled tip and shrink the wobble window toward an
+ * almost direct response; higher values widen the window and soften the
+ * spring for visibly calmer, more lagging ink. Output density stays fixed so
+ * stroke geometry semantics do not change with the slider; only the
+ * end-of-stroke iteration budget scales, keeping ends landing on the lift
+ * point despite the softer spring.
+ */
+export function strokeModelParamsForSmoothStrength(strength: number): StrokeModelParams {
+  const value = Math.max(1, Math.min(100, strength));
+  const amount = value <= 50 ? (value - 1) / 49 : (value - 50) / 50;
+  const floor = value <= 50 ? interp(2.62, 1.31, amount) : interp(1.31, 0.65, amount);
+  const ceiling = value <= 50 ? interp(2.88, 1.44, amount) : interp(1.44, 0.72, amount);
+  const timeout = value <= 50 ? interp(0.016, 0.04, amount) : interp(0.04, 0.08, amount);
+  const springFactor = value <= 50 ? interp(0.5, 1, amount) : interp(1, 2, amount);
+  const springMassConstant = DEFAULT_STROKE_MODEL_PARAMS.positionModeler.springMassConstant * springFactor;
+  return {
+    wobbleSmoother: { enabled: true, timeout, speedFloor: floor, speedCeiling: ceiling },
+    positionModeler: { springMassConstant, dragConstant: DEFAULT_STROKE_MODEL_PARAMS.positionModeler.dragConstant },
+    // A softer spring needs proportionally more steps to land the stroke end
+    // on the lift point within the stopping distance.
+    sampling: { ...DEFAULT_STROKE_MODEL_PARAMS.sampling, endOfStrokeMaxIterations: Math.ceil(DEFAULT_STROKE_MODEL_PARAMS.sampling.endOfStrokeMaxIterations * springFactor) },
+  };
+}
+
 interface TipState {
   position: StrokeModelPosition;
   velocity: StrokeModelPosition;
