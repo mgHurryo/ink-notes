@@ -413,13 +413,12 @@ function drawWorkerStroke(ctx: CanvasRenderingContext2D, stroke: InkStroke, widt
   ctx.globalCompositeOperation = "source-over";
   ctx.beginPath();
   if (outline.length >= 2) {
-    const firstX = outline[0], firstY = outline[1];
-    const lastX = outline[outline.length - 2], lastY = outline[outline.length - 1];
-    ctx.moveTo((lastX + firstX) / 2, (lastY + firstY) / 2);
-    for (let index = 0; index < outline.length; index += 2) {
-      const next = (index + 2) % outline.length;
-      const x = outline[index], y = outline[index + 1];
-      ctx.quadraticCurveTo(x, y, (x + outline[next]) / 2, (y + outline[next + 1]) / 2);
+    // The outline is the final ink shape; render it as a plain polygon so
+    // sparse fast-written corners land exactly where the pen turned. Curve
+    // fitting across its long segments would cut them into arcs.
+    ctx.moveTo(outline[0], outline[1]);
+    for (let index = 2; index < outline.length; index += 2) {
+      ctx.lineTo(outline[index], outline[index + 1]);
     }
     ctx.closePath();
     ctx.fill();

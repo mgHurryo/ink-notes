@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.3.0-beta.3 - 2026-10-05
+
+- Repair the reported stroke-tail artifact: lift events inherit the previous sample's pressure instead of jumping to a fixed value, and a pen-up sample inside the minimum spacing replaces the previous point instead of appending a degenerate segment, so strokes no longer end in a suddenly-thinning line with a detached dot.
+- Keep fast-written acute corners and sparse curves faithful: the finalize optimizer refuses to relax points that deviate from their neighbor chord more than a jitter limit, so deliberate folds are no longer rounded into curves and quick strokes are no longer visibly shrunk.
+- Render pen outlines as a faithful polygon in live ink, retained previews and committed tiles. The midpoint-quadratic outline fitting used since beta.2 cut corners on sparsely sampled fast strokes, bending acute turns into large arcs and visually swallowing the bend region of a stroke (reported as half of a stroke going missing).
+- Slow handwriting now tracks the pen: capture smoothing renders 3px steps at 90% of the pen movement (previously 66%) and keeps 5px+ steps exact, removing the intermittent lagging-nib feel while the finalize optimizer still removes residual jitter with corner protection.
+- Add browser pixel regressions: full-path coverage across live preview, retained overlay and committed tiles for a long fast stroke with a sharp bend, in Worker and no-Worker modes. The existing fast-corner pixel tests now pass again. Physical iPad/Pencil verification remains outstanding.
+
 ## 0.3.0-beta.2 - 2026-10-04
 
 - Tune the whole ink pipeline for handwriting: optimizer sample spacing now follows the nib diameter (35% of it, floored), and the corner-detection arc window scales with each stroke's own extent, so hooks stay protected from margin-note to page-filling sizes and hairline nibs keep their detail.
