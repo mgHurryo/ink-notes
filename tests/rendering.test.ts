@@ -71,12 +71,12 @@ describe("continuous pen rendering", () => {
     expect(ctx.stroke).not.toHaveBeenCalled();
     expect(ctx.globalAlpha).toBe(0.5);
   });
-  it("renders the closed outline with the same midpoint-quadratic as committed tiles", () => {
+  it("renders the outline as a faithful polygon without cutting sparse corners", () => {
     const ctx = context();
     drawInkStroke(ctx, stroke(), 800, 1000);
     const path = vi.mocked(ctx.fill).mock.calls[0][0];
-    expect(path.quadraticCurveTo).toHaveBeenCalled();
-    expect(path.lineTo).not.toHaveBeenCalled();
+    expect(path.lineTo).toHaveBeenCalled();
+    expect(path.quadraticCurveTo).not.toHaveBeenCalled();
   });
   it.each(["append", "translate", "resize", "width", "revision"])("invalidates cached geometry on %s", (change) => {
     const ctx = context();

@@ -237,6 +237,18 @@ describe("consecutive handwriting input", () => {
     expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2, 0.3]);
   });
 
+  it("tracks deliberate small moves closely while light smoothing is on", () => {
+    const { internal } = setup();
+    internal.onPointerDown(pointer(10));
+    internal.onPointerMove(pointer(13));
+    internal.onPointerMove(pointer(16));
+    const points = internal.notebook.pages[0].strokes[0].points;
+    // 3px steps render at >= 88% of the pen movement: the ink must not
+    // visibly lag the nib during slow, precise writing.
+    expect(points[1].x).toBeGreaterThanOrEqual(0.1 + 0.03 * 0.88);
+    expect(points[2].x).toBeGreaterThanOrEqual(0.1 + 0.06 * 0.88);
+  });
+
   it("smooths a continuous tail while preserving a deliberate turn", () => {
     const { internal } = setup();
     internal.state.pen.smoothing = 1;
@@ -999,5 +1011,39 @@ describe("stroke geometry optimization", () => {
     expect(outline!.sampleCount).toBe(Number.MAX_SAFE_INTEGER);
     expect(outline!.mode).toBe("pen");
     expect(outline!.points.length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("inherits tail pressure from the previous sample when the lift reports zero", () => {
+    const { internal } = setup();
+    internal.onPointerDown(pointer(10));
+    internal.onPointerMove(pointer(30, { pressure: 0.2 }));
+    internal.onPointerUp(pointer(50, { pressure: 0 }));
+
+    const stroke = lastStroke(internal);
+    const last = stroke.points[stroke.points.length - 1];
+    // A 0.5 pressure spike at the tail renders as a thin line with a
+    // full-width round cap dot; the tail must keep the writing pressure.
+    expect(last.pressure).toBeCloseTo(0.2, 5);
+  });
+
+  it("records every stroke during rapid consecutive input", () => {
+    const { internal } = setup();
+    internal.queueWorkerOperation = vi.fn();
+    for (let index = 0; index < 25; index++) {
+      const base = 5 + index * 3;
+      internal.onPointerDown(pointer(base));
+      internal.onPointerMove(pointer(base + 1));
+      internal.onPointerUp(pointer(base + 2));
+    }
+
+    const strokes = internal.notebook.pages[0].strokes;
+    expect(strokes).toHaveLength(25);
+    for (const stroke of strokes) {
+      expect(stroke.points.length).toBeGreaterThanOrEqual(3);
+      expect(stroke.points[0].x).toBeLessThan(stroke.points[stroke.points.length - 1].x);
+    }
+    const operations = queuedOperations(internal);
+    expect(operations.filter((operation) => operation.type === "patch-strokes")).toHaveLength(25);
+    expect(operations.filter((operation) => operation.type === "complete-stroke")).toHaveLength(25);
   });
 });

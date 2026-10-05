@@ -384,3 +384,20 @@ it("does not create a transformed canvas layer at 100% on older engines", () => 
   expect(v.pageElement.style.transform).toBe("none");
   expect(v.pageElement.style.zoom).toBe("");
 });
+
+it("renders retained pen previews as the same faithful polygon as committed tiles", () => {
+  const v = view();
+  const ctx = drawingContext();
+  const stroke = { id: "pen", tool: "pen", color: "#111111", opacity: 1, width: 3, points: [
+    { x: 0.1, y: 0.1, pressure: 0.5, t: 1 }, { x: 0.3, y: 0.2, pressure: 0.5, t: 2 }, { x: 0.5, y: 0.1, pressure: 0.5, t: 3 },
+  ] };
+  v.confirmedStrokeOutlines = new Map([["pen", {
+    points: new Float32Array([0.1, 0.1, 0.2, 0.16, 0.3, 0.2, 0.2, 0.12]),
+    sampleCount: 3, mode: "pen",
+  }]]);
+  v.drawCompletedPreviewStroke(ctx, stroke);
+  expect(ctx.closePath).toHaveBeenCalled();
+  expect(ctx.lineTo).toHaveBeenCalled();
+  expect(ctx.quadraticCurveTo).not.toHaveBeenCalled();
+  expect(ctx.fill).toHaveBeenCalled();
+});

@@ -213,6 +213,38 @@ describe("optimizeStrokePoints", () => {
     }
   });
 
+  it("keeps sparse fast-written curves exactly as captured", () => {
+    // A quarter arc of radius ~100 page units sampled every ~50 units: each
+    // interior point sits far off the chord through its neighbors, so it is
+    // deliberate curvature, not jitter, and must not be pulled inward.
+    const points: InkPoint[] = [];
+    for (let index = 0; index <= 6; index++) {
+      const angle = index * Math.PI / 12;
+      points.push({
+        x: 0.3 + Math.cos(angle) * (100 / 1600),
+        y: 0.3 + Math.sin(angle) * (100 / 2200),
+        pressure: 0.5,
+        t: index + 1,
+      });
+    }
+    const optimized = optimizeStrokePoints(points, { strength: 0.9, ...SCALE, nibWidth: 3 });
+    expect(optimized).toEqual(points);
+  });
+
+  it("replaces a sub-spacing pen-up sample instead of appending it", () => {
+    const samples: Array<[number, number]> = [];
+    for (let index = 0; index <= 5; index++) samples.push([0.2 + index * 0.002, 0.3]);
+    // Pen-up lands only 0.64 page units after the last stroke sample.
+    samples.push([0.2 + 5 * 0.002 + 0.0004, 0.3]);
+    const points = path(samples);
+    const optimized = optimizeStrokePoints(points, { strength: 0.25, ...SCALE, nibWidth: 3 });
+
+    const last = optimized[optimized.length - 1];
+    expect(last.x).toBeCloseTo(points[points.length - 1].x, 12);
+    const secondToLast = optimized[optimized.length - 2];
+    expect(spacing(secondToLast, last)).toBeGreaterThanOrEqual(1.05);
+  });
+
   it("is deterministic for identical input", () => {
     const samples: Array<[number, number]> = [];
     for (let index = 0; index <= 20; index++) samples.push([0.2 + index * 0.02, 0.3 + Math.sin(index) * 0.003]);

@@ -29,6 +29,11 @@ const NIB_SAMPLE_FRACTION = 0.35;
 const MINIMUM_CORNER_ARC = 8;
 const MAXIMUM_CORNER_ARC = 38;
 const CORNER_ARC_FRACTION = 0.12;
+// A point deviating more than this from the chord through its neighbors is
+// deliberate structure (a fast-written fold, sparse curvature), not noise;
+// relaxing it would shrink quick handwriting into mush instead of smoothing it.
+const MINIMUM_JITTER_LIMIT = 1.2;
+const JITTER_NIB_FRACTION = 0.5;
 // Matches the tail beautifier: a turn of roughly 60 degrees or sharper is
 // intentional handwriting structure (折/勾), not noise.
 const DEFAULT_CORNER_TURN_DEGREES = 60;
@@ -67,7 +72,8 @@ export function optimizeStrokePoints(points: readonly InkPoint[], options: Strok
   const corners = detectCorners(kept, cornerArcLength,
     positiveOr(options.cornerTurnDegrees, DEFAULT_CORNER_TURN_DEGREES), scaleX, scaleY);
   const passes = Math.max(1, Math.min(3, Math.round(strength * 4)));
-  return relaxBetweenCorners(kept, corners, passes, scaleX, scaleY);
+  const jitterLimit = Math.max(MINIMUM_JITTER_LIMIT, nibWidth * JITTER_NIB_FRACTION);
+  return relaxBetweenCorners(kept, corners, passes, scaleX, scaleY, jitterLimit);
 }
 
 function adaptiveCornerArc(points: readonly InkPoint[], scaleX: number, scaleY: number): number {
@@ -86,10 +92,19 @@ function deduplicateSamples(points: readonly InkPoint[], minimumSampleDistance: 
   const kept: InkPoint[] = [{ ...points[0] }];
   for (let index = 1; index < points.length; index++) {
     const last = kept[kept.length - 1];
-    // The pen-up sample pins hook tips, so it is kept even when it sits
-    // inside the minimum spacing.
-    const isFinalSample = index === points.length - 1;
-    if (isFinalSample || scaledDistance(last, points[index], scaleX, scaleY) >= minimumSampleDistance) {
+    if (index === points.length - 1) {
+      // The pen-up sample pins hook tips. When it lands inside the minimum
+      // spacing it replaces the previous kept point instead of appending:
+      // a sub-spacing final segment degenerates the rendered outline into a
+      // thin spike with a detached dot at the stroke end.
+      if (scaledDistance(last, points[index], scaleX, scaleY) < minimumSampleDistance) {
+        kept[kept.length - 1] = { ...points[index] };
+      } else {
+        kept.push({ ...points[index] });
+      }
+      continue;
+    }
+    if (scaledDistance(last, points[index], scaleX, scaleY) >= minimumSampleDistance) {
       kept.push({ ...points[index] });
     }
   }
@@ -132,7 +147,8 @@ function walkArc(points: readonly InkPoint[], index: number, arcLength: number, 
 // straight run of samples; relaxing there only adds rounding noise.
 const STRAIGHT_EPSILON = 0.01;
 
-function relaxBetweenCorners(points: InkPoint[], corners: readonly boolean[], passes: number, scaleX: number, scaleY: number): InkPoint[] {
+function relaxBetweenCorners(points: InkPoint[], corners: readonly boolean[], passes: number, scaleX: number, scaleY: number,
+  jitterLimit: number): InkPoint[] {
   let current = points;
   for (let pass = 0; pass < passes; pass++) {
     const next = current.map((point) => ({ ...point }));
@@ -145,6 +161,9 @@ function relaxBetweenCorners(points: InkPoint[], corners: readonly boolean[], pa
       const after = current[index + 1];
       if (Math.abs((before.x - 2 * point.x + after.x) * scaleX) < STRAIGHT_EPSILON
         && Math.abs((before.y - 2 * point.y + after.y) * scaleY) < STRAIGHT_EPSILON) continue;
+      const deviationX = ((before.x + after.x) * 0.5 - point.x) * scaleX;
+      const deviationY = ((before.y + after.y) * 0.5 - point.y) * scaleY;
+      if (Math.hypot(deviationX, deviationY) > jitterLimit) continue;
       next[index] = {
         x: before.x * 0.25 + point.x * 0.5 + after.x * 0.25,
         y: before.y * 0.25 + point.y * 0.5 + after.y * 0.25,
