@@ -1924,6 +1924,9 @@ var InkView = class extends import_obsidian.FileView {
     this.activeStroke = null;
     this.workerStrokePointIndex = 0;
     this.penModeler = null;
+    /** Active while pointerrawupdate delivers pen samples; tracks the newest
+     *  consumed timestamp so pointermove batches cannot replay eaten samples. */
+    this.rawUpdateCapture = null;
     this.confirmedStrokeOutlines = /* @__PURE__ */ new Map();
     this.pendingInkStrokes = [];
     this.committingInkStrokes = null;
@@ -2318,6 +2321,9 @@ var InkView = class extends import_obsidian.FileView {
     this.registerDomEvent(this.pageElement, "pointerenter", (event) => this.onPointerEnter(event));
     this.registerDomEvent(this.pageElement, "pointerdown", (event) => this.onPointerDown(event));
     this.registerDomEvent(this.pageElement, "pointermove", (event) => this.onPointerMove(event));
+    if ("onpointerrawupdate" in window) {
+      this.registerDomEvent(this.pageElement, "pointerrawupdate", (event) => this.onPointerRawUpdate(event));
+    }
     this.registerDomEvent(this.pageElement, "pointerleave", () => {
       this.eraserPointerInside = false;
       this.refreshEraserCursor();
@@ -2856,7 +2862,7 @@ var InkView = class extends import_obsidian.FileView {
     this.updateEraserHover(this.toPoint(event, rect), pointInsideRect(event, rect));
   }
   onPointerMove(event, source = "pointer") {
-    var _a, _b;
+    var _a, _b, _c;
     if (event.pointerType === "touch") return;
     if (this.interaction && ((_a = this.interaction.source) != null ? _a : "pointer") !== source) return;
     const rect = this.pageElement.getBoundingClientRect();
@@ -2868,7 +2874,24 @@ var InkView = class extends import_obsidian.FileView {
     }
     if (this.activePointerId !== event.pointerId) return;
     if (((_b = this.interaction) == null ? void 0 : _b.tool) === "eraser") this.updateEraserHover(point, inside);
+    if (((_c = this.rawUpdateCapture) == null ? void 0 : _c.pointerId) === event.pointerId) return;
     this.applyPointerSamples(event, rect, "move");
+  }
+  /** Consumes Chromium raw hardware samples so ink forms at full pen rate
+   *  instead of waiting for the next frame-aligned pointermove batch. */
+  onPointerRawUpdate(event) {
+    var _a;
+    if (this.activePointerId === null || event.pointerId !== this.activePointerId) return;
+    const interaction = this.interaction;
+    if (!interaction || ((_a = interaction.source) != null ? _a : "pointer") !== "pointer") return;
+    if (interaction.tool !== "pen" && interaction.tool !== "highlighter") return;
+    if (typeof event.timeStamp !== "number" || !Number.isFinite(event.timeStamp)) {
+      this.rawUpdateCapture = null;
+      return;
+    }
+    if (this.rawUpdateCapture && this.rawUpdateCapture.pointerId !== event.pointerId) return;
+    if (!this.rawUpdateCapture) this.rawUpdateCapture = { pointerId: event.pointerId, lastTime: event.timeStamp - 1 };
+    this.applyPointerSamples(event);
   }
   onPointerUp(event, source = "pointer") {
     var _a, _b;
@@ -2901,11 +2924,25 @@ var InkView = class extends import_obsidian.FileView {
       this.requestRender();
       return;
     }
+    let feed = samples;
+    const raw = this.rawUpdateCapture;
+    if (raw && raw.pointerId === event.pointerId && (interaction.tool === "pen" || interaction.tool === "highlighter")) {
+      let newest = raw.lastTime;
+      feed = [];
+      for (const sample of samples) {
+        const time = sample.timeStamp;
+        if (typeof time === "number" && time <= raw.lastTime) continue;
+        feed.push(sample);
+        if (typeof time === "number" && time > newest) newest = time;
+      }
+      raw.lastTime = newest;
+      if (feed.length === 0) return;
+    }
     let changed = false;
     if (interaction.tool === "pen" && this.penModeler && !this.penModeler.fallback) {
-      changed = this.appendModeledPenPoints(samples, rect, phase);
+      changed = this.appendModeledPenPoints(feed, rect, phase);
     } else {
-      for (const sample of samples) {
+      for (const sample of feed) {
         const point = this.toPoint(sample, rect);
         if (interaction.tool === "eraser") {
           changed = this.eraseAt(point, page, interaction.eraserMode, interaction.eraserSize) || changed;
@@ -3096,6 +3133,7 @@ var InkView = class extends import_obsidian.FileView {
       this.refreshEraserCursor();
       this.activePointerId = null;
       this.penModeler = null;
+      this.rawUpdateCapture = null;
       this.tiles.resumeInkCommit();
       return;
     }
@@ -3146,6 +3184,7 @@ var InkView = class extends import_obsidian.FileView {
     this.workerStrokePointIndex = 0;
     this.lastPoint = null;
     this.penModeler = null;
+    this.rawUpdateCapture = null;
     this.pendingLassoPoint = null;
     this.eraserPreviewCells.clear();
     if (interaction.tool === "pen" || interaction.tool === "highlighter") {

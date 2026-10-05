@@ -179,6 +179,9 @@ export class InkView extends FileView {
   private activeStroke: InkStroke | null = null;
   private workerStrokePointIndex = 0;
   private penModeler: PenCapture | null = null;
+  /** Active while pointerrawupdate delivers pen samples; tracks the newest
+   *  consumed timestamp so pointermove batches cannot replay eaten samples. */
+  private rawUpdateCapture: { pointerId: number; lastTime: number } | null = null;
   private confirmedStrokeOutlines = new Map<string, ConfirmedStrokeOutline>();
   private pendingInkStrokes: InkStroke[] = [];
   private committingInkStrokes: InkStroke[] | null = null;
@@ -586,6 +589,12 @@ export class InkView extends FileView {
     this.registerDomEvent(this.pageElement, "pointerenter", (event) => this.onPointerEnter(event));
     this.registerDomEvent(this.pageElement, "pointerdown", (event) => this.onPointerDown(event));
     this.registerDomEvent(this.pageElement, "pointermove", (event) => this.onPointerMove(event));
+    // Chromium hosts (Obsidian desktop) stream every hardware pen sample as it
+    // arrives instead of batching it into the next frame's pointermove. WebKit
+    // (iPad) never exposes the event, so the gate keeps iPad behavior unchanged.
+    if ("onpointerrawupdate" in window) {
+      this.registerDomEvent(this.pageElement, "pointerrawupdate" as keyof HTMLElementEventMap, (event) => this.onPointerRawUpdate(event as InkPointerSample));
+    }
     this.registerDomEvent(this.pageElement, "pointerleave", () => {
       this.eraserPointerInside = false;
       this.refreshEraserCursor();
@@ -1152,7 +1161,28 @@ export class InkView extends FileView {
     }
     if (this.activePointerId !== event.pointerId) return;
     if (this.interaction?.tool === "eraser") this.updateEraserHover(point, inside);
+    // While pointerrawupdate owns this pointer, its samples already reached the
+    // stroke; replaying the frame-aligned batch would duplicate them.
+    if (this.rawUpdateCapture?.pointerId === event.pointerId) return;
     this.applyPointerSamples(event, rect, "move");
+  }
+
+  /** Consumes Chromium raw hardware samples so ink forms at full pen rate
+   *  instead of waiting for the next frame-aligned pointermove batch. */
+  private onPointerRawUpdate(event: InkPointerSample): void {
+    if (this.activePointerId === null || event.pointerId !== this.activePointerId) return;
+    const interaction = this.interaction;
+    if (!interaction || (interaction.source ?? "pointer") !== "pointer") return;
+    if (interaction.tool !== "pen" && interaction.tool !== "highlighter") return;
+    // Timestamps drive the pointermove dedup; without one the coalesced replay
+    // could feed the modeler an out-of-order sample and force raw capture.
+    if (typeof event.timeStamp !== "number" || !Number.isFinite(event.timeStamp)) {
+      this.rawUpdateCapture = null;
+      return;
+    }
+    if (this.rawUpdateCapture && this.rawUpdateCapture.pointerId !== event.pointerId) return;
+    if (!this.rawUpdateCapture) this.rawUpdateCapture = { pointerId: event.pointerId, lastTime: event.timeStamp - 1 };
+    this.applyPointerSamples(event);
   }
 
   private onPointerUp(event: InkPointerSample, source: InteractionContext["source"] = "pointer"): void {
@@ -1186,11 +1216,28 @@ export class InkView extends FileView {
       this.requestRender();
       return;
     }
+    let feed = samples;
+    const raw = this.rawUpdateCapture;
+    if (raw && raw.pointerId === event.pointerId && (interaction.tool === "pen" || interaction.tool === "highlighter")) {
+      // Raw updates already consumed the leading samples of every coalesced
+      // batch; replaying them would send the modeler backwards in time and
+      // degrade the whole stroke to raw capture.
+      let newest = raw.lastTime;
+      feed = [];
+      for (const sample of samples) {
+        const time = sample.timeStamp;
+        if (typeof time === "number" && time <= raw.lastTime) continue;
+        feed.push(sample);
+        if (typeof time === "number" && time > newest) newest = time;
+      }
+      raw.lastTime = newest;
+      if (feed.length === 0) return;
+    }
     let changed = false;
     if (interaction.tool === "pen" && this.penModeler && !this.penModeler.fallback) {
-      changed = this.appendModeledPenPoints(samples, rect, phase);
+      changed = this.appendModeledPenPoints(feed, rect, phase);
     } else {
-      for (const sample of samples) {
+      for (const sample of feed) {
         const point = this.toPoint(sample, rect);
         if (interaction.tool === "eraser") {
           changed = this.eraseAt(point, page, interaction.eraserMode, interaction.eraserSize) || changed;
@@ -1398,6 +1445,7 @@ export class InkView extends FileView {
       this.refreshEraserCursor();
       this.activePointerId = null;
       this.penModeler = null;
+      this.rawUpdateCapture = null;
       this.tiles.resumeInkCommit();
       return;
     }
@@ -1445,6 +1493,7 @@ export class InkView extends FileView {
     this.workerStrokePointIndex = 0;
     this.lastPoint = null;
     this.penModeler = null;
+    this.rawUpdateCapture = null;
     this.pendingLassoPoint = null;
     this.eraserPreviewCells.clear();
     if (interaction.tool === "pen" || interaction.tool === "highlighter") {

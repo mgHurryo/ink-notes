@@ -17,6 +17,9 @@ interface ViewInternals {
   pageIndex: number;
   onPointerDown(event: PointerEvent): void;
   onPointerMove(event: PointerEvent): void;
+  onPointerRawUpdate(event: PointerEvent): void;
+  penModeler: { fallback: boolean } | null;
+  rawUpdateCapture: { pointerId: number; lastTime: number } | null;
   onPointerUp(event: PointerEvent): void;
   onPointerCancel(event: PointerEvent): void;
   onLostPointerCapture(event: PointerEvent): void;
@@ -1009,5 +1012,78 @@ describe("stroke finalization", () => {
     }
     const operations = queuedOperations(internal);
     expect(operations.filter((operation) => operation.type === "complete-stroke")).toHaveLength(25);
+  });
+});
+
+describe("raw pointer update capture", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", globalThis);
+  });
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function lastStroke(internal: ViewInternals): InkStroke {
+    const strokes = internal.notebook.pages[0].strokes;
+    return strokes[strokes.length - 1];
+  }
+
+  it("feeds hardware samples directly and drops the coalesced replay", () => {
+    const { internal } = setup();
+    internal.queueWorkerOperation = vi.fn();
+    internal.onPointerDown(pointer(10));
+    const first = pointer(15);
+    internal.onPointerRawUpdate(first);
+    const second = pointer(20);
+    internal.onPointerRawUpdate(second);
+    // The frame-aligned pointermove replays both hardware samples.
+    internal.onPointerMove(pointer(20, {
+      timeStamp: second.timeStamp,
+      getCoalescedEvents: () => [
+        pointer(15, { timeStamp: first.timeStamp }),
+        second,
+      ] as unknown as PointerEvent[],
+    }));
+    const third = pointer(30);
+    internal.onPointerRawUpdate(third);
+    // The lift event carries the same kind of replay; its own sample is new.
+    internal.onPointerUp(pointer(40, {
+      getCoalescedEvents: () => [pointer(30, { timeStamp: third.timeStamp })] as unknown as PointerEvent[],
+    }));
+
+    const stroke = lastStroke(internal);
+    // Replayed samples would reach the modeler out of order, force the raw
+    // fallback and break the modeled span.
+    expect(internal.penModeler?.fallback).toBeFalsy();
+    expectStrokeSpan(stroke.points, 0.1, 0.4);
+  });
+
+  it("keeps the pointermove path when a raw update lacks a usable timestamp", () => {
+    const { internal } = setup();
+    internal.queueWorkerOperation = vi.fn();
+    internal.onPointerDown(pointer(10));
+    internal.onPointerRawUpdate(pointer(15, { timeStamp: undefined }));
+    expect(internal.rawUpdateCapture).toBeNull();
+    internal.onPointerMove(pointer(20));
+    internal.onPointerUp(pointer(30));
+
+    expect(internal.penModeler?.fallback).toBeFalsy();
+    expectStrokeSpan(lastStroke(internal).points, 0.1, 0.3);
+  });
+
+  it("ignores raw updates from another pointer", () => {
+    const { internal } = setup();
+    internal.queueWorkerOperation = vi.fn();
+    internal.onPointerDown(pointer(10));
+    internal.onPointerRawUpdate(pointer(90, { pointerId: 8 }));
+    expect(internal.rawUpdateCapture).toBeNull();
+    expect(lastStroke(internal).points).toHaveLength(1);
+    internal.onPointerUp(pointer(20));
+
+    expect(internal.penModeler?.fallback).toBeFalsy();
+    expectStrokeSpan(lastStroke(internal).points, 0.1, 0.2);
   });
 });
