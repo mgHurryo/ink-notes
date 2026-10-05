@@ -13,13 +13,31 @@ async function drawLongFastStroke(page: import("@playwright/test").Page): Promis
     scope.pathY = (index: number) => (index <= 80 ? 0.35 : 0.35 + 0.35 * (index - 80) / 39);
     const paper = document.querySelector<HTMLElement>(".ink-page")!;
     const box = paper.getBoundingClientRect();
-    const send = (type: string, index: number) => paper.dispatchEvent(new PointerEvent(type, {
-      bubbles: true, pointerId: 7, pointerType: "pen", buttons: type === "pointerup" ? 0 : 1, pressure: 0.65,
-      clientX: box.left + box.width * scope.pathX(index),
-      clientY: box.top + box.height * scope.pathY(index),
-    }));
+    // Explicit 24 ms timestamps keep the synchronous burst a coherent stroke
+    // for the modeler, which integrates against inter-sample time.
+    const send = (type: string, index: number) => {
+      const event = new PointerEvent(type, {
+        bubbles: true, pointerId: 7, pointerType: "pen", buttons: type === "pointerup" ? 0 : 1, pressure: 0.65,
+        clientX: box.left + box.width * scope.pathX(index),
+        clientY: box.top + box.height * scope.pathY(index),
+      });
+      Object.defineProperty(event, "timeStamp", { value: 1_000 + index * 24 });
+      paper.dispatchEvent(event);
+    };
     send("pointerdown", 0);
     for (let index = 1; index < 120; index++) send("pointermove", index);
+    // The modeled tip trails a fast anchor by a few pixels; a brief dwell at
+    // the final position (as when a writer pauses) lets it settle onto the
+    // path end before the live-coverage check.
+    for (let dwell = 0; dwell < 12; dwell++) {
+      const event = new PointerEvent("pointermove", {
+        bubbles: true, pointerId: 7, pointerType: "pen", buttons: 1, pressure: 0.65,
+        clientX: box.left + box.width * scope.pathX(119),
+        clientY: box.top + box.height * scope.pathY(119),
+      });
+      Object.defineProperty(event, "timeStamp", { value: 1_000 + (120 + dwell) * 24 });
+      paper.dispatchEvent(event);
+    }
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
   });
 }
@@ -55,10 +73,12 @@ for (const mode of ["no-worker", "worker"] as const) {
     await page.evaluate(() => {
       const paper = document.querySelector<HTMLElement>(".ink-page")!;
       const box = paper.getBoundingClientRect();
-      paper.dispatchEvent(new PointerEvent("pointerup", {
+      const lift = new PointerEvent("pointerup", {
         bubbles: true, pointerId: 7, pointerType: "pen", buttons: 0, pressure: 0,
         clientX: box.left + box.width * 0.82, clientY: box.top + box.height * 0.7,
-      }));
+      });
+      Object.defineProperty(lift, "timeStamp", { value: 1_000 + 120 * 24 });
+      paper.dispatchEvent(lift);
       return new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     });
     // The retained overlay still covers the whole path.

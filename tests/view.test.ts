@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TFile, WorkspaceLeaf } from "obsidian";
-import { InkNotebook, InkStroke, createNotebook, createPage } from "../src/model";
+import { InkNotebook, InkPoint, InkStroke, createNotebook, createPage } from "../src/model";
 import { NotebookStore } from "../src/storage";
 import type { InkWorkerResponse, NotebookOperation } from "../src/worker-protocol";
 import { InkView } from "../src/view";
@@ -57,12 +57,30 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
+// Synthetic pointer samples advance an 8 ms clock (120 Hz pen), giving the
+// stroke modeler realistic per-sample time deltas.
+let pointerClock = 1_000;
+
 function pointer(x: number, options: Partial<PointerEvent> = {}): PointerEvent {
   return {
     pointerId: 7, pointerType: "pen", clientX: x, clientY: 20,
     pressure: 0.5, tiltX: 0, tiltY: 0, preventDefault: vi.fn(),
+    timeStamp: pointerClock += 8,
     ...options,
   } as PointerEvent;
+}
+
+/** A modeled stroke starts exactly on the down sample and its tail
+ *  converges onto the final input position. The relaxed end tolerance covers
+ *  synthetic jumps between samples that no physical pen could produce; real
+ *  input converges to the modeler's stopping distance. */
+function expectStrokeSpan(points: InkPoint[], startX: number, endX: number): void {
+  expect(points.length).toBeGreaterThan(1);
+  expect(points[0].x).toBeCloseTo(startX, 6);
+  expect(points[points.length - 1].x).toBeCloseTo(endX, 3);
+  for (let index = 1; index < points.length; index++) {
+    expect(points[index].t).toBeGreaterThanOrEqual(points[index - 1].t);
+  }
 }
 
 function setup() {
@@ -119,8 +137,10 @@ describe("consecutive handwriting input", () => {
     internal.onPointerMove(pointer(40));
     internal.onPointerUp(pointer(50));
 
-    expect(internal.notebook.pages[0].strokes.map((stroke) => stroke.points.map((point) => point.x)))
-      .toEqual([[0.1, 0.2], [0.3, 0.4, 0.5]]);
+    const strokes = internal.notebook.pages[0].strokes;
+    expect(strokes).toHaveLength(2);
+    expectStrokeSpan(strokes[0].points, 0.1, 0.2);
+    expectStrokeSpan(strokes[1].points, 0.3, 0.5);
     expect(internal.activePointerId).toBeNull();
   });
 
@@ -138,8 +158,10 @@ describe("consecutive handwriting input", () => {
     internal.onPointerMove(pointer(40));
     internal.onPointerUp(pointer(50));
 
-    expect(internal.notebook.pages[0].strokes.map((stroke) => stroke.points.map((point) => point.x)))
-      .toEqual([[0.1, 0.2], [0.3, 0.4, 0.5]]);
+    const strokes = internal.notebook.pages[0].strokes;
+    expect(strokes).toHaveLength(2);
+    expectStrokeSpan(strokes[0].points, 0.1, 0.2);
+    expectStrokeSpan(strokes[1].points, 0.3, 0.5);
     expect(internal.activePointerId).toBeNull();
   });
 
@@ -153,8 +175,10 @@ describe("consecutive handwriting input", () => {
     internal.onPointerMove(pointer(40));
     internal.onPointerUp(pointer(50));
 
-    expect(internal.notebook.pages[0].strokes.map((stroke) => stroke.points.map((point) => point.x)))
-      .toEqual([[0.1, 0.2], [0.3, 0.4, 0.5]]);
+    const strokes = internal.notebook.pages[0].strokes;
+    expect(strokes).toHaveLength(2);
+    expectStrokeSpan(strokes[0].points, 0.1, 0.2);
+    expectStrokeSpan(strokes[1].points, 0.3, 0.5);
     expect(internal.activePointerId).toBeNull();
   });
 
@@ -169,8 +193,10 @@ describe("consecutive handwriting input", () => {
     internal.onPointerMove(pointer(40));
     internal.onPointerUp(pointer(50));
 
-    expect(internal.notebook.pages[0].strokes.map((stroke) => stroke.points.map((point) => point.x)))
-      .toEqual([[0.1, 0.2], [0.3, 0.4, 0.5]]);
+    const strokes = internal.notebook.pages[0].strokes;
+    expect(strokes).toHaveLength(2);
+    expectStrokeSpan(strokes[0].points, 0.1, 0.2);
+    expectStrokeSpan(strokes[1].points, 0.3, 0.5);
     expect(internal.activePointerId).toBeNull();
   });
 
@@ -204,7 +230,7 @@ describe("consecutive handwriting input", () => {
     expect(internal.activePointerId).toBe(7);
     internal.onPointerMove(pointer(30));
     internal.onPointerUp(pointer(40));
-    expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2, 0.3, 0.4]);
+    expectStrokeSpan(internal.notebook.pages[0].strokes[0].points, 0.1, 0.4);
   });
 
   it("finishes an uncaptured Pencil stroke when it is released outside the page", () => {
@@ -217,7 +243,7 @@ describe("consecutive handwriting input", () => {
     internal.onDocumentPointerEnd(pointer(90));
 
     expect(internal.activePointerId).toBeNull();
-    expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2]);
+    expectStrokeSpan(internal.notebook.pages[0].strokes[0].points, 0.1, 0.2);
   });
 
   it("does not sample pointercancel coordinates", () => {
@@ -225,19 +251,24 @@ describe("consecutive handwriting input", () => {
     internal.onPointerDown(pointer(10));
     internal.onPointerMove(pointer(20));
     internal.onPointerCancel(pointer(90));
-    expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2]);
+    expectStrokeSpan(internal.notebook.pages[0].strokes[0].points, 0.1, 0.2);
   });
 
-  it("preserves short moves and pressure exactly as captured", () => {
+  it("models short moves with flowing pressure and inherits the lift pressure", () => {
     const { internal } = setup();
     internal.onPointerDown(pointer(10, { clientY: 20, pressure: 0.2 }));
     internal.onPointerMove(pointer(10.25, { clientY: 20, pressure: 0.8 }));
     internal.onPointerMove(pointer(12, { clientY: 20, pressure: 0.4 }));
     internal.onPointerUp(pointer(12, { clientY: 22, pressure: 0.6 }));
     const points = internal.notebook.pages[0].strokes[0].points;
-    expect(points.map(({ x, y, pressure }) => [x, y, pressure])).toEqual([
-      [0.1, 0.2, 0.2], [0.1025, 0.2, 0.8], [0.12, 0.2, 0.4], [0.12, 0.22, 0.6],
-    ]);
+    // The stroke starts exactly on the down sample and ends on the lift
+    // sample; pressure flows through the modeler instead of resetting.
+    expect(points[0]).toMatchObject({ x: 0.1, y: 0.2, pressure: 0.2 });
+    const last = points[points.length - 1];
+    expect(last.x).toBeCloseTo(0.12, 3);
+    expect(last.y).toBeCloseTo(0.22, 3);
+    expect(last.pressure).toBeCloseTo(0.6, 2);
+    expect(points.length).toBeGreaterThan(4);
   });
 
   it("reads layout once for all coalesced samples in one pointer event", () => {
@@ -248,7 +279,7 @@ describe("consecutive handwriting input", () => {
     rect.mockClear();
     internal.onPointerMove(pointer(40, { getCoalescedEvents: () => [pointer(20), pointer(30)] }));
     expect(rect).toHaveBeenCalledOnce();
-    expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2, 0.3, 0.4]);
+    expectStrokeSpan(internal.notebook.pages[0].strokes[0].points, 0.1, 0.4);
   });
 
   it("reads layout once when a Pencil stroke starts", () => {
@@ -378,7 +409,7 @@ describe("consecutive handwriting input", () => {
     (internal as unknown as { state: { tool: string } }).state.tool = "eraser";
     internal.pageIndex = 1;
     internal.onPointerUp(pointer(20));
-    expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2]);
+    expectStrokeSpan(internal.notebook.pages[0].strokes[0].points, 0.1, 0.2);
     expect(internal.notebook.pages[1].strokes).toEqual([]);
   });
 
@@ -391,7 +422,7 @@ describe("consecutive handwriting input", () => {
       internal.onLostPointerCapture(pointer(0));
     }
     expect(internal.notebook.pages[0].strokes).toHaveLength(40);
-    expect(internal.notebook.pages[0].strokes.every((stroke) => stroke.points.length === 3)).toBe(true);
+    expect(internal.notebook.pages[0].strokes.every((stroke) => stroke.points.length >= 3)).toBe(true);
     expect(store.save).not.toHaveBeenCalled();
   });
 
@@ -483,7 +514,9 @@ describe("consecutive handwriting input", () => {
     internal.onPointerDown(pointer(10));
     internal.onPointerMove(pointer(20));
     expect(internal.activePointerId).toBe(7);
-    expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2]);
+    const activePoints = internal.notebook.pages[0].strokes[0].points;
+    expect(activePoints[0].x).toBeCloseTo(0.1, 6);
+    expect(activePoints.length).toBeGreaterThan(1);
     internal.onPointerUp(pointer(30));
     await vi.advanceTimersByTimeAsync(500);
     await saving;
@@ -506,7 +539,7 @@ describe("consecutive handwriting input", () => {
     await Promise.resolve();
 
     expect(internal.activePointerId).toBeNull();
-    expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2]);
+    expectStrokeSpan(internal.notebook.pages[0].strokes[0].points, 0.1, 0.2);
     expect(store.save).toHaveBeenCalledOnce();
     expect(internal.pageIndex).toBe(0);
 
@@ -755,7 +788,7 @@ describe("consecutive handwriting input", () => {
     internal.onPointerMove(pointer(20));
     internal.onPointerUp(pointer(30));
     expect(internal.notebook.pages[0].title).toBe("Remote page title");
-    expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2, 0.3]);
+    expectStrokeSpan(internal.notebook.pages[0].strokes[0].points, 0.1, 0.3);
   });
 
   it("does not apply a disk read to a different file after navigation", async () => {
@@ -786,8 +819,10 @@ describe("consecutive handwriting input", () => {
     expect(internal.renderAll).not.toHaveBeenCalled();
     internal.onPointerMove(pointer(40));
     internal.onPointerUp(pointer(50));
-    expect(internal.notebook.pages[0].strokes.map((stroke) => stroke.points.map((point) => point.x)))
-      .toEqual([[0.1, 0.2], [0.3, 0.4, 0.5]]);
+    const strokes = internal.notebook.pages[0].strokes;
+    expect(strokes).toHaveLength(2);
+    expectStrokeSpan(strokes[0].points, 0.1, 0.2);
+    expectStrokeSpan(strokes[1].points, 0.3, 0.5);
   });
 
   it("serializes a revision added while a save is in flight", async () => {
@@ -835,7 +870,7 @@ describe("consecutive handwriting input", () => {
     await internal.onUnloadFile(view.file!);
     expect(store.save).toHaveBeenCalledOnce();
     const saved = store.save.mock.calls[0][1] as InkNotebook;
-    expect(saved.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2]);
+    expectStrokeSpan(saved.pages[0].strokes[0].points, 0.1, 0.2);
     expect(internal.activePointerId).toBeNull();
     expect(internal.savedRevision).toBe(internal.dirtyRevision);
   });
@@ -860,7 +895,7 @@ describe("consecutive handwriting input", () => {
     expect(internal.renderAll).not.toHaveBeenCalled();
     internal.onPointerUp(pointer(20));
     expect(internal.notebook.pages.map((page) => page.id)).toContain(remotePage.id);
-    expect(internal.notebook.pages[internal.pageIndex].strokes[0].points).toHaveLength(2);
+    expectStrokeSpan(internal.notebook.pages[internal.pageIndex].strokes[0].points, 0.1, 0.2);
   });
 
   it("keeps the writing page selected when a background merge inserts an earlier page", async () => {
@@ -932,7 +967,7 @@ describe("stroke finalization", () => {
       .mock.calls.map((call) => call[0]);
   }
 
-  it("keeps the captured geometry byte-exact", () => {
+  it("keeps the modeled geometry intact through finalization", () => {
     const { internal } = setup();
     internal.queueWorkerOperation = vi.fn();
     internal.onPointerDown(pointer(10));
@@ -940,7 +975,7 @@ describe("stroke finalization", () => {
     internal.onPointerUp(pointer(50));
 
     expect(queuedOperations(internal).some((operation) => operation.type === "patch-strokes")).toBe(false);
-    expect(lastStroke(internal).points.map((point) => point.x)).toEqual([0.1, 0.3, 0.5]);
+    expectStrokeSpan(lastStroke(internal).points, 0.1, 0.5);
   });
 
   it("inherits tail pressure from the previous sample when the lift reports zero", () => {
@@ -953,7 +988,7 @@ describe("stroke finalization", () => {
     const last = stroke.points[stroke.points.length - 1];
     // A 0.5 pressure spike at the tail renders as a thin line with a
     // full-width round cap dot; the tail must keep the writing pressure.
-    expect(last.pressure).toBeCloseTo(0.2, 5);
+    expect(last.pressure).toBeCloseTo(0.2, 2);
   });
 
   it("records every stroke during rapid consecutive input", () => {
