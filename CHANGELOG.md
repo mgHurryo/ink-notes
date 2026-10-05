@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.3.0-beta.2 - 2026-10-04
+
+- Tune the whole ink pipeline for handwriting: optimizer sample spacing now follows the nib diameter (35% of it, floored), and the corner-detection arc window scales with each stroke's own extent, so hooks stay protected from margin-note to page-filling sizes and hairline nibs keep their detail.
+- Render the retained finished-stroke preview from the refined geometry, so every completed stroke matches the committed tiles immediately and never visibly settles or jumps at tile commit.
+- Align main-thread pen outlines (Markdown embeds, Worker-less fallback) with the Worker's closed midpoint-quadratic tile rendering.
+- Brush smoothing 0 keeps captured geometry and previews byte-exact and skips the refined preview path. Add nib-scale, writing-size, retained-preview and render-parity regressions. Physical iPad/Pencil writing feel and latency remain unverified.
+
 ## 0.3.0-beta.1 - 2026-10-04
 
 - Add a finalize-time stroke geometry optimizer: sub-threshold sample deduplication, corner detection over an arc-length window, and corner-preserving relaxation between pen-down and pen-up samples once the whole stroke is known.

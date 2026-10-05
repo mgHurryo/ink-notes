@@ -7,6 +7,8 @@ export interface StrokeOptimizationOptions {
   /** Page units per normalized axis; thresholds are expressed in page units. */
   scaleX?: number;
   scaleY?: number;
+  /** Nib diameter in page units; sample spacing stays proportional to it. */
+  nibWidth?: number;
   /** Minimum spacing kept between samples, in page units. */
   minimumSampleDistance?: number;
   /** Arc length used to decide whether a turn is deliberate structure. */
@@ -15,15 +17,21 @@ export interface StrokeOptimizationOptions {
   cornerTurnDegrees?: number;
 }
 
-// Half of the smallest default brush diameter, so deduplication can never
-// collapse a feature thinner than the finest available nib.
-const DEFAULT_MINIMUM_SAMPLE_DISTANCE = 1.25;
+// Handwriting produces everything from 1-unit hairlines to wide highlighter
+// nibs, so sub-nib spacing is kept proportional to the nib instead of fixed.
+const DEFAULT_NIB_WIDTH = 3;
+const MINIMUM_SAMPLE_SPAN = 0.6;
+const NIB_SAMPLE_FRACTION = 0.35;
+// The corner window scales with the stroke's own extent so hooks register at
+// any handwriting size, from margin notes to page-filling strokes. Below 8
+// page units the angle becomes noise-sensitive; above 38 it averages over
+// several unrelated turns.
+const MINIMUM_CORNER_ARC = 8;
+const MAXIMUM_CORNER_ARC = 38;
+const CORNER_ARC_FRACTION = 0.12;
 // Matches the tail beautifier: a turn of roughly 60 degrees or sharper is
 // intentional handwriting structure (折/勾), not noise.
 const DEFAULT_CORNER_TURN_DEGREES = 60;
-// An apex turn spread across several dense samples must still register as one
-// corner; 14 page units ≈ a hook arc on the default page.
-const DEFAULT_CORNER_ARC_LENGTH = 14;
 
 /**
  * Refines a finished stroke once the whole trajectory is known. Capture-time
@@ -32,9 +40,12 @@ const DEFAULT_CORNER_ARC_LENGTH = 14;
  * With the stroke complete the same smoothing budget can be spent without
  * sacrificing structure:
  *
- * 1. Sub-threshold sample jitter is dropped, which also trims the saved file.
- * 2. Deliberate corners are detected over an arc-length window, so a hook
- *    spread across many dense samples still counts as one protected vertex.
+ * 1. Sub-nib sample jitter is dropped, which also trims the saved file. The
+ *    spacing floor follows the nib diameter because writing switches nibs
+ *    between a hairline and a highlighter on the same page.
+ * 2. Deliberate corners are detected over an arc-length window that scales
+ *    with the stroke's own extent, so a hook registers as one protected
+ *    vertex whether the writing is margin-sized or page-filling.
  * 3. Relaxation smooths only between corners, and the first/last samples stay
  *    exact so pen-down positions and hook tips never drift.
  *
@@ -47,12 +58,28 @@ export function optimizeStrokePoints(points: readonly InkPoint[], options: Strok
   if (strength <= 0 || points.length < 3) return points as InkPoint[];
   const scaleX = positiveOr(options.scaleX, DEFAULT_PAGE_WIDTH);
   const scaleY = positiveOr(options.scaleY, DEFAULT_PAGE_HEIGHT);
-  const kept = deduplicateSamples(points, positiveOr(options.minimumSampleDistance, DEFAULT_MINIMUM_SAMPLE_DISTANCE), scaleX, scaleY);
+  const nibWidth = positiveOr(options.nibWidth, DEFAULT_NIB_WIDTH);
+  const minimumSampleDistance = positiveOr(options.minimumSampleDistance,
+    Math.max(MINIMUM_SAMPLE_SPAN, nibWidth * NIB_SAMPLE_FRACTION));
+  const kept = deduplicateSamples(points, minimumSampleDistance, scaleX, scaleY);
   if (kept.length < 3) return kept;
-  const corners = detectCorners(kept, positiveOr(options.cornerArcLength, DEFAULT_CORNER_ARC_LENGTH),
+  const cornerArcLength = positiveOr(options.cornerArcLength, adaptiveCornerArc(kept, scaleX, scaleY));
+  const corners = detectCorners(kept, cornerArcLength,
     positiveOr(options.cornerTurnDegrees, DEFAULT_CORNER_TURN_DEGREES), scaleX, scaleY);
   const passes = Math.max(1, Math.min(3, Math.round(strength * 4)));
   return relaxBetweenCorners(kept, corners, passes, scaleX, scaleY);
+}
+
+function adaptiveCornerArc(points: readonly InkPoint[], scaleX: number, scaleY: number): number {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const point of points) {
+    if (point.x < minX) minX = point.x;
+    if (point.x > maxX) maxX = point.x;
+    if (point.y < minY) minY = point.y;
+    if (point.y > maxY) maxY = point.y;
+  }
+  const extent = Math.hypot((maxX - minX) * scaleX, (maxY - minY) * scaleY);
+  return Math.max(MINIMUM_CORNER_ARC, Math.min(MAXIMUM_CORNER_ARC, extent * CORNER_ARC_FRACTION));
 }
 
 function deduplicateSamples(points: readonly InkPoint[], minimumSampleDistance: number, scaleX: number, scaleY: number): InkPoint[] {
