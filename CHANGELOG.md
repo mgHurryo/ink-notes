@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.6.0-beta.2 - 2026-10-06
+
+- Fix the dot that appeared past a stroke's tail on every pen lift when the stroke modeler was engaged: the modeler's end-of-stroke catch-up cluster (converging, sometimes overshoot-reversing sub-pixel steps) reached the outline renderer whole, whose outline-point gate then misconnected the end-cap arc into a visible bulb. Modeled points are now deduplicated against a real radius (0.35 page px, previously an ineffective 0.01) with the final lift point under the same rule, so the catch-up cluster never reaches storage while the tail still lands within a fraction of a nib width of the lift position.
+- Fix the Smooth dial appearing to have no effect: the sparse-device detection fed human pauses (between strokes, letters or hover bursts, 150-500 ms) into the sample-interval history, so normal writing rhythm tripped the sparse threshold and silently re-engaged the modeler even with the dial at 0. Intervals above 120 ms are now treated as pauses and excluded.
+- No notebook schema change; strokes stored by earlier versions render unchanged except for the removed tail dot.
+
 ## 0.6.0-beta.1 - 2026-10-06
 
 - Make direct capture the pen default: ink stores and renders every delivered sample exactly as the digitizer reported it, in the style of the apple-pencil-capability-probe writing pad. The 0.5.0 stroke modeler no longer runs unless asked.
