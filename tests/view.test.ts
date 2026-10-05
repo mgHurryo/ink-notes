@@ -47,11 +47,12 @@ interface ViewInternals {
   queueWorkerOperation(operation: NotebookOperation, transfer?: Transferable[], onApplied?: (response: InkWorkerResponse) => void): void;
   state: {
     tool: string;
-    pen: { color: string; width: number; opacity: number };
+    pen: { color: string; width: number; opacity: number; smooth?: number };
     highlighter: { color: string; width: number; opacity: number };
     eraserMode: "stroke" | "circle" | "square";
     eraserSize: number;
   };
+  updateEraserHover(point: { x: number; y: number; pressure: number; t: number }, inside: boolean): void;
 }
 
 function deferred<T>() {
@@ -117,6 +118,9 @@ function setup() {
   internal.renderAll = vi.fn();
   Object.assign(internal, { renderPageRail: vi.fn(), renderPage: vi.fn() });
   internal.updateHistoryButtons = vi.fn();
+  // Exercise the modeled path by default: strength 50 reproduces the original
+  // upstream tuning. Direct-mode tests opt out explicitly with smooth = 0.
+  internal.state.pen.smooth = 50;
   return { store, view, internal, captured };
 }
 
@@ -1085,5 +1089,78 @@ describe("raw pointer update capture", () => {
 
     expect(internal.penModeler?.fallback).toBeFalsy();
     expectStrokeSpan(lastStroke(internal).points, 0.1, 0.2);
+  });
+});
+
+describe("direct ink capture", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", globalThis);
+  });
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function lastStroke(internal: ViewInternals): InkStroke {
+    const strokes = internal.notebook.pages[0].strokes;
+    return strokes[strokes.length - 1];
+  }
+
+  it("stores raw samples untouched when smooth is off", () => {
+    const { internal } = setup();
+    internal.state.pen.smooth = 0;
+    internal.queueWorkerOperation = vi.fn();
+    internal.onPointerDown(pointer(10));
+    internal.onPointerMove(pointer(20));
+    internal.onPointerUp(pointer(30));
+
+    expect(internal.penModeler).toBeNull();
+    const points = lastStroke(internal).points;
+    expect(points.map((point) => Math.round(point.x * 100))).toEqual([10, 20, 30]);
+  });
+
+  it("engages the modeler when a smooth strength is selected", () => {
+    const { internal } = setup();
+    internal.state.pen.smooth = 40;
+    internal.queueWorkerOperation = vi.fn();
+    internal.onPointerDown(pointer(10));
+    expect(internal.penModeler).not.toBeNull();
+    internal.onPointerMove(pointer(30));
+    internal.onPointerUp(pointer(50));
+
+    expect(internal.penModeler?.fallback).toBeFalsy();
+    expectStrokeSpan(lastStroke(internal).points, 0.1, 0.5);
+  });
+
+  it("auto-engages the modeler when the device samples sparsely", () => {
+    const { internal } = setup();
+    internal.state.pen.smooth = 0;
+    internal.queueWorkerOperation = vi.fn();
+    internal.updateEraserHover = vi.fn();
+    // Hover history below ~40 Hz marks the device as sparse.
+    for (let index = 0; index < 10; index++) {
+      internal.onPointerMove(pointer(index, { timeStamp: 1_000 + index * 40 }));
+    }
+    internal.onPointerDown(pointer(10, { timeStamp: 1_500 }));
+    expect(internal.penModeler).not.toBeNull();
+    internal.onPointerMove(pointer(30, { timeStamp: 1_540 }));
+    internal.onPointerUp(pointer(50, { timeStamp: 1_580 }));
+
+    expect(internal.penModeler?.fallback).toBeFalsy();
+    expectStrokeSpan(lastStroke(internal).points, 0.1, 0.5);
+  });
+
+  it("keeps direct capture while the device history is dense", () => {
+    const { internal } = setup();
+    internal.state.pen.smooth = 0;
+    internal.queueWorkerOperation = vi.fn();
+    internal.updateEraserHover = vi.fn();
+    for (let index = 0; index < 10; index++) {
+      internal.onPointerMove(pointer(index, { timeStamp: 1_000 + index * 8 }));
+    }
+    internal.onPointerDown(pointer(10, { timeStamp: 1_500 }));
+    expect(internal.penModeler).toBeNull();
   });
 });

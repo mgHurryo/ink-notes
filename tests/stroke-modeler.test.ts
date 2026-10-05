@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_STROKE_MODEL_PARAMS, StrokeModeler, StrokeModelInput, StrokeModelResult } from "../src/stroke-modeler";
+import { DEFAULT_STROKE_MODEL_PARAMS, StrokeModeler, StrokeModelInput, StrokeModelResult, strokeModelParamsForSmoothStrength } from "../src/stroke-modeler";
 
 function move(position: { x: number; y: number }, time: number, extra: Partial<StrokeModelInput> = {}): StrokeModelInput {
   return { eventType: "move", position, time, ...extra };
@@ -17,6 +17,60 @@ function collect(inputs: StrokeModelInput[]): StrokeModelResult[] {
   const modeler = new StrokeModeler();
   return inputs.flatMap((input) => modeler.update(input));
 }
+
+describe("smooth strength parameter mapping", () => {
+  const defaults = DEFAULT_STROKE_MODEL_PARAMS;
+
+  it("reproduces the reference tuning at strength 50", () => {
+    const params = strokeModelParamsForSmoothStrength(50);
+    expect(params.wobbleSmoother.timeout).toBeCloseTo(defaults.wobbleSmoother.timeout, 10);
+    expect(params.wobbleSmoother.speedFloor).toBeCloseTo(defaults.wobbleSmoother.speedFloor, 10);
+    expect(params.wobbleSmoother.speedCeiling).toBeCloseTo(defaults.wobbleSmoother.speedCeiling, 10);
+    expect(params.positionModeler.springMassConstant).toBeCloseTo(defaults.positionModeler.springMassConstant, 12);
+    expect(params.positionModeler.dragConstant).toBe(defaults.positionModeler.dragConstant);
+    expect(params.sampling).toEqual(defaults.sampling);
+  });
+
+  it("moves monotonically from stiff to soft between the extremes", () => {
+    let previous = strokeModelParamsForSmoothStrength(1);
+    for (let strength = 5; strength <= 100; strength += 5) {
+      const params = strokeModelParamsForSmoothStrength(strength);
+      expect(params.wobbleSmoother.timeout).toBeGreaterThan(previous.wobbleSmoother.timeout);
+      expect(params.wobbleSmoother.speedFloor).toBeLessThan(previous.wobbleSmoother.speedFloor);
+      expect(params.wobbleSmoother.speedCeiling).toBeGreaterThan(params.wobbleSmoother.speedFloor);
+      expect(params.positionModeler.springMassConstant).toBeGreaterThan(previous.positionModeler.springMassConstant);
+      previous = params;
+    }
+  });
+
+  it("clamps out-of-range strengths", () => {
+    const lowest = strokeModelParamsForSmoothStrength(1);
+    const highest = strokeModelParamsForSmoothStrength(100);
+    for (const candidate of [-5, 0, 1]) {
+      const params = strokeModelParamsForSmoothStrength(candidate);
+      expect(params.wobbleSmoother.timeout).toBe(lowest.wobbleSmoother.timeout);
+    }
+    for (const candidate of [101, 400]) {
+      const params = strokeModelParamsForSmoothStrength(candidate);
+      expect(params.wobbleSmoother.timeout).toBe(highest.wobbleSmoother.timeout);
+    }
+  });
+
+  it("produces a working modeler at the extremes", () => {
+    for (const strength of [1, 25, 75, 100]) {
+      const modeler = new StrokeModeler(strokeModelParamsForSmoothStrength(strength));
+      const results = [
+        ...modeler.update(down({ x: 0, y: 0 }, 0)),
+        ...modeler.update(move({ x: 30, y: 10 }, 0.008, { pressure: 0.5 })),
+        ...modeler.update(up({ x: 60, y: 20 }, 0.016)),
+      ];
+      expect(results.length).toBeGreaterThan(1);
+      // A softer spring converges geometrically; sub-quarter-pixel residual
+      // is invisible next to a 3 px stroke.
+      expect(Math.abs(results[results.length - 1].position.x - 60)).toBeLessThan(0.25);
+    }
+  });
+});
 
 describe("stroke modeler", () => {
   it("returns the down input exactly as the only first result", () => {
