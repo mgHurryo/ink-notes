@@ -26,8 +26,8 @@ export function penOutline(stroke: InkStroke, width: number, height: number): nu
     size: stroke.width * 0.925,
     thinning: 0.75 / 1.85,
     simulatePressure: false,
-    // Input is already stabilized by the user's smoothing control. A second
-    // position filter pulls sparse fast corners away from the saved trajectory.
+    // Input is the raw captured trajectory; a position filter here would pull
+    // sparse fast corners away from the saved trajectory.
     streamline: 0,
     smoothing: 0.65,
     last: true,
