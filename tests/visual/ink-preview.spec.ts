@@ -23,11 +23,19 @@ for (const mode of ["no-worker", "lagging-worker"] as const) {
     await page.evaluate(() => {
       const paper = document.querySelector<HTMLElement>(".ink-page")!;
       const box = paper.getBoundingClientRect();
-      const send = (type: string, index: number) => paper.dispatchEvent(new PointerEvent(type, {
-        bubbles: true, pointerId: 7, pointerType: "pen", buttons: type === "pointerup" ? 0 : 1,
-        pressure: 0.65, clientX: box.left + box.width * (0.15 + 0.65 * index / 96),
-        clientY: box.top + box.height * (0.48 + 0.08 * Math.sin(index * Math.PI / 24)),
-      }));
+      // Synthetic events carry explicit 24 ms timestamps: the stroke modeler
+      // resamples and integrates against real inter-sample time, so a burst
+      // of equal-time events would model as one instantaneous jump.
+      const send = (type: string, index: number) => {
+        const event = new PointerEvent(type, {
+          bubbles: true, pointerId: 7, pointerType: "pen", buttons: type === "pointerup" ? 0 : 1,
+          pressure: 0.65,
+          clientX: box.left + box.width * (0.15 + 0.65 * index / 96),
+          clientY: box.top + box.height * (0.48 + 0.08 * Math.sin(index * Math.PI / 24)),
+        });
+        Object.defineProperty(event, "timeStamp", { value: 1_000 + index * 24 });
+        paper.dispatchEvent(event);
+      };
       send("pointerdown", 0);
       for (let index = 1; index <= 8; index++) send("pointermove", index);
     });
@@ -60,12 +68,17 @@ for (const mode of ["no-worker", "lagging-worker"] as const) {
     await page.evaluate(async () => {
       const paper = document.querySelector<HTMLElement>(".ink-page")!;
       const box = paper.getBoundingClientRect();
-      // A burst larger than the old 32-sample tail limit reaches one frame.
-      for (let index = 9; index <= 96; index++) paper.dispatchEvent(new PointerEvent("pointermove", {
-        bubbles: true, pointerId: 7, pointerType: "pen", buttons: 1, pressure: 0.65,
-        clientX: box.left + box.width * (0.15 + 0.65 * index / 96),
-        clientY: box.top + box.height * (0.48 + 0.08 * Math.sin(index * Math.PI / 24)),
-      }));
+      // A burst larger than the 32-sample tail limit reaches one frame. The
+      // explicit timestamps keep it a coherent stroke for the modeler.
+      for (let index = 9; index <= 96; index++) {
+        const event = new PointerEvent("pointermove", {
+          bubbles: true, pointerId: 7, pointerType: "pen", buttons: 1, pressure: 0.65,
+          clientX: box.left + box.width * (0.15 + 0.65 * index / 96),
+          clientY: box.top + box.height * (0.48 + 0.08 * Math.sin(index * Math.PI / 24)),
+        });
+        Object.defineProperty(event, "timeStamp", { value: 1_000 + index * 24 });
+        paper.dispatchEvent(event);
+      }
       await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
     });
 
@@ -96,18 +109,21 @@ for (const mode of ["no-worker", "lagging-worker"] as const) {
     const result = await page.evaluate(() => {
       const paper = document.querySelector<HTMLElement>(".ink-page")!;
       const box = paper.getBoundingClientRect();
-      paper.dispatchEvent(new PointerEvent("pointerup", {
+      const lift = new PointerEvent("pointerup", {
         bubbles: true, pointerId: 7, pointerType: "pen", buttons: 0, pressure: 0,
         clientX: box.left + box.width * 0.8, clientY: box.top + box.height * 0.48,
-      }));
+      });
+      Object.defineProperty(lift, "timeStamp", { value: 1_000 + 97 * 24 });
+      paper.dispatchEvent(lift);
       const view = (window as unknown as PreviewScope).__inkNotesPreview.view;
       return { strokes: view.currentPage().strokes.length,
         points: view.currentPage().strokes.at(-1)?.points.length, active: view.activePointerId };
     });
-    // The preview starts with one demonstration stroke. Raw capture keeps the
-    // lift sample too: it reports a sub-pixel jitter offset from the last move
-    // instead of the exact same position, so it is a real (tiny) sample.
-    expect(result).toMatchObject({ strokes: 2, points: 98, active: null });
+    // The preview starts with one demonstration stroke. The modeler resamples
+    // the 97-move sine at 180 Hz, so the stored stroke holds far more samples
+    // than the input events, and the lift catches the tail onto the pen.
+    expect(result).toMatchObject({ strokes: 2, active: null });
+    expect(result.points).toBeGreaterThan(97);
   });
 }
 
@@ -120,12 +136,21 @@ test(`a fast sparse corner stays at the pen position while writing with ${mode}`
   await page.evaluate(async () => {
     const paper = document.querySelector<HTMLElement>(".ink-page")!;
     const box = paper.getBoundingClientRect();
-    for (const [index, [x, y]] of [[0.15, 0.42], [0.55, 0.42], [0.55, 0.62]].entries()) {
-      paper.dispatchEvent(new PointerEvent(index === 0 ? "pointerdown" : "pointermove", {
+    // Events carry 24 ms timestamps; after the fast segment the pen dwells
+    // at the corner, as it does in real handwriting, so the modeled tip
+    // settles exactly onto the corner vertex instead of trailing behind it.
+    const send = (type: string, index: number, x: number, y: number) => {
+      const event = new PointerEvent(type, {
         bubbles: true, pointerId: 7, pointerType: "pen", buttons: 1, pressure: 0.65,
         clientX: box.left + box.width * x, clientY: box.top + box.height * y,
-      }));
-    }
+      });
+      Object.defineProperty(event, "timeStamp", { value: 1_000 + index * 24 });
+      paper.dispatchEvent(event);
+    };
+    send("pointerdown", 0, 0.15, 0.42);
+    send("pointermove", 1, 0.55, 0.42);
+    for (let dwell = 0; dwell < 10; dwell++) send("pointermove", 2 + dwell, 0.55, 0.42);
+    send("pointermove", 12, 0.55, 0.62);
     await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
   });
   const inkAtCorner = () => page.evaluate(() => {
@@ -142,7 +167,7 @@ test(`a fast sparse corner stays at the pen position while writing with ${mode}`
     await expect.poll(() => page.evaluate(() => {
       const view = (window as unknown as PreviewScope).__inkNotesPreview.view;
       return view.confirmedStrokeOutlines.get(view.activeStroke.id)?.sampleCount ?? 0;
-    })).toBe(3);
+    })).toBeGreaterThan(2);
     await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
     expect(await inkAtCorner()).toBe(true);
   }

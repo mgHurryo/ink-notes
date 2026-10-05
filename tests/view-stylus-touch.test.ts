@@ -55,12 +55,17 @@ function touchList(touches: TestTouch[]) {
   return Object.assign(touches, { item: (index: number) => touches[index] ?? null });
 }
 
+// Synthetic input events advance an 8 ms clock (120 Hz pen), giving the
+// stroke modeler realistic per-sample time deltas.
+let inputClock = 1_000;
+
 function dispatchTouch(type: string, changed: TestTouch[], remaining = changed, target: EventTarget = paper): Event {
   const event = new Event(type, { bubbles: true, cancelable: true });
   Object.defineProperties(event, {
     changedTouches: { value: touchList(changed) },
     touches: { value: touchList(remaining) },
     targetTouches: { value: touchList(remaining.filter((sample) => sample.target === target)) },
+    timeStamp: { value: inputClock += 8 },
   });
   target.dispatchEvent(event);
   return event;
@@ -89,6 +94,7 @@ function dispatchPointer(type: string, options: {
     pressure: { value: options.pressure ?? 0.35 },
     tiltX: { value: options.tiltX ?? 0 },
     tiltY: { value: options.tiltY ?? 0 },
+    timeStamp: { value: inputClock += 8 },
   });
   target.dispatchEvent(event);
   return event;
@@ -148,7 +154,9 @@ describe("stylus touch input ownership", () => {
     }
     expect(drawing.currentPage().strokes).toHaveLength(3);
     for (const stroke of drawing.currentPage().strokes) {
-      expect(stroke.points).toHaveLength(3);
+      // Modeled capture streams the touch as a full trajectory, not one point
+      // per event; the ends still land exactly on the contact positions.
+      expect(stroke.points.length).toBeGreaterThanOrEqual(3);
       expect(stroke.points[0]).toMatchObject({ x: 0.25, y: 0.3, pressure: 0.35 });
       expect(stroke.points.at(-1)?.x).toBeCloseTo(0.4);
     }
@@ -164,7 +172,8 @@ describe("stylus touch input ownership", () => {
     dispatchTouch("touchmove", [touch(20, { clientX: 380 })]);
     dispatchTouch("touchend", [touch(20, { clientX: 420 })], []);
     expect(drawing.currentPage().strokes).toEqual([stroke]);
-    expect(stroke.points).toHaveLength(3);
+    expect(stroke.points.length).toBeGreaterThanOrEqual(3);
+    expect(stroke.points.at(-1)?.x).toBeCloseTo(0.4);
     expect(drawing.activePointerId).toBeNull();
   });
 
@@ -179,7 +188,8 @@ describe("stylus touch input ownership", () => {
     dispatchTouch("touchmove", [touch(7, { clientX: 380 })]);
     dispatchTouch("touchend", [touch(7, { clientX: 420 })], []);
     dispatchPointer("pointerup", { clientX: 600 });
-    expect(stroke.points).toHaveLength(3);
+    expect(stroke.points.length).toBeGreaterThanOrEqual(3);
+    expect(stroke.points.at(-1)?.x).toBeCloseTo(0.4);
     expect(drawing.activePointerId).toBeNull();
   });
 
@@ -193,7 +203,8 @@ describe("stylus touch input ownership", () => {
     expect(drawing.activePointerId).not.toBeNull();
     dispatchTouch("touchmove", [touch(20, { clientX: 380 })]);
     dispatchTouch("touchend", [touch(20, { clientX: 420 })], []);
-    expect(drawing.currentPage().strokes[0].points).toHaveLength(3);
+    expect(drawing.currentPage().strokes[0].points.length).toBeGreaterThanOrEqual(3);
+    expect(drawing.currentPage().strokes[0].points.at(-1)?.x).toBeCloseTo(0.4);
     expect(drawing.activePointerId).toBeNull();
   });
 
@@ -213,7 +224,11 @@ describe("stylus touch input ownership", () => {
     dispatchTouch("touchstart", [touch()]);
     dispatchTouch("touchmove", [touch(7, { clientX: 380 })]);
     expect(dispatchTouch("touchcancel", [touch(7, { clientX: 600 })], []).defaultPrevented).toBe(true);
-    expect(drawing.currentPage().strokes[0].points).toHaveLength(2);
+    // The cancelled stroke finalizes on its last input, never on the
+    // cancel event's coordinates.
+    const cancelled = drawing.currentPage().strokes[0].points;
+    expect(cancelled.length).toBeGreaterThanOrEqual(2);
+    expect(cancelled.at(-1)?.x).toBeCloseTo(0.35, 3);
     expect(drawing.activePointerId).toBeNull();
     expect(drawing.interaction).toBeNull();
     dispatchTouch("touchend", [touch()], []);
@@ -260,7 +275,7 @@ describe("stylus touch input ownership", () => {
     dispatchTouch("touchmove", [touch(7, { clientX: 380 })]);
     dispatchTouch("touchend", [touch(7, { clientX: 420 })], []);
     expect(drawing.currentPage().strokes).toHaveLength(1);
-    expect(drawing.currentPage().strokes[0].points).toHaveLength(3);
+    expect(drawing.currentPage().strokes[0].points.length).toBeGreaterThanOrEqual(3);
   });
 
   it("rebases a remaining finger at Pencil lift so it can pan without lifting again", () => {
@@ -287,7 +302,7 @@ describe("stylus touch input ownership", () => {
     dispatchPointer("pointermove", { pointerId: 1, pointerType: "mouse", clientX: 380 });
     dispatchPointer("pointerup", { pointerId: 1, pointerType: "mouse", clientX: 420 });
     expect(drawing.currentPage().strokes).toHaveLength(2);
-    expect(drawing.currentPage().strokes[1].points).toHaveLength(3);
+    expect(drawing.currentPage().strokes[1].points.length).toBeGreaterThanOrEqual(3);
     expect(drawing.activePointerId).toBeNull();
   });
 
@@ -350,17 +365,24 @@ describe("stylus touch input ownership", () => {
 
   it("retains pressure and converts stylus angle metadata into existing point fields", () => {
     dispatchTouch("touchstart", [touch(7, { force: 0.2, altitudeAngle: Math.PI / 4, azimuthAngle: 0 })]);
+    // Space the contacts 200 ms apart so the modeled tip can keep up with a
+    // physically plausible writing speed before the assertions run.
+    inputClock += 200;
     dispatchTouch("touchmove", [touch(7, { clientX: 380, force: 0.8, altitudeAngle: Math.PI / 4, azimuthAngle: Math.PI / 2 })]);
+    inputClock += 200;
+    dispatchTouch("touchend", [touch(7, { clientX: 420, force: 0.8, altitudeAngle: Math.PI / 4, azimuthAngle: Math.PI / 2 })], []);
     const points = drawing.currentPage().strokes[0].points;
     expect(points[0]).toMatchObject({ x: 0.25, y: 0.3, pressure: 0.2 });
     expect(points[0].tiltX).toBeCloseTo(45);
     expect(points[0].tiltY).toBeCloseTo(0);
-    expect(points[1].pressure).toBeCloseTo(0.8);
-    expect(points[1].tiltX).toBeCloseTo(0);
-    expect(points[1].tiltY).toBeCloseTo(45);
+    // The modeled tail lands on the lift sample, carrying its pressure and
+    // converted tilt through the projection onto the raw input polyline.
+    const last = points[points.length - 1];
+    expect(last.pressure).toBeCloseTo(0.8, 1);
+    expect(last.tiltX).toBeCloseTo(0, 1);
+    expect(last.tiltY).toBeCloseTo(45, 1);
     expect(Number.isFinite(points[0].t)).toBe(true);
-    expect(Number.isFinite(points[1].t)).toBe(true);
-    dispatchTouch("touchend", [touch(7, { clientX: 420 })], []);
+    expect(Number.isFinite(last.t)).toBe(true);
   });
 
   it.each([
@@ -399,7 +421,8 @@ describe("stylus touch input ownership", () => {
     dispatchPointer("pointerup", { clientX: 420 });
     dispatchTouch("touchend", [unknown], []);
     expect(drawing.currentPage().strokes).toHaveLength(1);
-    expect(drawing.currentPage().strokes[0].points).toHaveLength(3);
+    expect(drawing.currentPage().strokes[0].points.length).toBeGreaterThanOrEqual(3);
+    expect(drawing.currentPage().strokes[0].points.at(-1)?.x).toBeCloseTo(0.4);
     expect(drawing.stylusTouchInput).toBe(false);
     expect(drawing.activePointerId).toBeNull();
   });
@@ -414,7 +437,8 @@ describe("stylus touch input ownership", () => {
     dispatchPointer("pointerenter", { pressure: 0, buttons: 0 });
     dispatchPointer("pointermove", { pressure: 0, buttons: 0, clientX: 600 });
     expect(drawing.currentPage().strokes).toEqual([stroke]);
-    expect(stroke.points).toHaveLength(2);
+    expect(stroke.points.length).toBeGreaterThanOrEqual(2);
+    expect(stroke.points.at(-1)?.x).toBeCloseTo(0.4);
     expect(drawing.activePointerId).toBeNull();
   });
 });

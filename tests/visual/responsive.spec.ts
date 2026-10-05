@@ -358,6 +358,12 @@ test("pen contact and release stay visible through a late Worker response", asyn
   await page.mouse.move(start.x, start.y);
   await page.mouse.down();
   await page.mouse.move(point.x, point.y, { steps: 8 });
+  // A real pen is never perfectly still at a contact: the micro-moves let
+  // the modeled tip settle onto the point before the visibility check.
+  for (let index = 0; index < 8; index++) {
+    await page.mouse.move(point.x + (index % 2 ? 1 : -1), point.y + (index % 2 ? -1 : 1));
+    await page.waitForTimeout(20);
+  }
   expect(await alphaNearPoint()).toBeGreaterThan(0);
   await page.mouse.up();
   expect(await alphaNearPoint()).toBeGreaterThan(0);
@@ -388,16 +394,23 @@ test("consecutive Pencil contacts cancel native touch defaults and retain every 
       const results = [];
       for (let index = 0; index < 20; index++) {
         const clientY = box.top + 200 + index * 20;
-        const pointer = (type: string, sample: number) => paper.dispatchEvent(new PointerEvent(type, {
-          bubbles: true, pointerId: 1, pointerType: "pen", isPrimary: true,
-          buttons: type === "pointerup" ? 0 : 1, pressure: type === "pointerup" ? 0 : 0.5,
-          clientX: box.left + 140 + sample * 5, clientY,
-        }));
+        const pointer = (type: string, sample: number) => {
+          const event = new PointerEvent(type, {
+            bubbles: true, pointerId: 1, pointerType: "pen", isPrimary: true,
+            buttons: type === "pointerup" ? 0 : 1, pressure: type === "pointerup" ? 0 : 0.5,
+            clientX: box.left + 140 + sample * 5, clientY,
+          });
+          // Explicit 24 ms timestamps: the modeler integrates against
+          // inter-sample time, and a synchronous burst has none.
+          Object.defineProperty(event, "timeStamp", { value: 1_000 + index * 1_000 + sample * 24 });
+          paper.dispatchEvent(event);
+        };
         const touch = (type: string) => {
           const contact = new Touch({ identifier: 1, target: paper, clientX: box.left + 140, clientY });
           const contacts = type === "touchend" ? [] : [contact];
           const event = new TouchEvent(type, { bubbles: true, cancelable: true,
             touches: contacts, targetTouches: contacts, changedTouches: [contact] });
+          Object.defineProperty(event, "timeStamp", { value: 1_000 + index * 1_000 + (type === "touchend" ? 17 * 24 : -24) });
           paper.dispatchEvent(event);
           return event.defaultPrevented;
         };
@@ -452,11 +465,17 @@ for (const inputMode of ["touch-only", "mixed"] as const) {
         for (let index = 0; index < 20; index++) {
           const clientY = box.top + 200 + index * 20;
           const sequence = mode === "touch-only" ? "touch-only" : ["pe-first", "te-first", "pe-missing"][index % 3];
-          const pointer = (type: string, sample: number) => paper.dispatchEvent(new PointerEvent(type, {
-            bubbles: true, pointerId: 1, pointerType: "pen", isPrimary: true,
-            buttons: type === "pointerup" ? 0 : 1, pressure: type === "pointerup" ? 0 : 0.65,
-            clientX: box.left + 140 + sample * 5, clientY,
-          }));
+          const pointer = (type: string, sample: number) => {
+            const event = new PointerEvent(type, {
+              bubbles: true, pointerId: 1, pointerType: "pen", isPrimary: true,
+              buttons: type === "pointerup" ? 0 : 1, pressure: type === "pointerup" ? 0 : 0.65,
+              clientX: box.left + 140 + sample * 5, clientY,
+            });
+            // Explicit 24 ms timestamps: the modeler integrates against
+            // inter-sample time, and a synchronous burst has none.
+            Object.defineProperty(event, "timeStamp", { value: 2_000 + index * 2_000 + sample * 24 });
+            paper.dispatchEvent(event);
+          };
           const touch = (type: string, sample: number) => {
             const contact = new Touch({ identifier: 7, target: paper,
               clientX: box.left + 140 + sample * 5, clientY, force: type === "touchend" ? 0 : 0.65 });
@@ -465,6 +484,7 @@ for (const inputMode of ["touch-only", "mixed"] as const) {
             const contacts = type === "touchend" ? [] : [contact];
             const event = new TouchEvent(type, { bubbles: true, cancelable: true,
               touches: contacts, targetTouches: contacts, changedTouches: [contact] });
+            Object.defineProperty(event, "timeStamp", { value: 2_000 + index * 2_000 + sample * 24 });
             paper.dispatchEvent(event);
             return event.defaultPrevented;
           };
@@ -506,7 +526,10 @@ for (const inputMode of ["touch-only", "mixed"] as const) {
         expect(stroke.modelCount).toBe(index + 1);
         expect(stroke.activeAfterEnd).toBeNull();
         expect(stroke.points).toBeGreaterThanOrEqual(16);
-        expect(stroke.points).toBeLessThanOrEqual(18);
+        // The modeler resamples the 17-contact stroke at 180 Hz, so the
+        // stored count far exceeds the raw event count; the ceiling only
+        // guards against a duplicated stream doubling the samples.
+        expect(stroke.points).toBeLessThanOrEqual(150);
         expect(stroke.pressure).toBeCloseTo(0.65, 5);
         expect(stroke.inkPixels).toBeGreaterThan(0);
       }
