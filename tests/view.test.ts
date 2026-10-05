@@ -44,8 +44,8 @@ interface ViewInternals {
   queueWorkerOperation(operation: NotebookOperation, transfer?: Transferable[], onApplied?: (response: InkWorkerResponse) => void): void;
   state: {
     tool: string;
-    pen: { color: string; width: number; opacity: number; smoothing: number };
-    highlighter: { color: string; width: number; opacity: number; smoothing: number };
+    pen: { color: string; width: number; opacity: number };
+    highlighter: { color: string; width: number; opacity: number };
     eraserMode: "stroke" | "circle" | "square";
     eraserSize: number;
   };
@@ -228,44 +228,8 @@ describe("consecutive handwriting input", () => {
     expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2]);
   });
 
-  it("filters sub-pixel slow-input jitter without dropping intentional movement", () => {
+  it("preserves short moves and pressure exactly as captured", () => {
     const { internal } = setup();
-    internal.onPointerDown(pointer(10));
-    internal.onPointerMove(pointer(10.5));
-    internal.onPointerMove(pointer(20));
-    internal.onPointerUp(pointer(30));
-    expect(internal.notebook.pages[0].strokes[0].points.map((point) => point.x)).toEqual([0.1, 0.2, 0.3]);
-  });
-
-  it("tracks deliberate small moves closely while light smoothing is on", () => {
-    const { internal } = setup();
-    internal.onPointerDown(pointer(10));
-    internal.onPointerMove(pointer(13));
-    internal.onPointerMove(pointer(16));
-    const points = internal.notebook.pages[0].strokes[0].points;
-    // 3px steps render at >= 88% of the pen movement: the ink must not
-    // visibly lag the nib during slow, precise writing.
-    expect(points[1].x).toBeGreaterThanOrEqual(0.1 + 0.03 * 0.88);
-    expect(points[2].x).toBeGreaterThanOrEqual(0.1 + 0.06 * 0.88);
-  });
-
-  it("smooths a continuous tail while preserving a deliberate turn", () => {
-    const { internal } = setup();
-    internal.state.pen.smoothing = 1;
-    internal.onPointerDown(pointer(10, { clientY: 20 }));
-    internal.onPointerMove(pointer(12, { clientY: 20 }));
-    internal.onPointerMove(pointer(14, { clientY: 20 }));
-    internal.onPointerMove(pointer(14, { clientY: 40 }));
-    internal.onPointerUp(pointer(14, { clientY: 50 }));
-    const points = internal.notebook.pages[0].strokes[0].points;
-    expect(points.length).toBeGreaterThan(2);
-    expect(points[points.length - 2].y).toBeLessThan(points[points.length - 1].y);
-    expect(points[points.length - 1].y).toBeCloseTo(0.5);
-  });
-
-  it("preserves short moves and pressure exactly when smoothing is disabled", () => {
-    const { internal } = setup();
-    internal.state.pen.smoothing = 0;
     internal.onPointerDown(pointer(10, { clientY: 20, pressure: 0.2 }));
     internal.onPointerMove(pointer(10.25, { clientY: 20, pressure: 0.8 }));
     internal.onPointerMove(pointer(12, { clientY: 20, pressure: 0.4 }));
@@ -947,7 +911,7 @@ describe("consecutive handwriting input", () => {
   });
 });
 
-describe("stroke geometry optimization", () => {
+describe("stroke finalization", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.stubGlobal("window", globalThis);
@@ -968,26 +932,8 @@ describe("stroke geometry optimization", () => {
       .mock.calls.map((call) => call[0]);
   }
 
-  it("publishes refined stroke geometry to the worker when the pen lifts", () => {
+  it("keeps the captured geometry byte-exact", () => {
     const { internal } = setup();
-    internal.queueWorkerOperation = vi.fn();
-    internal.onPointerDown(pointer(10));
-    for (const x of [12, 14, 16, 40, 42, 44, 46, 48]) internal.onPointerMove(pointer(x));
-    internal.onPointerUp(pointer(50));
-
-    const patch = queuedOperations(internal).find((operation) => operation.type === "patch-strokes");
-    expect(patch).toBeDefined();
-    const stroke = lastStroke(internal);
-    if (!patch || patch.type !== "patch-strokes") return;
-    expect(patch.remove).toEqual([]);
-    expect(patch.upsert).toHaveLength(1);
-    expect(patch.upsert[0].id).toBe(stroke.id);
-    expect(patch.upsert[0].points).toEqual(stroke.points);
-  });
-
-  it("keeps the captured geometry byte-exact when smoothing is disabled", () => {
-    const { internal } = setup();
-    internal.state.pen.smoothing = 0;
     internal.queueWorkerOperation = vi.fn();
     internal.onPointerDown(pointer(10));
     internal.onPointerMove(pointer(30));
@@ -995,22 +941,6 @@ describe("stroke geometry optimization", () => {
 
     expect(queuedOperations(internal).some((operation) => operation.type === "patch-strokes")).toBe(false);
     expect(lastStroke(internal).points.map((point) => point.x)).toEqual([0.1, 0.3, 0.5]);
-  });
-
-  it("retains a preview outline built from the refined geometry", () => {
-    const { internal } = setup();
-    internal.queueWorkerOperation = vi.fn();
-    internal.onPointerDown(pointer(10));
-    for (const x of [12, 14, 16, 40, 42, 44, 46, 48]) internal.onPointerMove(pointer(x));
-    internal.onPointerUp(pointer(50));
-
-    const stroke = lastStroke(internal);
-    const outline = internal.confirmedStrokeOutlines.get(stroke.id);
-    expect(outline).toBeDefined();
-    // No late raw append may override the refined preview.
-    expect(outline!.sampleCount).toBe(Number.MAX_SAFE_INTEGER);
-    expect(outline!.mode).toBe("pen");
-    expect(outline!.points.length).toBeGreaterThanOrEqual(4);
   });
 
   it("inherits tail pressure from the previous sample when the lift reports zero", () => {
@@ -1043,7 +973,6 @@ describe("stroke geometry optimization", () => {
       expect(stroke.points[0].x).toBeLessThan(stroke.points[stroke.points.length - 1].x);
     }
     const operations = queuedOperations(internal);
-    expect(operations.filter((operation) => operation.type === "patch-strokes")).toHaveLength(25);
     expect(operations.filter((operation) => operation.type === "complete-stroke")).toHaveLength(25);
   });
 });

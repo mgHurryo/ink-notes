@@ -11,8 +11,7 @@ import {
   newId,
 } from "./model";
 import { NotebookStore } from "./storage";
-import { canvasResolution, drawInkStroke, penOutline } from "./rendering";
-import { optimizeStrokePoints } from "./stroke-geometry";
+import { canvasResolution, drawInkStroke } from "./rendering";
 import { Rect, TileRenderer } from "./tiles";
 import type { InkWorkerResponse, NotebookOperation } from "./worker-protocol";
 import { InkWorkerRequestError, InkWorkerService, InkWorkerSession } from "./worker-service";
@@ -25,7 +24,6 @@ interface BrushSettings {
   color: string;
   width: number;
   opacity: number;
-  smoothing: number;
 }
 
 interface ToolState {
@@ -53,7 +51,6 @@ interface InteractionContext {
   tool: InkTool;
   eraserMode?: EraserMode;
   eraserSize?: number;
-  smoothing?: number;
 }
 
 interface InkPointerSample {
@@ -95,7 +92,6 @@ const SAVE_CONFLICT_RETRIES = 3;
 const INK_COMMIT_IDLE_DELAY = 180;
 const LIVE_TAIL_SAMPLE_LIMIT = 32;
 const COMPLETED_PREVIEW_SAMPLE_LIMIT = 256;
-const DEFAULT_PEN_SMOOTHING = 0.25;
 
 class SaveConflictError extends Error {
   constructor(message: string) {
@@ -118,8 +114,8 @@ export class InkView extends FileView {
   private pageIndex = 0;
   private state: ToolState = {
     tool: "pen",
-    pen: { color: "#1b1b1b", width: 3, opacity: 1, smoothing: DEFAULT_PEN_SMOOTHING },
-    highlighter: { color: "#f2c94c", width: 18, opacity: 0.4, smoothing: 0.55 },
+    pen: { color: "#1b1b1b", width: 3, opacity: 1 },
+    highlighter: { color: "#f2c94c", width: 18, opacity: 0.4 },
     eraserMode: "stroke",
     eraserSize: 32,
   };
@@ -495,7 +491,6 @@ export class InkView extends FileView {
       settings.opacity = value;
       this.updateBrushPreview(tool);
     });
-    this.addRange(panel, `${label} smoothing`, 0, 1, 0.05, settings.smoothing, (value) => { settings.smoothing = value; });
   }
 
   private brushSettings(tool: BrushTool): BrushSettings {
@@ -1056,7 +1051,6 @@ export class InkView extends FileView {
       tool,
       eraserMode: tool === "eraser" ? this.state.eraserMode : undefined,
       eraserSize: tool === "eraser" ? this.state.eraserSize : undefined,
-      smoothing: brush?.smoothing,
     };
     const point = this.toPoint(event, rect);
     this.erasedStrokeIds.clear();
@@ -1176,11 +1170,12 @@ export class InkView extends FileView {
       if (interaction.tool === "eraser") {
         changed = this.eraseAt(point, page, interaction.eraserMode, interaction.eraserSize) || changed;
       } else if (this.activeStroke && this.lastPoint) {
-        const stabilized = stabilizeInkPoint(point, this.lastPoint, this.canvasLogicalWidth, this.canvasLogicalHeight, interaction.smoothing ?? DEFAULT_PEN_SMOOTHING);
-        if (!stabilized) continue;
-        this.activeStroke.points.push(stabilized);
+        // Raw capture: every sample is stored exactly as delivered. Repeated
+        // positions from duplicate input events still must not enter the stroke.
+        if (distance(point, this.lastPoint) <= 0) continue;
+        this.activeStroke.points.push(point);
         this.activeStroke.updatedAt = Date.now();
-        this.lastPoint = stabilized;
+        this.lastPoint = point;
         changed = true;
       }
     }
@@ -1285,7 +1280,6 @@ export class InkView extends FileView {
       this.drawInteractiveStrokes(page.strokes, true);
     } else if (this.activeStroke) {
       this.markChanged(page);
-      this.optimizeFinalizedStroke(page, interaction);
       // Retain a complete vector preview without copying the full high-density
       // overlay. Late Worker responses update only the live stroke layer.
       this.retainActivePreview();
@@ -1311,59 +1305,6 @@ export class InkView extends FileView {
       this.externalRefreshPending = false;
       void this.reloadFromDisk().catch((error) => new Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
     }
-  }
-
-  private optimizeFinalizedStroke(page: InkPage, interaction: InteractionContext): void {
-    const stroke = this.activeStroke;
-    if (!stroke || (stroke.tool !== "pen" && stroke.tool !== "highlighter")) return;
-    const optimized = optimizeStrokePoints(stroke.points, {
-      strength: interaction.smoothing ?? DEFAULT_PEN_SMOOTHING,
-      scaleX: this.notebook.pageWidth,
-      scaleY: this.notebook.pageHeight,
-      nibWidth: stroke.width,
-    });
-    // The optimizer hands back the input reference when there is nothing to
-    // change (disabled smoothing, dots, ticks), so this stays byte-exact.
-    if (optimized === stroke.points) return;
-    stroke.points = optimized;
-    stroke.updatedAt = page.updatedAt;
-    // Streaming pushed the raw captured samples to the Worker while drawing.
-    // Publish the refined geometry so committed tiles, saves and other devices
-    // all converge on the optimized trajectory.
-    this.queueWorkerOperation({
-      type: "patch-strokes",
-      pageId: stroke.pageId,
-      upsert: [cloneStroke(stroke)],
-      remove: [],
-      deletedStrokeIds: [...page.deletedStrokeIds],
-      pageUpdatedAt: page.updatedAt,
-      notebookUpdatedAt: this.notebook.updatedAt,
-    });
-    this.retainRefinedPreviewOutline(stroke);
-  }
-
-  private retainRefinedPreviewOutline(stroke: InkStroke): void {
-    // Writing produces many short strokes in quick succession. Rendering the
-    // retained preview from the refined points (with a sample count no late
-    // raw append can override) keeps the overlay identical to the committed
-    // tiles, so each finished stroke never visibly settles or jumps.
-    if (stroke.tool === "highlighter") {
-      const line = new Float32Array(stroke.points.length * 2);
-      for (let index = 0; index < stroke.points.length; index++) {
-        line[index * 2] = stroke.points[index].x;
-        line[index * 2 + 1] = stroke.points[index].y;
-      }
-      this.confirmedStrokeOutlines.set(stroke.id, { points: line, sampleCount: Number.MAX_SAFE_INTEGER, mode: "highlighter" });
-      return;
-    }
-    const generated = penOutline(stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
-    if (generated.length < 2) return;
-    const normalized = new Float32Array(generated.length * 2);
-    for (let index = 0; index < generated.length; index++) {
-      normalized[index * 2] = generated[index][0] / this.canvasLogicalWidth;
-      normalized[index * 2 + 1] = generated[index][1] / this.canvasLogicalHeight;
-    }
-    this.confirmedStrokeOutlines.set(stroke.id, { points: normalized, sampleCount: Number.MAX_SAFE_INTEGER, mode: "pen" });
   }
 
   private applyPendingMergedNotebook(): void {
@@ -2427,60 +2368,6 @@ function stylusTouchSample(touch: StylusTouch): InkPointerSample {
   };
 }
 
-function stabilizeInkPoint(point: InkPoint, previous: InkPoint, width: number, height: number, smoothing: number): InkPoint | null {
-  // Zero is a real opt-out: retain small deliberate marks and their pressure,
-  // while still ignoring repeated positions from duplicate input samples.
-  if (smoothing <= 0) return distance(point, previous) > 0 ? point : null;
-  if (width <= 1 || height <= 1) return distance(point, previous) >= 0.0002 ? point : null;
-  const dx = (point.x - previous.x) * width;
-  const dy = (point.y - previous.y) * height;
-  const pixels = Math.hypot(dx, dy);
-  const strength = Math.max(0, Math.min(1, smoothing));
-  if (pixels < 0.35 + strength * 0.65) return null;
-  // Slow writing must track the pen: blending small moves used to hold back
-  // a third of a visible step, which reads as the ink lagging the nib. The
-  // finalize optimizer removes the residual jitter non-causally, so capture
-  // only takes the edge off sub-2px noise and stays exact from 5px up.
-  const minimumWeight = 0.9 - strength * 0.4;
-  const mediumWeight = 0.95 - strength * 0.2;
-  const weight = pixels < 2 ? minimumWeight : pixels < 5 ? mediumWeight : 1;
-  const pressureDelta = point.pressure - previous.pressure;
-  const pressureWeight = Math.max(0.2, 0.82 - strength * 0.52);
-  return {
-    ...point,
-    x: previous.x + (point.x - previous.x) * weight,
-    y: previous.y + (point.y - previous.y) * weight,
-    pressure: Math.abs(pressureDelta) < 0.025 * strength
-      ? previous.pressure
-      : previous.pressure + pressureDelta * Math.max(pressureWeight, Math.min(1, pixels / 12)),
-  };
-}
-
-function beautifyStrokeTail(points: InkPoint[], width: number, height: number, smoothing: number): void {
-  if (points.length < 3 || smoothing <= 0 || width <= 1 || height <= 1) return;
-  const start = points[points.length - 3];
-  const middle = points[points.length - 2];
-  const end = points[points.length - 1];
-  const incomingX = (middle.x - start.x) * width, incomingY = (middle.y - start.y) * height;
-  const outgoingX = (end.x - middle.x) * width, outgoingY = (end.y - middle.y) * height;
-  const incomingLength = Math.hypot(incomingX, incomingY), outgoingLength = Math.hypot(outgoingX, outgoingY);
-  if (incomingLength < 0.001 || outgoingLength < 0.001) return;
-  const direction = (incomingX * outgoingX + incomingY * outgoingY) / (incomingLength * outgoingLength);
-  // Only polish continuous motion. A turn of roughly 60 degrees or sharper is
-  // treated as intentional handwriting structure and remains untouched.
-  const continuity = Math.max(0, Math.min(1, (direction - 0.5) / 0.5));
-  if (continuity === 0) return;
-  const targetX = (start.x + end.x) / 2, targetY = (start.y + end.y) / 2;
-  const correctionX = (targetX - middle.x) * width, correctionY = (targetY - middle.y) * height;
-  const correctionLength = Math.hypot(correctionX, correctionY);
-  if (correctionLength < 0.01) return;
-  const maximumCorrection = 1.25 * smoothing * continuity;
-  const scale = correctionLength > maximumCorrection && correctionLength > 0 ? maximumCorrection / correctionLength : 1;
-  middle.x += correctionX * scale / width;
-  middle.y += correctionY * scale / height;
-  middle.pressure += ((start.pressure + end.pressure) / 2 - middle.pressure) * smoothing * continuity * 0.35;
-}
-
 function strokeIntersectsEraser(stroke: InkStroke, center: InkPoint, radius: number, mode: EraserMode, width: number, height: number): boolean {
   if (stroke.points.some((point) => pointInsideEraser(point, center, radius, mode, width, height))) return true;
   for (let index = 1; index < stroke.points.length; index++) {
@@ -2786,7 +2673,7 @@ function isPointerCaptureError(error: unknown): boolean {
 
 function formatControlValue(name: string, value: number): string {
   const normalized = name.toLowerCase();
-  return normalized.endsWith("opacity") || normalized.endsWith("smoothing")
+  return normalized.endsWith("opacity")
     ? `${Math.round(value * 100)}%`
     : `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(1)} px`;
 }

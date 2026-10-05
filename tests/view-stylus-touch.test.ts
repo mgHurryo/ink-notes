@@ -121,9 +121,6 @@ beforeEach(async () => {
   paper.setPointerCapture = vi.fn();
   paper.releasePointerCapture = vi.fn();
   Object.assign(view, { canvasLogicalWidth: 800, canvasLogicalHeight: 1000 });
-  const smoothing = document.querySelector<HTMLInputElement>('input[aria-label="Pen smoothing"]')!;
-  smoothing.value = "0";
-  smoothing.dispatchEvent(new Event("input"));
 });
 
 afterEach(async () => {
