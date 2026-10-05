@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.5.0-beta.1 - 2026-10-06
+
+- Model pen strokes at capture time with a TypeScript port of the causal core of Google's open-source ink-stroke-modeler: digitizer wobble smoothing, 180 Hz resampling, spring-drag position modeling and an end-of-stroke catch-up that lands stroke tails exactly on the lift position. Stored points are only ever appended and never rewritten, preserving the raw-capture guarantee that finished ink always matches its committed tiles.
+- Keep fast sparse corners faithful: the wobble filter applies only to near-stationary input, so moving strokes keep their captured trajectory, and the renderer still draws faithful polygons. Pressure and tilt flow through the modeler's projection onto the raw input polyline; lift pressure keeps the writing pressure.
+- Pen strokes only: highlighter, eraser and lasso capture exactly as before, and the stored notebook schema is unchanged, so existing notebooks render as they always did. If a stroke's input stream breaks (clock jump or an extreme gap), that stroke falls back to raw capture instead of losing ink.
+- Known trade-off: while a stroke is in progress the modeled tip trails the pointer slightly (the modeler's spring lag, the same behavior as upstream without prediction); stroke ends always converge on lift. Real-device (iPad/Pencil) writing feel is not verified for this change, and the upstream tuning constants may need device-specific adjustment later.
+
 ## 0.4.0-beta.1 - 2026-10-06
 
 - Store and render strokes exactly as the pen reported them. The finalize-time stroke optimizer (sub-nib sample dedupe, corner detection, corner-preserving relaxation) and the capture-time point stabilization are removed, ending the regression chain that traded cut corners, missing stroke halves, thin tails and preview settle across 0.3.0-beta.1–.3.

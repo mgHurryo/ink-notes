@@ -1173,6 +1173,330 @@ function isStaleRenderError(error) {
   return typeof error === "object" && error !== null && error.code === "stale-generation";
 }
 
+// src/stroke-modeler.ts
+var DEFAULT_STROKE_MODEL_PARAMS = {
+  wobbleSmoother: { enabled: true, timeout: 0.04, speedFloor: 1.31, speedCeiling: 1.44 },
+  positionModeler: { springMassConstant: 11 / 32400, dragConstant: 72 },
+  sampling: {
+    minOutputRate: 180,
+    endOfStrokeStoppingDistance: 1e-3,
+    endOfStrokeMaxIterations: 20,
+    maxOutputsPerCall: 1e5
+  }
+};
+function copyTip(state) {
+  return {
+    position: { ...state.position },
+    velocity: { ...state.velocity },
+    acceleration: { ...state.acceleration },
+    time: state.time
+  };
+}
+function clamp01(value) {
+  return Math.max(0, Math.min(1, value));
+}
+function interp(start, end, amount) {
+  return start + (end - start) * clamp01(amount);
+}
+function interpPosition(start, end, amount) {
+  return { x: interp(start.x, end.x, amount), y: interp(start.y, end.y, amount) };
+}
+function distance(a2, b2) {
+  return Math.hypot(a2.x - b2.x, a2.y - b2.y);
+}
+function dotProduct(a2, b2) {
+  return a2.x * b2.x + a2.y * b2.y;
+}
+function normalize01(start, end, value) {
+  if (start === end) return value > start ? 1 : 0;
+  return clamp01((value - start) / (end - start));
+}
+function nearestPointOnSegment(start, end, point) {
+  if (start.x === end.x && start.y === end.y) return 0;
+  const segmentVector = { x: end.x - start.x, y: end.y - start.y };
+  const projectionVector = { x: point.x - start.x, y: point.y - start.y };
+  return clamp01(dotProduct(projectionVector, segmentVector) / dotProduct(segmentVector, segmentVector));
+}
+function springAcceleration(tip, anchor, params) {
+  return {
+    x: (anchor.x - tip.position.x) / params.springMassConstant - params.dragConstant * tip.velocity.x,
+    y: (anchor.y - tip.position.y) / params.springMassConstant - params.dragConstant * tip.velocity.y
+  };
+}
+var WobbleSmoother = class {
+  constructor() {
+    this.samples = [];
+    this.weightedPositionSum = { x: 0, y: 0 };
+    this.distanceSum = 0;
+    this.durationSum = 0;
+  }
+  reset(params, position, time) {
+    this.params = params;
+    this.samples = [{ position, weightedPosition: { x: 0, y: 0 }, distance: 0, duration: 0, time }];
+    this.weightedPositionSum = { x: 0, y: 0 };
+    this.distanceSum = 0;
+    this.durationSum = 0;
+  }
+  update(position, time) {
+    if (!this.params.enabled) return position;
+    const back = this.samples[this.samples.length - 1];
+    const deltaTime = time - back.time;
+    const segmentDistance = distance(position, back.position);
+    this.samples.push({
+      position,
+      weightedPosition: { x: position.x * deltaTime, y: position.y * deltaTime },
+      distance: segmentDistance,
+      duration: deltaTime,
+      time
+    });
+    this.weightedPositionSum.x += position.x * deltaTime;
+    this.weightedPositionSum.y += position.y * deltaTime;
+    this.distanceSum += segmentDistance;
+    this.durationSum += deltaTime;
+    while (this.samples.length > 1 && this.samples[0].time < time - this.params.timeout) {
+      const front = this.samples.shift();
+      this.weightedPositionSum.x -= front.weightedPosition.x;
+      this.weightedPositionSum.y -= front.weightedPosition.y;
+      this.distanceSum -= front.distance;
+      this.durationSum -= front.duration;
+    }
+    if (this.durationSum === 0) return position;
+    const averagePosition = {
+      x: this.weightedPositionSum.x / this.durationSum,
+      y: this.weightedPositionSum.y / this.durationSum
+    };
+    const averageSpeed = this.distanceSum / this.durationSum;
+    return interpPosition(averagePosition, position, normalize01(this.params.speedFloor, this.params.speedCeiling, averageSpeed));
+  }
+};
+var PositionModeler = class {
+  reset(state, params) {
+    this.state = state;
+    this.params = params;
+  }
+  update(anchor, time) {
+    const state = this.state;
+    const deltaTime = time - state.time;
+    const acceleration = springAcceleration(state, anchor, this.params);
+    state.acceleration = acceleration;
+    state.velocity = {
+      x: state.velocity.x + deltaTime * acceleration.x,
+      y: state.velocity.y + deltaTime * acceleration.y
+    };
+    state.position = {
+      x: state.position.x + deltaTime * state.velocity.x,
+      y: state.position.y + deltaTime * state.velocity.y
+    };
+    state.time = time;
+    return copyTip(state);
+  }
+  currentState() {
+    return this.state;
+  }
+  /** Interpolates the anchor linearly from start to end over nSamples steps. */
+  updateAlongLinearPath(startAnchor, startTime, endAnchor, endTime, nSamples, output) {
+    for (let index = 1; index <= nSamples; index++) {
+      const amount = index / nSamples;
+      output.push(this.update(interpPosition(startAnchor, endAnchor, amount), interp(startTime, endTime, amount)));
+    }
+  }
+  /** Repeatedly updates toward the final anchor, halving the step on overshoot. */
+  modelEndOfStroke(anchor, deltaTime, maxIterations, stopDistance, output) {
+    for (let index = 0; index < maxIterations; index++) {
+      const previousState = copyTip(this.state);
+      const candidate = this.update(anchor, previousState.time + deltaTime);
+      if (distance(previousState.position, candidate.position) < stopDistance) return;
+      if (nearestPointOnSegment(previousState.position, candidate.position, anchor) < 1) {
+        deltaTime *= 0.5;
+        this.state = previousState;
+        continue;
+      }
+      output.push(candidate);
+      if (distance(candidate.position, anchor) < stopDistance) return;
+    }
+  }
+};
+var StylusStateModeler = class {
+  constructor() {
+    this.samples = [];
+    this.segmentIndex = 0;
+    this.ratioAlongSegment = 0;
+    this.receivedUnknownPressure = false;
+    this.receivedUnknownTiltX = false;
+    this.receivedUnknownTiltY = false;
+  }
+  reset() {
+    this.samples = [];
+    this.segmentIndex = 0;
+    this.ratioAlongSegment = 0;
+    this.receivedUnknownPressure = false;
+    this.receivedUnknownTiltX = false;
+    this.receivedUnknownTiltY = false;
+  }
+  update(position, time, pressure, tiltX, tiltY) {
+    if (pressure === void 0 || !Number.isFinite(pressure)) this.receivedUnknownPressure = true;
+    if (tiltX === void 0 || !Number.isFinite(tiltX)) this.receivedUnknownTiltX = true;
+    if (tiltY === void 0 || !Number.isFinite(tiltY)) this.receivedUnknownTiltY = true;
+    const back = this.samples[this.samples.length - 1];
+    let velocity = { x: 0, y: 0 };
+    if (back && time !== back.time) {
+      velocity = {
+        x: (position.x - back.position.x) / (time - back.time),
+        y: (position.y - back.position.y) / (time - back.time)
+      };
+    }
+    if (this.samples.length > 4096 && back && distance(position, back.position) < 0.01) {
+      this.samples[this.samples.length - 1] = { position, velocity, time, pressure, tiltX, tiltY };
+      return;
+    }
+    this.samples.push({ position, velocity, time, pressure, tiltX, tiltY });
+  }
+  project(tip) {
+    var _a, _b, _c, _d, _e, _f, _g;
+    if (this.samples.length === 0) return {};
+    this.projectToClosestPoint(tip.position);
+    while (this.segmentIndex > 0) {
+      this.segmentIndex--;
+      this.samples.shift();
+    }
+    const start = this.samples[0];
+    const end = (_a = this.samples[1]) != null ? _a : start;
+    const amount = this.samples.length > 1 ? this.ratioAlongSegment : 0;
+    return {
+      pressure: this.receivedUnknownPressure ? void 0 : interp((_b = start.pressure) != null ? _b : 0, (_c = end.pressure) != null ? _c : 0, amount),
+      tiltX: this.receivedUnknownTiltX ? void 0 : interp((_d = start.tiltX) != null ? _d : 0, (_e = end.tiltX) != null ? _e : 0, amount),
+      tiltY: this.receivedUnknownTiltY ? void 0 : interp((_f = start.tiltY) != null ? _f : 0, (_g = end.tiltY) != null ? _g : 0, amount)
+    };
+  }
+  projectToClosestPoint(position) {
+    let bestDistance = Infinity;
+    for (let index = 0; index < this.samples.length - 1; index++) {
+      const ratio = nearestPointOnSegment(this.samples[index].position, this.samples[index + 1].position, position);
+      if (index === this.segmentIndex && ratio < this.ratioAlongSegment) continue;
+      const projected = interpPosition(this.samples[index].position, this.samples[index + 1].position, ratio);
+      const currentDistance = distance(position, projected);
+      if (currentDistance <= bestDistance) {
+        this.segmentIndex = index;
+        this.ratioAlongSegment = ratio;
+        bestDistance = currentDistance;
+      }
+    }
+  }
+};
+var StrokeModeler = class {
+  constructor(params = DEFAULT_STROKE_MODEL_PARAMS) {
+    this.wobbleSmoother = new WobbleSmoother();
+    this.positionModeler = new PositionModeler();
+    this.stylusStateModeler = new StylusStateModeler();
+    this.lastInput = null;
+    this.lastCorrectedPosition = { x: 0, y: 0 };
+    this.params = params;
+  }
+  reset(params = DEFAULT_STROKE_MODEL_PARAMS) {
+    this.params = params;
+    this.lastInput = null;
+  }
+  /** True while a stroke is in progress (after down, before up). */
+  get strokeInProgress() {
+    return this.lastInput !== null;
+  }
+  update(input) {
+    if (!Number.isFinite(input.time) || !Number.isFinite(input.position.x) || !Number.isFinite(input.position.y)) {
+      throw new Error("Stroke modeler received a non-finite position or time");
+    }
+    if (this.lastInput) {
+      if (input.time < this.lastInput.time) throw new Error("Stroke modeler inputs travel backwards in time");
+      if (sameInput(this.lastInput, input)) return [];
+    }
+    switch (input.eventType) {
+      case "down":
+        return this.processDown(input);
+      case "move":
+        return this.processMove(input);
+      case "up":
+        return this.processUp(input);
+      default:
+        throw new Error(`Stroke modeler received an invalid event type: ${String(input.eventType)}`);
+    }
+  }
+  processDown(input) {
+    if (this.lastInput) throw new Error("Stroke modeler received a down event while a stroke is in progress");
+    this.wobbleSmoother.reset(this.params.wobbleSmoother, input.position, input.time);
+    this.positionModeler.reset({
+      position: { ...input.position },
+      velocity: { x: 0, y: 0 },
+      acceleration: { x: 0, y: 0 },
+      time: input.time
+    }, this.params.positionModeler);
+    this.stylusStateModeler.reset();
+    this.stylusStateModeler.update(input.position, input.time, input.pressure, input.tiltX, input.tiltY);
+    this.lastInput = input;
+    this.lastCorrectedPosition = { ...input.position };
+    return [{ position: { ...input.position }, time: input.time, pressure: input.pressure, tiltX: input.tiltX, tiltY: input.tiltY }];
+  }
+  processMove(input) {
+    if (!this.lastInput) throw new Error("Stroke modeler received a move event while no stroke is in progress");
+    const corrected = this.wobbleSmoother.update(input.position, input.time);
+    this.stylusStateModeler.update(corrected, input.time, input.pressure, input.tiltX, input.tiltY);
+    const nSteps = this.numberOfStepsBetweenInputs(input);
+    const tipStates = [];
+    this.positionModeler.updateAlongLinearPath(
+      this.lastCorrectedPosition,
+      this.lastInput.time,
+      corrected,
+      input.time,
+      nSteps,
+      tipStates
+    );
+    this.lastInput = input;
+    this.lastCorrectedPosition = corrected;
+    return this.modelStylus(tipStates);
+  }
+  processUp(input) {
+    if (!this.lastInput) throw new Error("Stroke modeler received an up event while no stroke is in progress");
+    const nSteps = this.numberOfStepsBetweenInputs(input);
+    const tipStates = [];
+    this.positionModeler.updateAlongLinearPath(
+      this.lastCorrectedPosition,
+      this.lastInput.time,
+      input.position,
+      input.time,
+      nSteps,
+      tipStates
+    );
+    this.positionModeler.modelEndOfStroke(
+      input.position,
+      1 / this.params.sampling.minOutputRate,
+      this.params.sampling.endOfStrokeMaxIterations,
+      this.params.sampling.endOfStrokeStoppingDistance,
+      tipStates
+    );
+    if (tipStates.length === 0) tipStates.push(copyTip(this.positionModeler.currentState()));
+    this.stylusStateModeler.update(input.position, input.time, input.pressure, input.tiltX, input.tiltY);
+    const results = this.modelStylus(tipStates);
+    this.lastInput = null;
+    return results;
+  }
+  numberOfStepsBetweenInputs(input) {
+    const tip = this.positionModeler.currentState();
+    const deltaTime = input.time - this.lastInput.time;
+    let nSteps = Math.ceil(deltaTime * this.params.sampling.minOutputRate);
+    if (this.params.sampling.maxOutputsPerCall > 0 && nSteps > this.params.sampling.maxOutputsPerCall) {
+      throw new Error(`Stroke modeler input events are too far apart; requested ${nSteps} > ${this.params.sampling.maxOutputsPerCall} samples`);
+    }
+    return Math.max(0, nSteps);
+  }
+  modelStylus(tipStates) {
+    return tipStates.map((tip) => {
+      const stylus = this.stylusStateModeler.project(tip);
+      return { position: { ...tip.position }, time: tip.time, ...stylus };
+    });
+  }
+};
+function sameInput(left, right) {
+  return left.eventType === right.eventType && left.time === right.time && left.position.x === right.position.x && left.position.y === right.position.y && left.pressure === right.pressure && left.tiltX === right.tiltX && left.tiltY === right.tiltY;
+}
+
 // ink-worker:ink-worker-source
 var ink_worker_source_default = '(() => {\n  // src/model.ts\n  var DEFAULT_PAGE_WIDTH = 1600;\n  var DEFAULT_PAGE_HEIGHT = 2200;\n  function newId(prefix) {\n    const random = Math.random().toString(36).slice(2, 10);\n    return `${prefix}-${Date.now().toString(36)}-${random}`;\n  }\n  function createNotebook(title = "Ink Notebook") {\n    const now = Date.now();\n    const page = createPage("Page 1", "ruled", now);\n    return {\n      schema: 2,\n      title,\n      pageWidth: DEFAULT_PAGE_WIDTH,\n      pageHeight: DEFAULT_PAGE_HEIGHT,\n      pages: [page],\n      pageOrder: [page.id],\n      deletedPages: {},\n      pageOrderUpdatedAt: now,\n      updatedAt: now\n    };\n  }\n  function createPage(title, paper = "ruled", now = Date.now()) {\n    return { id: newId("page"), title, paper, strokes: [], deletedStrokeIds: [], createdAt: now, updatedAt: now };\n  }\n  function normalizeNotebook(value) {\n    if (!value || typeof value !== "object") return createNotebook();\n    const raw = value;\n    const pages = Array.isArray(raw.pages) ? raw.pages : [];\n    const normalizedPages = pages.map(normalizePage).filter((page) => page !== null);\n    const pageIds = new Set(normalizedPages.map((page) => page.id));\n    const legacyOrder = [...normalizedPages].sort((a2, b2) => a2.createdAt - b2.createdAt).map((page) => page.id);\n    const requestedOrder = Array.isArray(raw.pageOrder) ? raw.pageOrder.filter((id) => typeof id === "string") : legacyOrder;\n    const pageOrder = [.../* @__PURE__ */ new Set([...requestedOrder.filter((id) => pageIds.has(id)), ...legacyOrder.filter((id) => !requestedOrder.includes(id))])];\n    const deletedPages = raw.deletedPages && typeof raw.deletedPages === "object" ? Object.fromEntries(Object.entries(raw.deletedPages).filter((entry) => typeof entry[0] === "string" && typeof entry[1] === "number" && Number.isFinite(entry[1]))) : {};\n    const visiblePages = normalizedPages.filter((page) => !(page.id in deletedPages));\n    const visibleIds = new Set(visiblePages.map((page) => page.id));\n    const byId = new Map(visiblePages.map((page) => [page.id, page]));\n    const orderedPages = pageOrder.map((id) => byId.get(id)).filter((page) => page !== void 0);\n    if (orderedPages.length === 0) orderedPages.push(createPage("Page 1"));\n    return {\n      schema: 2,\n      title: typeof raw.title === "string" ? raw.title : "Ink Notebook",\n      pageWidth: finitePositive(raw.pageWidth, DEFAULT_PAGE_WIDTH),\n      pageHeight: finitePositive(raw.pageHeight, DEFAULT_PAGE_HEIGHT),\n      pages: orderedPages,\n      pageOrder: orderedPages.map((page) => page.id).filter((id) => visibleIds.has(id) || orderedPages.length === 1),\n      deletedPages,\n      pageOrderUpdatedAt: finitePositive(raw.pageOrderUpdatedAt, finitePositive(raw.updatedAt, Date.now())),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function mergeNotebooks(base, incoming) {\n    var _a, _b, _c, _d, _e, _f, _g;\n    const pages = /* @__PURE__ */ new Map();\n    for (const page of base.pages) pages.set(page.id, page);\n    for (const page of incoming.pages) {\n      const existing = pages.get(page.id);\n      pages.set(page.id, existing ? mergePages(existing, page) : page);\n    }\n    const deletedPages = { ...(_a = base.deletedPages) != null ? _a : {} };\n    for (const [id, timestamp] of Object.entries((_b = incoming.deletedPages) != null ? _b : {})) deletedPages[id] = Math.max((_c = deletedPages[id]) != null ? _c : 0, timestamp);\n    for (const id of Object.keys(deletedPages)) pages.delete(id);\n    const orderSource = incoming.pageOrderUpdatedAt > base.pageOrderUpdatedAt || incoming.pageOrderUpdatedAt === base.pageOrderUpdatedAt && compareNotebookOrder(incoming, base) >= 0 ? incoming : base;\n    const preferred = (_d = orderSource.pageOrder) != null ? _d : [];\n    const known = preferred.map((id) => pages.get(id)).filter((page) => page !== void 0);\n    const additions = [...pages.values()].filter((page) => !preferred.includes(page.id)).sort((a2, b2) => a2.createdAt - b2.createdAt);\n    const ordered = [...known];\n    for (const page of additions) {\n      const inBase = ((_e = base.pageOrder) != null ? _e : []).includes(page.id);\n      const inIncoming = ((_f = incoming.pageOrder) != null ? _f : []).includes(page.id);\n      const source = inBase && !inIncoming ? base : incoming;\n      const sourceOrder = (_g = source.pageOrder) != null ? _g : source.pages.map((candidate) => candidate.id);\n      const sourceIndex = sourceOrder.indexOf(page.id);\n      let inserted = false;\n      for (let index = sourceIndex - 1; index >= 0; index--) {\n        const anchor = ordered.findIndex((candidate) => candidate.id === sourceOrder[index]);\n        if (anchor >= 0) {\n          ordered.splice(anchor + 1, 0, page);\n          inserted = true;\n          break;\n        }\n      }\n      if (!inserted) for (let index = sourceIndex + 1; index < sourceOrder.length; index++) {\n        const anchor = ordered.findIndex((candidate) => candidate.id === sourceOrder[index]);\n        if (anchor >= 0) {\n          ordered.splice(anchor, 0, page);\n          inserted = true;\n          break;\n        }\n      }\n      if (!inserted) {\n        const at = ordered.findIndex((candidate) => page.createdAt < candidate.createdAt);\n        ordered.splice(at < 0 ? ordered.length : at, 0, page);\n      }\n    }\n    const safePages = ordered.length ? ordered : [createPage("Page 1")];\n    const pageOrder = safePages.map((page) => page.id);\n    return {\n      ...incoming,\n      schema: 2,\n      title: incoming.updatedAt >= base.updatedAt ? incoming.title : base.title,\n      pageWidth: incoming.pageWidth || base.pageWidth,\n      pageHeight: incoming.pageHeight || base.pageHeight,\n      pages: safePages,\n      pageOrder,\n      deletedPages,\n      pageOrderUpdatedAt: Math.max(base.pageOrderUpdatedAt, incoming.pageOrderUpdatedAt),\n      updatedAt: Math.max(base.updatedAt, incoming.updatedAt)\n    };\n  }\n  function compareNotebookOrder(left, right) {\n    var _a, _b;\n    const leftOrder = JSON.stringify((_a = left.pageOrder) != null ? _a : []);\n    const rightOrder = JSON.stringify((_b = right.pageOrder) != null ? _b : []);\n    return leftOrder < rightOrder ? -1 : leftOrder > rightOrder ? 1 : 0;\n  }\n  function mergePages(base, incoming) {\n    var _a, _b;\n    const strokes = /* @__PURE__ */ new Map();\n    for (const stroke of base.strokes) strokes.set(stroke.id, stroke);\n    for (const stroke of incoming.strokes) {\n      const existing = strokes.get(stroke.id);\n      if (!existing || stroke.updatedAt >= existing.updatedAt) strokes.set(stroke.id, stroke);\n    }\n    const deletedStrokeIds = [.../* @__PURE__ */ new Set([...(_a = base.deletedStrokeIds) != null ? _a : [], ...(_b = incoming.deletedStrokeIds) != null ? _b : []])];\n    for (const id of deletedStrokeIds) strokes.delete(id);\n    return {\n      ...base,\n      ...incoming,\n      title: incoming.updatedAt >= base.updatedAt ? incoming.title : base.title,\n      paper: incoming.updatedAt >= base.updatedAt ? incoming.paper : base.paper,\n      strokes: [...strokes.values()].sort((a2, b2) => a2.createdAt - b2.createdAt),\n      deletedStrokeIds,\n      updatedAt: Math.max(base.updatedAt, incoming.updatedAt)\n    };\n  }\n  function normalizePage(value) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    const strokes = Array.isArray(raw.strokes) ? raw.strokes : [];\n    const deletedStrokeIds = Array.isArray(raw.deletedStrokeIds) ? raw.deletedStrokeIds.filter((id) => typeof id === "string") : [];\n    const deleted = new Set(deletedStrokeIds);\n    return {\n      id: typeof raw.id === "string" ? raw.id : newId("page"),\n      title: typeof raw.title === "string" ? raw.title : "Untitled",\n      paper: isPaperStyle(raw.paper) ? raw.paper : "ruled",\n      strokes: strokes.map(normalizeStroke).filter((stroke) => stroke !== null && !deleted.has(stroke.id)),\n      deletedStrokeIds,\n      createdAt: finitePositive(raw.createdAt, Date.now()),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function normalizeStroke(value) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    if (typeof raw.id !== "string" || typeof raw.pageId !== "string") return null;\n    const points = Array.isArray(raw.points) ? raw.points : [];\n    return {\n      id: raw.id,\n      pageId: raw.pageId,\n      tool: raw.tool === "highlighter" ? "highlighter" : "pen",\n      color: typeof raw.color === "string" ? raw.color : "#1b1b1b",\n      width: finitePositive(raw.width, 3),\n      opacity: clamp(finitePositive(raw.opacity, 1), 0.05, 1),\n      points: points.map(normalizePoint).filter((point) => point !== null),\n      createdAt: finitePositive(raw.createdAt, Date.now()),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function normalizePoint(value) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    if (typeof raw.x !== "number" || typeof raw.y !== "number") return null;\n    return {\n      x: clamp(raw.x, 0, 1),\n      y: clamp(raw.y, 0, 1),\n      pressure: clamp(typeof raw.pressure === "number" ? raw.pressure : 0.5, 0.05, 1),\n      tiltX: typeof raw.tiltX === "number" ? raw.tiltX : void 0,\n      tiltY: typeof raw.tiltY === "number" ? raw.tiltY : void 0,\n      t: finitePositive(raw.t, Date.now())\n    };\n  }\n  function finitePositive(value, fallback) {\n    return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;\n  }\n  function clamp(value, min, max) {\n    return Math.max(min, Math.min(max, value));\n  }\n  function isPaperStyle(value) {\n    return value === "blank" || value === "ruled" || value === "grid" || value === "dot";\n  }\n\n  // node_modules/perfect-freehand/dist/esm/index.mjs\n  var { PI: e } = Math;\n  var t = e + 1e-4;\n  var n = 0.5;\n  var r = [1, 1];\n  function i(e2, t2, n2, r2 = (e3) => e3) {\n    return e2 * r2(0.5 - t2 * (0.5 - n2));\n  }\n  var { min: a } = Math;\n  function o(e2, t2, n2) {\n    let r2 = a(1, t2 / n2);\n    return a(1, e2 + (a(1, 1 - r2) - e2) * (r2 * 0.275));\n  }\n  function s(e2) {\n    return [-e2[0], -e2[1]];\n  }\n  function c(e2, t2) {\n    return [e2[0] + t2[0], e2[1] + t2[1]];\n  }\n  function l(e2, t2, n2) {\n    return e2[0] = t2[0] + n2[0], e2[1] = t2[1] + n2[1], e2;\n  }\n  function u(e2, t2) {\n    return [e2[0] - t2[0], e2[1] - t2[1]];\n  }\n  function d(e2, t2, n2) {\n    return e2[0] = t2[0] - n2[0], e2[1] = t2[1] - n2[1], e2;\n  }\n  function f(e2, t2) {\n    return [e2[0] * t2, e2[1] * t2];\n  }\n  function p(e2, t2, n2) {\n    return e2[0] = t2[0] * n2, e2[1] = t2[1] * n2, e2;\n  }\n  function m(e2, t2) {\n    return [e2[0] / t2, e2[1] / t2];\n  }\n  function h(e2) {\n    return [e2[1], -e2[0]];\n  }\n  function g(e2, t2) {\n    let n2 = t2[0];\n    return e2[0] = t2[1], e2[1] = -n2, e2;\n  }\n  function ee(e2, t2) {\n    return e2[0] * t2[0] + e2[1] * t2[1];\n  }\n  function _(e2, t2) {\n    return e2[0] === t2[0] && e2[1] === t2[1];\n  }\n  function v(e2) {\n    return Math.hypot(e2[0], e2[1]);\n  }\n  function y(e2, t2) {\n    let n2 = e2[0] - t2[0], r2 = e2[1] - t2[1];\n    return n2 * n2 + r2 * r2;\n  }\n  function b(e2) {\n    return m(e2, v(e2));\n  }\n  function x(e2, t2) {\n    return Math.hypot(e2[1] - t2[1], e2[0] - t2[0]);\n  }\n  function S(e2, t2, n2) {\n    let r2 = Math.sin(n2), i2 = Math.cos(n2), a2 = e2[0] - t2[0], o2 = e2[1] - t2[1], s2 = a2 * i2 - o2 * r2, c2 = a2 * r2 + o2 * i2;\n    return [s2 + t2[0], c2 + t2[1]];\n  }\n  function C(e2, t2, n2, r2) {\n    let i2 = Math.sin(r2), a2 = Math.cos(r2), o2 = t2[0] - n2[0], s2 = t2[1] - n2[1], c2 = o2 * a2 - s2 * i2, l2 = o2 * i2 + s2 * a2;\n    return e2[0] = c2 + n2[0], e2[1] = l2 + n2[1], e2;\n  }\n  function w(e2, t2, n2) {\n    return c(e2, f(u(t2, e2), n2));\n  }\n  function te(e2, t2, n2, r2) {\n    let i2 = n2[0] - t2[0], a2 = n2[1] - t2[1];\n    return e2[0] = t2[0] + i2 * r2, e2[1] = t2[1] + a2 * r2, e2;\n  }\n  function T(e2, t2, n2) {\n    return c(e2, f(t2, n2));\n  }\n  var E = [0, 0];\n  var D = [0, 0];\n  var O = [0, 0];\n  function k(e2, n2) {\n    let r2 = T(e2, b(h(u(e2, c(e2, [1, 1])))), -n2), i2 = [], a2 = 1 / 13;\n    for (let n3 = a2; n3 <= 1; n3 += a2) i2.push(S(r2, e2, t * 2 * n3));\n    return i2;\n  }\n  function A(e2, n2, r2) {\n    let i2 = [], a2 = 1 / r2;\n    for (let r3 = a2; r3 <= 1; r3 += a2) i2.push(S(n2, e2, t * r3));\n    return i2;\n  }\n  function j(e2, t2, n2) {\n    let r2 = u(t2, n2), i2 = f(r2, 0.5), a2 = f(r2, 0.51);\n    return [u(e2, i2), u(e2, a2), c(e2, a2), c(e2, i2)];\n  }\n  function M(e2, n2, r2, i2) {\n    let a2 = [], o2 = T(e2, n2, r2), s2 = 1 / i2;\n    for (let n3 = s2; n3 < 1; n3 += s2) a2.push(S(o2, e2, t * 3 * n3));\n    return a2;\n  }\n  function ne(e2, t2, n2) {\n    return [c(e2, f(t2, n2)), c(e2, f(t2, n2 * 0.99)), u(e2, f(t2, n2 * 0.99)), u(e2, f(t2, n2))];\n  }\n  function N(e2, t2, n2) {\n    return e2 === false || e2 === void 0 ? 0 : e2 === true ? Math.max(t2, n2) : e2;\n  }\n  function re(e2, t2, n2) {\n    return e2.slice(0, 10).reduce((e3, r2) => {\n      let i2 = r2.pressure;\n      return t2 && (i2 = o(e3, r2.distance, n2)), (e3 + i2) / 2;\n    }, e2[0].pressure);\n  }\n  function P(e2, n2 = {}) {\n    let { size: r2 = 16, smoothing: a2 = 0.5, thinning: f2 = 0.5, simulatePressure: m2 = true, easing: _2 = (e3) => e3, start: v2 = {}, end: b2 = {}, last: x2 = false } = n2, { cap: S2 = true, easing: w2 = (e3) => e3 * (2 - e3) } = v2, { cap: T2 = true, easing: P2 = (e3) => --e3 * e3 * e3 + 1 } = b2;\n    if (e2.length === 0 || r2 <= 0) return [];\n    let F2 = e2[e2.length - 1].runningLength, I2 = N(v2.taper, r2, F2), L2 = N(b2.taper, r2, F2), R2 = (r2 * a2) ** 2, z = [], B = [], V = re(e2, m2, r2), H = i(r2, f2, e2[e2.length - 1].pressure, _2), U, W = e2[0].vector, G = e2[0].point, K = G, q = G, J = K, Y = false;\n    for (let n3 = 0; n3 < e2.length; n3++) {\n      let { pressure: a3 } = e2[n3], { point: s2, vector: h2, distance: v3, runningLength: b3 } = e2[n3], x3 = n3 === e2.length - 1;\n      if (!x3 && F2 - b3 < 3) continue;\n      f2 ? (m2 && (a3 = o(V, v3, r2)), H = i(r2, f2, a3, _2)) : H = r2 / 2, U === void 0 && (U = H);\n      let S3 = b3 < I2 ? w2(b3 / I2) : 1, T3 = F2 - b3 < L2 ? P2((F2 - b3) / L2) : 1;\n      H = Math.max(0.01, H * Math.min(S3, T3));\n      let k2 = (x3 ? e2[n3] : e2[n3 + 1]).vector, A2 = x3 ? 1 : ee(h2, k2), j2 = ee(h2, W) < 0 && !Y, M2 = A2 !== null && A2 < 0;\n      if (j2 || M2) {\n        g(E, W), p(E, E, H);\n        for (let e3 = 0; e3 <= 1; e3 += 0.07692307692307693) d(D, s2, E), C(D, D, s2, t * e3), q = [D[0], D[1]], z.push(q), l(O, s2, E), C(O, O, s2, t * -e3), J = [O[0], O[1]], B.push(J);\n        G = q, K = J, M2 && (Y = true);\n        continue;\n      }\n      if (Y = false, x3) {\n        g(E, h2), p(E, E, H), z.push(u(s2, E)), B.push(c(s2, E));\n        continue;\n      }\n      te(E, k2, h2, A2), g(E, E), p(E, E, H), d(D, s2, E), q = [D[0], D[1]], (n3 <= 1 || y(G, q) > R2) && (z.push(q), G = q), l(O, s2, E), J = [O[0], O[1]], (n3 <= 1 || y(K, J) > R2) && (B.push(J), K = J), V = a3, W = h2;\n    }\n    let X = [e2[0].point[0], e2[0].point[1]], Z = e2.length > 1 ? [e2[e2.length - 1].point[0], e2[e2.length - 1].point[1]] : c(e2[0].point, [1, 1]), Q = [], $ = [];\n    if (e2.length === 1) {\n      if (!(I2 || L2) || x2) return k(X, U || H);\n    } else {\n      I2 || L2 && e2.length === 1 || (S2 ? Q.push(...A(X, B[0], 13)) : Q.push(...j(X, z[0], B[0])));\n      let t2 = h(s(e2[e2.length - 1].vector));\n      L2 || I2 && e2.length === 1 ? $.push(Z) : T2 ? $.push(...M(Z, t2, H, 29)) : $.push(...ne(Z, t2, H));\n    }\n    return z.concat($, B.reverse(), Q);\n  }\n  var F = [0, 0];\n  function I(e2) {\n    return e2 != null && e2 >= 0;\n  }\n  function L(e2, t2 = {}) {\n    var _a;\n    let { streamline: i2 = 0.5, size: a2 = 16, last: o2 = false } = t2;\n    if (e2.length === 0) return [];\n    let s2 = 0.15 + (1 - i2) * 0.85, l2 = Array.isArray(e2[0]) ? e2 : e2.map(({ x: e3, y: t3, pressure: r2 = n }) => [e3, t3, r2]);\n    if (l2.length === 2) {\n      let e3 = l2[1];\n      l2 = l2.slice(0, -1);\n      for (let t3 = 1; t3 < 5; t3++) l2.push(w(l2[0], e3, t3 / 4));\n    }\n    l2.length === 1 && (l2 = [...l2, [...c(l2[0], r), ...l2[0].slice(2)]]);\n    let u2 = [{ point: [l2[0][0], l2[0][1]], pressure: I(l2[0][2]) ? l2[0][2] : 0.25, vector: [...r], distance: 0, runningLength: 0 }], f2 = false, p2 = 0, m2 = u2[0], h2 = l2.length - 1;\n    for (let e3 = 1; e3 < l2.length; e3++) {\n      let t3 = o2 && e3 === h2 ? [l2[e3][0], l2[e3][1]] : w(m2.point, l2[e3], s2);\n      if (_(m2.point, t3)) continue;\n      let r2 = x(t3, m2.point);\n      if (p2 += r2, e3 < h2 && !f2) {\n        if (p2 < a2) continue;\n        f2 = true;\n      }\n      d(F, m2.point, t3), m2 = { point: t3, pressure: I(l2[e3][2]) ? l2[e3][2] : n, vector: b(F), distance: r2, runningLength: p2 }, u2.push(m2);\n    }\n    return u2[0].vector = ((_a = u2[1]) == null ? void 0 : _a.vector) || [0, 0], u2;\n  }\n  function R(e2, t2 = {}) {\n    return P(L(e2, t2), t2);\n  }\n\n  // src/rendering.ts\n  var paths = /* @__PURE__ */ new WeakMap();\n  function penOutline(stroke, width, height) {\n    const pressures = smoothPenPressures(stroke.points);\n    return R(stroke.points.map((point, index) => [point.x * width, point.y * height, pressures[index]]), {\n      // Preserve the existing diameter: width * (0.55 + pressure * 0.75).\n      size: stroke.width * 0.925,\n      thinning: 0.75 / 1.85,\n      simulatePressure: false,\n      // Input is the raw captured trajectory; a position filter here would pull\n      // sparse fast corners away from the saved trajectory.\n      streamline: 0,\n      smoothing: 0.65,\n      last: true,\n      start: { cap: true, taper: 0 },\n      end: { cap: true, taper: 0 }\n    });\n  }\n  function smoothPenPressures(points) {\n    if (points.length < 3) return points.map((point) => point.pressure);\n    return points.map((point, index) => {\n      if (index === 0 || index === points.length - 1) return point.pressure;\n      return median3(points[index - 1].pressure, point.pressure, points[index + 1].pressure);\n    });\n  }\n  function median3(a2, b2, c2) {\n    return Math.max(Math.min(a2, b2), Math.min(Math.max(a2, b2), c2));\n  }\n  function drawInkStroke(ctx, stroke, width, height) {\n    if (stroke.points.length === 0) return;\n    ctx.save();\n    ctx.globalAlpha = stroke.opacity;\n    ctx.fillStyle = stroke.color;\n    ctx.strokeStyle = stroke.color;\n    ctx.lineCap = "round";\n    ctx.lineJoin = "round";\n    ctx.globalCompositeOperation = stroke.tool === "highlighter" ? "multiply" : "source-over";\n    if (stroke.points.length === 1) {\n      const point = stroke.points[0];\n      const diameter = stroke.tool === "highlighter" ? stroke.width : stroke.width * (0.55 + point.pressure * 0.75);\n      ctx.beginPath();\n      ctx.arc(point.x * width, point.y * height, diameter / 2, 0, Math.PI * 2);\n      ctx.fill();\n    } else if (stroke.tool === "highlighter") {\n      ctx.lineWidth = stroke.width;\n      drawSmoothPath(ctx, stroke.points, width, height);\n      ctx.stroke();\n    } else {\n      let cached = paths.get(stroke);\n      if (!cached || cached.points !== stroke.points || cached.count !== stroke.points.length || cached.updatedAt !== stroke.updatedAt || cached.size !== stroke.width || cached.width !== width || cached.height !== height) {\n        cached = {\n          points: stroke.points,\n          count: stroke.points.length,\n          updatedAt: stroke.updatedAt,\n          size: stroke.width,\n          width,\n          height,\n          path: createPenPath(stroke, width, height)\n        };\n        paths.set(stroke, cached);\n      }\n      ctx.fill(cached.path);\n    }\n    ctx.restore();\n  }\n  function createPenPath(stroke, width, height) {\n    const path = new Path2D();\n    const outline = penOutline(stroke, width, height);\n    if (outline.length > 0) {\n      const first = outline[0];\n      path.moveTo(first[0], first[1]);\n      for (let index = 1; index < outline.length; index++) {\n        const point = outline[index];\n        path.lineTo(point[0], point[1]);\n      }\n      path.closePath();\n    }\n    return path;\n  }\n  function drawSmoothPath(ctx, points, width, height) {\n    ctx.beginPath();\n    ctx.moveTo(points[0].x * width, points[0].y * height);\n    for (let index = 1; index < points.length; index++) {\n      const previous = points[index - 1];\n      const point = points[index];\n      const end = index === points.length - 1 ? point : { x: (previous.x + point.x) / 2, y: (previous.y + point.y) / 2 };\n      ctx.quadraticCurveTo(previous.x * width, previous.y * height, end.x * width, end.y * height);\n    }\n    const last = points[points.length - 1];\n    ctx.lineTo(last.x * width, last.y * height);\n  }\n\n  // src/worker-protocol.ts\n  function serializeNotebook(notebook) {\n    return `${JSON.stringify(notebook, null, 2)}\n`;\n  }\n  function cloneStrokeValue(stroke) {\n    return { ...stroke, points: stroke.points.map((point) => ({ ...point })) };\n  }\n  function clonePageValue(page) {\n    return { ...page, strokes: page.strokes.map(cloneStrokeValue), deletedStrokeIds: [...page.deletedStrokeIds] };\n  }\n\n  // src/worker-core.ts\n  var WorkerPageIndex = class {\n    constructor(width, height) {\n      this.width = width;\n      this.height = height;\n      this.entries = /* @__PURE__ */ new Map();\n      this.cells = /* @__PURE__ */ new Map();\n      this.strokeWidths = /* @__PURE__ */ new Map();\n      this.maximumStrokeWidth = 0;\n    }\n    sync(page) {\n      this.entries.clear();\n      this.cells.clear();\n      this.strokeWidths.clear();\n      this.maximumStrokeWidth = 0;\n      page.strokes.forEach((stroke, order) => this.upsert(stroke, order));\n    }\n    upsert(stroke, order) {\n      var _a;\n      this.remove(stroke.id);\n      const entry = { stroke, order, cells: workerStrokeCells(stroke, this.width, this.height) };\n      this.entries.set(stroke.id, entry);\n      this.strokeWidths.set(stroke.width, ((_a = this.strokeWidths.get(stroke.width)) != null ? _a : 0) + 1);\n      this.maximumStrokeWidth = Math.max(this.maximumStrokeWidth, stroke.width);\n      for (const cell of entry.cells) {\n        let bucket = this.cells.get(cell);\n        if (!bucket) this.cells.set(cell, bucket = /* @__PURE__ */ new Set());\n        bucket.add(entry);\n      }\n    }\n    remove(strokeId) {\n      var _a;\n      const entry = this.entries.get(strokeId);\n      if (!entry) return;\n      this.entries.delete(strokeId);\n      const widthCount = ((_a = this.strokeWidths.get(entry.stroke.width)) != null ? _a : 1) - 1;\n      if (widthCount > 0) this.strokeWidths.set(entry.stroke.width, widthCount);\n      else this.strokeWidths.delete(entry.stroke.width);\n      if (entry.stroke.width === this.maximumStrokeWidth && widthCount <= 0) {\n        this.maximumStrokeWidth = 0;\n        for (const width of this.strokeWidths.keys()) this.maximumStrokeWidth = Math.max(this.maximumStrokeWidth, width);\n      }\n      for (const cell of entry.cells) {\n        const bucket = this.cells.get(cell);\n        bucket == null ? void 0 : bucket.delete(entry);\n        if ((bucket == null ? void 0 : bucket.size) === 0) this.cells.delete(cell);\n      }\n    }\n    updateOrder(page) {\n      page.strokes.forEach((stroke, order) => {\n        const entry = this.entries.get(stroke.id);\n        if (entry) entry.order = order;\n      });\n    }\n    getStroke(strokeId) {\n      var _a;\n      return (_a = this.entries.get(strokeId)) == null ? void 0 : _a.stroke;\n    }\n    getOrder(strokeId) {\n      var _a;\n      return (_a = this.entries.get(strokeId)) == null ? void 0 : _a.order;\n    }\n    query(cell, queryWidth = this.width, queryHeight = this.height) {\n      var _a;\n      const [column, row] = cell.split(":").map(Number);\n      const x2 = column * 128;\n      const y2 = row * 128;\n      const padding = this.maximumStrokeWidth * 0.7 + 4;\n      const paddingX = padding * this.width / queryWidth;\n      const paddingY = padding * this.height / queryHeight;\n      const keys = workerCellKeys({\n        x: x2 * this.width / queryWidth - paddingX,\n        y: y2 * this.height / queryHeight - paddingY,\n        width: Math.min(128, queryWidth - x2) * this.width / queryWidth + paddingX * 2,\n        height: Math.min(128, queryHeight - y2) * this.height / queryHeight + paddingY * 2\n      }, this.width, this.height);\n      const found = /* @__PURE__ */ new Set();\n      for (const key of keys) for (const entry of (_a = this.cells.get(key)) != null ? _a : []) found.add(entry);\n      return [...found].sort((left, right) => left.order - right.order).map((entry) => entry.stroke);\n    }\n  };\n  var OUTLINE_CACHE_LIMIT = 512;\n  var ProtocolError = class extends Error {\n    constructor(code, message) {\n      super(message);\n      this.code = code;\n    }\n  };\n  var InkWorkerCore = class {\n    constructor(capabilities) {\n      this.capabilities = capabilities;\n      this.sessions = /* @__PURE__ */ new Map();\n    }\n    ready() {\n      return { type: "ready", requestId: 0, sessionId: "", generation: 0, notebookRevision: 0, capabilities: this.capabilities };\n    }\n    async handle(request) {\n      var _a, _b;\n      try {\n        const response = await this.dispatch(request);\n        return response.type === "tile-rendered" ? { response, transfer: [response.bitmap] } : response.type === "operation-applied" && response.outline ? { response, transfer: [response.outline.buffer] } : { response };\n      } catch (error) {\n        return { response: {\n          type: "error",\n          requestId: request.requestId,\n          sessionId: request.sessionId,\n          generation: request.generation,\n          notebookRevision: (_b = (_a = this.sessions.get(request.sessionId)) == null ? void 0 : _a.revision) != null ? _b : request.notebookRevision,\n          code: error instanceof ProtocolError ? error.code : "internal",\n          message: error instanceof Error ? error.message : String(error)\n        } };\n      }\n    }\n    async dispatch(request) {\n      if (request.type === "initialize-raw") {\n        if (request.notebookRevision !== request.revision) {\n          throw new ProtocolError("revision-gap", "Initialize request revision metadata does not match its notebook revision");\n        }\n        const notebook = parseNotebook(request.raw);\n        this.sessions.set(request.sessionId, {\n          generation: request.generation,\n          notebook,\n          revision: request.revision,\n          pendingSave: /* @__PURE__ */ new Map(),\n          indexes: workerIndexes(notebook),\n          outlineCache: /* @__PURE__ */ new Map()\n        });\n        return this.response(request, { type: "initialized", notebook, revision: request.revision });\n      }\n      if (request.type === "initialize-notebook") {\n        if (request.notebookRevision !== request.revision) {\n          throw new ProtocolError("revision-gap", "Initialize request revision metadata does not match its notebook revision");\n        }\n        const notebook = normalizeNotebook(request.notebook);\n        this.sessions.set(request.sessionId, {\n          generation: request.generation,\n          notebook,\n          revision: request.revision,\n          pendingSave: /* @__PURE__ */ new Map(),\n          indexes: workerIndexes(notebook),\n          outlineCache: /* @__PURE__ */ new Map()\n        });\n        return this.response(request, { type: "initialized", notebook, revision: request.revision });\n      }\n      const session = this.sessions.get(request.sessionId);\n      if (!session) throw new ProtocolError("missing-session", "Ink worker session is not initialized");\n      if (session.generation !== request.generation) throw new ProtocolError("stale-generation", "Ink worker request belongs to a stale file generation");\n      if (request.type !== "apply-operation" && request.notebookRevision > session.revision) {\n        throw new ProtocolError("revision-gap", `Worker revision ${session.revision} is behind request revision ${request.notebookRevision}`);\n      }\n      if (request.type === "apply-operation") {\n        if (request.notebookRevision !== request.revision) {\n          throw new ProtocolError("revision-gap", "Operation revision metadata does not match its notebook revision");\n        }\n        if (request.revision !== session.revision + 1) {\n          throw new ProtocolError("revision-gap", `Expected revision ${session.revision + 1}, received ${request.revision}`);\n        }\n        const operation = request.operation;\n        invalidateOperationOutlines(session.outlineCache, operation);\n        const operationIndex = "pageId" in operation && typeof operation.pageId === "string" ? session.indexes.get(operation.pageId) : void 0;\n        const outline = applyNotebookOperation(session.notebook, operation, session.outlineCache, operationIndex);\n        if (operation.type === "replace-notebook" || operation.type === "history-restore" || operation.type === "page-operation") {\n          session.indexes = workerIndexes(session.notebook);\n          session.outlineCache.clear();\n        } else {\n          const pageId = operation.pageId;\n          const page = session.notebook.pages.find((candidate) => candidate.id === pageId);\n          if (page) {\n            let index = session.indexes.get(pageId);\n            if (!index) session.indexes.set(pageId, index = new WorkerPageIndex(session.notebook.pageWidth, session.notebook.pageHeight));\n            updateWorkerIndex(index, page, operation, outline == null ? void 0 : outline.stroke);\n          }\n        }\n        session.revision = request.revision;\n        return this.response(request, {\n          type: "operation-applied",\n          revision: session.revision,\n          ...outline ? { strokeId: outline.strokeId, sampleCount: outline.sampleCount, outline: outline.points, outlineMode: outline.mode } : {}\n        });\n      }\n      if (request.type === "barrier") {\n        if (session.revision < request.minimumRevision) {\n          throw new ProtocolError("revision-gap", `Worker revision ${session.revision} is behind ${request.minimumRevision}`);\n        }\n        return this.response(request, { type: "barrier-complete", revision: session.revision });\n      }\n      if (request.type === "prepare-save") {\n        if (session.revision < request.minimumRevision) {\n          throw new ProtocolError("revision-gap", `Worker revision ${session.revision} is behind ${request.minimumRevision}`);\n        }\n        const disk = parseNotebook(request.raw);\n        const local = normalizeNotebook(session.notebook);\n        const merged = mergeNotebooks(disk, local);\n        const token = `${request.sessionId}:${request.generation}:${request.requestId}`;\n        session.pendingSave.clear();\n        session.pendingSave.set(token, {\n          notebook: normalizeNotebook(merged),\n          revision: session.revision,\n          reconcile: serializeNotebook(merged) !== serializeNotebook(local)\n        });\n        return this.response(request, { type: "save-prepared", token, content: serializeNotebook(merged), revision: session.revision });\n      }\n      if (request.type === "render-tile") {\n        const rendered = renderTile(\n          session.notebook,\n          session.indexes.get(request.pageId),\n          session.outlineCache,\n          request.pageId,\n          request.cell,\n          request.density,\n          request.revision,\n          request.renderGeneration,\n          request.width,\n          request.height\n        );\n        return this.response(request, { type: "tile-rendered", ...rendered });\n      }\n      if (request.type === "cancel-render-generation") {\n        return this.response(request, { type: "renders-cancelled", renderGeneration: request.renderGeneration });\n      }\n      if (request.type === "commit-save") {\n        const candidate = session.pendingSave.get(request.token);\n        if (!candidate) throw new ProtocolError("missing-session", "Prepared save is no longer available");\n        session.pendingSave.delete(request.token);\n        session.notebook = mergeNotebooks(candidate.notebook, session.notebook);\n        session.indexes = workerIndexes(session.notebook);\n        session.outlineCache.clear();\n        return this.response(request, {\n          type: "save-committed",\n          revision: candidate.revision,\n          merged: candidate.reconcile ? candidate.notebook : void 0\n        });\n      }\n      if (request.type === "abort-save") {\n        session.pendingSave.delete(request.token);\n        return this.response(request, { type: "save-aborted" });\n      }\n      if (request.type === "merge-external") {\n        const merged = mergeNotebooks(parseNotebook(request.raw), session.notebook);\n        const changed = serializeNotebook(merged) !== serializeNotebook(session.notebook);\n        session.notebook = normalizeNotebook(merged);\n        if (changed) {\n          session.indexes = workerIndexes(session.notebook);\n          session.outlineCache.clear();\n        }\n        return this.response(request, { type: "external-merged", notebook: changed ? session.notebook : void 0, revision: session.revision });\n      }\n      this.sessions.delete(request.sessionId);\n      return this.response(request, { type: "session-disposed" });\n    }\n    response(request, response) {\n      var _a, _b;\n      return {\n        ...response,\n        requestId: request.requestId,\n        sessionId: request.sessionId,\n        generation: request.generation,\n        notebookRevision: (_b = (_a = this.sessions.get(request.sessionId)) == null ? void 0 : _a.revision) != null ? _b : request.notebookRevision\n      };\n    }\n  };\n  function renderTile(notebook, index, outlineCache, pageId, cell, density, revision, renderGeneration, pageWidth, pageHeight) {\n    var _a;\n    const page = notebook.pages.find((candidate) => candidate.id === pageId);\n    if (!page) throw new Error(`Ink worker page is unavailable: ${pageId}`);\n    const Canvas = globalThis.OffscreenCanvas;\n    if (!Canvas) throw new Error("OffscreenCanvas is not supported by this device");\n    const [column, row] = cell.split(":").map(Number);\n    const x2 = column * 128;\n    const y2 = row * 128;\n    const width = Math.min(128, pageWidth - x2);\n    const height = Math.min(128, pageHeight - y2);\n    if (width <= 0 || height <= 0) throw new Error(`Ink worker tile is outside page bounds: ${cell}`);\n    const safeDensity = Math.max(0.5, Math.min(9, density));\n    const bleedPixels = Math.ceil(4 * safeDensity);\n    const canvasWidth = Math.ceil(width * safeDensity) + bleedPixels * 2;\n    const canvasHeight = Math.ceil(height * safeDensity) + bleedPixels * 2;\n    const canvas = new Canvas(canvasWidth, canvasHeight);\n    const ctx = canvas.getContext("2d");\n    if (!ctx) throw new Error("Ink worker could not create a 2D tile context");\n    ctx.setTransform(safeDensity, 0, 0, safeDensity, bleedPixels - x2 * safeDensity, bleedPixels - y2 * safeDensity);\n    const candidates = (_a = index == null ? void 0 : index.query(cell, pageWidth, pageHeight)) != null ? _a : [];\n    for (const stroke of candidates) drawWorkerStroke(ctx, stroke, pageWidth, pageHeight, outlineCache);\n    return {\n      pageId,\n      cell,\n      density: safeDensity,\n      revision,\n      renderGeneration,\n      x: x2,\n      y: y2,\n      width,\n      height,\n      canvasWidth,\n      canvasHeight,\n      bitmap: canvas.transferToImageBitmap()\n    };\n  }\n  function workerIndexes(notebook) {\n    const indexes = /* @__PURE__ */ new Map();\n    for (const page of notebook.pages) {\n      const index = new WorkerPageIndex(notebook.pageWidth, notebook.pageHeight);\n      index.sync(page);\n      indexes.set(page.id, index);\n    }\n    return indexes;\n  }\n  function workerStrokeCells(stroke, pageWidth, pageHeight) {\n    if (stroke.points.length === 0) return [];\n    const padding = stroke.width * 0.7 + 4;\n    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;\n    for (const point of stroke.points) {\n      minX = Math.min(minX, point.x * pageWidth);\n      minY = Math.min(minY, point.y * pageHeight);\n      maxX = Math.max(maxX, point.x * pageWidth);\n      maxY = Math.max(maxY, point.y * pageHeight);\n    }\n    return workerCellKeys({ x: minX - padding, y: minY - padding, width: maxX - minX + padding * 2, height: maxY - minY + padding * 2 }, pageWidth, pageHeight);\n  }\n  function workerCellKeys(rect, pageWidth, pageHeight) {\n    if (!Number.isFinite(rect.x + rect.y + rect.width + rect.height) || rect.width <= 0 || rect.height <= 0 || rect.x >= pageWidth || rect.y >= pageHeight || rect.x + rect.width <= 0 || rect.y + rect.height <= 0) return [];\n    const cells = [];\n    for (let row = Math.floor(Math.max(0, rect.y) / 128); row < Math.ceil(Math.min(pageHeight, rect.y + rect.height) / 128); row++) {\n      for (let column = Math.floor(Math.max(0, rect.x) / 128); column < Math.ceil(Math.min(pageWidth, rect.x + rect.width) / 128); column++) {\n        cells.push(`${column}:${row}`);\n      }\n    }\n    return cells;\n  }\n  function drawWorkerStroke(ctx, stroke, width, height, cache) {\n    if (stroke.tool !== "pen") {\n      drawInkStroke(ctx, stroke, width, height);\n      return;\n    }\n    const signature = `${stroke.updatedAt}:${stroke.points.length}:${stroke.width}:${width}:${height}`;\n    let cached = cache.get(stroke.id);\n    let outline = (cached == null ? void 0 : cached.signature) === signature ? cached.points : void 0;\n    if (!outline) {\n      const points = penOutline(stroke, width, height);\n      outline = new Float32Array(points.length * 2);\n      for (let index = 0; index < points.length; index++) {\n        outline[index * 2] = points[index][0];\n        outline[index * 2 + 1] = points[index][1];\n      }\n      cache.delete(stroke.id);\n      cache.set(stroke.id, { signature, points: outline });\n      while (cache.size > OUTLINE_CACHE_LIMIT) cache.delete(cache.keys().next().value);\n    } else {\n      cache.delete(stroke.id);\n      cache.set(stroke.id, cached);\n    }\n    ctx.save();\n    ctx.globalAlpha = stroke.opacity;\n    ctx.fillStyle = stroke.color;\n    ctx.globalCompositeOperation = "source-over";\n    ctx.beginPath();\n    if (outline.length >= 2) {\n      ctx.moveTo(outline[0], outline[1]);\n      for (let index = 2; index < outline.length; index += 2) {\n        ctx.lineTo(outline[index], outline[index + 1]);\n      }\n      ctx.closePath();\n      ctx.fill();\n    }\n    ctx.restore();\n  }\n  function parseNotebook(raw) {\n    try {\n      return normalizeNotebook(JSON.parse(raw));\n    } catch (e2) {\n      throw new ProtocolError("invalid-format", "Existing ink notebook is not valid JSON");\n    }\n  }\n  function applyNotebookOperation(notebook, operation, cache, index) {\n    var _a, _b, _c, _d, _e, _f, _g, _h, _i;\n    if (operation.type === "replace-notebook" || operation.type === "history-restore") {\n      Object.assign(notebook, normalizeNotebook(operation.notebook));\n      return void 0;\n    }\n    if (operation.type === "page-operation") {\n      const page2 = operation.page;\n      if ((operation.action === "add" || operation.action === "duplicate" || operation.action === "restore") && page2) {\n        if (!(page2.id in notebook.deletedPages)) {\n          notebook.pages = notebook.pages.filter((candidate) => candidate.id !== page2.id);\n          notebook.pages.push(clonePageValue(page2));\n        }\n      } else if (operation.action === "delete" && operation.pageId) {\n        if (notebook.pages.length > 1) {\n          notebook.pages = notebook.pages.filter((candidate) => candidate.id !== operation.pageId);\n          notebook.deletedPages[operation.pageId] = Math.max((_a = notebook.deletedPages[operation.pageId]) != null ? _a : 0, (_b = operation.deletedAt) != null ? _b : Date.now());\n        }\n      }\n      const order = new Map(operation.pageOrder.map((id, index2) => [id, index2]));\n      notebook.pages.sort((left, right) => {\n        var _a2, _b2;\n        return ((_a2 = order.get(left.id)) != null ? _a2 : Number.MAX_SAFE_INTEGER) - ((_b2 = order.get(right.id)) != null ? _b2 : Number.MAX_SAFE_INTEGER);\n      });\n      notebook.pageOrder = notebook.pages.map((candidate) => candidate.id);\n      notebook.pageOrderUpdatedAt = operation.pageOrderUpdatedAt;\n      notebook.updatedAt = operation.notebookUpdatedAt;\n      return void 0;\n    }\n    const page = notebook.pages.find((candidate) => candidate.id === operation.pageId);\n    if (!page) return void 0;\n    let outlinedStroke;\n    if (operation.type === "start-stroke") {\n      const position = (_c = index == null ? void 0 : index.getOrder(operation.stroke.id)) != null ? _c : -1;\n      const stroke = cloneStrokeValue(operation.stroke);\n      if (position >= 0) page.strokes[position] = stroke;\n      else page.strokes.push(stroke);\n      outlinedStroke = stroke;\n    } else if (operation.type === "append-stroke-points") {\n      const stroke = (_d = index == null ? void 0 : index.getStroke(operation.strokeId)) != null ? _d : page.strokes.find((candidate) => candidate.id === operation.strokeId);\n      if (stroke) {\n        for (let index2 = 0; index2 + 5 < operation.points.length; index2 += 6) {\n          stroke.points.push({\n            x: operation.points[index2],\n            y: operation.points[index2 + 1],\n            pressure: operation.points[index2 + 2],\n            tiltX: Number.isNaN(operation.points[index2 + 3]) ? void 0 : operation.points[index2 + 3],\n            tiltY: Number.isNaN(operation.points[index2 + 4]) ? void 0 : operation.points[index2 + 4],\n            t: operation.points[index2 + 5]\n          });\n        }\n        outlinedStroke = stroke;\n      }\n    } else if (operation.type === "complete-stroke") {\n      const stroke = (_e = index == null ? void 0 : index.getStroke(operation.strokeId)) != null ? _e : page.strokes.find((candidate) => candidate.id === operation.strokeId);\n      if (stroke) stroke.updatedAt = operation.pageUpdatedAt;\n    } else if (operation.type === "finalize-stroke") {\n      const position = (_f = index == null ? void 0 : index.getOrder(operation.stroke.id)) != null ? _f : -1;\n      const stroke = cloneStrokeValue(operation.stroke);\n      if (position >= 0) page.strokes[position] = stroke;\n      else page.strokes.push(stroke);\n      page.strokes.sort((left, right) => left.createdAt - right.createdAt);\n      outlinedStroke = stroke;\n    } else if (operation.type === "patch-strokes") {\n      const removed = new Set(operation.remove);\n      const upsert = new Map(operation.upsert.map((stroke) => [stroke.id, cloneStrokeValue(stroke)]));\n      page.strokes = page.strokes.filter((stroke) => !removed.has(stroke.id) && !upsert.has(stroke.id));\n      page.strokes.push(...upsert.values());\n      page.strokes.sort((left, right) => left.createdAt - right.createdAt);\n      page.deletedStrokeIds = [.../* @__PURE__ */ new Set([...page.deletedStrokeIds, ...operation.deletedStrokeIds])];\n    } else if (operation.type === "translate-strokes") {\n      for (const strokeId of operation.strokeIds) {\n        const stroke = (_g = index == null ? void 0 : index.getStroke(strokeId)) != null ? _g : page.strokes.find((candidate) => candidate.id === strokeId);\n        if (!stroke) continue;\n        stroke.points = stroke.points.map((point) => ({ ...point, x: point.x + operation.dx, y: point.y + operation.dy }));\n        stroke.updatedAt = operation.pageUpdatedAt;\n      }\n    } else {\n      if (operation.title !== void 0) page.title = operation.title;\n      if (operation.paper !== void 0) page.paper = operation.paper;\n    }\n    page.updatedAt = operation.pageUpdatedAt;\n    notebook.updatedAt = operation.notebookUpdatedAt;\n    if (!outlinedStroke || outlinedStroke.tool !== "pen" && outlinedStroke.tool !== "highlighter") return void 0;\n    const previewWidth = operation.type === "start-stroke" || operation.type === "append-stroke-points" ? Math.max(1, (_h = operation.previewWidth) != null ? _h : notebook.pageWidth) : notebook.pageWidth;\n    const previewHeight = operation.type === "start-stroke" || operation.type === "append-stroke-points" ? Math.max(1, (_i = operation.previewHeight) != null ? _i : notebook.pageHeight) : notebook.pageHeight;\n    const signature = `${outlinedStroke.updatedAt}:${outlinedStroke.points.length}:${outlinedStroke.width}:${previewWidth}:${previewHeight}`;\n    if (outlinedStroke.tool === "highlighter") {\n      const line = new Float32Array(outlinedStroke.points.length * 2);\n      for (let index2 = 0; index2 < outlinedStroke.points.length; index2++) {\n        line[index2 * 2] = outlinedStroke.points[index2].x;\n        line[index2 * 2 + 1] = outlinedStroke.points[index2].y;\n      }\n      return { strokeId: outlinedStroke.id, sampleCount: outlinedStroke.points.length, points: line, mode: "highlighter", stroke: outlinedStroke };\n    }\n    const cached = cache == null ? void 0 : cache.get(outlinedStroke.id);\n    let outline = (cached == null ? void 0 : cached.signature) === signature ? cached.points : void 0;\n    if (!outline) {\n      const generated = penOutline(outlinedStroke, previewWidth, previewHeight);\n      outline = new Float32Array(generated.length * 2);\n      for (let index2 = 0; index2 < generated.length; index2++) {\n        outline[index2 * 2] = generated[index2][0];\n        outline[index2 * 2 + 1] = generated[index2][1];\n      }\n      if (cache) {\n        cache.delete(outlinedStroke.id);\n        cache.set(outlinedStroke.id, { signature, points: outline });\n        while (cache.size > OUTLINE_CACHE_LIMIT) cache.delete(cache.keys().next().value);\n      }\n    }\n    const normalized = new Float32Array(outline.length);\n    for (let index2 = 0; index2 < outline.length; index2 += 2) {\n      normalized[index2] = outline[index2] / previewWidth;\n      normalized[index2 + 1] = outline[index2 + 1] / previewHeight;\n    }\n    return { strokeId: outlinedStroke.id, sampleCount: outlinedStroke.points.length, points: normalized, mode: "pen", stroke: outlinedStroke };\n  }\n  function invalidateOperationOutlines(cache, operation) {\n    if (operation.type === "replace-notebook" || operation.type === "history-restore" || operation.type === "page-operation") {\n      cache.clear();\n      return;\n    }\n    if (operation.type === "start-stroke" || operation.type === "finalize-stroke") cache.delete(operation.stroke.id);\n    else if (operation.type === "append-stroke-points" || operation.type === "complete-stroke") cache.delete(operation.strokeId);\n    else if (operation.type === "patch-strokes") {\n      for (const id of operation.remove) cache.delete(id);\n      for (const stroke of operation.upsert) cache.delete(stroke.id);\n    } else if (operation.type === "translate-strokes") {\n      for (const id of operation.strokeIds) cache.delete(id);\n    }\n  }\n  function updateWorkerIndex(index, page, operation, outlinedStroke) {\n    var _a, _b, _c, _d;\n    if (operation.type === "start-stroke" || operation.type === "finalize-stroke") {\n      const stroke = outlinedStroke;\n      if (stroke) index.upsert(stroke, operation.type === "start-stroke" ? (_a = index.getOrder(stroke.id)) != null ? _a : page.strokes.length - 1 : Number.MAX_SAFE_INTEGER);\n      if (operation.type === "finalize-stroke") index.updateOrder(page);\n    } else if (operation.type === "complete-stroke") {\n      const stroke = outlinedStroke != null ? outlinedStroke : index.getStroke(operation.strokeId);\n      if (stroke) index.upsert(stroke, (_b = index.getOrder(operation.strokeId)) != null ? _b : page.strokes.length - 1);\n    } else if (operation.type === "append-stroke-points") {\n    } else if (operation.type === "patch-strokes") {\n      for (const id of operation.remove) index.remove(id);\n      const positions = new Map(page.strokes.map((stroke, position) => [stroke.id, position]));\n      const strokes = new Map(page.strokes.map((stroke) => [stroke.id, stroke]));\n      for (const replacement of operation.upsert) {\n        const stroke = strokes.get(replacement.id);\n        if (stroke) index.upsert(stroke, (_c = positions.get(stroke.id)) != null ? _c : Number.MAX_SAFE_INTEGER);\n      }\n      index.updateOrder(page);\n    } else if (operation.type === "translate-strokes") {\n      for (const id of operation.strokeIds) {\n        const stroke = index.getStroke(id);\n        if (stroke) index.upsert(stroke, (_d = index.getOrder(id)) != null ? _d : Number.MAX_SAFE_INTEGER);\n      }\n    }\n  }\n\n  // src/ink-worker.ts\n  var scope = self;\n  var core = new InkWorkerCore({\n    offscreenCanvas: typeof OffscreenCanvas !== "undefined",\n    imageBitmap: typeof ImageBitmap !== "undefined",\n    transferable: supportsTransferableBuffers()\n  });\n  var queue = [];\n  var running = false;\n  scope.onmessage = (event) => {\n    const request = event.data;\n    if (request.type === "cancel-render-generation") {\n      for (let index = queue.length - 1; index >= 0; index--) {\n        const queued = queue[index];\n        if (queued.type === "render-tile" && queued.sessionId === request.sessionId && queued.generation === request.generation && queued.renderGeneration < request.renderGeneration) {\n          queue.splice(index, 1);\n          scope.postMessage({\n            type: "error",\n            requestId: queued.requestId,\n            sessionId: queued.sessionId,\n            generation: queued.generation,\n            notebookRevision: queued.notebookRevision,\n            code: "stale-generation",\n            message: "Queued tile belongs to an obsolete render generation"\n          });\n        }\n      }\n    }\n    queue.push(request);\n    drain();\n  };\n  function drain() {\n    if (running || queue.length === 0) return;\n    queue.sort((left, right) => workerPriority(left) - workerPriority(right));\n    const request = queue.shift();\n    running = true;\n    void core.handle(request).then(({ response, transfer }) => scope.postMessage(response, transfer != null ? transfer : [])).finally(() => {\n      running = false;\n      drain();\n    });\n  }\n  function workerPriority(request) {\n    if (request.type === "cancel-render-generation" || request.type === "initialize-raw" || request.type === "initialize-notebook") return 0;\n    if (request.type === "apply-operation") return 1;\n    if (request.type === "render-tile") return request.priority === "visible" ? 2 : 3;\n    return 4;\n  }\n  scope.postMessage(core.ready());\n  function supportsTransferableBuffers() {\n    if (typeof MessageChannel === "undefined") return false;\n    try {\n      const channel = new MessageChannel();\n      const buffer = new ArrayBuffer(1);\n      channel.port1.postMessage(buffer, [buffer]);\n      channel.port1.close();\n      channel.port2.close();\n      return buffer.byteLength === 0;\n    } catch (e2) {\n      return false;\n    }\n  }\n})();\n';
 
@@ -1549,6 +1873,7 @@ var SAVE_CONFLICT_RETRIES = 3;
 var INK_COMMIT_IDLE_DELAY = 180;
 var LIVE_TAIL_SAMPLE_LIMIT = 32;
 var COMPLETED_PREVIEW_SAMPLE_LIMIT = 256;
+var PEN_CAPTURE_MIN_DISTANCE = 0.01;
 var SaveConflictError = class extends Error {
   constructor(message) {
     super(message);
@@ -1598,6 +1923,7 @@ var InkView = class extends import_obsidian.FileView {
     this.workerFallbackReported = false;
     this.activeStroke = null;
     this.workerStrokePointIndex = 0;
+    this.penModeler = null;
     this.confirmedStrokeOutlines = /* @__PURE__ */ new Map();
     this.pendingInkStrokes = [];
     this.committingInkStrokes = null;
@@ -2509,6 +2835,7 @@ var InkView = class extends import_obsidian.FileView {
       updatedAt: Date.now()
     };
     this.workerStrokePointIndex = 1;
+    if (tool === "pen") this.startPenModeler(event, point);
     this.queueWorkerOperation({
       type: "start-stroke",
       pageId: page.id,
@@ -2541,7 +2868,7 @@ var InkView = class extends import_obsidian.FileView {
     }
     if (this.activePointerId !== event.pointerId) return;
     if (((_b = this.interaction) == null ? void 0 : _b.tool) === "eraser") this.updateEraserHover(point, inside);
-    this.applyPointerSamples(event, rect);
+    this.applyPointerSamples(event, rect, "move");
   }
   onPointerUp(event, source = "pointer") {
     var _a, _b;
@@ -2549,7 +2876,7 @@ var InkView = class extends import_obsidian.FileView {
     const rect = this.pageElement.getBoundingClientRect();
     const point = this.toPoint(event, rect);
     const inside = pointInsideRect(event, rect);
-    this.applyPointerSamples(event, rect);
+    this.applyPointerSamples(event, rect, "up");
     try {
       if (source === "pointer") this.releasePointer(event.pointerId);
     } finally {
@@ -2563,7 +2890,7 @@ var InkView = class extends import_obsidian.FileView {
     this.eraserPointerInside = false;
     this.finishPointerInput(false);
   }
-  applyPointerSamples(event, rect = this.pageElement.getBoundingClientRect()) {
+  applyPointerSamples(event, rect = this.pageElement.getBoundingClientRect(), phase = "move") {
     const interaction = this.interaction;
     if (!interaction || interaction.pointerId !== event.pointerId) return;
     const page = this.pageById(interaction.pageId);
@@ -2575,19 +2902,132 @@ var InkView = class extends import_obsidian.FileView {
       return;
     }
     let changed = false;
-    for (const sample of samples) {
-      const point = this.toPoint(sample, rect);
-      if (interaction.tool === "eraser") {
-        changed = this.eraseAt(point, page, interaction.eraserMode, interaction.eraserSize) || changed;
-      } else if (this.activeStroke && this.lastPoint) {
-        if (distance(point, this.lastPoint) <= 0) continue;
-        this.activeStroke.points.push(point);
-        this.activeStroke.updatedAt = Date.now();
-        this.lastPoint = point;
-        changed = true;
+    if (interaction.tool === "pen" && this.penModeler && !this.penModeler.fallback) {
+      changed = this.appendModeledPenPoints(samples, rect, phase);
+    } else {
+      for (const sample of samples) {
+        const point = this.toPoint(sample, rect);
+        if (interaction.tool === "eraser") {
+          changed = this.eraseAt(point, page, interaction.eraserMode, interaction.eraserSize) || changed;
+        } else if (this.activeStroke && this.lastPoint) {
+          if (distance2(point, this.lastPoint) <= 0) continue;
+          this.activeStroke.points.push(point);
+          this.lastPoint = point;
+          changed = true;
+        }
       }
     }
-    if (changed) this.requestRender();
+    if (changed) {
+      if (this.activeStroke) this.activeStroke.updatedAt = Date.now();
+      this.requestRender();
+    }
+  }
+  /** Feeds raw pointer samples through the stroke modeler and stores its results. */
+  appendModeledPenPoints(samples, rect, phase) {
+    const capture = this.penModeler;
+    const stroke = this.activeStroke;
+    if (!stroke) return false;
+    let changed = false;
+    for (let index = 0; index < samples.length; index++) {
+      const sample = samples[index];
+      const point = this.toPoint(sample, rect);
+      if (capture.fallback) {
+        if (this.appendRawPenPoint(stroke, point)) changed = true;
+        continue;
+      }
+      const isLift = phase === "up" && index === samples.length - 1;
+      const rawPressure = sample.pressure > 0 ? sample.pressure : capture.lastRawPressure;
+      capture.lastRawPressure = rawPressure;
+      const input = {
+        eventType: isLift ? "up" : "move",
+        position: { x: point.x * capture.pageWidth, y: point.y * capture.pageHeight },
+        time: penSampleTimeMillis(sample) / 1e3,
+        pressure: rawPressure,
+        tiltX: sample.tiltX,
+        tiltY: sample.tiltY
+      };
+      this.updatePenModeler(input, isLift);
+      if (capture.fallback) {
+        this.appendRawPenPoint(stroke, point);
+        changed = true;
+        continue;
+      }
+      changed = true;
+    }
+    return changed;
+  }
+  /** Runs one modeler input and appends its results, guarding stroke bloat. */
+  updatePenModeler(input, isLift) {
+    var _a;
+    const capture = this.penModeler;
+    const stroke = this.activeStroke;
+    let results;
+    try {
+      results = capture.modeler.update(input);
+    } catch (e2) {
+      capture.fallback = true;
+      return false;
+    }
+    capture.lastInput = isLift ? null : input;
+    let changed = false;
+    for (let index = 0; index < results.length; index++) {
+      const result = results[index];
+      const isFinalLiftPoint = isLift && index === results.length - 1;
+      if (!isFinalLiftPoint && Math.hypot(result.position.x - capture.lastStored.x, result.position.y - capture.lastStored.y) < PEN_CAPTURE_MIN_DISTANCE) continue;
+      capture.lastStored = { x: result.position.x, y: result.position.y };
+      const point = {
+        x: result.position.x / capture.pageWidth,
+        y: result.position.y / capture.pageHeight,
+        pressure: (_a = result.pressure) != null ? _a : 0.5,
+        tiltX: result.tiltX,
+        tiltY: result.tiltY,
+        t: result.time * 1e3
+      };
+      stroke.points.push(point);
+      this.lastPoint = point;
+      changed = true;
+    }
+    return changed;
+  }
+  appendRawPenPoint(stroke, point) {
+    if (!this.lastPoint || distance2(point, this.lastPoint) <= 0) return false;
+    stroke.points.push(point);
+    this.lastPoint = point;
+    return true;
+  }
+  /** Completes a stroke whose pointer vanished without an up event. */
+  flushPenModeler() {
+    const capture = this.penModeler;
+    if (!capture || capture.fallback || !capture.lastInput) return;
+    this.updatePenModeler({ ...capture.lastInput, eventType: "up" }, true);
+  }
+  startPenModeler(event, point) {
+    const pageWidth = this.notebook.pageWidth;
+    const pageHeight = this.notebook.pageHeight;
+    const modeler = new StrokeModeler();
+    const input = {
+      eventType: "down",
+      position: { x: point.x * pageWidth, y: point.y * pageHeight },
+      time: penSampleTimeMillis(event) / 1e3,
+      pressure: point.pressure,
+      tiltX: event.tiltX,
+      tiltY: event.tiltY
+    };
+    try {
+      modeler.update(input);
+    } catch (e2) {
+      return;
+    }
+    point.t = input.time * 1e3;
+    this.penModeler = {
+      modeler,
+      pageWidth,
+      pageHeight,
+      lastInput: input,
+      lastRawPressure: point.pressure,
+      lastStored: { ...input.position },
+      fallback: false
+    };
   }
   pointerSamples(event) {
     const coalesced = typeof event.getCoalescedEvents === "function" ? event.getCoalescedEvents() : [];
@@ -2606,7 +3046,7 @@ var InkView = class extends import_obsidian.FileView {
       return true;
     }
     const previous = this.lassoPath[this.lassoPath.length - 1];
-    if (!previous || distance(point, previous) < 1e-3) return false;
+    if (!previous || distance2(point, previous) < 1e-3) return false;
     this.lassoPath.push(point);
     return true;
   }
@@ -2647,6 +3087,7 @@ var InkView = class extends import_obsidian.FileView {
     });
   }
   finishPointerInput(_includeFinalSample = false) {
+    this.flushPenModeler();
     const interaction = this.interaction;
     if (!interaction) return;
     const page = this.pageById(interaction.pageId);
@@ -2654,6 +3095,7 @@ var InkView = class extends import_obsidian.FileView {
       this.interaction = null;
       this.refreshEraserCursor();
       this.activePointerId = null;
+      this.penModeler = null;
       this.tiles.resumeInkCommit();
       return;
     }
@@ -2703,6 +3145,7 @@ var InkView = class extends import_obsidian.FileView {
     this.activeStroke = null;
     this.workerStrokePointIndex = 0;
     this.lastPoint = null;
+    this.penModeler = null;
     this.pendingLassoPoint = null;
     this.eraserPreviewCells.clear();
     if (interaction.tool === "pen" || interaction.tool === "highlighter") {
@@ -2853,7 +3296,7 @@ var InkView = class extends import_obsidian.FileView {
     if (!touch) return false;
     if (event.cancelable) event.preventDefault();
     this.touchGesture = null;
-    const sample = stylusTouchSample(touch);
+    const sample = stylusTouchSample(touch, event.timeStamp);
     const interaction = this.interaction;
     if (event.type === "touchstart") {
       this.stylusTouchInput = true;
@@ -3718,7 +4161,7 @@ page: ${this.currentPage().id}
     return this.notebook.pages[this.pageIndex];
   }
 };
-function distance(a2, b2) {
+function distance2(a2, b2) {
   return Math.hypot(a2.x - b2.x, a2.y - b2.y);
 }
 function isBrushTool(tool) {
@@ -3727,7 +4170,7 @@ function isBrushTool(tool) {
 function pointInsideRect(point, rect) {
   return point.clientX >= rect.left && point.clientX <= rect.right && point.clientY >= rect.top && point.clientY <= rect.bottom;
 }
-function stylusTouchSample(touch) {
+function stylusTouchSample(touch, timeStamp) {
   const altitude = touch.altitudeAngle;
   const azimuth = touch.azimuthAngle;
   let tiltX = 0;
@@ -3749,8 +4192,14 @@ function stylusTouchSample(touch) {
     clientY: touch.clientY,
     pressure: touch.force,
     tiltX,
-    tiltY
+    tiltY,
+    // Touch objects carry no per-sample timestamp; the owning TouchEvent's is
+    // per-event, which is exactly the per-sample time for stylus input.
+    timeStamp: typeof timeStamp === "number" && Number.isFinite(timeStamp) ? timeStamp : void 0
   };
+}
+function penSampleTimeMillis(sample) {
+  return typeof sample.timeStamp === "number" && Number.isFinite(sample.timeStamp) ? sample.timeStamp : Date.now();
 }
 function strokeIntersectsEraser(stroke, center, radius, mode, width, height) {
   if (stroke.points.some((point) => pointInsideEraser(point, center, radius, mode, width, height))) return true;

@@ -13,6 +13,7 @@ import {
 import { NotebookStore } from "./storage";
 import { canvasResolution, drawInkStroke } from "./rendering";
 import { Rect, TileRenderer } from "./tiles";
+import { StrokeModeler, StrokeModelInput, StrokeModelResult } from "./stroke-modeler";
 import type { InkWorkerResponse, NotebookOperation } from "./worker-protocol";
 import { InkWorkerRequestError, InkWorkerService, InkWorkerSession } from "./worker-service";
 
@@ -61,6 +62,8 @@ interface InkPointerSample {
   pressure: number;
   tiltX?: number;
   tiltY?: number;
+  /** Monotonic event time in ms; coalesced samples carry distinct values. */
+  timeStamp?: number;
   getCoalescedEvents?: () => InkPointerSample[];
 }
 
@@ -92,6 +95,23 @@ const SAVE_CONFLICT_RETRIES = 3;
 const INK_COMMIT_IDLE_DELAY = 180;
 const LIVE_TAIL_SAMPLE_LIMIT = 32;
 const COMPLETED_PREVIEW_SAMPLE_LIMIT = 256;
+// Modeled pen samples are deduplicated against this page-pixel radius so a
+// resting pen (which the model reports at 180 Hz) cannot bloat the stroke.
+const PEN_CAPTURE_MIN_DISTANCE = 0.01;
+
+/** Capture-time state for modeling one active pen stroke. */
+interface PenCapture {
+  modeler: StrokeModeler;
+  pageWidth: number;
+  pageHeight: number;
+  /** Last fed input; null once the stroke's up event has been modeled. */
+  lastInput: StrokeModelInput | null;
+  /** Most recent raw-sample pressure, for inheriting lift pressure. */
+  lastRawPressure: number;
+  lastStored: { x: number; y: number };
+  /** Set when the input stream breaks; the stroke then continues raw. */
+  fallback: boolean;
+}
 
 class SaveConflictError extends Error {
   constructor(message: string) {
@@ -158,6 +178,7 @@ export class InkView extends FileView {
   private workerFallbackReported = false;
   private activeStroke: InkStroke | null = null;
   private workerStrokePointIndex = 0;
+  private penModeler: PenCapture | null = null;
   private confirmedStrokeOutlines = new Map<string, ConfirmedStrokeOutline>();
   private pendingInkStrokes: InkStroke[] = [];
   private committingInkStrokes: InkStroke[] | null = null;
@@ -1097,6 +1118,7 @@ export class InkView extends FileView {
       updatedAt: Date.now(),
     };
     this.workerStrokePointIndex = 1;
+    if (tool === "pen") this.startPenModeler(event, point);
     this.queueWorkerOperation({
       type: "start-stroke",
       pageId: page.id,
@@ -1130,7 +1152,7 @@ export class InkView extends FileView {
     }
     if (this.activePointerId !== event.pointerId) return;
     if (this.interaction?.tool === "eraser") this.updateEraserHover(point, inside);
-    this.applyPointerSamples(event, rect);
+    this.applyPointerSamples(event, rect, "move");
   }
 
   private onPointerUp(event: InkPointerSample, source: InteractionContext["source"] = "pointer"): void {
@@ -1138,7 +1160,7 @@ export class InkView extends FileView {
     const rect = this.pageElement.getBoundingClientRect();
     const point = this.toPoint(event, rect);
     const inside = pointInsideRect(event, rect);
-    this.applyPointerSamples(event, rect);
+    this.applyPointerSamples(event, rect, "up");
     try {
       if (source === "pointer") this.releasePointer(event.pointerId);
     } finally {
@@ -1153,7 +1175,7 @@ export class InkView extends FileView {
     this.finishPointerInput(false);
   }
 
-  private applyPointerSamples(event: InkPointerSample, rect = this.pageElement.getBoundingClientRect()): void {
+  private applyPointerSamples(event: InkPointerSample, rect = this.pageElement.getBoundingClientRect(), phase: "move" | "up" = "move"): void {
     const interaction = this.interaction;
     if (!interaction || interaction.pointerId !== event.pointerId) return;
     const page = this.pageById(interaction.pageId);
@@ -1165,21 +1187,150 @@ export class InkView extends FileView {
       return;
     }
     let changed = false;
-    for (const sample of samples) {
-      const point = this.toPoint(sample, rect);
-      if (interaction.tool === "eraser") {
-        changed = this.eraseAt(point, page, interaction.eraserMode, interaction.eraserSize) || changed;
-      } else if (this.activeStroke && this.lastPoint) {
-        // Raw capture: every sample is stored exactly as delivered. Repeated
-        // positions from duplicate input events still must not enter the stroke.
-        if (distance(point, this.lastPoint) <= 0) continue;
-        this.activeStroke.points.push(point);
-        this.activeStroke.updatedAt = Date.now();
-        this.lastPoint = point;
-        changed = true;
+    if (interaction.tool === "pen" && this.penModeler && !this.penModeler.fallback) {
+      changed = this.appendModeledPenPoints(samples, rect, phase);
+    } else {
+      for (const sample of samples) {
+        const point = this.toPoint(sample, rect);
+        if (interaction.tool === "eraser") {
+          changed = this.eraseAt(point, page, interaction.eraserMode, interaction.eraserSize) || changed;
+        } else if (this.activeStroke && this.lastPoint) {
+          // Raw capture: every sample is stored exactly as delivered. Repeated
+          // positions from duplicate input events still must not enter the stroke.
+          if (distance(point, this.lastPoint) <= 0) continue;
+          this.activeStroke.points.push(point);
+          this.lastPoint = point;
+          changed = true;
+        }
       }
     }
-    if (changed) this.requestRender();
+    if (changed) {
+      if (this.activeStroke) this.activeStroke.updatedAt = Date.now();
+      this.requestRender();
+    }
+  }
+
+  /** Feeds raw pointer samples through the stroke modeler and stores its results. */
+  private appendModeledPenPoints(samples: InkPointerSample[], rect: DOMRect, phase: "move" | "up"): boolean {
+    const capture = this.penModeler!;
+    const stroke = this.activeStroke;
+    if (!stroke) return false;
+    let changed = false;
+    for (let index = 0; index < samples.length; index++) {
+      const sample = samples[index];
+      const point = this.toPoint(sample, rect);
+      if (capture.fallback) {
+        if (this.appendRawPenPoint(stroke, point)) changed = true;
+        continue;
+      }
+      const isLift = phase === "up" && index === samples.length - 1;
+      // Lift events (and some coalesced samples) report pressure 0. Inherit
+      // the most recent raw pressure, not the modeled tip's projected
+      // pressure: the modeled tip lags the pen and would drag a stale value
+      // into the tail.
+      const rawPressure = sample.pressure > 0 ? sample.pressure : capture.lastRawPressure;
+      capture.lastRawPressure = rawPressure;
+      const input: StrokeModelInput = {
+        eventType: isLift ? "up" : "move",
+        position: { x: point.x * capture.pageWidth, y: point.y * capture.pageHeight },
+        time: penSampleTimeMillis(sample) / 1000,
+        pressure: rawPressure,
+        tiltX: sample.tiltX,
+        tiltY: sample.tiltY,
+      };
+      this.updatePenModeler(input, isLift);
+      if (capture.fallback) {
+        // The broken sample contributed nothing modeled; keep its raw position.
+        this.appendRawPenPoint(stroke, point);
+        changed = true;
+        continue;
+      }
+      changed = true;
+    }
+    return changed;
+  }
+
+  /** Runs one modeler input and appends its results, guarding stroke bloat. */
+  private updatePenModeler(input: StrokeModelInput, isLift: boolean): boolean {
+    const capture = this.penModeler!;
+    const stroke = this.activeStroke!;
+    let results: StrokeModelResult[];
+    try {
+      results = capture.modeler.update(input);
+    } catch {
+      // A corrupted stream (clock jump, oversized gap) must never lose ink;
+      // the rest of the stroke falls back to raw capture.
+      capture.fallback = true;
+      return false;
+    }
+    capture.lastInput = isLift ? null : input;
+    let changed = false;
+    for (let index = 0; index < results.length; index++) {
+      const result = results[index];
+      const isFinalLiftPoint = isLift && index === results.length - 1;
+      if (!isFinalLiftPoint && Math.hypot(result.position.x - capture.lastStored.x, result.position.y - capture.lastStored.y) < PEN_CAPTURE_MIN_DISTANCE) continue;
+      capture.lastStored = { x: result.position.x, y: result.position.y };
+      const point: InkPoint = {
+        x: result.position.x / capture.pageWidth,
+        y: result.position.y / capture.pageHeight,
+        pressure: result.pressure ?? 0.5,
+        tiltX: result.tiltX,
+        tiltY: result.tiltY,
+        t: result.time * 1000,
+      };
+      stroke.points.push(point);
+      this.lastPoint = point;
+      changed = true;
+    }
+    return changed;
+  }
+
+  private appendRawPenPoint(stroke: InkStroke, point: InkPoint): boolean {
+    if (!this.lastPoint || distance(point, this.lastPoint) <= 0) return false;
+    stroke.points.push(point);
+    this.lastPoint = point;
+    return true;
+  }
+
+  /** Completes a stroke whose pointer vanished without an up event. */
+  private flushPenModeler(): void {
+    const capture = this.penModeler;
+    if (!capture || capture.fallback || !capture.lastInput) return;
+    // Synthesize the missing up event from the last input so the modeled tail
+    // still converges onto the pen's final position.
+    this.updatePenModeler({ ...capture.lastInput, eventType: "up" }, true);
+  }
+
+  private startPenModeler(event: InkPointerSample, point: InkPoint): void {
+    const pageWidth = this.notebook.pageWidth;
+    const pageHeight = this.notebook.pageHeight;
+    const modeler = new StrokeModeler();
+    const input: StrokeModelInput = {
+      eventType: "down",
+      position: { x: point.x * pageWidth, y: point.y * pageHeight },
+      time: penSampleTimeMillis(event) / 1000,
+      pressure: point.pressure,
+      tiltX: event.tiltX,
+      tiltY: event.tiltY,
+    };
+    try {
+      modeler.update(input);
+    } catch {
+      // Without capture state the stroke is captured raw instead.
+      return;
+    }
+    // Keep the whole stroke on one time base: the stored down point carries
+    // the event time the modeler consumed.
+    point.t = input.time * 1000;
+    this.penModeler = {
+      modeler,
+      pageWidth,
+      pageHeight,
+      lastInput: input,
+      lastRawPressure: point.pressure,
+      lastStored: { ...input.position },
+      fallback: false,
+    };
   }
 
   private pointerSamples(event: InkPointerSample): InkPointerSample[] {
@@ -1238,6 +1389,7 @@ export class InkView extends FileView {
   }
 
   private finishPointerInput(_includeFinalSample = false): void {
+    this.flushPenModeler();
     const interaction = this.interaction;
     if (!interaction) return;
     const page = this.pageById(interaction.pageId);
@@ -1245,6 +1397,7 @@ export class InkView extends FileView {
       this.interaction = null;
       this.refreshEraserCursor();
       this.activePointerId = null;
+      this.penModeler = null;
       this.tiles.resumeInkCommit();
       return;
     }
@@ -1291,6 +1444,7 @@ export class InkView extends FileView {
     this.activeStroke = null;
     this.workerStrokePointIndex = 0;
     this.lastPoint = null;
+    this.penModeler = null;
     this.pendingLassoPoint = null;
     this.eraserPreviewCells.clear();
     if (interaction.tool === "pen" || interaction.tool === "highlighter") {
@@ -1462,7 +1616,7 @@ export class InkView extends FileView {
     if (!touch) return false;
     if (event.cancelable) event.preventDefault();
     this.touchGesture = null;
-    const sample = stylusTouchSample(touch);
+    const sample = stylusTouchSample(touch, event.timeStamp);
     const interaction = this.interaction;
     if (event.type === "touchstart") {
       // Scribble can suppress Pointer events. Once native stylus Touch support
@@ -2341,7 +2495,7 @@ function pointInsideRect(point: { clientX: number; clientY: number }, rect: DOMR
     && point.clientY >= rect.top && point.clientY <= rect.bottom;
 }
 
-function stylusTouchSample(touch: StylusTouch): InkPointerSample {
+function stylusTouchSample(touch: StylusTouch, timeStamp?: number): InkPointerSample {
   const altitude = touch.altitudeAngle;
   const azimuth = touch.azimuthAngle;
   let tiltX = 0;
@@ -2365,7 +2519,17 @@ function stylusTouchSample(touch: StylusTouch): InkPointerSample {
     pressure: touch.force,
     tiltX,
     tiltY,
+    // Touch objects carry no per-sample timestamp; the owning TouchEvent's is
+    // per-event, which is exactly the per-sample time for stylus input.
+    timeStamp: typeof timeStamp === "number" && Number.isFinite(timeStamp) ? timeStamp : undefined,
   };
+}
+
+function penSampleTimeMillis(sample: InkPointerSample): number {
+  // Pointer events carry a monotonic per-sample timestamp; falling back to
+  // Date.now() would give every coalesced sample of one event the same time
+  // and defeat the modeler's resampling.
+  return typeof sample.timeStamp === "number" && Number.isFinite(sample.timeStamp) ? sample.timeStamp : Date.now();
 }
 
 function strokeIntersectsEraser(stroke: InkStroke, center: InkPoint, radius: number, mode: EraserMode, width: number, height: number): boolean {
