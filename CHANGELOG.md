@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.7.0-beta.5 - 2026-10-06
+
+- iPad UX pass on the tool settings popover: the sample-stroke preview is pinned in a header that stays visible at all times while only the settings controls scroll (vertical-only panning, no scroll chaining), and the open menu shields touches from Obsidian's workspace swipe gestures, so adjusting a slider can no longer summon the file switcher or side panels.
+- All toolbar buttons are icon-only (labels remain as tooltips and aria-labels); the color swatches keep a fixed circular size instead of stretching into ellipses on iPad.
+- Reading mode: a toolbar toggle (book icon) that disables ink capture and eraser tracking and restores native page panning and scrolling for reviewing notes; everything returns on exit.
+- Editor ergonomics: a suggested default hotkey (Ctrl/Cmd+Shift+O) opens the notebook file picker, diagnostics JSON export moved into the Page options menu and the Obsidian settings tab (no longer developer-only), and the developer panel toggle lives in the new Ink Notes settings tab.
+
 ## 0.7.0-beta.4 - 2026-10-06
 
 - Pressure curve editor refinements from device feedback:
