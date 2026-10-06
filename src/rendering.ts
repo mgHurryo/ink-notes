@@ -191,8 +191,13 @@ export function normalizePressureCurve(raw: unknown): number[][] | undefined {
     monotonic.push(cleaned[index]);
   }
   if (monotonic.length < 2) return undefined;
-  const identity = monotonic.length === 2
-    && monotonic[0][1] === 0 && monotonic[1][1] === 1;
+  // Pressure mappings must be non-decreasing: more pressure maps to equal or
+  // more width. A dip would make harder presses render thinner.
+  for (let index = 1; index < monotonic.length; index++) {
+    monotonic[index][1] = Math.max(monotonic[index][1], monotonic[index - 1][1]);
+  }
+  // An all-points-on-the-diagonal curve is the identity mapping.
+  const identity = monotonic.every(([x, y]) => Math.abs(x - y) <= 0.001);
   return identity ? undefined : monotonic;
 }
 
