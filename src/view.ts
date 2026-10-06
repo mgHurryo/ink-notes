@@ -28,7 +28,7 @@ export const VIEW_TYPE_INK = "ink-notes-view";
 
 type BrushTool = "pen" | "highlighter";
 
-interface BrushSettings {
+export interface BrushSettings {
   color: string;
   width: number;
   opacity: number;
@@ -45,7 +45,7 @@ interface BrushSettings {
   pressureCurve?: number[][];
 }
 
-interface ToolState {
+export interface ToolState {
   tool: InkTool;
   pen: BrushSettings;
   highlighter: BrushSettings;
@@ -53,7 +53,7 @@ interface ToolState {
   eraserSize: number;
 }
 
-type EraserMode = "stroke" | "circle" | "square";
+export type EraserMode = "stroke" | "circle" | "square";
 
 interface EditCommand {
   undo: () => void;
@@ -72,7 +72,7 @@ interface InteractionContext {
   eraserSize?: number;
 }
 
-interface InkPointerSample {
+export interface InkPointerSample {
   pointerId: number;
   pointerType: string;
   clientX: number;
@@ -149,7 +149,7 @@ class SaveConflictError extends Error {
   }
 }
 
-const INK_COLORS = [
+export const INK_COLORS = [
   { value: "#1b1b1b", label: "Black" },
   { value: "#195bff", label: "Blue" },
   { value: "#f23c42", label: "Red" },
@@ -3137,11 +3137,11 @@ export class InkView extends FileView {
   private currentPage(): InkPage { return this.notebook.pages[this.pageIndex]; }
 }
 
-function distance(a: { x: number; y: number }, b: { x: number; y: number }): number {
+export function distance(a: { x: number; y: number }, b: { x: number; y: number }): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
-function isBrushTool(tool: InkTool): tool is BrushTool {
+export function isBrushTool(tool: InkTool): tool is BrushTool {
   return tool === "pen" || tool === "highlighter";
 }
 
@@ -3188,19 +3188,19 @@ function stylusTouchSample(touch: StylusTouch, timeStamp?: number): InkPointerSa
  * artifact; clamping to the previous point keeps the rendered tail from
  * fattening into a round dot past the stroke.
  */
-function clampLiftPressure(point: InkPoint, previous: InkPoint | null): void {
+export function clampLiftPressure(point: InkPoint, previous: InkPoint | null): void {
   if (!previous || point.pressure <= previous.pressure) return;
   point.pressure = previous.pressure;
 }
 
-function penSampleTimeMillis(sample: InkPointerSample): number {
+export function penSampleTimeMillis(sample: InkPointerSample): number {
   // Pointer events carry a monotonic per-sample timestamp; falling back to
   // Date.now() would give every coalesced sample of one event the same time
   // and defeat the modeler's resampling.
   return typeof sample.timeStamp === "number" && Number.isFinite(sample.timeStamp) ? sample.timeStamp : Date.now();
 }
 
-function strokeIntersectsEraser(stroke: InkStroke, center: InkPoint, radius: number, mode: EraserMode, width: number, height: number): boolean {
+export function strokeIntersectsEraser(stroke: InkStroke, center: InkPoint, radius: number, mode: EraserMode, width: number, height: number): boolean {
   if (stroke.points.some((point) => pointInsideEraser(point, center, radius, mode, width, height))) return true;
   for (let index = 1; index < stroke.points.length; index++) {
     if (segmentIntersectsEraser(stroke.points[index - 1], stroke.points[index], center, radius, mode, width, height)) return true;
@@ -3208,7 +3208,7 @@ function strokeIntersectsEraser(stroke: InkStroke, center: InkPoint, radius: num
   return false;
 }
 
-function eraseStrokeSegments(stroke: InkStroke, center: InkPoint, radius: number, mode: Exclude<EraserMode, "stroke">, width: number, height: number): InkPoint[][] {
+export function eraseStrokeSegments(stroke: InkStroke, center: InkPoint, radius: number, mode: Exclude<EraserMode, "stroke">, width: number, height: number): InkPoint[][] {
   const segments: InkPoint[][] = [];
   let segment: InkPoint[] = [];
   const flush = () => {
@@ -3292,7 +3292,7 @@ function cloneNotebook(notebook: InkNotebook): InkNotebook {
   };
 }
 
-function cloneStroke(stroke: InkStroke): InkStroke {
+export function cloneStroke(stroke: InkStroke): InkStroke {
   return { ...stroke, points: clonePoints(stroke.points), dynamics: stroke.dynamics ? { ...stroke.dynamics } : undefined };
 }
 
@@ -3313,11 +3313,11 @@ function clonePageAsNew(page: InkPage, title: string, now = Date.now()): InkPage
   };
 }
 
-function clonePoints(points: InkPoint[]): InkPoint[] {
+export function clonePoints(points: InkPoint[]): InkPoint[] {
   return points.map((point) => ({ ...point }));
 }
 
-function packStrokePoints(points: readonly InkPoint[], start: number): Float64Array {
+export function packStrokePoints(points: readonly InkPoint[], start: number): Float64Array {
   const packed = new Float64Array((points.length - start) * 6);
   let offset = 0;
   for (let index = start; index < points.length; index++) {
@@ -3361,15 +3361,15 @@ function restoredStroke(stroke: InkStroke): InkStroke {
   return { ...cloneStroke(stroke), id: newId("stroke"), createdAt: now, updatedAt: now };
 }
 
-function translatePoints(points: InkPoint[], dx: number, dy: number): InkPoint[] {
+export function translatePoints(points: InkPoint[], dx: number, dy: number): InkPoint[] {
   return points.map((point) => ({ ...point, x: point.x + dx, y: point.y + dy, t: Date.now() }));
 }
 
-function selectionBounds(strokes: InkStroke[]): { minX: number; minY: number; maxX: number; maxY: number } | null {
+export function selectionBounds(strokes: InkStroke[]): { minX: number; minY: number; maxX: number; maxY: number } | null {
   return boundsForPointSets(strokes.map((stroke) => stroke.points));
 }
 
-function boundsForPointSets(pointSets: InkPoint[][]): { minX: number; minY: number; maxX: number; maxY: number } | null {
+export function boundsForPointSets(pointSets: InkPoint[][]): { minX: number; minY: number; maxX: number; maxY: number } | null {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
   for (const points of pointSets) for (const point of points) {
     minX = Math.min(minX, point.x);
@@ -3480,7 +3480,7 @@ function recordsEqual(left: Record<string, number>, right: Record<string, number
   return leftKeys.length === rightKeys.length && leftKeys.every((key) => left[key] === right[key]);
 }
 
-function pointInPolygon(point: InkPoint, polygon: InkPoint[]): boolean {
+export function pointInPolygon(point: InkPoint, polygon: InkPoint[]): boolean {
   let inside = false;
   for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
     const a = polygon[i];
@@ -3492,7 +3492,7 @@ function pointInPolygon(point: InkPoint, polygon: InkPoint[]): boolean {
   return inside;
 }
 
-function constrainDelta(delta: number, minimum: number, maximum: number): number {
+export function constrainDelta(delta: number, minimum: number, maximum: number): number {
   return Math.max(-minimum, Math.min(1 - maximum, delta));
 }
 

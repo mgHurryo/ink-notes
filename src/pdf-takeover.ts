@@ -1,0 +1,112 @@
+import { around } from "monkey-around";
+import { WorkspaceLeaf } from "obsidian";
+
+/**
+ * PDF tab takeover.
+ *
+ * Obsidian has no public API to replace the built-in `pdf` view, and the plan
+ * explicitly rules out private registries — so this module wraps the public
+ * `WorkspaceLeaf.prototype.setViewState` at the single choke point every PDF
+ * open path converges on (file list, search, internal links, `#page=` links
+ * all end in a setViewState call with type "pdf"). The patch redirects those
+ * calls to our view type before the built-in view is instantiated.
+ *
+ * Patch pattern follows PDF++ (MIT, © Ryota Ushio,
+ * https://github.com/RyotaUshio/obsidian-pdf-plus), including the use of the
+ * `monkey-around` wrapper so uninstallation only restores the original while
+ * our patch is still the outermost one.
+ *
+ * PDF++ compatibility: PDF++ keeps the built-in `pdf` view and enhances it
+ * from the inside, so while our patch is active its enhancements never engage
+ * (the built-in view is never created). We therefore yield automatically
+ * while `pdf-plus` is enabled — PDFs open in the enhanced built-in viewer and
+ * handwriting stays available per-tab through the explicit open command and
+ * file menu entry. The user can also flip a tab back to the built-in viewer
+ * from inside our view.
+ */
+
+/** Plugins that enhance the built-in PDF viewer from the inside. */
+export const PDF_VIEW_ENHANCER_PLUGIN_IDS: readonly string[] = ["pdf-plus"];
+
+export interface PdfViewState {
+  type: string;
+  state?: Record<string, unknown>;
+}
+
+export interface PdfTakeoverGate {
+  /** Master setting (kill switch). */
+  enabled: boolean;
+  /** True while an installed enhancer plugin owns the built-in viewer UX. */
+  enhancerActive: boolean;
+  /** Vault membership + extension check for the path inside the view state. */
+  isPdfFile: (path: string) => boolean;
+}
+
+/**
+ * Pure decision: which view type a setViewState call should actually open.
+ * Returns the replacement view type, or null to pass through untouched.
+ */
+export function pdfTakeoverReplacement(viewState: PdfViewState | null | undefined, gate: PdfTakeoverGate, viewType: string): string | null {
+  if (!gate.enabled || gate.enhancerActive) return null;
+  if (!viewState || viewState.type !== "pdf") return null;
+  const file = viewState.state?.file;
+  if (typeof file !== "string" || !gate.isPdfFile(file)) return null;
+  return viewType;
+}
+
+export class PdfTabTakeover {
+  private uninstaller: (() => void) | null = null;
+  private inert = false;
+  private readonly suppressedLeaves = new WeakSet<WorkspaceLeaf>();
+
+  constructor(private readonly gateProvider: () => PdfTakeoverGate, private readonly viewType: string) {}
+
+  get installed(): boolean {
+    return this.uninstaller !== null;
+  }
+
+  install(
+    target: { setViewState: (this: WorkspaceLeaf, viewState: PdfViewState, eState?: unknown) => Promise<void> } = WorkspaceLeaf.prototype,
+  ): void {
+    if (this.uninstaller) return;
+    const takeover = this;
+    this.inert = false;
+    this.uninstaller = around(target, {
+      setViewState(old: (this: WorkspaceLeaf, viewState: PdfViewState, eState?: unknown) => Promise<void>) {
+        return async function setViewState(this: WorkspaceLeaf, viewState: PdfViewState, eState?: unknown) {
+          if (!takeover.inert && !takeover.suppressedLeaves.has(this)) {
+            const replacement = pdfTakeoverReplacement(viewState, takeover.gateProvider(), takeover.viewType);
+            if (replacement) return old.call(this, { ...viewState, type: replacement }, eState);
+          }
+          return old.call(this, viewState, eState);
+        } as unknown as typeof old;
+      },
+    });
+  }
+
+  /**
+   * Remove the patch. When another plugin wrapped ours after installation,
+   * monkey-around refuses to restore mid-chain; the patch is then left in
+   * place but neutralized (inert) so it always passes through.
+   */
+  uninstall(): void {
+    if (!this.uninstaller) return;
+    const uninstaller = this.uninstaller;
+    this.uninstaller = null;
+    uninstaller();
+    this.inert = true;
+  }
+
+  /**
+   * Keep a leaf in the built-in viewer even while the patch is active: set
+   * before switching the leaf back to type "pdf", so our own patch does not
+   * immediately recapture the tab.
+   */
+  suppressLeaf(leaf: WorkspaceLeaf): void {
+    this.suppressedLeaves.add(leaf);
+  }
+
+  releaseLeaf(leaf: WorkspaceLeaf): void {
+    this.suppressedLeaves.delete(leaf);
+  }
+}
