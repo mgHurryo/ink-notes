@@ -186,13 +186,19 @@
   margin-bottom: 8px;
 }
 
-.ink-popover-preview {
+/* Ink previews are pinned to the paper look (the notebook pages are white
+   in both themes), so the sampled ink color stays legible in dark mode. */
+.ink-popover-preview,
+.ink-curve-editor-canvas {
   display: block;
   width: 100%;
+  background: #ffffff;
+}
+
+.ink-popover-preview {
   height: 56px;
   border: 1px solid var(--background-modifier-border);
   border-radius: 10px;
-  background: var(--background-primary);
 }
 
 .ink-popover-body {
@@ -204,8 +210,9 @@
   touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
-  margin: 0 -6px;
-  padding: 0 6px;
+  /* Right padding keeps a visible gap between the controls and the
+     scrollbar instead of letting them touch. */
+  padding: 0 10px 0 6px;
 }
 
 .ink-popover-body input[type="range"] { touch-action: none; }
@@ -683,11 +690,6 @@
 
 /* The diagnostics toolbar toggle is width-budgeted out of phone layouts;
    the command palette exposes the same toggle there. */
-@media (max-width: 639.5px) {
-  /* Matches the toolbar button specificity (.ink-notes-view :is(...)). */
-  .ink-notes-view .ink-icon-button.ink-dev-toggle { display: none; }
-}
-
 /* Developer diagnostics overlay (read-only telemetry; toggled from the
    toolbar "activity" button or the "Toggle Ink developer diagnostics"
    command). */
@@ -737,7 +739,6 @@
   width: 100%;
   height: 110px;
   border-radius: 8px;
-  background: var(--ink-panel, transparent);
   touch-action: none;
   cursor: crosshair;
 }

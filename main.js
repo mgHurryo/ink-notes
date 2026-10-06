@@ -24176,8 +24176,6 @@ var InkView = class extends import_obsidian.FileView {
     this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
     const pages = this.addToolbarSection(group, "Document");
     this.addIconButton(pages, "more-horizontal", "Page options", (event) => this.openPageMenu(event));
-    const devToggle = this.addIconButton(pages, "activity", "Developer diagnostics", () => this.toggleDevPanel());
-    devToggle.addClass("ink-dev-toggle");
     this.renderToolPopover();
     this.updateToolButtons();
   }
@@ -24308,9 +24306,6 @@ var InkView = class extends import_obsidian.FileView {
     var _a, _b, _c, _d;
     const settings = this.brushSettings(tool);
     const panel = parent.createDiv({ cls: "ink-brush-settings", attr: { "data-brush-tool": tool } });
-    const header = panel.createDiv({ cls: "ink-size-popover-header" });
-    header.createSpan({ cls: "ink-size-popover-title", text: `${label} settings` });
-    header.createSpan({ cls: "ink-control-value", text: formatControlValue("Size", settings.width) });
     panel.createDiv({ cls: "ink-settings-label", text: "Size" });
     const input = panel.createEl("input", { attr: {
       type: "range",
