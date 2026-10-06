@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.7.0-beta.3 - 2026-10-06
+
+- Fix the pressure curve editor rendering blank: the draw routine was defined but never invoked, and the popover is built display:none so a build-time draw would also have had no layout. The popover now triggers a preview redraw when it opens (after layout), and point drags redraw both the curve editor and the sample stroke. Verified in a live popover with pixel sampling and screenshots.
+
 ## 0.7.0-beta.2 - 2026-10-06
 
 - Fix the Taper slider being effectively binary: any value above 0 collapsed the stroke ends to a sharp point. The taper now sets a width envelope that keeps (100 − taper)% of the width at each end — 1% is visually round, mid values narrow progressively, only 100 converges to a point.
