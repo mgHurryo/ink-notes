@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+## 0.8.0-beta.1 - 2026-10-06
+
+- PDF handwriting: opening a PDF now creates a sidecar notes file under `A_pdfinkwrittern/` and opens the tab in the Ink Notes reading view — the page renders with saved handwriting on top, and ink input stays off until you explicitly toggle edit mode.
+- Editing mirrors the notebook editor: pen, highlighter, stroke/circle/square erasers, lasso select and move, and undo/redo, all rendered through the existing background-worker tile pipeline.
+- Data safety: sidecar writes are gated by a SHA-256 fingerprint of the PDF and compare-and-swap saves with bounded merge retries; corrupt, unknown-version, or foreign sidecars force read-only instead of being overwritten; states that cannot be saved safely keep the ink in a conflict copy.
+- Blank note pages: insert after any page (inheriting the neighbor's size and rotation), delete, or move — source PDF pages are permanent and their order never changes.
+- Renaming a PDF migrates its sidecar automatically; moving it while the plugin was closed is recovered on the next open via a unique content-fingerprint match (with several matches, you pick).
+- Vector export: "Export PDF with handwriting" writes `<name> (handwritten).pdf` next to the source, preserving original page content, sizes, and rotation; digitally signed, encrypted, and corrupt PDFs are rejected explicitly and the sidecar is untouched.
+- PDF++ compatibility: while PDF++ is enabled the automatic takeover yields and PDFs keep opening in the enhanced built-in viewer — handwriting stays available per tab from the file context menu or command palette, and a handwriting tab can hand itself back to the built-in viewer from the page menu.
+
+
 ## 0.7.0-beta.5 - 2026-10-06
 
 - iPad UX pass on the tool settings popover: the sample-stroke preview is pinned in a header that stays visible at all times while only the settings controls scroll (vertical-only panning, no scroll chaining), and the open menu shields touches from Obsidian's workspace swipe gestures, so adjusting a slider can no longer summon the file switcher or side panels.

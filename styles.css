@@ -785,3 +785,177 @@
   border-color: var(--ink-border);
   background: var(--ink-hover);
 }
+
+/* ---------------------------------------------------------------- PDF ink view */
+
+.ink-pdf-view {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 0;
+  background: var(--ink-workspace);
+}
+
+.ink-pdf-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 2px;
+  flex: 0 0 auto;
+  min-height: var(--ink-toolbar-height);
+  padding: 5px 8px;
+  background: var(--ink-panel);
+  border-bottom: 1px solid var(--ink-border);
+}
+
+.ink-pdf-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  position: relative;
+}
+
+.ink-pdf-toolbar-group + .ink-pdf-toolbar-group { margin-left: 8px; }
+
+.ink-pdf-icon-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: var(--ink-radius-sm);
+  color: var(--ink-text);
+  background: transparent;
+  cursor: pointer;
+}
+
+.ink-pdf-icon-button:hover { background: var(--ink-hover); }
+.ink-pdf-icon-button.is-active { border-color: var(--ink-border); background: var(--ink-hover); }
+.ink-pdf-icon-button.is-disabled { opacity: 0.4; pointer-events: none; }
+.ink-pdf-tool-group .ink-tool-button.is-active { background: var(--ink-accent); }
+
+.ink-pdf-page-indicator {
+  min-width: 64px;
+  text-align: center;
+  font-size: var(--font-ui-smaller);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-text);
+}
+
+.ink-pdf-status {
+  display: none;
+  flex: 0 0 auto;
+  padding: 3px 12px;
+  font-size: var(--font-ui-smaller);
+  color: var(--ink-text-muted, var(--text-muted));
+  background: var(--ink-panel);
+  border-bottom: 1px solid var(--ink-border);
+}
+
+.ink-pdf-status.is-visible { display: block; }
+.ink-pdf-status.is-error { color: var(--text-error, #e5534b); }
+
+.ink-pdf-scroller {
+  position: relative;
+  flex: 1 1 auto;
+  overflow: auto;
+  padding: 24px;
+}
+
+.ink-pdf-page-wrap {
+  position: relative;
+  margin: 0 auto;
+  overflow: hidden;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: var(--ink-shadow-paper);
+  color-scheme: light;
+}
+
+.ink-pdf-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+
+.ink-pdf-text-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  line-height: 1;
+  opacity: 1;
+}
+
+.ink-pdf-text-layer span,
+.ink-pdf-text-layer br {
+  position: absolute;
+  color: transparent;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0 0;
+}
+
+.ink-pdf-text-layer ::selection { background: rgb(47 128 237 / 30%); }
+
+.ink-pdf-ink-host {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background: transparent;
+  touch-action: none;
+}
+
+.ink-pdf-reading .ink-pdf-ink-host { pointer-events: none; }
+.ink-pdf-editing .ink-pdf-text-layer { display: none; }
+
+.ink-pdf-brush-popover {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: none;
+  min-width: 200px;
+  padding: 10px 12px;
+  border: 1px solid var(--ink-border);
+  border-radius: var(--ink-radius-sm);
+  background: var(--ink-panel);
+  box-shadow: var(--ink-shadow-paper);
+}
+
+.ink-pdf-brush-popover.is-open { display: block; }
+.ink-pdf-popover-title { font-size: var(--font-ui-smaller); color: var(--text-muted); margin-bottom: 6px; }
+.ink-pdf-color-row { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
+
+.ink-pdf-color-swatch {
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 1px solid var(--ink-border);
+  border-radius: 50%;
+  cursor: pointer;
+}
+
+.ink-pdf-mode-button {
+  flex: 1 1 auto;
+  padding: 3px 8px;
+  border: 1px solid var(--ink-border);
+  border-radius: var(--ink-radius-sm);
+  background: transparent;
+  color: var(--ink-text);
+  font-size: var(--font-ui-smaller);
+  cursor: pointer;
+}
+
+.ink-pdf-mode-button:hover { background: var(--ink-hover); }
+
+.ink-pdf-range-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+}
+
+.ink-pdf-range-row label { flex: 0 0 76px; font-size: var(--font-ui-smaller); color: var(--text-muted); }
+.ink-pdf-range-row input[type="range"] { flex: 1 1 auto; }
