@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.6.0-beta.5 - 2026-10-06
+
+- Render sampled curves as curves: the pen outline now connects the captured centerline with corner-preserving smoothing instead of raw polylines, so a fast hook sampled a handful of times (a flicked a/d tail, cursive turns) renders as the curve the pen drew rather than a straight-line kink. Corners stay sharp by construction: a vertex only participates while both adjacent segments are short relative to the nib width, so deliberate corners drawn with long strokes (Chinese character turns, angular letters) keep their vertex exactly, endpoints never move, and every displacement stays a small fraction of the nib width. Render-only: stored points remain the raw samples.
+- Cap the Smooth dial's spring softening at 1.4x the reference mass (previously 2x at strength 100). A softer spring lags the pen further, and enough lag cuts tight end-of-stroke hooks out of the modeled trajectory — the "algorithm straightens my hook" report at high strengths. The wobble window still widens with the dial, keeping the calmer feel; strength 50 remains the exact upstream reference tuning.
+
 ## 0.6.0-beta.4 - 2026-10-06
 
 - Fix the tail dot reported from iPad: iPadOS re-reports a fresh, frequently higher pressure on the pointerup sample at the frozen tail position (device diagnostics measured the fading tail at 0.01-0.33 while the lift jumps back to 0.36-0.76). Contact force can only fall while the pen leaves the surface, so the lift pressure is now clamped to the previous sample's pressure in both capture paths (modeled and direct). A skidding lift still lands where the pen lifted; it just no longer fattens the tail into a round dot.

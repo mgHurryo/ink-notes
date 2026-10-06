@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { canvasResolution, drawInkStroke, penOutline, smoothPenPressures } from "../src/rendering";
+import { canvasResolution, drawInkStroke, penOutline, smoothOutlineCenterline, smoothPenPressures } from "../src/rendering";
 import type { InkStroke } from "../src/model";
 
 function stroke(pressure = 0.5): InkStroke {
@@ -19,6 +19,59 @@ function context(): CanvasRenderingContext2D {
 }
 
 afterEach(() => vi.unstubAllGlobals());
+
+
+describe("outline centerline smoothing", () => {
+  const size = 12 * 0.925;
+
+  function outlineOf(points: Array<[number, number]>): number[][] {
+    return penOutline({
+      ...stroke(), width: 12,
+      points: points.map(([x, y], i) => ({ x: x / 100, y: y / 100, pressure: 0.5, t: i })),
+    }, 100, 100);
+  }
+
+  it("keeps a deliberate long-segment corner sharp", () => {
+    // 横折-style corner: long straight segments meeting at 90°.
+    const outline = outlineOf([[10, 10], [30, 10], [50, 10], [50, 30], [50, 50]]);
+    let minDistance = Infinity;
+    for (const [x, y] of outline) minDistance = Math.min(minDistance, Math.hypot(x - 50, y - 10));
+    // The outline must reach the corner vertex up to the stroke's half width;
+    // a rounded corner would leave a much larger gap.
+    expect(minDistance).toBeLessThan(size * 0.5 + 2);
+  });
+
+  it("rounds a sampled kink into a curve instead of a straight-line turn", () => {
+    // A fast hook sampled a handful of times: short segments reversing
+    // direction over ~15px. The kink vertices must move toward the local
+    // chord (curve rendering), unlike a polyline render.
+    // A flicked hook sampled at ~125Hz: ~5px segments turning ~60 degrees at
+    // the reversal — what a writer perceives as a straight-line turn.
+    const kink = [[0, 0], [5, 0.8], [10, 1.6], [14.4, 3.6], [17.2, 7.2], [18, 11.6], [17, 15.8], [14.2, 18.6], [10.4, 19.6], [6.4, 19]].map(([x, y]) => [x, y, 0.5]);
+    const smoothed = smoothOutlineCenterline(kink, size);
+    let maxShift = 0;
+    for (let i = 1; i < kink.length - 1; i++) {
+      maxShift = Math.max(maxShift, Math.hypot(smoothed[i][0] - kink[i][0], smoothed[i][1] - kink[i][1]));
+    }
+    expect(maxShift).toBeGreaterThan(1);
+  });
+
+  it("leaves long-segment corner vertices exactly in place", () => {
+    const corner = [[10, 10], [30, 10], [50, 10], [50, 30], [50, 50]].map(([x, y]) => [x, y, 0.5]);
+    const smoothed = smoothOutlineCenterline(corner, size);
+    expect(smoothed).toEqual(corner);
+  });
+
+  it("never moves the stroke endpoints", () => {
+    const points: Array<[number, number]> = [[10, 10], [14, 12], [18, 14], [21, 17], [23, 21]];
+    const outline = outlineOf(points);
+    const start = points[0], end = points[points.length - 1];
+    const minStart = Math.min(...outline.map(([x, y]) => Math.hypot(x - start[0], y - start[1])));
+    const minEnd = Math.min(...outline.map(([x, y]) => Math.hypot(x - end[0], y - end[1])));
+    expect(minStart).toBeLessThan(size * 0.5 + 2);
+    expect(minEnd).toBeLessThan(size * 0.5 + 2);
+  });
+});
 
 describe("canvas density", () => {
   it.each([0.5, 0.75, 1, 1.25, 2, 3])("matches display pixels at zoom %s", (zoom) => {

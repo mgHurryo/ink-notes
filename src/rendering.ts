@@ -21,7 +21,11 @@ export function canvasResolution(width: number, height: number, dpr: number, zoo
 
 export function penOutline(stroke: InkStroke, width: number, height: number): number[][] {
   const pressures = smoothPenPressures(stroke.points);
-  return getStroke(stroke.points.map((point, index) => [point.x * width, point.y * height, pressures[index]]), {
+  const centerline = smoothOutlineCenterline(
+    stroke.points.map((point, index) => [point.x * width, point.y * height, pressures[index]]),
+    stroke.width * 0.925,
+  );
+  return getStroke(centerline, {
     // Preserve the existing diameter: width * (0.55 + pressure * 0.75).
     size: stroke.width * 0.925,
     thinning: 0.75 / 1.85,
@@ -34,6 +38,37 @@ export function penOutline(stroke: InkStroke, width: number, height: number): nu
     start: { cap: true, taper: 0 },
     end: { cap: true, taper: 0 },
   });
+}
+
+/**
+ * Connects the sampled centerline with curves instead of raw polylines, so a
+ * fast hook sampled a handful of times renders as the curve the pen drew
+ * rather than a straight-line kink. Corner-preserving by construction: a
+ * vertex only participates while BOTH adjacent segments are short relative to
+ * the nib, so deliberate sharp corners drawn with long strokes keep their
+ * vertex exactly, and every displacement stays a small fraction of the nib
+ * width. Endpoints never move, so strokes still start on the pen-down spot
+ * and land on the lift position. Render-only: stored points are untouched.
+ */
+export function smoothOutlineCenterline(points: number[][], nib: number): number[][] {
+  if (points.length < 3) return points;
+  const maxSegment = nib * 0.75;
+  let current = points;
+  for (let pass = 0; pass < 2; pass++) {
+    const next = current.map((point) => point.slice());
+    for (let index = 1; index < current.length - 1; index++) {
+      const point = current[index];
+      const previous = current[index - 1];
+      const following = current[index + 1];
+      if (Math.hypot(point[0] - previous[0], point[1] - previous[1]) > maxSegment) continue;
+      if (Math.hypot(following[0] - point[0], following[1] - point[1]) > maxSegment) continue;
+      next[index][0] = (previous[0] + 2 * point[0] + following[0]) / 4;
+      next[index][1] = (previous[1] + 2 * point[1] + following[1]) / 4;
+      next[index][2] = (previous[2] + 2 * point[2] + following[2]) / 4;
+    }
+    current = next;
+  }
+  return current;
 }
 
 export function smoothPenPressures(points: readonly InkPoint[]): number[] {
