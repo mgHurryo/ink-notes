@@ -1,4 +1,4 @@
-import { Notice, Plugin, SuggestModal, TFile, WorkspaceLeaf } from "obsidian";
+import { Notice, Plugin, PluginSettingTab, SuggestModal, TFile, WorkspaceLeaf } from "obsidian";
 import { InkView, VIEW_TYPE_INK } from "./view";
 import { INK_EXTENSION, NotebookStore } from "./storage";
 import { createInkEmbedProcessor } from "./embed";
@@ -17,7 +17,9 @@ export default class InkNotesPlugin extends Plugin {
     this.registerView(VIEW_TYPE_INK, (leaf) => this.createView(leaf));
     this.registerExtensions([INK_EXTENSION], VIEW_TYPE_INK);
     this.addRibbonIcon("pen-line", "Open Ink Notes", () => this.runAsync(this.openNotebook(), "open a notebook"));
-    this.addCommand({ id: "open-ink-notebook", name: "Open Ink Notebook", callback: () => this.runAsync(this.openNotebook(), "open a notebook") });
+    this.addCommand({ id: "open-ink-notebook", name: "Open Ink Notebook",
+      hotkeys: [{ modifiers: ["Mod", "Shift"], key: "o" }],
+      callback: () => this.runAsync(this.openNotebook(), "open a notebook") });
     this.addCommand({ id: "create-ink-notebook", name: "Create Ink Notebook", callback: () => this.runAsync(this.createNotebook(), "create a notebook") });
     this.addCommand({
       id: "toggle-ink-diagnostics",
@@ -29,6 +31,7 @@ export default class InkNotesPlugin extends Plugin {
       },
     });
     this.registerMarkdownCodeBlockProcessor("ink", createInkEmbedProcessor(this.app, (file, pageId) => this.openFile(file, pageId)));
+    this.addSettingTab(new InkSettingTab(this.app, this));
     this.register(this.store.observe((file) => this.queueRefresh(file)));
     this.register(() => {
       for (const timer of this.refreshTimers.values()) window.clearTimeout(timer);
@@ -84,6 +87,37 @@ export default class InkNotesPlugin extends Plugin {
       new Notice(`Ink Notes could not reload ${file.path}: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       this.refreshing.delete(file.path);
+    }
+  }
+}
+
+class InkSettingTab extends PluginSettingTab {
+  constructor(app: Plugin["app"], private readonly plugin: InkNotesPlugin) { super(app, plugin); }
+
+  display(): void {
+    const { containerEl } = this;
+    containerEl.empty();
+    containerEl.createEl("h3", { text: "Ink Notes" });
+
+    const diagnostics = containerEl.createDiv();
+    diagnostics.createEl("h4", { text: "Diagnostics" });
+    diagnostics.createEl("p", { text: "Capture telemetry and per-stroke records from the currently open notebook. Export is available to everyone — also from the Page options menu inside the editor." });
+    const actions = diagnostics.createDiv({ cls: "ink-settings-actions" });
+    const exportButton = actions.createEl("button", { text: "Export diagnostics JSON", attr: { type: "button" } });
+    exportButton.addEventListener("click", () => this.eachView((view) => view.exportDiagnosticsJson(false)));
+    const copyButton = actions.createEl("button", { text: "Copy diagnostics JSON", attr: { type: "button" } });
+    copyButton.addEventListener("click", () => this.eachView((view) => view.exportDiagnosticsJson(true)));
+
+    const panel = containerEl.createDiv();
+    panel.createEl("h4", { text: "Developer panel" });
+    panel.createEl("p", { text: "Show the live developer panel (sample rate, sparse detection, per-stroke records) inside the open editor." });
+    const toggleButton = panel.createEl("button", { text: "Toggle developer panel", attr: { type: "button" } });
+    toggleButton.addEventListener("click", () => this.eachView((view) => view.toggleDevPanel()));
+  }
+
+  private eachView(run: (view: InkView) => void): void {
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_INK)) {
+      if (leaf.view instanceof InkView) run(leaf.view);
     }
   }
 }

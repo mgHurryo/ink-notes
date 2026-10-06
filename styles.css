@@ -157,20 +157,60 @@
   position: fixed;
   z-index: 1000;
   display: none;
+  flex-direction: column;
   width: min(320px, calc(100vw - 16px));
   /* Capped so the popover (now with the dynamics sliders) still fits below
      the toolbar row; taller content scrolls inside instead of covering the
      toolbar buttons when the below-placement flips. */
   max-height: min(calc(100vh - 120px), 540px);
   padding: 16px;
-  overflow: auto;
+  overflow: hidden;
+  /* Menu priority over workspace gestures: vertical panning only, and no
+     scroll chaining to the page while the menu is open. */
+  touch-action: pan-y;
+  overscroll-behavior: contain;
   border: 1px solid var(--ink-border);
   border-radius: 14px;
   background: var(--ink-panel-raised);
   color: var(--ink-text);
   box-shadow: var(--ink-shadow-panel);
-  scrollbar-width: thin;
 }
+
+/* Pinned header: title + live sample stroke stay visible while the settings
+   below scroll. */
+.ink-popover-header {
+  flex: 0 0 auto;
+  margin: -4px 0 10px;
+}
+
+.ink-popover-title {
+  font-size: var(--font-ui-medium);
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.ink-popover-preview {
+  display: block;
+  width: 100%;
+  height: 56px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 10px;
+  background: var(--background-primary);
+}
+
+.ink-popover-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  overscroll-behavior: contain;
+  touch-action: pan-y;
+  scrollbar-width: thin;
+  margin: 0 -6px;
+  padding: 0 6px;
+}
+
+.ink-popover-body input[type="range"] { touch-action: none; }
 
 .ink-size-popover.is-open { display: block; }
 
@@ -289,16 +329,17 @@
 .ink-color-swatches {
   display: flex;
   flex: 1;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
 }
 
 .ink-notes-view .ink-color-swatch {
   position: relative;
-  flex: 1 1 44px;
-  width: 44px;
-  height: 44px;
+  flex: 0 0 40px;
+  width: 40px;
+  height: 40px;
   min-width: 0;
   padding: 0;
   border: 10px solid var(--ink-panel-raised);
@@ -727,4 +768,20 @@
 .ink-curve-actions button {
   font-size: var(--font-ui-smaller);
   padding: 2px 10px;
+}
+
+/* Reading mode: view-only. Tool and history controls disappear, the page
+   restores native panning, and only navigation remains. */
+.ink-reading .ink-toolbar-section-draw,
+.ink-reading .ink-toolbar-section-history {
+  display: none;
+}
+
+.ink-reading .ink-size-popover-control {
+  display: none;
+}
+
+.ink-reading-toggle[aria-pressed="true"] {
+  border-color: var(--ink-border);
+  background: var(--ink-hover);
 }

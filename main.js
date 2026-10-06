@@ -1995,8 +1995,12 @@ var InkView = class extends import_obsidian.FileView {
     this.devCoalescedSamples = 0;
     this.devSamplesFed = 0;
     this.devLastPointerType = null;
+    /** Reading mode: view-only. Ink tools, the popover and eraser tracking are
+     *  disabled and the page restores native panning/scrolling. */
+    this.readingMode = false;
     /** The pressure curve editor stays collapsed until manually expanded. */
     this.pressureCurveOpen = false;
+    this.popoverTitle = null;
     this.confirmedStrokeOutlines = /* @__PURE__ */ new Map();
     this.pendingInkStrokes = [];
     this.committingInkStrokes = null;
@@ -2189,14 +2193,22 @@ var InkView = class extends import_obsidian.FileView {
     });
     const icon = button.createSpan({ cls: "ink-button-icon" });
     (0, import_obsidian.setIcon)(icon, "sliders-horizontal");
+    void icon;
     button.title = "Brush size and opacity";
     const popover = container.createDiv({
       cls: "ink-size-popover",
       attr: { role: "dialog", "aria-label": "Tool settings", "aria-hidden": "true" }
     });
-    this.addBrushSettings(popover, "pen", "Pen", [2, 4, 8], 24);
-    this.addBrushSettings(popover, "highlighter", "Highlighter", [8, 16, 24], 48);
-    const eraser = popover.createDiv({ cls: "ink-eraser-settings" });
+    const header = popover.createDiv({ cls: "ink-popover-header" });
+    this.popoverTitle = header.createDiv({ cls: "ink-popover-title", text: "Pen settings" });
+    header.createEl("canvas", { cls: "ink-popover-preview", attr: { "aria-hidden": "true" } });
+    for (const type of ["touchstart", "touchmove", "pointerdown"]) {
+      this.registerDomEvent(popover, type, (event) => event.stopPropagation(), { passive: type !== "touchmove" });
+    }
+    const popoverBody = popover.createDiv({ cls: "ink-popover-body" });
+    this.addBrushSettings(popoverBody, "pen", "Pen", [2, 4, 8], 24);
+    this.addBrushSettings(popoverBody, "highlighter", "Highlighter", [8, 16, 24], 48);
+    const eraser = popoverBody.createDiv({ cls: "ink-eraser-settings" });
     eraser.createDiv({ cls: "ink-size-popover-title", text: "Eraser" });
     eraser.createDiv({ cls: "ink-settings-label", text: "Mode" });
     const modes = eraser.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
@@ -2214,7 +2226,10 @@ var InkView = class extends import_obsidian.FileView {
       this.state.eraserSize = value;
       this.refreshEraserCursor();
     });
-    const close = () => this.setSizePopoverOpen(false);
+    const close = () => {
+      if (window.curveDebug) console.log("[curve-debug] close() called");
+      this.setSizePopoverOpen(false);
+    };
     button.addEventListener("click", (event) => {
       event.stopPropagation();
       this.setSizePopoverOpen(!this.sizePopoverOpen);
@@ -2240,6 +2255,7 @@ var InkView = class extends import_obsidian.FileView {
   }
   setSizePopoverOpen(open) {
     if (!this.sizePopover || !this.sizePopoverButton) return;
+    if (typeof window !== "undefined" && window.curveDebug) console.log("[curve-debug] setSizePopoverOpen", open);
     this.sizePopoverOpen = open;
     this.sizePopover.toggleClass("is-open", open);
     this.sizePopover.setAttribute("aria-hidden", String(!open));
@@ -2289,13 +2305,6 @@ var InkView = class extends import_obsidian.FileView {
     const header = panel.createDiv({ cls: "ink-size-popover-header" });
     header.createSpan({ cls: "ink-size-popover-title", text: `${label} settings` });
     header.createSpan({ cls: "ink-control-value", text: formatControlValue("Size", settings.width) });
-    const preview = panel.createDiv({ cls: "ink-brush-preview", attr: { "aria-hidden": "true" } });
-    preview.createSpan({ cls: "ink-brush-preview-line" });
-    if (tool === "pen") {
-      const sample = preview.createEl("canvas", { cls: "ink-brush-preview-canvas", attr: { "aria-hidden": "true" } });
-      sample.style.width = "100%";
-      sample.style.height = "40px";
-    }
     panel.createDiv({ cls: "ink-settings-label", text: "Size" });
     const input = panel.createEl("input", { attr: {
       type: "range",
@@ -2382,13 +2391,16 @@ var InkView = class extends import_obsidian.FileView {
     return this.state[tool];
   }
   updateBrushPreview(tool) {
-    var _a;
+    var _a, _b;
     const settings = this.brushSettings(tool);
     const preview = (_a = this.sizePopover) == null ? void 0 : _a.querySelector(`.ink-brush-settings[data-brush-tool="${tool}"] .ink-brush-preview-line`);
-    if (!preview) return;
-    preview.style.setProperty("--ink-preview-color", settings.color);
-    preview.style.setProperty("--ink-preview-opacity", String(settings.opacity));
-    preview.style.setProperty("--ink-preview-width", `${Math.max(2, Math.min(30, settings.width))}px`);
+    if (preview) {
+      preview.style.setProperty("--ink-preview-color", settings.color);
+      preview.style.setProperty("--ink-preview-opacity", String(settings.opacity));
+      preview.style.setProperty("--ink-preview-width", `${Math.max(2, Math.min(30, settings.width))}px`);
+    }
+    const title = (_b = this.sizePopover) == null ? void 0 : _b.querySelector(".ink-popover-title");
+    if (title) title.textContent = `${tool === "pen" ? "Pen" : "Highlighter"} settings \xB7 ${formatControlValue("Size", settings.width)}`;
     if (tool === "pen") {
       this.drawBrushSampleStroke(settings);
       this.drawPressureCurveEditor(settings);
@@ -2398,7 +2410,7 @@ var InkView = class extends import_obsidian.FileView {
    *  panel's preview canvas, using the same outline geometry as real ink. */
   drawBrushSampleStroke(settings) {
     var _a, _b, _c, _d;
-    const canvas = (_a = this.sizePopover) == null ? void 0 : _a.querySelector(`.ink-brush-settings[data-brush-tool="pen"] .ink-brush-preview-canvas`);
+    const canvas = (_a = this.sizePopover) == null ? void 0 : _a.querySelector(".ink-popover-preview");
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
@@ -2958,6 +2970,7 @@ var InkView = class extends import_obsidian.FileView {
     var _a, _b, _c, _d, _e;
     this.devPointerEvents += 1;
     this.devLastPointerType = event.pointerType || this.devLastPointerType;
+    if (this.readingMode) return;
     if (event.pointerType === "touch" || source === "pointer" && event.pointerType === "pen" && this.stylusTouchInput) return;
     this.pageNavigationGeneration += 1;
     if (this.activePointerId !== null) this.finishPointerInput(false);
@@ -4176,7 +4189,6 @@ page: ${this.currentPage().id}
     } });
     const iconHolder = button.createSpan({ cls: "ink-button-icon" });
     (0, import_obsidian.setIcon)(iconHolder, icon);
-    button.createSpan({ cls: "ink-button-text", text: label });
     button.addEventListener("click", () => {
       this.finishPointerInput(false);
       if (this.state.tool === tool && (tool === "pen" || tool === "highlighter" || tool === "eraser")) {
@@ -4199,7 +4211,6 @@ page: ${this.currentPage().id}
     button.disabled = disabled;
     const iconHolder = button.createSpan({ cls: "ink-button-icon" });
     (0, import_obsidian.setIcon)(iconHolder, icon);
-    button.createSpan({ cls: "ink-button-text", text: label });
     button.addEventListener("click", callback);
     return button;
   }
@@ -5348,7 +5359,12 @@ var InkNotesPlugin = class extends import_obsidian4.Plugin {
     this.registerView(VIEW_TYPE_INK, (leaf) => this.createView(leaf));
     this.registerExtensions([INK_EXTENSION], VIEW_TYPE_INK);
     this.addRibbonIcon("pen-line", "Open Ink Notes", () => this.runAsync(this.openNotebook(), "open a notebook"));
-    this.addCommand({ id: "open-ink-notebook", name: "Open Ink Notebook", callback: () => this.runAsync(this.openNotebook(), "open a notebook") });
+    this.addCommand({
+      id: "open-ink-notebook",
+      name: "Open Ink Notebook",
+      hotkeys: [{ modifiers: ["Mod", "Shift"], key: "o" }],
+      callback: () => this.runAsync(this.openNotebook(), "open a notebook")
+    });
     this.addCommand({ id: "create-ink-notebook", name: "Create Ink Notebook", callback: () => this.runAsync(this.createNotebook(), "create a notebook") });
     this.addCommand({
       id: "toggle-ink-diagnostics",
@@ -5360,6 +5376,7 @@ var InkNotesPlugin = class extends import_obsidian4.Plugin {
       }
     });
     this.registerMarkdownCodeBlockProcessor("ink", createInkEmbedProcessor(this.app, (file, pageId) => this.openFile(file, pageId)));
+    this.addSettingTab(new InkSettingTab(this.app, this));
     this.register(this.store.observe((file) => this.queueRefresh(file)));
     this.register(() => {
       for (const timer of this.refreshTimers.values()) window.clearTimeout(timer);
@@ -5415,6 +5432,35 @@ var InkNotesPlugin = class extends import_obsidian4.Plugin {
       new import_obsidian4.Notice(`Ink Notes could not reload ${file.path}: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       this.refreshing.delete(file.path);
+    }
+  }
+};
+var InkSettingTab = class extends import_obsidian4.PluginSettingTab {
+  constructor(app, plugin) {
+    super(app, plugin);
+    this.plugin = plugin;
+  }
+  display() {
+    const { containerEl } = this;
+    containerEl.empty();
+    containerEl.createEl("h3", { text: "Ink Notes" });
+    const diagnostics = containerEl.createDiv();
+    diagnostics.createEl("h4", { text: "Diagnostics" });
+    diagnostics.createEl("p", { text: "Capture telemetry and per-stroke records from the currently open notebook. Export is available to everyone \u2014 also from the Page options menu inside the editor." });
+    const actions = diagnostics.createDiv({ cls: "ink-settings-actions" });
+    const exportButton = actions.createEl("button", { text: "Export diagnostics JSON", attr: { type: "button" } });
+    exportButton.addEventListener("click", () => this.eachView((view) => view.exportDiagnosticsJson(false)));
+    const copyButton = actions.createEl("button", { text: "Copy diagnostics JSON", attr: { type: "button" } });
+    copyButton.addEventListener("click", () => this.eachView((view) => view.exportDiagnosticsJson(true)));
+    const panel = containerEl.createDiv();
+    panel.createEl("h4", { text: "Developer panel" });
+    panel.createEl("p", { text: "Show the live developer panel (sample rate, sparse detection, per-stroke records) inside the open editor." });
+    const toggleButton = panel.createEl("button", { text: "Toggle developer panel", attr: { type: "button" } });
+    toggleButton.addEventListener("click", () => this.eachView((view) => view.toggleDevPanel()));
+  }
+  eachView(run) {
+    for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_INK)) {
+      if (leaf.view instanceof InkView) run(leaf.view);
     }
   }
 };
