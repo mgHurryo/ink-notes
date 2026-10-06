@@ -231,6 +231,8 @@ export class InkView extends FileView {
   private devCoalescedSamples = 0;
   private devSamplesFed = 0;
   private devLastPointerType: string | null = null;
+  /** The pressure curve editor stays collapsed until manually expanded. */
+  private pressureCurveOpen = false;
   private confirmedStrokeOutlines = new Map<string, ConfirmedStrokeOutline>();
   private pendingInkStrokes: InkStroke[] = [];
   private committingInkStrokes: InkStroke[] | null = null;
@@ -597,8 +599,32 @@ export class InkView extends FileView {
         settings.pressureGain = value;
         this.updateBrushPreview(tool);
       });
-      panel.createDiv({ cls: "ink-settings-label", text: "Pressure curve" });
-      this.addPressureCurveEditor(panel, settings);
+      // The curve editor stays collapsed until manually expanded.
+      const curveHeader = panel.createDiv({ cls: "ink-settings-label ink-curve-header" });
+      curveHeader.createSpan({ text: "Pressure curve" });
+      const curveToggle = curveHeader.createEl("button", {
+        cls: "ink-curve-toggle", attr: {
+          type: "button", "aria-expanded": String(this.pressureCurveOpen),
+          "aria-label": this.pressureCurveOpen ? "Collapse pressure curve editor" : "Expand pressure curve editor",
+        },
+      });
+      setIcon(curveToggle.createSpan({ cls: "ink-button-icon" }), this.pressureCurveOpen ? "chevron-up" : "chevron-down");
+      const curveBody = panel.createDiv({ cls: "ink-curve-body" });
+      if (!this.pressureCurveOpen) curveBody.style.display = "none";
+      const resetRow = curveBody.createDiv({ cls: "ink-curve-actions" });
+      const resetButton = resetRow.createEl("button", { text: "Reset", attr: { type: "button" } });
+      resetButton.addEventListener("click", () => {
+        settings.pressureCurve = undefined;
+        this.updateBrushPreview("pen");
+      });
+      this.addPressureCurveEditor(curveBody, settings);
+      curveToggle.addEventListener("click", () => {
+        this.pressureCurveOpen = !this.pressureCurveOpen;
+        curveBody.style.display = this.pressureCurveOpen ? "" : "none";
+        curveToggle.setAttribute("aria-expanded", String(this.pressureCurveOpen));
+        setIcon(curveToggle.querySelector(".ink-button-icon") ?? curveToggle.createSpan({ cls: "ink-button-icon" }), this.pressureCurveOpen ? "chevron-up" : "chevron-down");
+        if (this.pressureCurveOpen) this.updateBrushPreview("pen");
+      });
       this.addRange(panel, "Speed width", 0, 100, 1, settings.speedGain ?? 0, (value) => {
         settings.speedGain = value;
         this.updateBrushPreview(tool);
@@ -2505,7 +2531,11 @@ export class InkView extends FileView {
       } else if (points.length < 6) {
         const insertAt = points.findIndex((point) => point[0] > position.x);
         const index = insertAt === -1 ? points.length - 1 : insertAt;
-        points.splice(index, 0, [position.x, position.y]);
+        // Keep the mapping monotonic: a new point starts between its
+        // neighbors' heights.
+        const lowY = index > 0 ? points[index - 1][1] : 0;
+        const highY = index < points.length - 1 ? points[index][1] : 1;
+        points.splice(index, 0, [position.x, Math.max(lowY, Math.min(highY, position.y))]);
         settings.pressureCurve = points;
         dragIndex = index;
       }
@@ -2519,11 +2549,20 @@ export class InkView extends FileView {
       const points = curve();
       const point = points[dragIndex];
       const isEnd = dragIndex === 0 || dragIndex === points.length - 1;
-      point[1] = Math.max(0, Math.min(1, position.y));
+      // Non-decreasing heights: more pressure must never map to less width.
+      const lowY = dragIndex > 0 ? points[dragIndex - 1][1] : 0;
+      const highY = dragIndex < points.length - 1 ? points[dragIndex + 1][1] : 1;
+      point[1] = Math.max(lowY, Math.min(highY, position.y));
       if (!isEnd) {
         const low = points[dragIndex - 1][0] + 0.02;
         const high = points[dragIndex + 1][0] - 0.02;
         point[0] = Math.max(low, Math.min(high, position.x));
+      }
+      settings.pressureCurve = points;
+      // Flinging an interior point onto the bottom edge removes it.
+      if (!isEnd && dragIndex > 0 && dragIndex < points.length - 1 && point[1] <= 0.02) {
+        points.splice(dragIndex, 1);
+        dragIndex = -1;
       }
       settings.pressureCurve = points;
       this.updateBrushPreview("pen");

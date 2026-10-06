@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { canvasResolution, drawInkStroke, penOutline, smoothOutlineCenterline, smoothPenPressures } from "../src/rendering";
+import { canvasResolution, drawInkStroke, normalizePressureCurve, penOutline, smoothOutlineCenterline, smoothPenPressures } from "../src/rendering";
 import type { InkStroke } from "../src/model";
 
 function stroke(pressure = 0.5): InkStroke {
@@ -219,6 +219,25 @@ describe("dynamics refinement", () => {
     const fastBand = thicknessAt(combined, 42, 58);
     expect(fastBand).toBeLessThan(slowBand);
     expect(slowBand).toBeGreaterThan(fastBand * 1.15);
+  });
+});
+
+
+describe("pressure curve normalization", () => {
+  it("flattens decreasing heights to a non-decreasing mapping", () => {
+    const curve = normalizePressureCurve([[0, 0], [0.3, 0.8], [0.5, 0.3], [1, 0.9]]);
+    expect(curve).toEqual([[0, 0], [0.3, 0.8], [0.5, 0.8], [1, 0.9]]);
+  });
+
+  it("rejects degenerate input", () => {
+    expect(normalizePressureCurve(undefined)).toBeUndefined();
+    expect(normalizePressureCurve([[0.2, 0.5]])).toBeUndefined();
+    expect(normalizePressureCurve([[0, 0.2], [0, 0.8], [1, 0.9]])).toEqual([[0, 0.2], [1, 0.9]]);
+  });
+
+  it("strips identity curves", () => {
+    expect(normalizePressureCurve([[0, 0], [1, 1]])).toBeUndefined();
+    expect(normalizePressureCurve([[0, 0], [0.5, 0.5], [1, 1]])).toBeUndefined();
   });
 });
 
