@@ -6,10 +6,15 @@ const registerMarkdown = vi.fn();
 const list = vi.fn();
 const notice = vi.fn();
 
-vi.mock("obsidian", () => ({
+vi.mock("obsidian", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   Plugin: class {
-    app = { workspace: { getLeavesOfType: vi.fn(() => []) } };
-    registerView = vi.fn(); registerExtensions = vi.fn(); addRibbonIcon = vi.fn(); addCommand = vi.fn(); addSettingTab = vi.fn();
+    app = {
+      vault: null,
+      workspace: { getLeavesOfType: vi.fn(() => []), getActiveFile: vi.fn(() => null), getActiveViewOfType: vi.fn(() => null) },
+    };
+    registerView = vi.fn(); registerExtensions = vi.fn(); addRibbonIcon = vi.fn(); addCommand = vi.fn(); addSettingTab = vi.fn(); registerEvent = vi.fn();
+    loadData = vi.fn(async () => ({})); saveData = vi.fn(async () => undefined);
     registerMarkdownCodeBlockProcessor = registerMarkdown;
     register = register;
   },
@@ -18,13 +23,22 @@ vi.mock("obsidian", () => ({
   PluginSettingTab: class {},
   TFile: class {},
   WorkspaceLeaf: class {},
+  FileView: class { app = { scope: {} }; file = null; },
+  Scope: class { register(): void {} },
+  Menu: class {},
+  setIcon: () => undefined,
+  loadPdfJs: () => Promise.resolve({}),
 }));
 vi.mock("../src/storage", () => ({
   INK_EXTENSION: "ink",
   NotebookStore: class { observe = observe; list = list; },
 }));
 vi.mock("../src/embed", () => ({ createInkEmbedProcessor: vi.fn(() => vi.fn()) }));
-vi.mock("../src/view", () => ({ VIEW_TYPE_INK: "ink-notes-view", InkView: class {} }));
+vi.mock("../src/view", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
+  VIEW_TYPE_INK: "ink-notes-view",
+  InkView: class {},
+}));
 
 import InkNotesPlugin from "../src/main";
 import { InkView } from "../src/view";

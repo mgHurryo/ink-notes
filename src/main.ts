@@ -1,21 +1,41 @@
-import { Notice, Plugin, PluginSettingTab, SuggestModal, TFile, WorkspaceLeaf } from "obsidian";
+import { Notice, Plugin, PluginSettingTab, SuggestModal, TAbstractFile, TFile, WorkspaceLeaf } from "obsidian";
 import { InkView, VIEW_TYPE_INK } from "./view";
 import { INK_EXTENSION, NotebookStore } from "./storage";
 import { createInkEmbedProcessor } from "./embed";
 import { InkWorkerService } from "./worker-service";
+import { PdfInkView, PdfWriterArbiter, VIEW_TYPE_PDF_INK } from "./pdf-view";
+import { PdfSidecarStore } from "./pdf-store";
+import { PDF_INK_FOLDER, PDF_SIDECAR_EXTENSION } from "./pdf-sidecar";
+import { PDF_VIEW_ENHANCER_PLUGIN_IDS, PdfTabTakeover } from "./pdf-takeover";
+
+interface InkNotesSettings {
+  /** Master switch for taking over PDF tabs with the handwriting view. */
+  takeOverPdfTabs: boolean;
+}
+
+const DEFAULT_SETTINGS: InkNotesSettings = {
+  takeOverPdfTabs: true,
+};
 
 export default class InkNotesPlugin extends Plugin {
   private store!: NotebookStore;
   private workers!: InkWorkerService;
+  private pdfStore!: PdfSidecarStore;
+  private arbiter!: PdfWriterArbiter;
+  private takeover!: PdfTabTakeover;
+  config: InkNotesSettings = { ...DEFAULT_SETTINGS };
   private refreshTimers = new Map<string, number>();
   private refreshing = new Set<string>();
   private pendingRefresh = new Set<string>();
+
   async onload(): Promise<void> {
+    this.config = { ...DEFAULT_SETTINGS, ...(await this.loadData()), ...DEFAULT_SETTINGS };
     this.store = new NotebookStore(this.app);
     this.workers = new InkWorkerService((message) => new Notice(message));
     this.register(() => this.workers.dispose());
     this.registerView(VIEW_TYPE_INK, (leaf) => this.createView(leaf));
     this.registerExtensions([INK_EXTENSION], VIEW_TYPE_INK);
+    this.configurePdfSupport();
     this.addRibbonIcon("pen-line", "Open Ink Notes", () => this.runAsync(this.openNotebook(), "open a notebook"));
     this.addCommand({ id: "open-ink-notebook", name: "Open Ink Notebook",
       hotkeys: [{ modifiers: ["Mod", "Shift"], key: "o" }],
@@ -30,6 +50,39 @@ export default class InkNotesPlugin extends Plugin {
         }
       },
     });
+    this.addCommand({
+      id: "open-pdf-handwriting",
+      name: "Open current PDF with handwriting",
+      checkCallback: (checking) => {
+        const file = this.app.workspace.getActiveFile();
+        if (!file || file.extension !== "pdf") return false;
+        if (checking) return true;
+        this.openPdfHandwriting(file);
+        return true;
+      },
+    });
+    this.addCommand({
+      id: "export-pdf-handwriting",
+      name: "Export current PDF with handwriting",
+      checkCallback: (checking) => {
+        const view = this.app.workspace.getActiveViewOfType(PdfInkView);
+        if (!view) return false;
+        if (checking) return true;
+        void view.exportHandwrittenCopy();
+        return true;
+      },
+    });
+    this.addCommand({
+      id: "restore-pdf-viewer",
+      name: "Return current PDF tab to the built-in viewer",
+      checkCallback: (checking) => {
+        const view = this.app.workspace.getActiveViewOfType(PdfInkView);
+        if (!view) return false;
+        if (checking) return true;
+        void view.restoreBuiltinViewer();
+        return true;
+      },
+    });
     this.registerMarkdownCodeBlockProcessor("ink", createInkEmbedProcessor(this.app, (file, pageId) => this.openFile(file, pageId)));
     this.addSettingTab(new InkSettingTab(this.app, this));
     this.register(this.store.observe((file) => this.queueRefresh(file)));
@@ -39,8 +92,70 @@ export default class InkNotesPlugin extends Plugin {
     });
   }
 
+  onunload(): void {
+    this.takeover?.uninstall();
+  }
+
   private createView(leaf: WorkspaceLeaf): InkView {
     return new InkView(leaf, this.store, this.workers);
+  }
+
+  /**
+   * PDF handwriting support: a custom view for PDF tabs, installed by
+   * wrapping the public WorkspaceLeaf.setViewState choke point, plus the
+   * sidecar store, writer arbitration, and vault event wiring.
+   */
+  private configurePdfSupport(): void {
+    this.pdfStore = new PdfSidecarStore(this.app);
+    this.arbiter = new PdfWriterArbiter();
+    this.takeover = new PdfTabTakeover(() => ({
+      enabled: this.config.takeOverPdfTabs,
+      // PDF++ enhances the built-in viewer from the inside; while it is
+      // enabled we yield so both plugins stay fully usable.
+      enhancerActive: PDF_VIEW_ENHANCER_PLUGIN_IDS.some((id) => {
+        const plugins = (this.app as unknown as { plugins?: { enabledPlugins?: Set<string> } }).plugins;
+        return plugins?.enabledPlugins?.has(id) === true;
+      }),
+      isPdfFile: (path) => {
+        const file = this.app.vault.getAbstractFileByPath(path);
+        return file instanceof TFile && file.extension === "pdf";
+      },
+    }), VIEW_TYPE_PDF_INK);
+    this.registerView(VIEW_TYPE_PDF_INK, (leaf) => {
+      const view = new PdfInkView(leaf);
+      view.configure({ store: this.pdfStore, workers: this.workers, takeover: this.takeover, arbiter: this.arbiter });
+      return view;
+    });
+    if (this.app.vault) {
+      this.takeover.install();
+      this.register(() => this.takeover.uninstall());
+      this.registerEvent(this.app.vault.on("rename", (file: TAbstractFile, oldPath: string) => {
+        if (file instanceof TFile && file.extension === "pdf") {
+          void this.pdfStore.migrateForRename(file.path, oldPath).catch(() => {
+            // The recovery scan resolves a failed migration on the next open.
+          });
+        }
+      }));
+      this.registerEvent(this.app.vault.on("modify", (file: TAbstractFile) => {
+        if (!(file instanceof TFile) || file.parent?.path !== PDF_INK_FOLDER || !file.name.endsWith(`.${PDF_SIDECAR_EXTENSION}`)) return;
+        for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_PDF_INK)) {
+          if (leaf.view instanceof PdfInkView) void leaf.view.reloadExternalSidecar(file.path);
+        }
+      }));
+    }
+  }
+
+  /** Re-evaluate the takeover patch after the setting changed. */
+  refreshPdfTakeover(): void {
+    if (!this.takeover) return;
+    this.takeover.uninstall();
+    if (this.config.takeOverPdfTabs && this.app.vault) this.takeover.install();
+  }
+
+  /** Open a PDF tab in the handwriting view on explicit request. */
+  private async openPdfHandwriting(file: TFile): Promise<void> {
+    const leaf = this.app.workspace.getLeaf("tab");
+    await leaf.setViewState({ type: VIEW_TYPE_PDF_INK, state: { file: file.path } });
   }
 
   private async openNotebook(): Promise<void> {
@@ -98,6 +213,24 @@ class InkSettingTab extends PluginSettingTab {
     const { containerEl } = this;
     containerEl.empty();
     containerEl.createEl("h3", { text: "Ink Notes" });
+
+    const pdf = containerEl.createDiv();
+    pdf.createEl("h4", { text: "PDF handwriting" });
+    pdf.createEl("p", {
+      text: "Open PDFs in a handwriting view with a sidecar stored in A_pdfinkwrittern/. "
+        + "Turn this off to keep the built-in PDF viewer (including PDF++); you can still open "
+        + "individual PDFs with handwriting from the file context menu or the command palette.",
+    });
+    const pdfRow = pdf.createDiv({ cls: "ink-settings-actions" });
+    const toggle = pdfRow.createEl("label");
+    const checkbox = toggle.createEl("input", { type: "checkbox" });
+    checkbox.checked = this.plugin.config.takeOverPdfTabs;
+    toggle.createSpan({ text: " Take over PDF tabs automatically" });
+    checkbox.addEventListener("change", () => {
+      this.plugin.config.takeOverPdfTabs = checkbox.checked;
+      void this.plugin.saveData(this.plugin.config);
+      this.plugin.refreshPdfTakeover();
+    });
 
     const diagnostics = containerEl.createDiv();
     diagnostics.createEl("h4", { text: "Diagnostics" });
