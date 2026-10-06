@@ -398,7 +398,6 @@ export class InkView extends FileView {
   }
 
   private renderToolPopover(): void {
-    console.log("[curve-debug] renderToolPopover rebuild");
     const host = this.root.querySelector<HTMLElement>(".ink-tool-popover-host")!;
     host.empty();
     this.addSizePopover(host);
