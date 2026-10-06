@@ -634,6 +634,13 @@
   }
 }
 
+/* The diagnostics toolbar toggle is width-budgeted out of phone layouts;
+   the command palette exposes the same toggle there. */
+@media (max-width: 639.5px) {
+  /* Matches the toolbar button specificity (.ink-notes-view :is(...)). */
+  .ink-notes-view .ink-icon-button.ink-dev-toggle { display: none; }
+}
+
 /* Developer diagnostics overlay (read-only telemetry; toggled from the
    toolbar "activity" button or the "Toggle Ink developer diagnostics"
    command). */
