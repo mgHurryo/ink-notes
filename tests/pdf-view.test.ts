@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { TFile, WorkspaceLeaf } from "obsidian";
 import type { NotebookOperation } from "../src/worker-protocol";
+import type { InkPoint, InkStroke } from "../src/model";
 import { InkWorkerService } from "../src/worker-service";
 import { PdfSidecarStore, serializeSidecar } from "../src/pdf-store";
 import { createSidecar, insertBlankNotePage, sourcePageId } from "../src/pdf-sidecar";
@@ -27,6 +28,9 @@ interface PdfViewInternals {
   noteIndex: number;
   canvasLogicalWidth: number;
   canvasLogicalHeight: number;
+  lastPoint: InkPoint | null;
+  predictedTip: InkPoint[] | null;
+  activeStroke: InkStroke | null;
   attachSidecar(sidecar: PdfSidecar, raw: string, file: TFile | null): void;
   setMode(mode: "reading" | "editing"): Promise<void>;
   flushSaveNow(): Promise<{ status: string; message?: string }>;
@@ -311,5 +315,37 @@ describe("blank note pages in the view", () => {
     expect(internal.sidecar.notePages).toHaveLength(1);
     expect(internal.sidecar.notePages[0].id).toBe(sourcePageId(0));
     expect(internal.dirty).toBe(true);
+  });
+});
+
+describe("predicted ghost tip", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", globalThis);
+  });
+
+  it("tracks the pen tail and anchors the ghost at the stroke tail, not the start", async () => {
+    const { view, internal } = setup();
+    await internal.setMode("editing");
+    internal.onPointerDownHost(pointer(100, 420));
+    internal.onPointerMoveHost(pointer(300, 420));
+    expect(internal.lastPoint!.x).toBeCloseTo(300 / 595.28, 3);
+    const predictedSample = { pointerId: 7, pointerType: "pen", clientX: 340, clientY: 422, pressure: 0.5, tiltX: 0, tiltY: 0, timeStamp: pointerClock += 8 };
+    internal.onPointerMoveHost(Object.assign(pointer(310, 421), { getPredictedEvents: () => [predictedSample] }) as PointerEvent);
+    expect(internal.predictedTip).toHaveLength(1);
+    expect(internal.predictedTip![0].x).toBeCloseTo(340 / 595.28, 3);
+
+    const moveTo = vi.fn();
+    const lineTo = vi.fn();
+    const ghostCtx = { beginPath: vi.fn(), moveTo, lineTo, stroke: vi.fn() } as unknown as CanvasRenderingContext2D;
+    const stroke = internal.activeStroke!;
+    (view as unknown as PdfViewInternals & { drawPredictedGhostTip(ctx: CanvasRenderingContext2D, stroke: InkStroke): void }).drawPredictedGhostTip(ghostCtx, stroke);
+
+    const tail = stroke.points[stroke.points.length - 1];
+    expect(moveTo).toHaveBeenCalled();
+    expect(moveTo.mock.calls[0][0]).toBeCloseTo(tail.x * internal.canvasLogicalWidth, 0);
+    expect(moveTo.mock.calls[0][1]).toBeCloseTo(tail.y * internal.canvasLogicalHeight, 0);
+    // The bug this locks: the ghost swept from the stroke's FIRST point.
+    expect(Math.abs(moveTo.mock.calls[0][0] - stroke.points[0].x * internal.canvasLogicalWidth)).toBeGreaterThan(1);
   });
 });

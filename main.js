@@ -28826,6 +28826,7 @@ var PdfInkView = class extends import_obsidian6.FileView {
         stroke.points.push(point);
         stroke.updatedAt = Date.now();
       }
+      this.lastPoint = point;
       this.requestRender();
     }
     const predicted = typeof event.getPredictedEvents === "function" ? event.getPredictedEvents() : [];
@@ -29247,14 +29248,17 @@ var PdfInkView = class extends import_obsidian6.FileView {
   }
   /** Draws the predicted tip as a tapering ghost: continuous with the stroke
    *  at the junction (deep black), fading to faint at the predicted position.
+   *  Anchored at the live stroke tail — anchoring anywhere else sweeps faint
+   *  segments from the stroke's start to the pen on every frame.
    *  Preview-layer only; the stored stroke never includes these points. */
   drawPredictedGhostTip(ctx, stroke) {
     var _a, _b;
-    if (!this.predictedTip || this.predictedTip.length === 0 || !this.lastPoint) return;
+    const tail = stroke.points[stroke.points.length - 1];
+    if (!this.predictedTip || this.predictedTip.length === 0 || !tail) return;
     const gain = clampPercent((_a = stroke.dynamics) == null ? void 0 : _a.pressure, 100) / 100;
-    const mapped = samplePressureCurve(this.lastPoint.pressure, normalizePressureCurve((_b = stroke.dynamics) == null ? void 0 : _b.pressureCurve));
+    const mapped = samplePressureCurve(tail.pressure, normalizePressureCurve((_b = stroke.dynamics) == null ? void 0 : _b.pressureCurve));
     const baseHalf = Math.max(0.6, stroke.width * (0.55 + 0.75 * (0.5 + (mapped - 0.5) * gain)) / 2);
-    let previous = { x: this.lastPoint.x * this.canvasLogicalWidth, y: this.lastPoint.y * this.canvasLogicalHeight };
+    let previous = { x: tail.x * this.canvasLogicalWidth, y: tail.y * this.canvasLogicalHeight };
     const segments = this.predictedTip.length;
     for (let index = 0; index < segments; index++) {
       const point = { x: this.predictedTip[index].x * this.canvasLogicalWidth, y: this.predictedTip[index].y * this.canvasLogicalHeight };
