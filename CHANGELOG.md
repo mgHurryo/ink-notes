@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.6.0-beta.4 - 2026-10-06
+
+- Fix the tail dot reported from iPad: iPadOS re-reports a fresh, frequently higher pressure on the pointerup sample at the frozen tail position (device diagnostics measured the fading tail at 0.01-0.33 while the lift jumps back to 0.36-0.76). Contact force can only fall while the pen leaves the surface, so the lift pressure is now clamped to the previous sample's pressure in both capture paths (modeled and direct). A skidding lift still lands where the pen lifted; it just no longer fattens the tail into a round dot.
+- Diagnostics (from the developer panel JSON this fix was derived from): input ~125 Hz, sparse detection not flagged, coalesced API present but empty on iPadOS, pointerrawupdate absent. The earlier "Direct engages the modeler" report matches the Smooth dial being at 100 during capture; the sparse branch was correctly idle.
+
 ## 0.6.0-beta.3 - 2026-10-06
 
 - Add a developer diagnostics overlay for tracking down device-specific capture issues: a new toolbar button (activity icon) or the "Toggle Ink developer diagnostics" command opens a live panel showing the build version, pointer/environment capabilities (coalesced events, pointerrawupdate, predicted events, touch points, DPR, zoom), measured input rate (min/median/mean/max sample intervals), the sparse-device detection state with its threshold, the current Smooth mode, and a per-stroke record of the last eight pen strokes: whether the modeler engaged and why (smooth strength / sparse auto / direct), delivered samples vs stored points, fallback state, and how far the stored tail lands from the true lift position.

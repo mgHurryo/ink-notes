@@ -3037,11 +3037,13 @@ var InkView = class extends import_obsidian.FileView {
     if (interaction.tool === "pen" && this.penModeler && !this.penModeler.fallback) {
       changed = this.appendModeledPenPoints(feed, rect, phase);
     } else {
-      for (const sample of feed) {
+      for (let index = 0; index < feed.length; index++) {
+        const sample = feed[index];
         const point = this.toPoint(sample, rect);
         if (interaction.tool === "eraser") {
           changed = this.eraseAt(point, page, interaction.eraserMode, interaction.eraserSize) || changed;
         } else if (this.activeStroke && this.lastPoint) {
+          clampLiftPressure(point, phase === "up" && index === feed.length - 1 ? this.lastPoint : null);
           if (distance2(point, this.lastPoint) <= 0) continue;
           this.activeStroke.points.push(point);
           this.lastPoint = point;
@@ -3056,6 +3058,7 @@ var InkView = class extends import_obsidian.FileView {
   }
   /** Feeds raw pointer samples through the stroke modeler and stores its results. */
   appendModeledPenPoints(samples, rect, phase) {
+    var _a, _b;
     const capture = this.penModeler;
     const stroke = this.activeStroke;
     if (!stroke) return false;
@@ -3068,7 +3071,8 @@ var InkView = class extends import_obsidian.FileView {
         continue;
       }
       const isLift = phase === "up" && index === samples.length - 1;
-      const rawPressure = sample.pressure > 0 ? sample.pressure : capture.lastRawPressure;
+      const reportedPressure = sample.pressure > 0 ? sample.pressure : capture.lastRawPressure;
+      const rawPressure = isLift && reportedPressure > ((_a = capture.lastRawPressure) != null ? _a : reportedPressure) ? (_b = capture.lastRawPressure) != null ? _b : reportedPressure : reportedPressure;
       capture.lastRawPressure = rawPressure;
       const input = {
         eventType: isLift ? "up" : "move",
@@ -4514,6 +4518,10 @@ function stylusTouchSample(touch, timeStamp) {
     // per-event, which is exactly the per-sample time for stylus input.
     timeStamp: typeof timeStamp === "number" && Number.isFinite(timeStamp) ? timeStamp : void 0
   };
+}
+function clampLiftPressure(point, previous) {
+  if (!previous || point.pressure <= previous.pressure) return;
+  point.pressure = previous.pressure;
 }
 function penSampleTimeMillis(sample) {
   return typeof sample.timeStamp === "number" && Number.isFinite(sample.timeStamp) ? sample.timeStamp : Date.now();
