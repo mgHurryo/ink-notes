@@ -504,6 +504,11 @@ export class InkView extends FileView {
     if (open) {
       this.positionSizePopover();
       window.requestAnimationFrame(() => this.positionSizePopover());
+      // The popover is display:none while built, so canvas previews can only
+      // be drawn once it becomes visible and has layout.
+      window.requestAnimationFrame(() => {
+        if (isBrushTool(this.state.tool)) this.updateBrushPreview(this.state.tool);
+      });
       const focusTarget = this.state.tool === "eraser"
         ? ".ink-eraser-mode"
         : `.ink-brush-settings[data-brush-tool="${this.state.tool}"] input, .ink-brush-settings[data-brush-tool="${this.state.tool}"] button`;
@@ -612,7 +617,10 @@ export class InkView extends FileView {
     preview.style.setProperty("--ink-preview-color", settings.color);
     preview.style.setProperty("--ink-preview-opacity", String(settings.opacity));
     preview.style.setProperty("--ink-preview-width", `${Math.max(2, Math.min(30, settings.width))}px`);
-    if (tool === "pen") this.drawBrushSampleStroke(settings);
+    if (tool === "pen") {
+      this.drawBrushSampleStroke(settings);
+      this.drawPressureCurveEditor(settings);
+    }
   }
 
   /** Renders a sample stroke with the current pen dynamics into the brush
@@ -2473,64 +2481,14 @@ export class InkView extends FileView {
     canvas.style.width = "100%";
     canvas.style.height = "110px";
     canvas.setAttribute("aria-hidden", "true");
-    const hit = (clientX: number, clientY: number): { index: number; x: number; y: number } | null => {
+    const hit = (clientX: number, clientY: number): { x: number; y: number } => {
       const rect = canvas.getBoundingClientRect();
-      return { x: (clientX - rect.left) / rect.width, y: 1 - (clientY - rect.top) / rect.height, index: -1 };
+      return { x: (clientX - rect.left) / rect.width, y: 1 - (clientY - rect.top) / rect.height };
     };
     const curve = (): number[][] => settings.pressureCurve ? settings.pressureCurve.map((point) => [...point]) : [[0, 0], [1, 1]];
-    const draw = (): void => {
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-      const ratio = Math.max(1, window.devicePixelRatio || 1);
-      const w = canvas.clientWidth || 200, h = canvas.clientHeight || 110;
-      if (canvas.width !== Math.round(w * ratio)) canvas.width = Math.round(w * ratio);
-      if (canvas.height !== Math.round(h * ratio)) canvas.height = Math.round(h * ratio);
-      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-      ctx.clearRect(0, 0, w, h);
-      ctx.strokeStyle = "var(--ink-border, #8a8f98)";
-      ctx.globalAlpha = 0.35;
-      ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
-      ctx.beginPath();
-      ctx.moveTo(0, h);
-      ctx.lineTo(w, 0);
-      ctx.stroke();
-      ctx.globalAlpha = 1;
-      const points = curve();
-      const toXY = (point: number[]): [number, number] => [point[0] * w, (1 - point[1]) * h];
-      ctx.strokeStyle = settings.color;
-      ctx.lineWidth = 2;
-      ctx.beginPath();
-      for (let step = 0; step <= 48; step++) {
-        const x = step / 48;
-        let y: number;
-        if (x <= points[0][0]) y = points[0][1];
-        else if (x >= points[points.length - 1][0]) y = points[points.length - 1][1];
-        else {
-          let i = 1;
-          while (points[i][0] < x) i++;
-          const span = points[i][0] - points[i - 1][0];
-          const t = span > 0 ? (x - points[i - 1][0]) / span : 0;
-          y = points[i - 1][1] + (points[i][1] - points[i - 1][1]) * t;
-        }
-        const [sx, sy] = toXY([x, y]);
-        if (step === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
-      }
-      ctx.stroke();
-      for (const point of points) {
-        const [sx, sy] = toXY(point);
-        ctx.fillStyle = settings.color;
-        ctx.beginPath();
-        ctx.arc(sx, sy, 5, 0, Math.PI * 2);
-        ctx.fill();
-        ctx.strokeStyle = "#ffffff";
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-      }
-    };
     let dragIndex = -1;
     canvas.addEventListener("pointerdown", (event) => {
       const position = hit(event.clientX, event.clientY);
-      if (!position) return;
       const points = curve();
       let nearest = -1;
       let nearestDistance = 0.06;
@@ -2558,7 +2516,6 @@ export class InkView extends FileView {
     canvas.addEventListener("pointermove", (event) => {
       if (dragIndex < 0) return;
       const position = hit(event.clientX, event.clientY);
-      if (!position) return;
       const points = curve();
       const point = points[dragIndex];
       const isEnd = dragIndex === 0 || dragIndex === points.length - 1;
@@ -2579,7 +2536,59 @@ export class InkView extends FileView {
     };
     canvas.addEventListener("pointerup", endDrag);
     canvas.addEventListener("pointercancel", endDrag);
-    this.register(() => canvas.replaceWith(canvas.cloneNode(true)));
+  }
+
+  /** Renders the pressure mapping editor: grid, identity guide, curve and
+   *  control points. Skipped while the popover has no layout (it is built
+   *  display:none and drawn when opened). */
+  private drawPressureCurveEditor(settings: BrushSettings): void {
+    const canvas = this.sizePopover?.querySelector<HTMLCanvasElement>(`.ink-brush-settings[data-brush-tool="pen"] .ink-curve-editor-canvas`);
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    if (w < 10 || h < 10) return;
+    const ratio = Math.max(1, window.devicePixelRatio || 1);
+    if (canvas.width !== Math.round(w * ratio)) canvas.width = Math.round(w * ratio);
+    if (canvas.height !== Math.round(h * ratio)) canvas.height = Math.round(h * ratio);
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.strokeStyle = "#8a8f98";
+    ctx.globalAlpha = 0.35;
+    ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
+    ctx.beginPath();
+    ctx.moveTo(0, h);
+    ctx.lineTo(w, 0);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    const points = settings.pressureCurve ? settings.pressureCurve.map((point) => [...point]) : [[0, 0], [1, 1]];
+    const sampleY = (x: number): number => {
+      if (x <= points[0][0]) return points[0][1];
+      if (x >= points[points.length - 1][0]) return points[points.length - 1][1];
+      let index = 1;
+      while (points[index][0] < x) index++;
+      const span = points[index][0] - points[index - 1][0];
+      const amount = span > 0 ? (x - points[index - 1][0]) / span : 0;
+      return points[index - 1][1] + (points[index][1] - points[index - 1][1]) * amount;
+    };
+    ctx.strokeStyle = settings.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let step = 0; step <= 48; step++) {
+      const x = step / 48;
+      const sx = x * w, sy = (1 - sampleY(x)) * h;
+      if (step === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+    }
+    ctx.stroke();
+    for (const point of points) {
+      ctx.fillStyle = settings.color;
+      ctx.beginPath();
+      ctx.arc(point[0] * w, (1 - point[1]) * h, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
   }
 
   private addColorPicker(parent: HTMLElement, tool: BrushTool, toolLabel: string): void {
