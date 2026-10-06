@@ -2152,7 +2152,8 @@ var InkView = class extends import_obsidian.FileView {
     this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
     const pages = this.addToolbarSection(group, "Document");
     this.addIconButton(pages, "more-horizontal", "Page options", (event) => this.openPageMenu(event));
-    this.addIconButton(pages, "activity", "Developer diagnostics", () => this.toggleDevPanel());
+    const devToggle = this.addIconButton(pages, "activity", "Developer diagnostics", () => this.toggleDevPanel());
+    devToggle.addClass("ink-dev-toggle");
     this.renderToolPopover();
     this.updateToolButtons();
   }
