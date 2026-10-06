@@ -18,7 +18,7 @@ import {
   newId,
 } from "./model";
 import { NotebookStore } from "./storage";
-import { canvasResolution, clampPercent, drawInkStroke, penOutline } from "./rendering";
+import { canvasResolution, clampPercent, drawInkStroke, normalizePressureCurve, penOutline, samplePressureCurve } from "./rendering";
 import { Rect, TileRenderer } from "./tiles";
 import { StrokeModeler, StrokeModelInput, StrokeModelResult, StrokeModelParams, DEFAULT_STROKE_MODEL_PARAMS, strokeModelParamsForSmoothStrength } from "./stroke-modeler";
 import type { InkWorkerResponse, NotebookOperation } from "./worker-protocol";
@@ -41,6 +41,8 @@ interface BrushSettings {
   pressureGain?: number;
   /** Pen only: speed-based thinning amplitude 0 (off) to 100. */
   speedGain?: number;
+  /** Pen only: pressure mapping curve control points [in, out] in 0..1. */
+  pressureCurve?: number[][];
 }
 
 interface ToolState {
@@ -161,7 +163,7 @@ export class InkView extends FileView {
   private pageIndex = 0;
   private state: ToolState = {
     tool: "pen",
-    pen: { color: "#1b1b1b", width: 3, opacity: 1, smooth: 0, taper: 0, pressureGain: 100, speedGain: 0 },
+    pen: { color: "#1b1b1b", width: 3, opacity: 1, smooth: 0, taper: 0, pressureGain: 100, speedGain: 0, pressureCurve: undefined },
     highlighter: { color: "#f2c94c", width: 18, opacity: 0.4 },
     eraserMode: "stroke",
     eraserSize: 32,
@@ -590,6 +592,8 @@ export class InkView extends FileView {
         settings.pressureGain = value;
         this.updateBrushPreview(tool);
       });
+      panel.createDiv({ cls: "ink-settings-label", text: "Pressure curve" });
+      this.addPressureCurveEditor(panel, settings);
       this.addRange(panel, "Speed width", 0, 100, 1, settings.speedGain ?? 0, (value) => {
         settings.speedGain = value;
         this.updateBrushPreview(tool);
@@ -644,7 +648,10 @@ export class InkView extends FileView {
     const outline = penOutline({
       id: "preview", pageId: "preview", tool: "pen", color: settings.color, width: settings.width,
       opacity: settings.opacity, points, createdAt: 0, updatedAt: 0,
-      dynamics: { taper: settings.taper ?? 0, pressure: settings.pressureGain ?? 100, speed: settings.speedGain ?? 0 },
+      dynamics: {
+        taper: settings.taper ?? 0, pressure: settings.pressureGain ?? 100, speed: settings.speedGain ?? 0,
+        pressureCurve: settings.pressureCurve ? settings.pressureCurve.map((point) => [...point]) : undefined,
+      },
     }, cssWidth, cssHeight);
     if (outline.length < 2) return;
     ctx.globalAlpha = settings.opacity;
@@ -1256,6 +1263,7 @@ export class InkView extends FileView {
         taper: this.state.pen.taper ?? 0,
         pressure: this.state.pen.pressureGain ?? 100,
         speed: this.state.pen.speedGain ?? 0,
+        pressureCurve: this.state.pen.pressureCurve ? this.state.pen.pressureCurve.map((point) => [...point]) : undefined,
       } : undefined,
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -1444,7 +1452,8 @@ export class InkView extends FileView {
     const tip = this.predictedTip;
     if (!tip || tip.length === 0 || !this.lastPoint) return;
     const gain = clampPercent(stroke.dynamics?.pressure, 100) / 100;
-    const baseHalf = Math.max(0.6, (stroke.width * (0.55 + 0.75 * (0.5 + (this.lastPoint.pressure - 0.5) * gain))) / 2);
+    const mapped = samplePressureCurve(this.lastPoint.pressure, normalizePressureCurve(stroke.dynamics?.pressureCurve));
+    const baseHalf = Math.max(0.6, (stroke.width * (0.55 + 0.75 * (0.5 + (mapped - 0.5) * gain))) / 2);
     let previous = { x: this.lastPoint.x * this.canvasLogicalWidth, y: this.lastPoint.y * this.canvasLogicalHeight };
     const segments = tip.length;
     for (let index = 0; index < segments; index++) {
@@ -2450,6 +2459,127 @@ export class InkView extends FileView {
     button.createSpan({ cls: "ink-button-text", text: label });
     button.addEventListener("click", callback);
     return button;
+  }
+
+  /**
+   * 2D multi-point pressure mapping editor: drag points (endpoints move
+   * vertically), click empty space to add one, double-click a point to
+   * remove it. The curve maps raw pen pressure to the response input and is
+   * captured per stroke; the sample preview re-renders on every change.
+   */
+  private addPressureCurveEditor(parent: HTMLElement, settings: BrushSettings): void {
+    const editor = parent.createDiv({ cls: "ink-curve-editor", attr: { "aria-label": "Pressure mapping curve" } });
+    const canvas = editor.createEl("canvas", { cls: "ink-curve-editor-canvas" });
+    canvas.style.width = "100%";
+    canvas.style.height = "110px";
+    canvas.setAttribute("aria-hidden", "true");
+    const hit = (clientX: number, clientY: number): { index: number; x: number; y: number } | null => {
+      const rect = canvas.getBoundingClientRect();
+      return { x: (clientX - rect.left) / rect.width, y: 1 - (clientY - rect.top) / rect.height, index: -1 };
+    };
+    const curve = (): number[][] => settings.pressureCurve ? settings.pressureCurve.map((point) => [...point]) : [[0, 0], [1, 1]];
+    const draw = (): void => {
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      const ratio = Math.max(1, window.devicePixelRatio || 1);
+      const w = canvas.clientWidth || 200, h = canvas.clientHeight || 110;
+      if (canvas.width !== Math.round(w * ratio)) canvas.width = Math.round(w * ratio);
+      if (canvas.height !== Math.round(h * ratio)) canvas.height = Math.round(h * ratio);
+      ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+      ctx.clearRect(0, 0, w, h);
+      ctx.strokeStyle = "var(--ink-border, #8a8f98)";
+      ctx.globalAlpha = 0.35;
+      ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
+      ctx.beginPath();
+      ctx.moveTo(0, h);
+      ctx.lineTo(w, 0);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+      const points = curve();
+      const toXY = (point: number[]): [number, number] => [point[0] * w, (1 - point[1]) * h];
+      ctx.strokeStyle = settings.color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let step = 0; step <= 48; step++) {
+        const x = step / 48;
+        let y: number;
+        if (x <= points[0][0]) y = points[0][1];
+        else if (x >= points[points.length - 1][0]) y = points[points.length - 1][1];
+        else {
+          let i = 1;
+          while (points[i][0] < x) i++;
+          const span = points[i][0] - points[i - 1][0];
+          const t = span > 0 ? (x - points[i - 1][0]) / span : 0;
+          y = points[i - 1][1] + (points[i][1] - points[i - 1][1]) * t;
+        }
+        const [sx, sy] = toXY([x, y]);
+        if (step === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
+      }
+      ctx.stroke();
+      for (const point of points) {
+        const [sx, sy] = toXY(point);
+        ctx.fillStyle = settings.color;
+        ctx.beginPath();
+        ctx.arc(sx, sy, 5, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#ffffff";
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+    };
+    let dragIndex = -1;
+    canvas.addEventListener("pointerdown", (event) => {
+      const position = hit(event.clientX, event.clientY);
+      if (!position) return;
+      const points = curve();
+      let nearest = -1;
+      let nearestDistance = 0.06;
+      for (let index = 0; index < points.length; index++) {
+        const d = Math.hypot(points[index][0] - position.x, points[index][1] - position.y);
+        if (d < nearestDistance) { nearest = index; nearestDistance = d; }
+      }
+      if (event.detail >= 2 && nearest > 0 && nearest < points.length - 1 && points.length > 2) {
+        points.splice(nearest, 1);
+        settings.pressureCurve = points;
+        dragIndex = -1;
+      } else if (nearest >= 0) {
+        dragIndex = nearest;
+      } else if (points.length < 6) {
+        const insertAt = points.findIndex((point) => point[0] > position.x);
+        const index = insertAt === -1 ? points.length - 1 : insertAt;
+        points.splice(index, 0, [position.x, position.y]);
+        settings.pressureCurve = points;
+        dragIndex = index;
+      }
+      canvas.setPointerCapture(event.pointerId);
+      this.updateBrushPreview("pen");
+      event.preventDefault();
+    });
+    canvas.addEventListener("pointermove", (event) => {
+      if (dragIndex < 0) return;
+      const position = hit(event.clientX, event.clientY);
+      if (!position) return;
+      const points = curve();
+      const point = points[dragIndex];
+      const isEnd = dragIndex === 0 || dragIndex === points.length - 1;
+      point[1] = Math.max(0, Math.min(1, position.y));
+      if (!isEnd) {
+        const low = points[dragIndex - 1][0] + 0.02;
+        const high = points[dragIndex + 1][0] - 0.02;
+        point[0] = Math.max(low, Math.min(high, position.x));
+      }
+      settings.pressureCurve = points;
+      this.updateBrushPreview("pen");
+      event.preventDefault();
+    });
+    const endDrag = (event: PointerEvent): void => {
+      if (dragIndex < 0) return;
+      dragIndex = -1;
+      try { canvas.releasePointerCapture(event.pointerId); } catch { /* pointer already released */ }
+    };
+    canvas.addEventListener("pointerup", endDrag);
+    canvas.addEventListener("pointercancel", endDrag);
+    this.register(() => canvas.replaceWith(canvas.cloneNode(true)));
   }
 
   private addColorPicker(parent: HTMLElement, tool: BrushTool, toolLabel: string): void {

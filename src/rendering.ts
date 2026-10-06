@@ -42,9 +42,10 @@ export function penOutline(stroke: InkStroke, width: number, height: number): nu
  * writing size).
  */
 function penRibbonPolygon(points: number[][], stroke: InkStroke): number[][] {
-  const taper = clampPercent(stroke.dynamics?.taper, 0);
+  const taper = clampPercent(stroke.dynamics?.taper, 0) / 100;
   const pressureGain = clampPercent(stroke.dynamics?.pressure, 100) / 100;
   const speedGain = clampPercent(stroke.dynamics?.speed, 0) / 100;
+  const pressureCurve = normalizePressureCurve(stroke.dynamics?.pressureCurve);
   // Per-point travel speed (page px/s), smoothed over the immediate
   // neighbors to reject sample jitter.
   const speeds: number[] = new Array(points.length);
@@ -60,11 +61,22 @@ function penRibbonPolygon(points: number[][], stroke: InkStroke): number[][] {
   // Full thinning kicks in at ~2.5x the stroke's own median pace (floored so
   // near-stationary strokes still respond).
   const speedReference = Math.max(medianSpeed * 2.5, 60);
-  const halfWidth = (point: number[], speed: number): number => {
-    const pressure = point[2];
+  const brushWidth = stroke.width;
+  // Taper defines the width ENVELOPE (the geometric shape); pressure and
+  // speed modulate the actual width WITHIN that envelope, so a firmly
+  // pressed tail widens the whole cone instead of staying a fixed needle.
+  const fullDiameter = brushWidth * 1.3;
+  const halfWidth = (point: number[], speed: number, envelope: number): number => {
+    const pressure = samplePressureCurve(Math.max(0, Math.min(1, point[2])), pressureCurve);
     const effectivePressure = 0.5 + (pressure - 0.5) * pressureGain;
-    const speedFactor = 1 - speedGain * Math.min(speed / speedReference, 1) * 0.65;
-    return Math.max(0.3, (brushWidth * (0.55 + 0.75 * effectivePressure)) / 2) * speedFactor;
+    // (0.55 + 0.75 * p) / 1.3 maps the response onto 0.42..1 of the
+    // full-pressure diameter, so dynamics stay visible next to the taper.
+    const modulation = (0.55 + 0.75 * effectivePressure) / 1.3;
+    // Quadratic speed profile, capped at -35%: fast segments thin, but the
+    // pressure response stays clearly visible when both channels are active.
+    const speedNorm = Math.min(speed / speedReference, 1);
+    const speedFactor = 1 - speedGain * speedNorm * speedNorm * 0.35;
+    return Math.max(0.3, (fullDiameter / 2) * envelope * modulation * speedFactor);
   };
   const count = points.length;
   if (count === 0) return [];
@@ -76,15 +88,19 @@ function penRibbonPolygon(points: number[][], stroke: InkStroke): number[][] {
     totalLength += Math.hypot(points[index][0] - points[index - 1][0], points[index][1] - points[index - 1][1]);
     cumulative[index] = totalLength;
   }
-  const brushWidth = stroke.width;
   const rampLength = taper * Math.min(totalLength * 0.25, brushWidth * 2);
-  const taperFactor = (distanceFromEnd: number): number => {
+  // The envelope holds the full width for most of the stroke, then narrows
+  // over the ramp to (1 - taper) of it at the endpoint: low taper values
+  // stay nearly round, only a full 100 converges to a point, and the ramp
+  // length grows with the slider to shape how far the narrowing reaches.
+  const envelopeAt = (distanceFromEnd: number): number => {
     if (rampLength <= 0) return 1;
     const m = Math.min(1, distanceFromEnd / rampLength);
-    return m * m * (3 - 2 * m);
+    const s = m * m * (3 - 2 * m);
+    return 1 - taper * (1 - s);
   };
   const halfWidthAt = (index: number): number =>
-    halfWidth(points[index], speeds[index]) * taperFactor(Math.min(cumulative[index], totalLength - cumulative[index]));
+    halfWidth(points[index], speeds[index], envelopeAt(Math.min(cumulative[index], totalLength - cumulative[index])));
   if (count === 1) {
     const ring: number[][] = [];
     const radius = Math.max(0.3, (brushWidth * (0.55 + 0.75 * (0.5 + (points[0][2] - 0.5) * pressureGain))) / 2);
@@ -149,6 +165,49 @@ function penRibbonPolygon(points: number[][], stroke: InkStroke): number[][] {
 
 export function clampPercent(value: unknown, fallback: number): number {
   return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : fallback;
+}
+
+/**
+ * Sanitizes a user-drawn pressure mapping curve: 2-8 control points with
+ * x clamped into [0,1] and forced monotonic (endpoints pinned to x=0 and
+ * x=1), y clamped into [0,1]. Returns undefined for absent or identity
+ * curves so storage stays clean.
+ */
+export function normalizePressureCurve(raw: unknown): number[][] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const cleaned = raw
+    .filter((point): point is number[] => Array.isArray(point) && point.length >= 2
+      && typeof point[0] === "number" && Number.isFinite(point[0])
+      && typeof point[1] === "number" && Number.isFinite(point[1]))
+    .map((point) => [Math.max(0, Math.min(1, point[0])), Math.max(0, Math.min(1, point[1]))]
+      .map((value) => Math.round(value * 1000) / 1000))
+    .sort((a, b) => a[0] - b[0]);
+  if (cleaned.length < 2) return undefined;
+  cleaned[0][0] = 0;
+  cleaned[cleaned.length - 1][0] = 1;
+  const monotonic: number[][] = [cleaned[0]];
+  for (let index = 1; index < cleaned.length; index++) {
+    if (cleaned[index][0] <= monotonic[monotonic.length - 1][0]) continue;
+    monotonic.push(cleaned[index]);
+  }
+  if (monotonic.length < 2) return undefined;
+  const identity = monotonic.length === 2
+    && monotonic[0][1] === 0 && monotonic[1][1] === 1;
+  return identity ? undefined : monotonic;
+}
+
+/** Samples the mapping curve with linear interpolation between control points. */
+export function samplePressureCurve(pressure: number, curve: number[][] | undefined): number {
+  if (!curve || curve.length < 2) return pressure;
+  if (pressure <= curve[0][0]) return curve[0][1];
+  for (let index = 1; index < curve.length; index++) {
+    if (pressure <= curve[index][0]) {
+      const span = curve[index][0] - curve[index - 1][0];
+      const amount = span > 0 ? (pressure - curve[index - 1][0]) / span : 0;
+      return curve[index - 1][1] + (curve[index][1] - curve[index - 1][1]) * amount;
+    }
+  }
+  return curve[curve.length - 1][1];
 }
 
 /**

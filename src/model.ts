@@ -36,6 +36,12 @@ export interface StrokeDynamics {
   pressure?: number;
   /** 0-100: speed-based thinning amplitude, 0 = off. */
   speed?: number;
+  /**
+   * Pressure mapping curve: control points [inputPressure, outputPressure]
+   * with x in [0,1] monotonic (endpoints pinned) and y in [0,1]. Applied
+   * before the response amplitude. Absent = linear identity.
+   */
+  pressureCurve?: number[][];
 }
 
 export interface InkPage {
@@ -239,15 +245,18 @@ function normalizeDynamics(value: unknown): StrokeDynamics | undefined {
   const raw = value as Partial<StrokeDynamics>;
   const percent = (candidate: unknown, fallback: number): number =>
     typeof candidate === "number" && Number.isFinite(candidate) ? clamp(Math.round(candidate), 0, 100) : fallback;
+  const curve = Array.isArray(raw.pressureCurve) && raw.pressureCurve.length >= 2
+    ? raw.pressureCurve.map((point) => (Array.isArray(point) ? [Number(point[0]), Number(point[1])] : [NaN, NaN]))
+    : undefined;
   const dynamics: StrokeDynamics = {
     taper: percent(raw.taper, 0),
     pressure: percent(raw.pressure, 100),
     speed: percent(raw.speed, 0),
   };
+  if (curve) dynamics.pressureCurve = curve;
   const defaults: StrokeDynamics = { taper: 0, pressure: 100, speed: 0 };
-  return (dynamics.taper === defaults.taper && dynamics.pressure === defaults.pressure && dynamics.speed === defaults.speed)
-    ? undefined
-    : dynamics;
+  const plain = dynamics.taper === defaults.taper && dynamics.pressure === defaults.pressure && dynamics.speed === defaults.speed;
+  return plain && !curve ? undefined : dynamics;
 }
 
 function normalizePoint(value: unknown): InkPoint | null {

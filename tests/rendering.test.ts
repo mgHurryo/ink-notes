@@ -138,6 +138,90 @@ describe("pen dynamics", () => {
   });
 });
 
+
+describe("dynamics refinement", () => {
+  function thicknessAt(outline: number[][], xLow: number, xHigh: number): number {
+    const band = outline.filter(([x]) => x >= xLow && x <= xHigh).map(([, y]) => y);
+    return Math.max(...band) - Math.min(...band);
+  }
+
+  function strokeWith(points: number[][], dynamics: { taper?: number; pressure?: number; speed?: number; pressureCurve?: number[][] }): number[][] {
+    return penOutline({
+      ...stroke(), width: 12, points: points.map(([x, y, p, t]) => ({ x: x / 100, y: y / 100, pressure: p, t })),
+      dynamics,
+    }, 100, 100);
+  }
+
+  function endCapRadius(outline: number[][], endX: number, endY: number): number {
+    return Math.min(...outline.map(([x, y]) => Math.hypot(x - endX, y - endY)));
+  }
+
+
+  it("lets pressure widen the tapered region instead of pinning it thin", () => {
+    // Same geometry and taper; the light-press tail fades to 0.15, the
+    // firm-press tail holds 0.8. The taper shapes both into cones, but the
+    // firm cone must stay clearly fatter along the ramp.
+    const tail = (pressure: number): number[][] => [
+      [10, 50, pressure, 0], [40, 50, pressure, 8], [65, 50, pressure, 16],
+      [82, 50, pressure, 22], [93, 50, pressure, 26],
+    ];
+    const light = strokeWith(tail(0.15), { taper: 100 });
+    const firm = strokeWith(tail(0.8), { taper: 100 });
+    // Sample the cone mid-ramp (the last quarter of the stroke length).
+    const lightThickness = thicknessAt(light, 80, 90);
+    const firmThickness = thicknessAt(firm, 80, 90);
+    expect(firmThickness).toBeGreaterThan(lightThickness * 1.5);
+  });
+
+  it("keeps low taper values nearly round", () => {
+    const line = [[10, 50, 0.6, 0], [40, 50, 0.6, 8], [70, 50, 0.6, 16], [90, 50, 0.6, 24]];
+    const halfWidth = 12 * (0.55 + 0.75 * 0.6) / 2;
+    const tiny = strokeWith(line, { taper: 1 });
+    const gentle = strokeWith(line, { taper: 25 });
+    const none = strokeWith(line, {});
+    // 1% must be visually indistinguishable from a round cap...
+    expect(endCapRadius(tiny, 90, 50)).toBeGreaterThan(halfWidth * 0.9);
+    // 25% narrows the cap but nowhere near a point; taper 0 keeps the full
+    // round cap at exactly half-width.
+    expect(endCapRadius(gentle, 90, 50)).toBeGreaterThan(halfWidth * 0.5);
+    expect(endCapRadius(none, 90, 50)).toBeGreaterThan(halfWidth * 0.9);
+    expect(endCapRadius(none, 90, 50)).toBeLessThan(halfWidth * 1.1);
+  });
+
+  it("pressure curve remaps the response", () => {
+    // A curve that boosts low pressures: at raw pressure 0.3 the width grows
+    // versus the identity mapping.
+    const line = [[10, 50, 0.3, 0], [40, 50, 0.3, 8], [70, 50, 0.3, 16], [90, 50, 0.3, 24]];
+    const identity = strokeWith(line, {});
+    const boosted = strokeWith(line, { pressureCurve: [[0, 0], [0.3, 0.7], [1, 1]] });
+    // Mapped 0.3 → 0.7 widens the response by ~1.39x over the identity.
+    expect(thicknessAt(boosted, 20, 80)).toBeGreaterThan(thicknessAt(identity, 20, 80) * 1.25);
+  });
+
+  it("speed and pressure stay visible together", () => {
+    // Alternating pressure with a fast middle: the pressure variation must
+    // remain measurable even with speed compensation at full gain.
+    // Densified like real capture (the modeler resamples to 180Hz, raw
+    // streams arrive at 125Hz). Same pressure everywhere; the middle
+    // segment is written 3x faster.
+    const line: number[][] = [];
+    const plateaus = [[10, 35, 0, 40], [35, 65, 40, 55], [65, 90, 55, 95]];
+    for (const [from, to, t0, t1] of plateaus) {
+      const steps = Math.max(2, Math.round((to - from) / 3));
+      for (let step = 0; step < steps; step++) {
+        const k = step / steps;
+        line.push([from + (to - from) * k, 50, 0.6, t0 + (t1 - t0) * k]);
+      }
+    }
+    const combined = strokeWith(line, { pressure: 100, speed: 100 });
+    // Sample well inside the slow and fast plateaus, away from transitions.
+    const slowBand = thicknessAt(combined, 15, 30);
+    const fastBand = thicknessAt(combined, 42, 58);
+    expect(fastBand).toBeLessThan(slowBand);
+    expect(slowBand).toBeGreaterThan(fastBand * 1.15);
+  });
+});
+
 describe("canvas density", () => {
   it.each([0.5, 0.75, 1, 1.25, 2, 3])("matches display pixels at zoom %s", (zoom) => {
     expect(canvasResolution(300, 450, 3, zoom)).toEqual({ width: Math.round(900 * zoom), height: Math.round(1350 * zoom) });
