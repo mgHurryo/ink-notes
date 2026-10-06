@@ -18,6 +18,8 @@ export interface StrokeDiagnosticsRecord {
   fallback: boolean;
   /** Delivered input samples consumed for this stroke. */
   rawSamples: number;
+  /** Predicted-event samples delivered while the stroke was active. */
+  predictedSamples?: number;
   pointsStored: number;
   intervals: IntervalStats;
   /** Page-pixel distance from the last stored point to the lift input. */

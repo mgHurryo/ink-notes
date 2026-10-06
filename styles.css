@@ -158,7 +158,10 @@
   z-index: 1000;
   display: none;
   width: min(320px, calc(100vw - 16px));
-  max-height: calc(100vh - 24px);
+  /* Capped so the popover (now with the dynamics sliders) still fits below
+     the toolbar row; taller content scrolls inside instead of covering the
+     toolbar buttons when the below-placement flips. */
+  max-height: min(calc(100vh - 120px), 540px);
   padding: 16px;
   overflow: auto;
   border: 1px solid var(--ink-border);

@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+## 0.7.0-beta.1 - 2026-10-06
+
+- iPad predicted events: where the WebView provides getPredictedEvents (iPadOS does), the live ink now draws a tapering ghost tip that follows the pen between samples — deep black at the ink junction fading to faint at the predicted position. Predicted points are speculative and never enter the stroke; they live only on the preview layer and are dropped at lift so the real tail takes over. The developer panel now counts predicted samples per session and per stroke, so availability on a given device is verifiable.
+- Pen dynamics, captured per stroke and rendered from stored points (render-only; points are never rewritten; older strokes default to the previous behavior):
+  - Taper (0-100): end shape from round caps to tapered points, with a length-ramped width falloff that also masks residual tail-width jumps.
+  - Pressure (0-100): pressure response amplitude, from uniform width (off) to full dynamics.
+  - Speed width (0-100): speed-based thinning, self-scaled to each stroke's own median pace so it works at any zoom or writing size; works together with the pressure response.
+- The pen brush panel gains the three sliders plus a live sample-stroke preview canvas rendered through the same outline geometry as committed ink, so previews match real output while adjusting.
+- Settings popover is height-capped with internal scrolling so the new controls never cover the toolbar.
+
 ## 0.6.0-beta.6 - 2026-10-06
 
 - Replace the pen outline generator (perfect-freehand) with a variable-width stroke ribbon flattened to a single polygon: left offsets forward, end cap, right offsets backward, start cap, filled with nonzero winding. Diagnostics from real handwriting showed the strand-offset outline structurally fails when letters are small relative to the nib: tight loop interiors collapsed to slivers, curves rendered with polygon facets, and hooks folded into dots. The ribbon keeps loop interiors open, renders curves smoothly, and draws hooks fully at every nib-to-letter ratio. The per-point diameter convention (width * (0.55 + pressure * 0.75)) and the corner-preserving centerline smoothing are unchanged, and live ink, retained previews, committed tiles and Markdown embeds share the same geometry, so they remain pixel-identical. The perfect-freehand dependency is removed.

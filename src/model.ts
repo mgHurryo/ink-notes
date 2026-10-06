@@ -18,8 +18,24 @@ export interface InkStroke {
   width: number;
   opacity: number;
   points: InkPoint[];
+  /**
+   * Pen dynamics captured with the stroke; render-only (points are never
+   * rewritten). Absent on older strokes — every field defaults to the
+   * pre-dynamics behavior (round ends, full pressure response, no speed
+   * compensation).
+   */
+  dynamics?: StrokeDynamics;
   createdAt: number;
   updatedAt: number;
+}
+
+export interface StrokeDynamics {
+  /** 0-100: end shape, 0 = round caps, 100 = tapered to a point. */
+  taper?: number;
+  /** 0-100: pressure response amplitude, 0 = uniform width, 100 = full. */
+  pressure?: number;
+  /** 0-100: speed-based thinning amplitude, 0 = off. */
+  speed?: number;
 }
 
 export interface InkPage {
@@ -212,9 +228,26 @@ function normalizeStroke(value: unknown): InkStroke | null {
     width: finitePositive(raw.width, 3),
     opacity: clamp(finitePositive(raw.opacity, 1), 0.05, 1),
     points: points.map(normalizePoint).filter((point): point is InkPoint => point !== null),
+    dynamics: normalizeDynamics(raw.dynamics),
     createdAt: finitePositive(raw.createdAt, Date.now()),
     updatedAt: finitePositive(raw.updatedAt, Date.now()),
   };
+}
+
+function normalizeDynamics(value: unknown): StrokeDynamics | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const raw = value as Partial<StrokeDynamics>;
+  const percent = (candidate: unknown, fallback: number): number =>
+    typeof candidate === "number" && Number.isFinite(candidate) ? clamp(Math.round(candidate), 0, 100) : fallback;
+  const dynamics: StrokeDynamics = {
+    taper: percent(raw.taper, 0),
+    pressure: percent(raw.pressure, 100),
+    speed: percent(raw.speed, 0),
+  };
+  const defaults: StrokeDynamics = { taper: 0, pressure: 100, speed: 0 };
+  return (dynamics.taper === defaults.taper && dynamics.pressure === defaults.pressure && dynamics.speed === defaults.speed)
+    ? undefined
+    : dynamics;
 }
 
 function normalizePoint(value: unknown): InkPoint | null {
