@@ -219,6 +219,11 @@ test("eraser reference follows hover and refreshes with local settings", async (
 
   await page.evaluate(() => (document.querySelector('[aria-label="Erase"]') as HTMLButtonElement).click());
   await page.evaluate(() => (document.querySelector('[aria-label="Square eraser"]') as HTMLButtonElement).click());
+  // Reopening settings mounts the popover over the hover point, so the paper
+  // fires pointerleave and hides the cursor. Close settings and move the
+  // pointer again, as a real user would, before asserting the refreshed cursor.
+  await page.keyboard.press("Escape");
+  await page.mouse.move(box.x + box.width / 2 + 4, box.y + box.height / 2 + 4);
   await expect(cursor).toBeVisible();
   await expect(cursor).toHaveClass(/is-square/);
   await expect(cursor.locator(".ink-eraser-reference-point")).toBeVisible();
