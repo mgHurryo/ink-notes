@@ -166,14 +166,29 @@ describe("mode gating", () => {
 
   it("ignores pen input in reading mode", async () => {
     const { internal, sidecar } = setup();
+    // attachSidecar now auto-enters editing for writable PDFs; force reading
+    // to exercise the gate itself.
+    await internal.setMode("reading");
     expect(internal.mode).toBe("reading");
     internal.onPointerDownHost(pointer(100, 100));
     expect(sidecar.notebook.pages[0].strokes).toHaveLength(0);
   });
 
+  it("opens writable PDFs straight into editing with the writer held", async () => {
+    const { internal } = setup();
+    // The auto-entry must happen when the sidecar attaches, not in onOpen:
+    // onOpen runs before the sidecar loads, so canEdit() was always false
+    // there and every fresh open silently stayed in reading mode.
+    expect(internal.mode).toBe("editing");
+    expect(internal.writerHeld).toBe(true);
+  });
+
   it("refuses editing when the sidecar is write-blocked", async () => {
     const { internal } = setup();
+    // In the real load path the block exists before the sidecar attaches;
+    // simulate that ordering by returning to reading before re-entering.
     internal.writeBlockedReason = "fingerprint mismatch";
+    await internal.setMode("reading");
     await internal.setMode("editing");
     expect(internal.mode).toBe("reading");
     expect(internal.writerHeld).toBe(false);

@@ -281,10 +281,10 @@ export class PdfInkView extends FileView {
     this.textLayer = this.pageWrap.createDiv({ cls: "ink-pdf-text-layer" });
     this.buildInkHost();
     this.registerDomEvent(scroller, "scroll", () => this.onViewportMotion(), { passive: true });
-    this.registerDomEvent(window, "resize", () => this.requestRender(true));
-    // Editable PDFs open straight into editing mode: the reading-first
-    // default hid the whole toolbar behind a toggle the user could not find.
-    if (this.canEdit()) void this.setMode("editing");
+    this.registerDomEvent(window, "resize", () => {
+      this.brushPopover?.position();
+      this.requestRender(true);
+    });
   }
 
   async onClose(): Promise<void> {
@@ -610,6 +610,10 @@ export class PdfInkView extends FileView {
     this.disposeWorkerSession();
     this.initializeWorkerSession();
     this.maybeOfferRecoveryChoice();
+    // Editable PDFs open straight into editing mode. onOpen cannot decide
+    // this - it runs before the sidecar loads, so canEdit() was always false
+    // there and every fresh open silently stayed in reading mode.
+    if (this.mode === "reading" && this.canEdit()) void this.setMode("editing");
   }
 
   private async writeSidecar(file: TFile, expectedRaw: string, sidecar: PdfSidecar): Promise<void> {
@@ -731,7 +735,27 @@ export class PdfInkView extends FileView {
     });
     setIcon(button, "settings-2");
     this.toolbarButtons.set("brush", button);
-    button.addEventListener("click", () => this.brushPopover!.toggle());
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      this.brushPopover!.toggle();
+    });
+    // Tap-outside closes — anywhere outside the popover itself, including the
+    // paper: a fullscreen PDF pane has no "outside the view" to tap, and the
+    // popover must close when the user starts writing again. The popover's own
+    // controls and the toggle button are exempt (the button's click toggles).
+    this.registerDomEvent(document, "pointerdown", (event) => {
+      const target = event.target as HTMLElement | null;
+      if (!this.brushPopover?.isOpen) return;
+      if (target && (this.brushPopover.root.contains(target) || button.contains(target))) return;
+      this.brushPopover.close();
+    });
+    this.registerDomEvent(document, "keydown", (event) => {
+      if (event.key === "Escape" && this.brushPopover?.isOpen) {
+        this.brushPopover.close();
+        button.focus();
+      }
+    });
+    this.registerDomEvent(window, "scroll", () => this.brushPopover?.position(), true);
     // Mounted at the view root with fixed positioning (mainline parity):
     // nesting it inside the toolbar group exposed it to toolbar layout and
     // produced the mangled arc layout on iPad.
