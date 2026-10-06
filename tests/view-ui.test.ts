@@ -84,7 +84,8 @@ describe("reference-style editor", () => {
     size.value = "5.5";
     size.dispatchEvent(new Event("input"));
     expect(button("Pen 8 px").getAttribute("aria-pressed")).toBe("false");
-    expect(document.querySelector('.ink-brush-settings[data-brush-tool="pen"] .ink-size-popover-header .ink-control-value')?.textContent).toBe("5.5 px");
+    // The pinned popover header carries the live size readout.
+    expect(document.querySelector(".ink-popover-title")?.textContent).toBe("Pen settings · 5.5 px");
     const color = document.querySelector<HTMLInputElement>('input[aria-label="Pen custom color"]')!;
     color.value = "#abcdef";
     color.dispatchEvent(new Event("input"));

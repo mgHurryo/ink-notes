@@ -420,11 +420,6 @@ export class InkView extends FileView {
     this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
     const pages = this.addToolbarSection(group, "Document");
     this.addIconButton(pages, "more-horizontal", "Page options", (event) => this.openPageMenu(event));
-    // Hidden on narrow viewports: the toolbar there is width-budgeted to the
-    // pixel (360/480px visual specs), and the command palette exposes the
-    // same toggle on phones.
-    const devToggle = this.addIconButton(pages, "activity", "Developer diagnostics", () => this.toggleDevPanel());
-    devToggle.addClass("ink-dev-toggle");
     this.renderToolPopover();
     this.updateToolButtons();
   }
@@ -570,9 +565,7 @@ export class InkView extends FileView {
   private addBrushSettings(parent: HTMLElement, tool: BrushTool, label: string, presets: number[], maximum: number): void {
     const settings = this.brushSettings(tool);
     const panel = parent.createDiv({ cls: "ink-brush-settings", attr: { "data-brush-tool": tool } });
-    const header = panel.createDiv({ cls: "ink-size-popover-header" });
-    header.createSpan({ cls: "ink-size-popover-title", text: `${label} settings` });
-    header.createSpan({ cls: "ink-control-value", text: formatControlValue("Size", settings.width) });
+    // The pinned popover header already shows "Tool settings · size".
 
     panel.createDiv({ cls: "ink-settings-label", text: "Size" });
     const input = panel.createEl("input", { attr: {
