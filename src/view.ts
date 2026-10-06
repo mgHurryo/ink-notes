@@ -401,7 +401,11 @@ export class InkView extends FileView {
     this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
     const pages = this.addToolbarSection(group, "Document");
     this.addIconButton(pages, "more-horizontal", "Page options", (event) => this.openPageMenu(event));
-    this.addIconButton(pages, "activity", "Developer diagnostics", () => this.toggleDevPanel());
+    // Hidden on narrow viewports: the toolbar there is width-budgeted to the
+    // pixel (360/480px visual specs), and the command palette exposes the
+    // same toggle on phones.
+    const devToggle = this.addIconButton(pages, "activity", "Developer diagnostics", () => this.toggleDevPanel());
+    devToggle.addClass("ink-dev-toggle");
     this.renderToolPopover();
     this.updateToolButtons();
   }
