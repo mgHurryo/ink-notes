@@ -633,3 +633,44 @@
     animation-iteration-count: 1 !important;
   }
 }
+
+/* Developer diagnostics overlay (read-only telemetry; toggled from the
+   toolbar "activity" button or the "Toggle Ink developer diagnostics"
+   command). */
+.ink-dev-panel {
+  position: absolute;
+  top: 48px;
+  right: 12px;
+  z-index: 100;
+  max-width: min(420px, calc(100% - 24px));
+  max-height: min(70%, 480px);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px;
+  border: 1px solid var(--background-modifier-border);
+  border-radius: 8px;
+  background: var(--background-primary);
+  box-shadow: var(--background-modifier-box-shadow);
+  font-family: var(--font-monospace);
+  pointer-events: auto;
+}
+
+.ink-dev-panel-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.ink-dev-panel-actions button {
+  font-size: var(--font-ui-smaller);
+  padding: 2px 8px;
+}
+
+.ink-dev-panel-output {
+  overflow: auto;
+  white-space: pre;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--text-normal);
+  user-select: text;
+}

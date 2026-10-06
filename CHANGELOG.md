@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.6.0-beta.3 - 2026-10-06
+
+- Add a developer diagnostics overlay for tracking down device-specific capture issues: a new toolbar button (activity icon) or the "Toggle Ink developer diagnostics" command opens a live panel showing the build version, pointer/environment capabilities (coalesced events, pointerrawupdate, predicted events, touch points, DPR, zoom), measured input rate (min/median/mean/max sample intervals), the sparse-device detection state with its threshold, the current Smooth mode, and a per-stroke record of the last eight pen strokes: whether the modeler engaged and why (smooth strength / sparse auto / direct), delivered samples vs stored points, fallback state, and how far the stored tail lands from the true lift position.
+- The panel's Export JSON / Copy JSON buttons produce a full diagnostics report, including the raw delivered sample points ([x, y, pressure, t]) of recent strokes (recorded only while the panel is open, capped per stroke) so device-specific ink issues can be reproduced offline.
+- Read-only by design: no capture, storage, or rendering behavior changes while the panel is closed; with it open, samples are additionally retained for the last strokes only.
+
 ## 0.6.0-beta.2 - 2026-10-06
 
 - Fix the dot that appeared past a stroke's tail on every pen lift when the stroke modeler was engaged: the modeler's end-of-stroke catch-up cluster (converging, sometimes overshoot-reversing sub-pixel steps) reached the outline renderer whole, whose outline-point gate then misconnected the end-cap arc into a visible bulb. Modeled points are now deduplicated against a real radius (0.35 page px, previously an ineffective 0.01) with the final lift point under the same rule, so the catch-up cluster never reaches storage while the tail still lands within a fraction of a nib width of the lift position.
