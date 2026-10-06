@@ -836,6 +836,13 @@
   cursor: pointer;
 }
 
+.ink-pdf-icon-button .ink-button-icon,
+.ink-pdf-icon-button svg {
+  display: block;
+  width: 20px;
+  height: 20px;
+}
+
 .ink-pdf-icon-button:hover { background: var(--ink-hover); }
 .ink-pdf-icon-button.is-active { border-color: var(--ink-border); background: var(--ink-hover); }
 .ink-pdf-icon-button.is-disabled { opacity: 0.4; pointer-events: none; }
@@ -910,22 +917,43 @@
   touch-action: none;
 }
 
+/* Explicit layer stacking for the PDF ink host: without positioned layers
+   the live preview canvas sat in static flow below the PDF canvas, so live
+  ink was invisible until the tile commit repainted it. */
+.ink-pdf-ink-host .ink-tile-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+.ink-pdf-ink-host .ink-selection-canvas,
+.ink-pdf-ink-host .ink-preview-canvas {
+  position: absolute;
+}
+
+.ink-pdf-ink-host .ink-selection-canvas { z-index: 3; }
+.ink-pdf-ink-host .ink-preview-canvas { z-index: 5; }
+.ink-pdf-ink-host .ink-eraser-cursor { z-index: 6; }
+
 .ink-pdf-reading .ink-pdf-ink-host { pointer-events: none; }
 .ink-pdf-editing .ink-pdf-text-layer { display: none; }
 
-.ink-pdf-brush-popover {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 50%;
-  transform: translateX(-50%);
-  z-index: 20;
-  display: none;
-  min-width: 200px;
-  padding: 10px 12px;
-  border: 1px solid var(--ink-border);
-  border-radius: var(--ink-radius-sm);
-  background: var(--ink-panel);
-  box-shadow: var(--ink-shadow-paper);
+/* The shared controller owns the popover root (position: fixed + clamped
+   via position()); these rules only add PDF-surface specifics. */
+.ink-size-popover.ink-pdf-brush-popover {
+  z-index: 1000;
+  padding: 12px 14px;
+}
+
+.ink-size-popover.ink-pdf-brush-popover .ink-popover-preview,
+.ink-size-popover.ink-pdf-brush-popover .ink-curve-editor-canvas {
+  background: #ffffff;
+}
+
+.ink-size-popover.ink-pdf-brush-popover .ink-popover-body {
+  /* Vertical-only scrolling with a visible gap before the scrollbar. */
+  padding-right: 10px;
 }
 
 .ink-pdf-brush-popover.is-open { display: block; }

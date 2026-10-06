@@ -52,6 +52,8 @@ export interface BrushToolSpec {
 }
 
 export interface BrushPopoverControllerOptions {
+  /** Extra class appended to the popover root for host-specific styling. */
+  extraClass?: string;
   tools: BrushToolSpec[];
   getSettings: (tool: BrushTool) => BrushSettings;
   /** The currently active tool: drives panel visibility and the header title. */
@@ -98,7 +100,7 @@ export class BrushPopoverController {
   constructor(parent: HTMLElement, options: BrushPopoverControllerOptions) {
     this.options = options;
     this.root = parent.createDiv({
-      cls: "ink-size-popover",
+      cls: options.extraClass ? `ink-size-popover ${options.extraClass}` : "ink-size-popover",
       attr: { role: "dialog", "aria-label": "Tool settings", "aria-hidden": "true" },
     });
     const header = this.root.createDiv({ cls: "ink-popover-header" });

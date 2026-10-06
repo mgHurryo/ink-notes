@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.8.0-beta.4 - 2026-10-07
+
+- Fix the PDF ink editor's broken GUI on iPad: the shared brush popover is now mounted at the view root with fixed, viewport-clamped positioning (mainline parity) instead of nested inside the toolbar group, where the toolbar's layout context mangled it into an unreadable arc; the popover now opens/closes reliably (brush button, Escape, outside tap).
+- Fix blank toolbar icons in the PDF view: icon SVGs get explicit sizing.
+- Fix handwritten strokes not appearing until the tile commit: the PDF ink host's layers now carry explicit positioning and z-index (tiles 1 / selection 3 / preview 5 / eraser cursor 6), so the live preview renders above the PDF canvas immediately.
+- PDFs editable in Ink Notes now open straight into editing mode when handwriting is available (the eye toggle still switches to reading); previously they opened read-only with no visible way into the editor.
+
 ## 0.8.0-beta.3 - 2026-10-06
 
 - Polish the tool settings popover from device feedback: the duplicated per-panel "Tool settings" header is removed (the pinned header alone carries the title and live size), the scroll body keeps a visible gap between the controls and the scrollbar, and the sample-stroke and pressure-curve canvases are pinned to a paper-white background so ink previews stay legible in dark mode (previously dark ink rendered on the dark theme background and disappeared).
