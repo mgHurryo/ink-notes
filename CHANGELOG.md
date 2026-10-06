@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.6.0-beta.6 - 2026-10-06
+
+- Replace the pen outline generator (perfect-freehand) with a variable-width stroke ribbon flattened to a single polygon: left offsets forward, end cap, right offsets backward, start cap, filled with nonzero winding. Diagnostics from real handwriting showed the strand-offset outline structurally fails when letters are small relative to the nib: tight loop interiors collapsed to slivers, curves rendered with polygon facets, and hooks folded into dots. The ribbon keeps loop interiors open, renders curves smoothly, and draws hooks fully at every nib-to-letter ratio. The per-point diameter convention (width * (0.55 + pressure * 0.75)) and the corner-preserving centerline smoothing are unchanged, and live ink, retained previews, committed tiles and Markdown embeds share the same geometry, so they remain pixel-identical. The perfect-freehand dependency is removed.
+
 ## 0.6.0-beta.5 - 2026-10-06
 
 - Render sampled curves as curves: the pen outline now connects the captured centerline with corner-preserving smoothing instead of raw polylines, so a fast hook sampled a handful of times (a flicked a/d tail, cursive turns) renders as the curve the pen drew rather than a straight-line kink. Corners stay sharp by construction: a vertex only participates while both adjacent segments are short relative to the nib width, so deliberate corners drawn with long strokes (Chinese character turns, angular letters) keep their vertex exactly, endpoints never move, and every displacement stays a small fraction of the nib width. Render-only: stored points remain the raw samples.

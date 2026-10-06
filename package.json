@@ -1,6 +1,6 @@
 {
   "name": "obsidian-ink-notes",
-  "version": "0.6.0-beta.5",
+  "version": "0.6.0-beta.6",
   "private": true,
   "description": "Cross-platform handwritten notes for Obsidian.",
   "main": "main.js",
@@ -20,8 +20,5 @@
     "obsidian": "^1.7.2",
     "typescript": "^5.7.2",
     "vitest": "4.1.11"
-  },
-  "dependencies": {
-    "perfect-freehand": "^1.2.3"
   }
 }

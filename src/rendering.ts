@@ -1,4 +1,3 @@
-import { getStroke } from "perfect-freehand";
 import type { InkPoint, InkStroke } from "./model";
 
 interface CachedPath {
@@ -25,19 +24,84 @@ export function penOutline(stroke: InkStroke, width: number, height: number): nu
     stroke.points.map((point, index) => [point.x * width, point.y * height, pressures[index]]),
     stroke.width * 0.925,
   );
-  return getStroke(centerline, {
-    // Preserve the existing diameter: width * (0.55 + pressure * 0.75).
-    size: stroke.width * 0.925,
-    thinning: 0.75 / 1.85,
-    simulatePressure: false,
-    // Input is the raw captured trajectory; a position filter here would pull
-    // sparse fast corners away from the saved trajectory.
-    streamline: 0,
-    smoothing: 0.65,
-    last: true,
-    start: { cap: true, taper: 0 },
-    end: { cap: true, taper: 0 },
-  });
+  return penRibbonPolygon(centerline, stroke.width);
+}
+
+/**
+ * Flattens the variable-width stroke ribbon around the centerline into a
+ * single polygon: left offsets forward, end cap, right offsets backward,
+ * start cap. Nonzero-winding fill renders this correctly even where a stroke
+ * crosses or doubles back on itself, unlike a strand-offset outline whose
+ * inner boundary collapses on tight loops (small handwriting with a
+ * comparatively thick nib filled loop interiors and folded hooks into dots).
+ * Per-point diameter follows the established convention
+ * width * (0.55 + pressure * 0.75).
+ */
+function penRibbonPolygon(points: number[][], width: number): number[][] {
+  const halfWidth = (point: number[]): number =>
+    Math.max(0.3, (width * (0.55 + 0.75 * point[2])) / 2);
+  const count = points.length;
+  if (count === 0) return [];
+  if (count === 1) {
+    const ring: number[][] = [];
+    const radius = halfWidth(points[0]);
+    for (let index = 0; index < 16; index++) {
+      const angle = (index / 16) * Math.PI * 2;
+      ring.push([points[0][0] + Math.cos(angle) * radius, points[0][1] + Math.sin(angle) * radius]);
+    }
+    return ring;
+  }
+  const left: number[][] = [];
+  const right: number[][] = [];
+  for (let index = 0; index < count; index++) {
+    const point = points[index];
+    const previous = points[Math.max(0, index - 1)];
+    const following = points[Math.min(count - 1, index + 1)];
+    let dx = following[0] - previous[0];
+    let dy = following[1] - previous[1];
+    if (index === 0) { dx = points[1][0] - point[0]; dy = points[1][1] - point[1]; }
+    else if (index === count - 1) { dx = point[0] - points[index - 1][0]; dy = point[1] - points[index - 1][1]; }
+    let length = Math.hypot(dx, dy);
+    if (length < 1e-6) { dx = 1; dy = 0; length = 1; }
+    const nx = -dy / length;
+    const ny = dx / length;
+    const radius = halfWidth(point);
+    left.push([point[0] + nx * radius, point[1] + ny * radius]);
+    right.push([point[0] - nx * radius, point[1] - ny * radius]);
+  }
+  const capSegments = 13;
+  const endCap: number[][] = [];
+  const lastIndex = count - 1;
+  let ex = points[lastIndex][0] - points[lastIndex - 1][0];
+  let ey = points[lastIndex][1] - points[lastIndex - 1][1];
+  let endLength = Math.hypot(ex, ey);
+  if (endLength < 1e-6) { ex = 1; ey = 0; endLength = 1; }
+  ex /= endLength; ey /= endLength;
+  const endRadius = halfWidth(points[lastIndex]);
+  for (let index = 1; index < capSegments; index++) {
+    const angle = Math.PI * (index / capSegments);
+    const across = Math.cos(angle), along = Math.sin(angle);
+    endCap.push([
+      points[lastIndex][0] + (-ey * across + ex * along) * endRadius,
+      points[lastIndex][1] + (ex * across + ey * along) * endRadius,
+    ]);
+  }
+  const startCap: number[][] = [];
+  let sx = points[0][0] - points[1][0];
+  let sy = points[0][1] - points[1][1];
+  let startLength = Math.hypot(sx, sy);
+  if (startLength < 1e-6) { sx = -1; sy = 0; startLength = 1; }
+  sx /= startLength; sy /= startLength;
+  const startRadius = halfWidth(points[0]);
+  for (let index = 1; index < capSegments; index++) {
+    const angle = Math.PI * (index / capSegments);
+    const across = Math.cos(angle), along = Math.sin(angle);
+    startCap.push([
+      points[0][0] + (-sy * across + sx * along) * startRadius,
+      points[0][1] + (sx * across + sy * along) * startRadius,
+    ]);
+  }
+  return [...left, ...endCap, ...right.slice().reverse(), ...startCap];
 }
 
 /**
