@@ -19,6 +19,15 @@ export default class InkNotesPlugin extends Plugin {
     this.addRibbonIcon("pen-line", "Open Ink Notes", () => this.runAsync(this.openNotebook(), "open a notebook"));
     this.addCommand({ id: "open-ink-notebook", name: "Open Ink Notebook", callback: () => this.runAsync(this.openNotebook(), "open a notebook") });
     this.addCommand({ id: "create-ink-notebook", name: "Create Ink Notebook", callback: () => this.runAsync(this.createNotebook(), "create a notebook") });
+    this.addCommand({
+      id: "toggle-ink-diagnostics",
+      name: "Toggle Ink developer diagnostics",
+      callback: () => {
+        for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_INK)) {
+          if (leaf.view instanceof InkView) leaf.view.toggleDevPanel();
+        }
+      },
+    });
     this.registerMarkdownCodeBlockProcessor("ink", createInkEmbedProcessor(this.app, (file, pageId) => this.openFile(file, pageId)));
     this.register(this.store.observe((file) => this.queueRefresh(file)));
     this.register(() => {
