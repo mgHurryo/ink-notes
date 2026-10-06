@@ -1,6 +1,7 @@
 import { App, FileView, Menu, Notice, Scope, SuggestModal, TFile, WorkspaceLeaf, loadPdfJs, setIcon } from "obsidian";
 import { InkPage, InkPoint, InkStroke, InkTool, newId } from "./model";
-import { canvasResolution, drawInkStroke } from "./rendering";
+import { canvasResolution, clampPercent, drawInkStroke, normalizePressureCurve, samplePressureCurve } from "./rendering";
+import { BrushPopoverController } from "./brush-popover";
 import { StrokeModelInput, StrokeModeler, StrokeModelResult, strokeModelParamsForSmoothStrength } from "./stroke-modeler";
 import { TileRenderer } from "./tiles";
 import { InkWorkerService, InkWorkerSession } from "./worker-service";
@@ -170,6 +171,10 @@ export class PdfInkView extends FileView {
   private selectionCtx: CanvasRenderingContext2D | null = null;
   private previewCanvas: HTMLCanvasElement | null = null;
   private previewCtx: CanvasRenderingContext2D | null = null;
+  private brushPopover: BrushPopoverController | null = null;
+  /** Predicted (speculative) tip points for the live stroke — render-only,
+   *  never stored; dropped when the real tail takes over at lift. */
+  private predictedTip: InkPoint[] | null = null;
   private statusEl: HTMLElement | null = null;
   private toolbarButtons = new Map<string, HTMLElement>();
 
@@ -713,48 +718,43 @@ export class PdfInkView extends FileView {
     this.toolbarButtons.set(`tool-${tool}`, button);
   }
 
-  /** Compact brush settings popover shared by pen and highlighter. */
+  /** Shared brush settings popover (same controller as the notebook view):
+   *  pinned sample-stroke preview, dynamics sliders, pressure mapping curve
+   *  and eraser controls. */
   private addBrushPopover(parent: HTMLElement): void {
     const button = parent.createEl("button", {
       cls: "ink-pdf-icon-button ink-icon-button",
       attr: { type: "button", "aria-label": "Brush settings" },
     });
     setIcon(button, "settings-2");
-    const popover = parent.createDiv({ cls: "ink-pdf-brush-popover" });
-    popover.createDiv({ cls: "ink-pdf-popover-title" }).setText("Color");
-    const swatches = popover.createDiv({ cls: "ink-pdf-color-row" });
-    for (const color of INK_COLORS) {
-      const swatch = swatches.createEl("button", {
-        cls: "ink-pdf-color-swatch",
-        attr: { type: "button", "aria-label": color.label },
-      });
-      swatch.setCssStyles({ background: color.value });
-      swatch.addEventListener("click", () => {
-        this.brushSettings().color = color.value;
-        this.updateToolButtons();
-      });
-    }
-    const addRange = (label: string, min: number, max: number, step: number, read: () => number, write: (value: number) => void) => {
-      const row = popover.createDiv({ cls: "ink-pdf-range-row" });
-      row.createEl("label").setText(label);
-      const input = row.createEl("input", { type: "range", attr: { min: String(min), max: String(max), step: String(step) } });
-      input.value = String(read());
-      input.addEventListener("input", () => write(Number(input.value)));
-    };
-    addRange("Width", 1, 40, 1, () => this.brushSettings().width, (value) => { this.brushSettings().width = value; });
-    addRange("Opacity", 5, 100, 5, () => Math.round(this.brushSettings().opacity * 100), (value) => { this.brushSettings().opacity = value / 100; });
-    addRange("Eraser size", 6, 80, 2, () => this.state.eraserSize, (value) => { this.state.eraserSize = value; });
-    const modes = popover.createDiv({ cls: "ink-pdf-color-row" });
-    for (const mode of ["stroke", "circle", "square"] as EraserMode[]) {
-      const label = { stroke: "Stroke", circle: "Circle", square: "Square" }[mode];
-      const modeButton = modes.createEl("button", { cls: "ink-pdf-mode-button", attr: { type: "button", "data-eraser-mode": mode } });
-      modeButton.setText(label);
-      modeButton.addEventListener("click", () => {
-        this.state.eraserMode = mode;
-        this.updateToolButtons();
-      });
-    }
-    button.addEventListener("click", () => popover.toggleClass("is-open", !popover.hasClass("is-open")));
+    button.addEventListener("click", () => this.brushPopover!.toggle());
+    this.brushPopover = new BrushPopoverController(parent, {
+      tools: [
+        { tool: "pen", label: "Pen", presets: [2, 4, 8], maximum: 40 },
+        { tool: "highlighter", label: "Highlighter", presets: [8, 16, 24], maximum: 48 },
+      ],
+      getSettings: (tool) => this.brushSettings(),
+      activeTool: () => this.state.tool,
+      showPenDynamics: () => this.state.tool === "pen",
+      buildExtras: (body, { addRange }) => {
+        body.createDiv({ cls: "ink-settings-label", text: "Eraser size" });
+        addRange(body, "Eraser size", 6, 80, 2, this.state.eraserSize, (value: number) => {
+          this.state.eraserSize = value;
+        });
+        const modes = body.createDiv({ cls: "ink-pdf-color-row" });
+        for (const mode of ["stroke", "circle", "square"] as EraserMode[]) {
+          const label = { stroke: "Stroke", circle: "Circle", square: "Square" }[mode];
+          const modeButton = modes.createEl("button", { cls: "ink-pdf-mode-button", attr: { type: "button", "data-eraser-mode": mode } });
+          modeButton.setText(label);
+          modeButton.addEventListener("click", () => {
+            this.state.eraserMode = mode;
+            this.updateToolButtons();
+          });
+        }
+      },
+      onControlsChanged: () => this.updateToolButtons(),
+      anchor: () => this.toolbarButtons.get("brush") ?? null,
+    });
   }
 
   private brushSettings(): BrushSettings {
@@ -1021,6 +1021,7 @@ export class PdfInkView extends FileView {
         taper: this.state.pen.taper ?? 0,
         pressure: this.state.pen.pressureGain ?? 100,
         speed: this.state.pen.speedGain ?? 0,
+        pressureCurve: this.state.pen.pressureCurve ? this.state.pen.pressureCurve.map((point) => [...point]) : undefined,
       } : undefined,
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -1073,9 +1074,15 @@ export class PdfInkView extends FileView {
       }
       this.requestRender();
     }
+    // Predicted (speculative) tip points from the host: render-only ghost,
+    // never stored; dropped when the real tail takes over at lift.
+    const predicted = typeof event.getPredictedEvents === "function" ? event.getPredictedEvents() : [];
+    this.predictedTip = predicted.length ? predicted.map((s) => this.toPoint(s, rect)) : null;
+    if (this.predictedTip) this.requestRender();
   }
 
   private onPointerEndHost(event: PointerEvent, _cancelled: boolean): void {
+    if (this.activePointerId === event.pointerId) this.predictedTip = null;
     if (this.activePointerId === null || event.pointerId !== this.activePointerId) return;
     try {
       this.inkHost?.releasePointerCapture(event.pointerId);
@@ -1117,6 +1124,7 @@ export class PdfInkView extends FileView {
       }
     }
     this.flushPenCapture();
+    this.predictedTip = null;
     this.interaction = null;
     this.activePointerId = null;
     if (interaction) {
@@ -1500,6 +1508,33 @@ export class PdfInkView extends FileView {
     if (!stroke || !isBrushTool(stroke.tool)) return;
     this.previewCanvas?.toggleClass("is-highlighter-preview", stroke.tool === "highlighter");
     drawInkStroke(ctx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    this.drawPredictedGhostTip(ctx, stroke);
+  }
+
+  /** Draws the predicted tip as a tapering ghost: continuous with the stroke
+   *  at the junction (deep black), fading to faint at the predicted position.
+   *  Preview-layer only; the stored stroke never includes these points. */
+  private drawPredictedGhostTip(ctx: CanvasRenderingContext2D, stroke: InkStroke): void {
+    if (!this.predictedTip || this.predictedTip.length === 0 || !this.lastPoint) return;
+    const gain = clampPercent(stroke.dynamics?.pressure, 100) / 100;
+    const mapped = samplePressureCurve(this.lastPoint.pressure, normalizePressureCurve(stroke.dynamics?.pressureCurve));
+    const baseHalf = Math.max(0.6, (stroke.width * (0.55 + 0.75 * (0.5 + (mapped - 0.5) * gain))) / 2);
+    let previous = { x: this.lastPoint.x * this.canvasLogicalWidth, y: this.lastPoint.y * this.canvasLogicalHeight };
+    const segments = this.predictedTip.length;
+    for (let index = 0; index < segments; index++) {
+      const point = { x: this.predictedTip[index].x * this.canvasLogicalWidth, y: this.predictedTip[index].y * this.canvasLogicalHeight };
+      const progress = (index + 1) / segments;
+      ctx.globalAlpha = stroke.opacity * (0.6 - 0.45 * progress);
+      ctx.lineWidth = Math.max(0.5, baseHalf * 2 * (1 - 0.45 * progress));
+      ctx.strokeStyle = stroke.color;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(previous.x, previous.y);
+      ctx.lineTo(point.x, point.y);
+      ctx.stroke();
+      previous = point;
+    }
+    ctx.globalAlpha = 1;
   }
 
   private schedulePendingInkCommit(): void {

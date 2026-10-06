@@ -18,32 +18,15 @@ import {
   newId,
 } from "./model";
 import { NotebookStore } from "./storage";
-import { canvasResolution, clampPercent, drawInkStroke, normalizePressureCurve, penOutline, samplePressureCurve } from "./rendering";
+import { canvasResolution, clampPercent, drawInkStroke, normalizePressureCurve, samplePressureCurve } from "./rendering";
+import { BrushPopoverController, BrushSettings, BrushTool, isBrushTool } from "./brush-popover";
+export { BrushSettings, BrushTool, INK_COLORS, isBrushTool } from "./brush-popover";
 import { Rect, TileRenderer } from "./tiles";
 import { StrokeModeler, StrokeModelInput, StrokeModelResult, StrokeModelParams, DEFAULT_STROKE_MODEL_PARAMS, strokeModelParamsForSmoothStrength } from "./stroke-modeler";
 import type { InkWorkerResponse, NotebookOperation } from "./worker-protocol";
 import { InkWorkerRequestError, InkWorkerService, InkWorkerSession } from "./worker-service";
 
 export const VIEW_TYPE_INK = "ink-notes-view";
-
-type BrushTool = "pen" | "highlighter";
-
-export interface BrushSettings {
-  color: string;
-  width: number;
-  opacity: number;
-  /** Pen only: 0 keeps ink direct (raw samples, no modeling); 1..100 is
-   *  the user-selected stroke-modeler strength. */
-  smooth?: number;
-  /** Pen only: end shape 0 (round caps) to 100 (tapered points). */
-  taper?: number;
-  /** Pen only: pressure response amplitude 0 (uniform) to 100 (full). */
-  pressureGain?: number;
-  /** Pen only: speed-based thinning amplitude 0 (off) to 100. */
-  speedGain?: number;
-  /** Pen only: pressure mapping curve control points [in, out] in 0..1. */
-  pressureCurve?: number[][];
-}
 
 export interface ToolState {
   tool: InkTool;
@@ -149,14 +132,6 @@ class SaveConflictError extends Error {
   }
 }
 
-export const INK_COLORS = [
-  { value: "#1b1b1b", label: "Black" },
-  { value: "#195bff", label: "Blue" },
-  { value: "#f23c42", label: "Red" },
-  { value: "#42c449", label: "Green" },
-  { value: "#f2c94c", label: "Yellow" },
-];
-
 export class InkView extends FileView {
   private readonly store: NotebookStore;
   private notebook: InkNotebook = createNotebook();
@@ -234,9 +209,7 @@ export class InkView extends FileView {
   /** Reading mode: view-only. Ink tools, the popover and eraser tracking are
    *  disabled and the page restores native panning/scrolling. */
   private readingMode = false;
-  /** The pressure curve editor stays collapsed until manually expanded. */
-  private pressureCurveOpen = false;
-  private popoverTitle: HTMLElement | null = null;
+  private brushPopover!: BrushPopoverController;
   private confirmedStrokeOutlines = new Map<string, ConfirmedStrokeOutline>();
   private pendingInkStrokes: InkStroke[] = [];
   private committingInkStrokes: InkStroke[] | null = null;
@@ -425,6 +398,7 @@ export class InkView extends FileView {
   }
 
   private renderToolPopover(): void {
+    console.log("[curve-debug] renderToolPopover rebuild");
     const host = this.root.querySelector<HTMLElement>(".ink-tool-popover-host")!;
     host.empty();
     this.addSizePopover(host);
@@ -446,48 +420,43 @@ export class InkView extends FileView {
     void icon;
     button.title = "Brush size and opacity";
 
-    const popover = container.createDiv({
-      cls: "ink-size-popover",
-      attr: { role: "dialog", "aria-label": "Tool settings", "aria-hidden": "true" },
+    // Shared brush settings popover (same controller as the PDF view): pinned
+    // preview header, vertical-only scroll body, gesture shield included.
+    const brushPopover = new BrushPopoverController(container, {
+      tools: [
+        { tool: "pen", label: "Pen", presets: [2, 4, 8], maximum: 24 },
+        { tool: "highlighter", label: "Highlighter", presets: [8, 16, 24], maximum: 48 },
+      ],
+      getSettings: (tool) => this.brushSettings(tool),
+      activeTool: () => this.state.tool,
+      showPenDynamics: () => this.state.tool === "pen",
+      buildExtras: (body, { addRange }) => {
+        const eraser = body.createDiv({ cls: "ink-eraser-settings" });
+        eraser.createDiv({ cls: "ink-size-popover-title", text: "Eraser" });
+        eraser.createDiv({ cls: "ink-settings-label", text: "Mode" });
+        const modes = eraser.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
+        for (const [mode, label, shortLabel, iconName] of [["stroke", "Stroke eraser", "Stroke", "eraser"], ["circle", "Circle eraser", "Circle", "circle"], ["square", "Square eraser", "Square", "square"]] as const) {
+          const modeButton = modes.createEl("button", { cls: "ink-eraser-mode", attr: { type: "button", role: "radio", title: label, "aria-label": label, "aria-checked": String(this.state.eraserMode === mode), "data-eraser-mode": mode } });
+          setIcon(modeButton.createSpan({ cls: "ink-button-icon" }), iconName);
+          modeButton.createSpan({ cls: "ink-eraser-mode-label", text: shortLabel });
+          modeButton.addEventListener("click", () => {
+            this.state.eraserMode = mode;
+            this.updateEraserControls();
+          });
+        }
+        eraser.createDiv({ cls: "ink-stroke-eraser-hint", text: "Erases the entire touched stroke. Size is fixed." });
+        addRange(eraser, "Eraser size", 8, 160, 2, this.state.eraserSize, (value: number) => {
+          this.state.eraserSize = value;
+          this.refreshEraserCursor();
+        });
+      },
+      onControlsChanged: () => this.updateEraserControls(),
+      anchor: () => this.activeToolButton() ?? this.sizePopoverButton,
     });
-    // Pinned header: title + live sample stroke stay visible while the
-    // settings below scroll. The header canvas is the single sample preview
-    // for every brush tool.
-    const header = popover.createDiv({ cls: "ink-popover-header" });
-    this.popoverTitle = header.createDiv({ cls: "ink-popover-title", text: "Pen settings" });
-    header.createEl("canvas", { cls: "ink-popover-preview", attr: { "aria-hidden": "true" } });
-    // Menu priority over workspace gestures: touches inside the popover never
-    // reach Obsidian's swipe handlers, so adjusting a slider cannot summon
-    // the file switcher or other menus.
-    for (const type of ["touchstart", "touchmove", "pointerdown"] as const) {
-      this.registerDomEvent(popover, type, (event) => event.stopPropagation(), { passive: type !== "touchmove" });
-    }
-    const popoverBody = popover.createDiv({ cls: "ink-popover-body" });
-    this.addBrushSettings(popoverBody, "pen", "Pen", [2, 4, 8], 24);
-    this.addBrushSettings(popoverBody, "highlighter", "Highlighter", [8, 16, 24], 48);
-    const eraser = popoverBody.createDiv({ cls: "ink-eraser-settings" });
-    eraser.createDiv({ cls: "ink-size-popover-title", text: "Eraser" });
-    eraser.createDiv({ cls: "ink-settings-label", text: "Mode" });
-    const modes = eraser.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
-    for (const [mode, label, shortLabel, iconName] of [["stroke", "Stroke eraser", "Stroke", "eraser"], ["circle", "Circle eraser", "Circle", "circle"], ["square", "Square eraser", "Square", "square"]] as const) {
-      const modeButton = modes.createEl("button", { cls: "ink-eraser-mode", attr: { type: "button", role: "radio", title: label, "aria-label": label, "aria-checked": String(this.state.eraserMode === mode), "data-eraser-mode": mode } });
-      setIcon(modeButton.createSpan({ cls: "ink-button-icon" }), iconName);
-      modeButton.createSpan({ cls: "ink-eraser-mode-label", text: shortLabel });
-      modeButton.addEventListener("click", () => {
-        this.state.eraserMode = mode;
-        this.updateEraserControls();
-      });
-    }
-    eraser.createDiv({ cls: "ink-stroke-eraser-hint", text: "Erases the entire touched stroke. Size is fixed." });
-    this.addRange(eraser, "Eraser size", 8, 160, 2, this.state.eraserSize, (value) => {
-      this.state.eraserSize = value;
-      this.refreshEraserCursor();
-    });
+    this.sizePopover = brushPopover.root;
+    this.sizePopoverButton = button;
+    this.brushPopover = brushPopover;
 
-    const close = (): void => {
-      if ((window as unknown as { curveDebug?: boolean }).curveDebug) console.log("[curve-debug] close() called");
-      this.setSizePopoverOpen(false);
-    };
     button.addEventListener("click", (event) => {
       event.stopPropagation();
       this.setSizePopoverOpen(!this.sizePopoverOpen);
@@ -495,59 +464,32 @@ export class InkView extends FileView {
     this.registerDomEvent(document, "pointerdown", (event) => {
       const target = event.target as HTMLElement | null;
       const switchingSettingsTool = target?.closest?.(".ink-tool-button[aria-haspopup='dialog']");
-      if (this.sizePopoverOpen && !container.contains(target) && !switchingSettingsTool) close();
+      if (this.sizePopoverOpen && !container.contains(target) && !switchingSettingsTool) this.setSizePopoverOpen(false);
     });
     this.registerDomEvent(document, "keydown", (event) => {
       if (event.key === "Escape" && this.sizePopoverOpen) {
-        close();
+        this.setSizePopoverOpen(false);
         this.activeToolButton()?.focus();
       }
     });
-    this.registerDomEvent(window, "resize", () => this.positionSizePopover());
-    this.registerDomEvent(window, "scroll", () => this.positionSizePopover(), true);
-
-    this.sizePopover = popover;
-    this.sizePopoverButton = button;
-    this.updateBrushControls();
+    this.registerDomEvent(window, "resize", () => this.brushPopover.position());
+    this.registerDomEvent(window, "scroll", () => this.brushPopover.position(), true);
   }
 
   private setSizePopoverOpen(open: boolean): void {
-    if (!this.sizePopover || !this.sizePopoverButton) return;
-    if (typeof window !== "undefined" && (window as unknown as { curveDebug?: boolean }).curveDebug) console.log("[curve-debug] setSizePopoverOpen", open);
     this.sizePopoverOpen = open;
-    this.sizePopover.toggleClass("is-open", open);
-    this.sizePopover.setAttribute("aria-hidden", String(!open));
+    open ? this.brushPopover.open() : this.brushPopover.close();
     this.root.querySelectorAll<HTMLElement>(".ink-tool-button[aria-haspopup='dialog']").forEach((button) => {
       button.setAttribute("aria-expanded", String(open && button.dataset.tool === this.state.tool));
     });
     if (open) {
-      this.positionSizePopover();
-      window.requestAnimationFrame(() => this.positionSizePopover());
-      // The popover is display:none while built, so canvas previews can only
-      // be drawn once it becomes visible and has layout.
       window.requestAnimationFrame(() => {
-        if (isBrushTool(this.state.tool)) this.updateBrushPreview(this.state.tool);
+        const focusTarget = this.state.tool === "eraser"
+          ? ".ink-eraser-mode"
+          : `.ink-brush-settings[data-brush-tool="${this.state.tool}"] input, .ink-brush-settings[data-brush-tool="${this.state.tool}"] button`;
+        this.sizePopover?.querySelector<HTMLElement>(focusTarget)?.focus();
       });
-      const focusTarget = this.state.tool === "eraser"
-        ? ".ink-eraser-mode"
-        : `.ink-brush-settings[data-brush-tool="${this.state.tool}"] input, .ink-brush-settings[data-brush-tool="${this.state.tool}"] button`;
-      window.requestAnimationFrame(() => this.sizePopover?.querySelector<HTMLElement>(focusTarget)?.focus());
     }
-  }
-
-  private positionSizePopover(): void {
-    if (!this.sizePopoverOpen || !this.sizePopover || !this.sizePopoverButton) return;
-    const anchor = this.activeToolButton() ?? this.sizePopoverButton;
-    const buttonRect = anchor.getBoundingClientRect();
-    const popoverRect = this.sizePopover.getBoundingClientRect();
-    const margin = 12;
-    const left = Math.max(margin, Math.min(window.innerWidth - popoverRect.width - margin, buttonRect.left + buttonRect.width / 2 - popoverRect.width / 2));
-    const below = buttonRect.bottom + 10;
-    const top = below + popoverRect.height <= window.innerHeight - margin
-      ? below
-      : Math.max(margin, buttonRect.top - popoverRect.height - 10);
-    this.sizePopover.style.left = `${left}px`;
-    this.sizePopover.style.top = `${top}px`;
   }
 
   private activeToolButton(): HTMLButtonElement | null {
@@ -562,171 +504,15 @@ export class InkView extends FileView {
     return section.createDiv({ cls: "ink-toolbar-section-controls" });
   }
 
-  private addBrushSettings(parent: HTMLElement, tool: BrushTool, label: string, presets: number[], maximum: number): void {
-    const settings = this.brushSettings(tool);
-    const panel = parent.createDiv({ cls: "ink-brush-settings", attr: { "data-brush-tool": tool } });
-    // The pinned popover header already shows "Tool settings · size".
-
-    panel.createDiv({ cls: "ink-settings-label", text: "Size" });
-    const input = panel.createEl("input", { attr: {
-      type: "range", min: "1", max: String(maximum), step: "0.5", value: String(settings.width),
-      "aria-label": `${label} size`, "data-control": "size",
-    } });
-    input.addEventListener("input", () => {
-      settings.width = Number(input.value);
-      this.updateBrushControls(tool);
-    });
-    panel.createDiv({ cls: "ink-settings-label ink-settings-label-presets", text: "Presets" });
-    const widths = this.addToolbarSection(panel, `${label}-widths`);
-    for (const width of presets) {
-      const preset = widths.createEl("button", { cls: "ink-width-preset", attr: {
-        type: "button", title: `${width} px`, "aria-label": `${label} ${width} px`,
-        "data-width": String(width), "data-brush-tool": tool, "aria-pressed": String(settings.width === width),
-      } });
-      preset.createSpan({ cls: "ink-width-line" }).style.height = Math.min(width, 24) + "px";
-      preset.addEventListener("click", () => { settings.width = width; this.updateBrushControls(tool); });
-    }
-    this.addColorPicker(panel, tool, label);
-    this.addRange(panel, `${label} opacity`, 0.1, 1, 0.05, settings.opacity, (value) => {
-      settings.opacity = value;
-      this.updateBrushPreview(tool);
-    });
-    if (tool === "pen") {
-      // 0 keeps ink direct (raw samples, no modeling); 1..100 is the stroke
-      // modeler strength. Sparse low-rate devices also auto-engage at 0.
-      this.addRange(panel, "Smooth", 0, 100, 1, settings.smooth ?? 0, (value) => {
-        settings.smooth = value;
-      });
-      // Dynamics sliders re-render the sample-stroke preview on change.
-      this.addRange(panel, "Taper", 0, 100, 1, settings.taper ?? 0, (value) => {
-        settings.taper = value;
-        this.updateBrushPreview(tool);
-      });
-      this.addRange(panel, "Pressure", 0, 100, 1, settings.pressureGain ?? 100, (value) => {
-        settings.pressureGain = value;
-        this.updateBrushPreview(tool);
-      });
-      // The curve editor stays collapsed until manually expanded.
-      const curveHeader = panel.createDiv({ cls: "ink-settings-label ink-curve-header" });
-      curveHeader.createSpan({ text: "Pressure curve" });
-      const curveToggle = curveHeader.createEl("button", {
-        cls: "ink-curve-toggle", attr: {
-          type: "button", "aria-expanded": String(this.pressureCurveOpen),
-          "aria-label": this.pressureCurveOpen ? "Collapse pressure curve editor" : "Expand pressure curve editor",
-        },
-      });
-      setIcon(curveToggle.createSpan({ cls: "ink-button-icon" }), this.pressureCurveOpen ? "chevron-up" : "chevron-down");
-      const curveBody = panel.createDiv({ cls: "ink-curve-body" });
-      if (!this.pressureCurveOpen) curveBody.style.display = "none";
-      const resetRow = curveBody.createDiv({ cls: "ink-curve-actions" });
-      const resetButton = resetRow.createEl("button", { text: "Reset", attr: { type: "button" } });
-      resetButton.addEventListener("click", () => {
-        settings.pressureCurve = undefined;
-        this.updateBrushPreview("pen");
-      });
-      this.addPressureCurveEditor(curveBody, settings);
-      curveToggle.addEventListener("click", () => {
-        this.pressureCurveOpen = !this.pressureCurveOpen;
-        curveBody.style.display = this.pressureCurveOpen ? "" : "none";
-        curveToggle.setAttribute("aria-expanded", String(this.pressureCurveOpen));
-        setIcon(curveToggle.querySelector(".ink-button-icon") ?? curveToggle.createSpan({ cls: "ink-button-icon" }), this.pressureCurveOpen ? "chevron-up" : "chevron-down");
-        if (this.pressureCurveOpen) this.updateBrushPreview("pen");
-      });
-      this.addRange(panel, "Speed width", 0, 100, 1, settings.speedGain ?? 0, (value) => {
-        settings.speedGain = value;
-        this.updateBrushPreview(tool);
-      });
-    }
-  }
 
   private brushSettings(tool: BrushTool): BrushSettings {
     return this.state[tool];
   }
 
-  private updateBrushPreview(tool: BrushTool): void {
-    const settings = this.brushSettings(tool);
-    const preview = this.sizePopover?.querySelector<HTMLElement>(`.ink-brush-settings[data-brush-tool="${tool}"] .ink-brush-preview-line`);
-    if (preview) {
-      preview.style.setProperty("--ink-preview-color", settings.color);
-      preview.style.setProperty("--ink-preview-opacity", String(settings.opacity));
-      preview.style.setProperty("--ink-preview-width", `${Math.max(2, Math.min(30, settings.width))}px`);
-    }
-    const title = this.sizePopover?.querySelector<HTMLElement>(".ink-popover-title");
-    if (title) title.textContent = `${tool === "pen" ? "Pen" : "Highlighter"} settings · ${formatControlValue("Size", settings.width)}`;
-    if (tool === "pen") {
-      this.drawBrushSampleStroke(settings);
-      this.drawPressureCurveEditor(settings);
-    }
-  }
 
   /** Renders a sample stroke with the current pen dynamics into the brush
    *  panel's preview canvas, using the same outline geometry as real ink. */
-  private drawBrushSampleStroke(settings: BrushSettings): void {
-    const canvas = this.sizePopover?.querySelector<HTMLCanvasElement>(".ink-popover-preview");
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const ratio = Math.max(1, window.devicePixelRatio || 1);
-    const cssWidth = canvas.clientWidth || 200;
-    const cssHeight = canvas.clientHeight || 46;
-    if (canvas.width !== Math.round(cssWidth * ratio)) canvas.width = Math.round(cssWidth * ratio);
-    if (canvas.height !== Math.round(cssHeight * ratio)) canvas.height = Math.round(cssHeight * ratio);
-    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-    ctx.clearRect(0, 0, cssWidth, cssHeight);
-    // A gentle S-curve with a mid-stroke pressure swell: exercises taper,
-    // pressure response and speed compensation together.
-    const samples = 36;
-    const margin = Math.max(8, settings.width);
-    const usableWidth = Math.max(10, cssWidth - margin * 2);
-    const midY = cssHeight / 2;
-    const amplitude = cssHeight / 2 - Math.max(3, settings.width);
-    const points = Array.from({ length: samples }, (_, index) => {
-      const k = index / (samples - 1);
-      return {
-        x: (margin + k * usableWidth) / cssWidth,
-        y: (midY - Math.sin(k * Math.PI * 2) * amplitude * 0.8) / cssHeight,
-        pressure: 0.35 + 0.45 * Math.sin(k * Math.PI),
-        t: index * 8,
-      };
-    });
-    const outline = penOutline({
-      id: "preview", pageId: "preview", tool: "pen", color: settings.color, width: settings.width,
-      opacity: settings.opacity, points, createdAt: 0, updatedAt: 0,
-      dynamics: {
-        taper: settings.taper ?? 0, pressure: settings.pressureGain ?? 100, speed: settings.speedGain ?? 0,
-        pressureCurve: settings.pressureCurve ? settings.pressureCurve.map((point) => [...point]) : undefined,
-      },
-    }, cssWidth, cssHeight);
-    if (outline.length < 2) return;
-    ctx.globalAlpha = settings.opacity;
-    ctx.fillStyle = settings.color;
-    ctx.beginPath();
-    outline.forEach(([x, y], index) => (index ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-    ctx.closePath();
-    ctx.fill();
-    ctx.globalAlpha = 1;
-  }
 
-  private updateBrushControls(tool: BrushTool | null = isBrushTool(this.state.tool) ? this.state.tool : null): void {
-    this.root.querySelectorAll<HTMLElement>(".ink-width-preset").forEach((button) => {
-      const buttonTool = button.dataset.brushTool as BrushTool;
-      button.setAttribute("aria-pressed", String(Number(button.dataset.width) === this.brushSettings(buttonTool).width));
-    });
-    for (const brushTool of ["pen", "highlighter"] as const) {
-      const panel = this.sizePopover?.querySelector<HTMLElement>(`.ink-brush-settings[data-brush-tool="${brushTool}"]`);
-      const settings = this.brushSettings(brushTool);
-      const input = panel?.querySelector<HTMLInputElement>('input[data-control="size"]');
-      if (input) input.value = String(settings.width);
-      const value = panel?.querySelector<HTMLElement>(".ink-size-popover-header .ink-control-value");
-      if (value) value.textContent = formatControlValue("Size", settings.width);
-      this.updateBrushPreview(brushTool);
-    }
-    this.sizePopover?.toggleClass("is-pen-tool", this.state.tool === "pen");
-    this.sizePopover?.toggleClass("is-highlighter-tool", this.state.tool === "highlighter");
-    this.sizePopover?.toggleClass("is-eraser-tool", this.state.tool === "eraser");
-    if (tool) this.updateColorSwatches(tool);
-    this.updateEraserControls();
-  }
 
   private updateEraserControls(): void {
     if (!this.sizePopover) return;
@@ -2485,12 +2271,12 @@ export class InkView extends FileView {
       }
       this.state.tool = tool;
       if (tool !== "lasso") this.clearSelection();
-      this.updateBrushControls();
+      this.brushPopover.update();
       this.updateToolButtons();
       this.refreshEraserCursor();
       if (this.sizePopoverOpen) {
         this.setSizePopoverOpen(true);
-        this.positionSizePopover();
+        this.brushPopover.position();
       }
     });
   }
@@ -2510,81 +2296,6 @@ export class InkView extends FileView {
    * remove it. The curve maps raw pen pressure to the response input and is
    * captured per stroke; the sample preview re-renders on every change.
    */
-  private addPressureCurveEditor(parent: HTMLElement, settings: BrushSettings): void {
-    const editor = parent.createDiv({ cls: "ink-curve-editor", attr: { "aria-label": "Pressure mapping curve" } });
-    const canvas = editor.createEl("canvas", { cls: "ink-curve-editor-canvas" });
-    canvas.style.width = "100%";
-    canvas.style.height = "110px";
-    canvas.setAttribute("aria-hidden", "true");
-    const hit = (clientX: number, clientY: number): { x: number; y: number } => {
-      const rect = canvas.getBoundingClientRect();
-      return { x: (clientX - rect.left) / rect.width, y: 1 - (clientY - rect.top) / rect.height };
-    };
-    const curve = (): number[][] => settings.pressureCurve ? settings.pressureCurve.map((point) => [...point]) : [[0, 0], [1, 1]];
-    let dragIndex = -1;
-    canvas.addEventListener("pointerdown", (event) => {
-      const position = hit(event.clientX, event.clientY);
-      const points = curve();
-      let nearest = -1;
-      let nearestDistance = 0.06;
-      for (let index = 0; index < points.length; index++) {
-        const d = Math.hypot(points[index][0] - position.x, points[index][1] - position.y);
-        if (d < nearestDistance) { nearest = index; nearestDistance = d; }
-      }
-      if (event.detail >= 2 && nearest > 0 && nearest < points.length - 1 && points.length > 2) {
-        points.splice(nearest, 1);
-        settings.pressureCurve = points;
-        dragIndex = -1;
-      } else if (nearest >= 0) {
-        dragIndex = nearest;
-      } else if (points.length < 6) {
-        const insertAt = points.findIndex((point) => point[0] > position.x);
-        const index = insertAt === -1 ? points.length - 1 : insertAt;
-        // Keep the mapping monotonic: a new point starts between its
-        // neighbors' heights.
-        const lowY = index > 0 ? points[index - 1][1] : 0;
-        const highY = index < points.length - 1 ? points[index][1] : 1;
-        points.splice(index, 0, [position.x, Math.max(lowY, Math.min(highY, position.y))]);
-        settings.pressureCurve = points;
-        dragIndex = index;
-      }
-      canvas.setPointerCapture(event.pointerId);
-      this.updateBrushPreview("pen");
-      event.preventDefault();
-    });
-    canvas.addEventListener("pointermove", (event) => {
-      if (dragIndex < 0) return;
-      const position = hit(event.clientX, event.clientY);
-      const points = curve();
-      const point = points[dragIndex];
-      const isEnd = dragIndex === 0 || dragIndex === points.length - 1;
-      // Non-decreasing heights: more pressure must never map to less width.
-      const lowY = dragIndex > 0 ? points[dragIndex - 1][1] : 0;
-      const highY = dragIndex < points.length - 1 ? points[dragIndex + 1][1] : 1;
-      point[1] = Math.max(lowY, Math.min(highY, position.y));
-      if (!isEnd) {
-        const low = points[dragIndex - 1][0] + 0.02;
-        const high = points[dragIndex + 1][0] - 0.02;
-        point[0] = Math.max(low, Math.min(high, position.x));
-      }
-      settings.pressureCurve = points;
-      // Flinging an interior point onto the bottom edge removes it.
-      if (!isEnd && dragIndex > 0 && dragIndex < points.length - 1 && point[1] <= 0.02) {
-        points.splice(dragIndex, 1);
-        dragIndex = -1;
-      }
-      settings.pressureCurve = points;
-      this.updateBrushPreview("pen");
-      event.preventDefault();
-    });
-    const endDrag = (event: PointerEvent): void => {
-      if (dragIndex < 0) return;
-      dragIndex = -1;
-      try { canvas.releasePointerCapture(event.pointerId); } catch { /* pointer already released */ }
-    };
-    canvas.addEventListener("pointerup", endDrag);
-    canvas.addEventListener("pointercancel", endDrag);
-  }
 
   /** Renders the pressure mapping editor: grid, identity guide, curve and
    *  control points. Skipped while the popover has no layout (it is built
@@ -2639,48 +2350,7 @@ export class InkView extends FileView {
     }
   }
 
-  private addColorPicker(parent: HTMLElement, tool: BrushTool, toolLabel: string): void {
-    const settings = this.brushSettings(tool);
-    parent.createDiv({ cls: "ink-settings-label", text: "Color" });
-    const control = parent.createDiv({ cls: "ink-color-control", attr: { "data-brush-tool": tool } });
-    const swatches = control.createDiv({ cls: "ink-color-swatches" });
-    for (const color of INK_COLORS) {
-      const swatch = swatches.createEl("button", { cls: "ink-color-swatch", attr: {
-        type: "button", title: color.label, "aria-label": `${toolLabel} ${color.label.toLowerCase()}`,
-        "aria-pressed": String(settings.color.toLowerCase() === color.value), "data-color": color.value,
-        "data-brush-tool": tool,
-      } });
-      swatch.style.backgroundColor = color.value;
-      if (settings.color.toLowerCase() === color.value) swatch.addClass("is-active");
-      swatch.addEventListener("click", () => {
-        settings.color = color.value;
-        this.updateColorSwatches(tool);
-      });
-    }
-    const custom = control.createEl("label", { cls: "ink-custom-color", attr: { title: "Custom color" } });
-    setIcon(custom.createSpan({ cls: "ink-button-icon" }), "plus");
-    const input = custom.createEl("input", { attr: {
-      type: "color", value: settings.color, "aria-label": `${toolLabel} custom color`, "data-brush-tool": tool,
-    } });
-    input.addEventListener("input", () => {
-      settings.color = input.value;
-      this.updateColorSwatches(tool);
-    });
-  }
 
-  private addRange(parent: HTMLElement, name: string, min: number, max: number, step: number, value: number, onChange: (value: number) => void): void {
-    const label = parent.createEl("label", { cls: "ink-range-control", attr: { title: name } });
-    label.addClass(`ink-range-${name.toLowerCase().replace(/\s+/g, "-")}`);
-    const header = label.createDiv({ cls: "ink-range-header" });
-    header.createSpan({ text: name });
-    const valueText = header.createSpan({ cls: "ink-control-value", text: formatControlValue(name, value) });
-    const input = label.createEl("input", { attr: { type: "range", min: String(min), max: String(max), step: String(step), value: String(value), "aria-label": name } });
-    input.addEventListener("input", () => {
-      const next = Number(input.value);
-      onChange(next);
-      valueText.textContent = formatControlValue(name, next);
-    });
-  }
 
   private layoutPage(): void {
     const style = getComputedStyle(this.pageScroller);
@@ -2902,17 +2572,6 @@ export class InkView extends FileView {
     });
   }
 
-  private updateColorSwatches(tool: BrushTool): void {
-    const settings = this.brushSettings(tool);
-    const custom = this.root.querySelector<HTMLInputElement>(`input[type="color"][data-brush-tool="${tool}"]`);
-    if (custom) custom.value = settings.color;
-    this.root.querySelectorAll<HTMLElement>(`.ink-color-swatch[data-brush-tool="${tool}"]`).forEach((swatch) => {
-      const active = swatch.dataset.color === settings.color.toLowerCase();
-      swatch.toggleClass("is-active", active);
-      swatch.setAttribute("aria-pressed", String(active));
-    });
-    this.updateBrushPreview(tool);
-  }
 
   private addedStrokeCommand(pageId: string, original: InkStroke): EditCommand {
     let currentId = original.id;
@@ -3132,10 +2791,6 @@ export class InkView extends FileView {
 
 export function distance(a: { x: number; y: number }, b: { x: number; y: number }): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
-export function isBrushTool(tool: InkTool): tool is BrushTool {
-  return tool === "pen" || tool === "highlighter";
 }
 
 function pointInsideRect(point: { clientX: number; clientY: number }, rect: DOMRect): boolean {
@@ -3496,13 +3151,3 @@ function isPointerCaptureError(error: unknown): boolean {
   return name === "NotFoundError" || name === "InvalidStateError";
 }
 
-function formatControlValue(name: string, value: number): string {
-  const normalized = name.toLowerCase();
-  if (normalized === "smooth") return value === 0 ? "Direct" : String(value);
-  if (normalized === "taper") return value === 0 ? "Round" : value === 100 ? "Sharp" : `${value}%`;
-  if (normalized === "pressure") return value === 0 ? "Off" : value === 100 ? "Full" : `${value}%`;
-  if (normalized === "speed width") return value === 0 ? "Off" : `${value}%`;
-  return normalized.endsWith("opacity")
-    ? `${Math.round(value * 100)}%`
-    : `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(1)} px`;
-}

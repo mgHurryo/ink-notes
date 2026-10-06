@@ -22028,10 +22028,10 @@ __export(main_exports, {
   default: () => InkNotesPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian7 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 
 // src/view.ts
-var import_obsidian = require("obsidian");
+var import_obsidian2 = require("obsidian");
 
 // src/diagnostics.ts
 function intervalStats(intervals) {
@@ -22531,6 +22531,443 @@ function drawSmoothPath(ctx, points, width, height) {
   const last = points[points.length - 1];
   ctx.lineTo(last.x * width, last.y * height);
 }
+
+// src/brush-popover.ts
+var import_obsidian = require("obsidian");
+var INK_COLORS = [
+  { value: "#1b1b1b", label: "Black" },
+  { value: "#195bff", label: "Blue" },
+  { value: "#f23c42", label: "Red" },
+  { value: "#42c449", label: "Green" },
+  { value: "#f2c94c", label: "Yellow" }
+];
+function isBrushTool(tool) {
+  return tool === "pen" || tool === "highlighter";
+}
+function formatControlValue(name, value) {
+  const normalized = name.toLowerCase();
+  if (normalized === "smooth") return value === 0 ? "Direct" : String(value);
+  if (normalized === "taper") return value === 0 ? "Round" : value === 100 ? "Sharp" : `${value}%`;
+  if (normalized === "pressure") return value === 0 ? "Off" : value === 100 ? "Full" : `${value}%`;
+  if (normalized === "speed width") return value === 0 ? "Off" : `${value}%`;
+  return normalized.endsWith("opacity") ? `${Math.round(value * 100)}%` : `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(1)} px`;
+}
+var BrushPopoverController = class {
+  constructor(parent, options) {
+    this.toolButtons = /* @__PURE__ */ new Map();
+    this.openState = false;
+    this.curveOpen = false;
+    this.dragIndex = -1;
+    var _a;
+    this.options = options;
+    this.root = parent.createDiv({
+      cls: "ink-size-popover",
+      attr: { role: "dialog", "aria-label": "Tool settings", "aria-hidden": "true" }
+    });
+    const header = this.root.createDiv({ cls: "ink-popover-header" });
+    this.title = header.createDiv({ cls: "ink-popover-title", text: "Brush settings" });
+    this.preview = header.createEl("canvas", { cls: "ink-popover-preview", attr: { "aria-hidden": "true" } });
+    for (const type of ["touchstart", "touchmove", "pointerdown"]) {
+      options.registerCleanup ? options.registerCleanup(this.attachShield(this.root, type)) : this.attachShield(this.root, type);
+    }
+    const body = this.root.createDiv({ cls: "ink-popover-body" });
+    for (const spec of options.tools) this.buildToolPanel(body, spec);
+    (_a = options.buildExtras) == null ? void 0 : _a.call(options, body, {
+      addRange: (parent2, name, min, max, step, value, onChange) => this.addRange(parent2, name, min, max, step, value, onChange)
+    });
+    this.update();
+  }
+  attachShield(target, type) {
+    const handler = (event) => event.stopPropagation();
+    const options = { passive: type !== "touchmove" };
+    target.addEventListener(type, handler, options);
+    return () => target.removeEventListener(type, handler, options);
+  }
+  buildToolPanel(body, spec) {
+    var _a, _b, _c, _d;
+    const settings = this.options.getSettings(spec.tool);
+    const panel = body.createDiv({ cls: "ink-brush-settings", attr: { "data-brush-tool": spec.tool } });
+    panel.createDiv({ cls: "ink-settings-label", text: "Size" });
+    const input = panel.createEl("input", { attr: {
+      type: "range",
+      min: "1",
+      max: String(spec.maximum),
+      step: "0.5",
+      value: String(settings.width),
+      "aria-label": `${spec.label} size`,
+      "data-control": "size"
+    } });
+    input.addEventListener("input", () => {
+      settings.width = Number(input.value);
+      this.update();
+    });
+    panel.createDiv({ cls: "ink-settings-label ink-settings-label-presets", text: "Presets" });
+    const widths = this.buildSection(panel, `${spec.label}-widths`);
+    for (const width of spec.presets) {
+      const preset = widths.createEl("button", { cls: "ink-width-preset", attr: {
+        type: "button",
+        title: `${width} px`,
+        "aria-label": `${spec.label} ${width} px`,
+        "aria-pressed": String(settings.width === width),
+        "data-width": String(width),
+        "data-brush-tool": spec.tool
+      } });
+      preset.createSpan({ cls: "ink-width-line" }).style.height = Math.min(width, 24) + "px";
+      preset.addEventListener("click", () => {
+        settings.width = width;
+        this.update();
+      });
+    }
+    this.buildColorPicker(panel, spec);
+    this.addRange(panel, `${spec.label} opacity`, 0.1, 1, 0.05, settings.opacity, (value) => {
+      settings.opacity = value;
+      this.update();
+    });
+    if (spec.tool !== "pen") return;
+    this.addRange(body, "Smooth", 0, 100, 1, (_a = settings.smooth) != null ? _a : 0, (value) => {
+      settings.smooth = value;
+    });
+    this.addRange(body, "Taper", 0, 100, 1, (_b = settings.taper) != null ? _b : 0, (value) => {
+      settings.taper = value;
+      this.update();
+    });
+    this.addRange(body, "Pressure", 0, 100, 1, (_c = settings.pressureGain) != null ? _c : 100, (value) => {
+      settings.pressureGain = value;
+      this.update();
+    });
+    this.buildPressureCurveEditor(body, settings);
+    this.addRange(body, "Speed width", 0, 100, 1, (_d = settings.speedGain) != null ? _d : 0, (value) => {
+      settings.speedGain = value;
+      this.update();
+    });
+  }
+  buildSection(parent, label) {
+    const section = parent.createDiv({ cls: "ink-toolbar-section" });
+    section.addClass(`ink-toolbar-section-${label.toLowerCase()}`);
+    section.setAttribute("role", "group");
+    section.setAttribute("aria-label", label);
+    return section.createDiv({ cls: "ink-toolbar-section-controls" });
+  }
+  buildColorPicker(parent, spec) {
+    const settings = this.options.getSettings(spec.tool);
+    parent.createDiv({ cls: "ink-settings-label", text: "Color" });
+    const control = parent.createDiv({ cls: "ink-color-control", attr: { "data-brush-tool": spec.tool } });
+    const swatches = control.createDiv({ cls: "ink-color-swatches" });
+    for (const color of INK_COLORS) {
+      const swatch = swatches.createEl("button", { cls: "ink-color-swatch", attr: {
+        type: "button",
+        title: color.label,
+        "aria-label": `${spec.label} ${color.label.toLowerCase()}`,
+        "aria-pressed": String(settings.color.toLowerCase() === color.value),
+        "data-color": color.value,
+        "data-brush-tool": spec.tool
+      } });
+      swatch.style.backgroundColor = color.value;
+      if (settings.color.toLowerCase() === color.value) swatch.addClass("is-active");
+      swatch.addEventListener("click", () => {
+        settings.color = color.value;
+        this.updateColorSwatches(spec.tool, settings.color);
+        this.update();
+      });
+    }
+    const custom = control.createEl("label", { cls: "ink-custom-color", attr: { title: "Custom color" } });
+    (0, import_obsidian.setIcon)(custom.createSpan({ cls: "ink-button-icon" }), "plus");
+    const input = custom.createEl("input", { attr: {
+      type: "color",
+      value: settings.color,
+      "aria-label": `${spec.label} custom color`,
+      "data-brush-tool": spec.tool
+    } });
+    input.addEventListener("input", () => {
+      settings.color = input.value;
+      this.updateColorSwatches(spec.tool, settings.color);
+      this.update();
+    });
+  }
+  updateColorSwatches(tool, color) {
+    this.root.querySelectorAll(`.ink-color-swatch[data-brush-tool="${tool}"]`).forEach((swatch) => {
+      var _a, _b;
+      swatch.setAttribute("aria-pressed", String(color.toLowerCase() === ((_a = swatch.dataset.color) == null ? void 0 : _a.toLowerCase())));
+      swatch.toggleClass("is-active", color.toLowerCase() === ((_b = swatch.dataset.color) == null ? void 0 : _b.toLowerCase()));
+    });
+    const custom = this.root.querySelector(`input[type="color"][data-brush-tool="${tool}"]`);
+    if (custom) custom.value = color;
+  }
+  addRange(parent, name, min, max, step, value, onChange) {
+    const label = parent.createEl("label", { cls: "ink-range-control", attr: { title: name } });
+    label.addClass(`ink-range-${name.toLowerCase().replace(/\s+/g, "-")}`);
+    const header = label.createDiv({ cls: "ink-range-header" });
+    header.createSpan({ text: name });
+    const valueText = header.createSpan({ cls: "ink-control-value", text: formatControlValue(name, value) });
+    const input = label.createEl("input", { attr: { type: "range", min: String(min), max: String(max), step: String(step), value: String(value), "aria-label": name } });
+    input.addEventListener("input", () => {
+      const next = Number(input.value);
+      onChange(next);
+      valueText.textContent = formatControlValue(name, next);
+    });
+  }
+  buildPressureCurveEditor(body, settings) {
+    const curveHeader = body.createDiv({ cls: "ink-settings-label ink-curve-header" });
+    curveHeader.createSpan({ text: "Pressure curve" });
+    const curveToggle = curveHeader.createEl("button", {
+      cls: "ink-curve-toggle",
+      attr: {
+        type: "button",
+        "aria-expanded": String(this.curveOpen),
+        "aria-label": this.curveOpen ? "Collapse pressure curve editor" : "Expand pressure curve editor"
+      }
+    });
+    (0, import_obsidian.setIcon)(curveToggle.createSpan({ cls: "ink-button-icon" }), this.curveOpen ? "chevron-up" : "chevron-down");
+    const curveBody = body.createDiv({ cls: "ink-curve-body" });
+    if (!this.curveOpen) curveBody.style.display = "none";
+    const resetRow = curveBody.createDiv({ cls: "ink-curve-actions" });
+    const resetButton = resetRow.createEl("button", { text: "Reset", attr: { type: "button" } });
+    resetButton.addEventListener("click", () => {
+      settings.pressureCurve = void 0;
+      this.update();
+    });
+    const editor = curveBody.createDiv({ cls: "ink-curve-editor", attr: { "aria-label": "Pressure mapping curve" } });
+    const canvas = editor.createEl("canvas", { cls: "ink-curve-editor-canvas" });
+    canvas.style.width = "100%";
+    canvas.style.height = "110px";
+    canvas.setAttribute("aria-hidden", "true");
+    const hit = (clientX, clientY) => {
+      const rect = canvas.getBoundingClientRect();
+      return { x: (clientX - rect.left) / rect.width, y: 1 - (clientY - rect.top) / rect.height };
+    };
+    const curve = () => settings.pressureCurve ? settings.pressureCurve.map((point) => [...point]) : [[0, 0], [1, 1]];
+    let dragIndex = -1;
+    canvas.addEventListener("pointerdown", (event) => {
+      const position = hit(event.clientX, event.clientY);
+      const points = curve();
+      let nearest = -1;
+      let nearestDistance = 0.06;
+      for (let index = 0; index < points.length; index++) {
+        const d = Math.hypot(points[index][0] - position.x, points[index][1] - position.y);
+        if (d < nearestDistance) {
+          nearest = index;
+          nearestDistance = d;
+        }
+      }
+      if (event.detail >= 2 && nearest > 0 && nearest < points.length - 1 && points.length > 2) {
+        points.splice(nearest, 1);
+        settings.pressureCurve = points;
+        dragIndex = -1;
+      } else if (nearest >= 0) {
+        dragIndex = nearest;
+      } else if (points.length < 6) {
+        const insertAt = points.findIndex((point) => point[0] > position.x);
+        const index = insertAt === -1 ? points.length - 1 : insertAt;
+        const lowY = index > 0 ? points[index - 1][1] : 0;
+        const highY = index < points.length - 1 ? points[index][1] : 1;
+        points.splice(index, 0, [position.x, Math.max(lowY, Math.min(highY, position.y))]);
+        settings.pressureCurve = points;
+        dragIndex = index;
+      }
+      canvas.setPointerCapture(event.pointerId);
+      this.update();
+      event.preventDefault();
+    });
+    canvas.addEventListener("pointermove", (event) => {
+      if (dragIndex < 0) return;
+      const position = hit(event.clientX, event.clientY);
+      const points = curve();
+      const point = points[dragIndex];
+      const isEnd = dragIndex === 0 || dragIndex === points.length - 1;
+      const lowY = dragIndex > 0 ? points[dragIndex - 1][1] : 0;
+      const highY = dragIndex < points.length - 1 ? points[dragIndex + 1][1] : 1;
+      point[1] = Math.max(lowY, Math.min(highY, position.y));
+      if (!isEnd) {
+        const low = points[dragIndex - 1][0] + 0.02;
+        const high = points[dragIndex + 1][0] - 0.02;
+        point[0] = Math.max(low, Math.min(high, position.x));
+      }
+      settings.pressureCurve = points;
+      if (!isEnd && dragIndex > 0 && dragIndex < points.length - 1 && point[1] <= 0.02) {
+        points.splice(dragIndex, 1);
+        dragIndex = -1;
+      }
+      settings.pressureCurve = points;
+      this.update();
+      event.preventDefault();
+    });
+    const endDrag = (event) => {
+      if (dragIndex < 0) return;
+      dragIndex = -1;
+      try {
+        canvas.releasePointerCapture(event.pointerId);
+      } catch (e) {
+      }
+    };
+    canvas.addEventListener("pointerup", endDrag);
+    canvas.addEventListener("pointercancel", endDrag);
+  }
+  get isOpen() {
+    return this.openState;
+  }
+  open() {
+    this.openState = true;
+    this.root.toggleClass("is-open", true);
+    this.root.setAttribute("aria-hidden", "false");
+    window.requestAnimationFrame(() => {
+      this.position();
+      this.update();
+    });
+  }
+  close() {
+    this.openState = false;
+    this.root.toggleClass("is-open", false);
+    this.root.setAttribute("aria-hidden", "true");
+  }
+  toggle() {
+    this.isOpen ? this.close() : this.open();
+  }
+  position() {
+    var _a, _b, _c;
+    if (!this.isOpen) return;
+    const anchor = (_c = (_b = (_a = this.options).anchor) == null ? void 0 : _b.call(_a)) != null ? _c : null;
+    if (!anchor) return;
+    const anchorRect = anchor.getBoundingClientRect();
+    const popoverRect = this.root.getBoundingClientRect();
+    const margin = 12;
+    const left = Math.max(margin, Math.min(window.innerWidth - popoverRect.width - margin, anchorRect.left + anchorRect.width / 2 - popoverRect.width / 2));
+    const below = anchorRect.bottom + 10;
+    const top = below + popoverRect.height <= window.innerHeight - margin ? below : Math.max(margin, anchorRect.top - popoverRect.height - 10);
+    this.root.style.left = `${left}px`;
+    this.root.style.top = `${top}px`;
+  }
+  /** Re-syncs every control, the title and the canvases from settings. */
+  update() {
+    var _a, _b, _c, _d;
+    const active = this.options.activeTool();
+    for (const spec of this.options.tools) {
+      const settings = this.options.getSettings(spec.tool);
+      const panel = this.root.querySelector(`.ink-brush-settings[data-brush-tool="${spec.tool}"]`);
+      const input = panel == null ? void 0 : panel.querySelector('input[data-control="size"]');
+      if (input) input.value = String(settings.width);
+      this.root.querySelectorAll(`.ink-width-preset[data-brush-tool="${spec.tool}"]`).forEach((button) => {
+        button.setAttribute("aria-pressed", String(Number(button.dataset.width) === settings.width));
+      });
+    }
+    this.title.textContent = active && isBrushTool(active) ? `${(_b = (_a = this.options.tools.find((spec) => spec.tool === active)) == null ? void 0 : _a.label) != null ? _b : "Brush"} settings \xB7 ${formatControlValue("Size", this.options.getSettings(active).width)}` : "Brush settings";
+    this.root.toggleClass("is-pen-tool", active === "pen");
+    this.root.toggleClass("is-highlighter-tool", active === "highlighter");
+    this.root.toggleClass("is-eraser-tool", active === "eraser");
+    if (active && isBrushTool(active)) {
+      this.updateColorSwatches(active, this.options.getSettings(active).color);
+      if (active === "pen") {
+        this.drawSampleStroke(this.options.getSettings("pen"));
+        this.drawPressureCurve(this.options.getSettings("pen"));
+      }
+    }
+    (_d = (_c = this.options).onControlsChanged) == null ? void 0 : _d.call(_c);
+  }
+  /** Renders a sample stroke with the current pen dynamics into the pinned
+   *  preview canvas, using the same outline geometry as committed ink. */
+  drawSampleStroke(settings) {
+    var _a, _b, _c;
+    const ctx = this.preview.getContext("2d");
+    if (!ctx) return;
+    const ratio = Math.max(1, window.devicePixelRatio || 1);
+    const cssWidth = this.preview.clientWidth || 200;
+    const cssHeight = this.preview.clientHeight || 46;
+    if (this.preview.width !== Math.round(cssWidth * ratio)) this.preview.width = Math.round(cssWidth * ratio);
+    if (this.preview.height !== Math.round(cssHeight * ratio)) this.preview.height = Math.round(cssHeight * ratio);
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, cssWidth, cssHeight);
+    const samples = 36;
+    const margin = Math.max(8, settings.width);
+    const usableWidth = Math.max(10, cssWidth - margin * 2);
+    const midY = cssHeight / 2;
+    const amplitude = cssHeight / 2 - Math.max(3, settings.width);
+    const points = Array.from({ length: samples }, (_, index) => {
+      const k = index / (samples - 1);
+      return {
+        x: (margin + k * usableWidth) / cssWidth,
+        y: (midY - Math.sin(k * Math.PI * 2) * amplitude * 0.8) / cssHeight,
+        pressure: 0.35 + 0.45 * Math.sin(k * Math.PI),
+        t: index * 8
+      };
+    });
+    const outline = penOutline({
+      id: "preview",
+      pageId: "preview",
+      tool: "pen",
+      color: settings.color,
+      width: settings.width,
+      opacity: settings.opacity,
+      points,
+      createdAt: 0,
+      updatedAt: 0,
+      dynamics: {
+        taper: (_a = settings.taper) != null ? _a : 0,
+        pressure: (_b = settings.pressureGain) != null ? _b : 100,
+        speed: (_c = settings.speedGain) != null ? _c : 0,
+        pressureCurve: settings.pressureCurve ? settings.pressureCurve.map((point) => [...point]) : void 0
+      }
+    }, cssWidth, cssHeight);
+    if (outline.length < 2) return;
+    ctx.globalAlpha = settings.opacity;
+    ctx.fillStyle = settings.color;
+    ctx.beginPath();
+    outline.forEach(([x, y], index) => index ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  /** Renders the pressure mapping editor: grid, identity guide, curve and
+   *  control points. Skipped while the popover has no layout. */
+  drawPressureCurve(settings) {
+    const canvas = this.root.querySelector(".ink-curve-editor-canvas");
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    if (w < 10 || h < 10) return;
+    const ratio = Math.max(1, window.devicePixelRatio || 1);
+    if (canvas.width !== Math.round(w * ratio)) canvas.width = Math.round(w * ratio);
+    if (canvas.height !== Math.round(h * ratio)) canvas.height = Math.round(h * ratio);
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+    ctx.strokeStyle = "#8a8f98";
+    ctx.globalAlpha = 0.35;
+    ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
+    ctx.beginPath();
+    ctx.moveTo(0, h);
+    ctx.lineTo(w, 0);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+    const points = settings.pressureCurve ? settings.pressureCurve.map((point) => [...point]) : [[0, 0], [1, 1]];
+    const sampleY = (x) => {
+      if (x <= points[0][0]) return points[0][1];
+      if (x >= points[points.length - 1][0]) return points[points.length - 1][1];
+      let index = 1;
+      while (points[index][0] < x) index++;
+      const span = points[index][0] - points[index - 1][0];
+      const amount = span > 0 ? (x - points[index - 1][0]) / span : 0;
+      return points[index - 1][1] + (points[index][1] - points[index - 1][1]) * amount;
+    };
+    ctx.strokeStyle = settings.color;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    for (let step = 0; step <= 48; step++) {
+      const x = step / 48;
+      const sx = x * w, sy = (1 - sampleY(x)) * h;
+      if (step === 0) ctx.moveTo(sx, sy);
+      else ctx.lineTo(sx, sy);
+    }
+    ctx.stroke();
+    for (const point of points) {
+      ctx.fillStyle = settings.color;
+      ctx.beginPath();
+      ctx.arc(point[0] * w, (1 - point[1]) * h, 5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    }
+  }
+};
 
 // src/tiles.ts
 var TILE = 128;
@@ -23935,14 +24372,7 @@ var SaveConflictError = class extends Error {
     this.name = "SaveConflictError";
   }
 };
-var INK_COLORS = [
-  { value: "#1b1b1b", label: "Black" },
-  { value: "#195bff", label: "Blue" },
-  { value: "#f23c42", label: "Red" },
-  { value: "#42c449", label: "Green" },
-  { value: "#f2c94c", label: "Yellow" }
-];
-var InkView = class extends import_obsidian.FileView {
+var InkView = class extends import_obsidian2.FileView {
   constructor(leaf, store, workers) {
     super(leaf);
     this.workers = workers;
@@ -24004,9 +24434,6 @@ var InkView = class extends import_obsidian.FileView {
     /** Reading mode: view-only. Ink tools, the popover and eraser tracking are
      *  disabled and the page restores native panning/scrolling. */
     this.readingMode = false;
-    /** The pressure curve editor stays collapsed until manually expanded. */
-    this.pressureCurveOpen = false;
-    this.popoverTitle = null;
     this.confirmedStrokeOutlines = /* @__PURE__ */ new Map();
     this.pendingInkStrokes = [];
     this.committingInkStrokes = null;
@@ -24038,7 +24465,7 @@ var InkView = class extends import_obsidian.FileView {
     this.resizeRequested = false;
     this.pageNavigationGeneration = 0;
     this.store = store;
-    this.scope = new import_obsidian.Scope(this.app.scope);
+    this.scope = new import_obsidian2.Scope(this.app.scope);
     this.scope.register(["Mod"], "z", () => {
       this.undo();
       return false;
@@ -24180,6 +24607,7 @@ var InkView = class extends import_obsidian.FileView {
     this.updateToolButtons();
   }
   renderToolPopover() {
+    console.log("[curve-debug] renderToolPopover rebuild");
     const host = this.root.querySelector(".ink-tool-popover-host");
     host.empty();
     this.addSizePopover(host);
@@ -24196,44 +24624,46 @@ var InkView = class extends import_obsidian.FileView {
       }
     });
     const icon = button.createSpan({ cls: "ink-button-icon" });
-    (0, import_obsidian.setIcon)(icon, "sliders-horizontal");
+    (0, import_obsidian2.setIcon)(icon, "sliders-horizontal");
     void icon;
     button.title = "Brush size and opacity";
-    const popover = container.createDiv({
-      cls: "ink-size-popover",
-      attr: { role: "dialog", "aria-label": "Tool settings", "aria-hidden": "true" }
+    const brushPopover = new BrushPopoverController(container, {
+      tools: [
+        { tool: "pen", label: "Pen", presets: [2, 4, 8], maximum: 24 },
+        { tool: "highlighter", label: "Highlighter", presets: [8, 16, 24], maximum: 48 }
+      ],
+      getSettings: (tool) => this.brushSettings(tool),
+      activeTool: () => this.state.tool,
+      showPenDynamics: () => this.state.tool === "pen",
+      buildExtras: (body, { addRange }) => {
+        const eraser = body.createDiv({ cls: "ink-eraser-settings" });
+        eraser.createDiv({ cls: "ink-size-popover-title", text: "Eraser" });
+        eraser.createDiv({ cls: "ink-settings-label", text: "Mode" });
+        const modes = eraser.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
+        for (const [mode, label, shortLabel, iconName] of [["stroke", "Stroke eraser", "Stroke", "eraser"], ["circle", "Circle eraser", "Circle", "circle"], ["square", "Square eraser", "Square", "square"]]) {
+          const modeButton = modes.createEl("button", { cls: "ink-eraser-mode", attr: { type: "button", role: "radio", title: label, "aria-label": label, "aria-checked": String(this.state.eraserMode === mode), "data-eraser-mode": mode } });
+          (0, import_obsidian2.setIcon)(modeButton.createSpan({ cls: "ink-button-icon" }), iconName);
+          modeButton.createSpan({ cls: "ink-eraser-mode-label", text: shortLabel });
+          modeButton.addEventListener("click", () => {
+            this.state.eraserMode = mode;
+            this.updateEraserControls();
+          });
+        }
+        eraser.createDiv({ cls: "ink-stroke-eraser-hint", text: "Erases the entire touched stroke. Size is fixed." });
+        addRange(eraser, "Eraser size", 8, 160, 2, this.state.eraserSize, (value) => {
+          this.state.eraserSize = value;
+          this.refreshEraserCursor();
+        });
+      },
+      onControlsChanged: () => this.updateEraserControls(),
+      anchor: () => {
+        var _a;
+        return (_a = this.activeToolButton()) != null ? _a : this.sizePopoverButton;
+      }
     });
-    const header = popover.createDiv({ cls: "ink-popover-header" });
-    this.popoverTitle = header.createDiv({ cls: "ink-popover-title", text: "Pen settings" });
-    header.createEl("canvas", { cls: "ink-popover-preview", attr: { "aria-hidden": "true" } });
-    for (const type of ["touchstart", "touchmove", "pointerdown"]) {
-      this.registerDomEvent(popover, type, (event) => event.stopPropagation(), { passive: type !== "touchmove" });
-    }
-    const popoverBody = popover.createDiv({ cls: "ink-popover-body" });
-    this.addBrushSettings(popoverBody, "pen", "Pen", [2, 4, 8], 24);
-    this.addBrushSettings(popoverBody, "highlighter", "Highlighter", [8, 16, 24], 48);
-    const eraser = popoverBody.createDiv({ cls: "ink-eraser-settings" });
-    eraser.createDiv({ cls: "ink-size-popover-title", text: "Eraser" });
-    eraser.createDiv({ cls: "ink-settings-label", text: "Mode" });
-    const modes = eraser.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
-    for (const [mode, label, shortLabel, iconName] of [["stroke", "Stroke eraser", "Stroke", "eraser"], ["circle", "Circle eraser", "Circle", "circle"], ["square", "Square eraser", "Square", "square"]]) {
-      const modeButton = modes.createEl("button", { cls: "ink-eraser-mode", attr: { type: "button", role: "radio", title: label, "aria-label": label, "aria-checked": String(this.state.eraserMode === mode), "data-eraser-mode": mode } });
-      (0, import_obsidian.setIcon)(modeButton.createSpan({ cls: "ink-button-icon" }), iconName);
-      modeButton.createSpan({ cls: "ink-eraser-mode-label", text: shortLabel });
-      modeButton.addEventListener("click", () => {
-        this.state.eraserMode = mode;
-        this.updateEraserControls();
-      });
-    }
-    eraser.createDiv({ cls: "ink-stroke-eraser-hint", text: "Erases the entire touched stroke. Size is fixed." });
-    this.addRange(eraser, "Eraser size", 8, 160, 2, this.state.eraserSize, (value) => {
-      this.state.eraserSize = value;
-      this.refreshEraserCursor();
-    });
-    const close = () => {
-      if (window.curveDebug) console.log("[curve-debug] close() called");
-      this.setSizePopoverOpen(false);
-    };
+    this.sizePopover = brushPopover.root;
+    this.sizePopoverButton = button;
+    this.brushPopover = brushPopover;
     button.addEventListener("click", (event) => {
       event.stopPropagation();
       this.setSizePopoverOpen(!this.sizePopoverOpen);
@@ -24242,55 +24672,31 @@ var InkView = class extends import_obsidian.FileView {
       var _a;
       const target = event.target;
       const switchingSettingsTool = (_a = target == null ? void 0 : target.closest) == null ? void 0 : _a.call(target, ".ink-tool-button[aria-haspopup='dialog']");
-      if (this.sizePopoverOpen && !container.contains(target) && !switchingSettingsTool) close();
+      if (this.sizePopoverOpen && !container.contains(target) && !switchingSettingsTool) this.setSizePopoverOpen(false);
     });
     this.registerDomEvent(document, "keydown", (event) => {
       var _a;
       if (event.key === "Escape" && this.sizePopoverOpen) {
-        close();
+        this.setSizePopoverOpen(false);
         (_a = this.activeToolButton()) == null ? void 0 : _a.focus();
       }
     });
-    this.registerDomEvent(window, "resize", () => this.positionSizePopover());
-    this.registerDomEvent(window, "scroll", () => this.positionSizePopover(), true);
-    this.sizePopover = popover;
-    this.sizePopoverButton = button;
-    this.updateBrushControls();
+    this.registerDomEvent(window, "resize", () => this.brushPopover.position());
+    this.registerDomEvent(window, "scroll", () => this.brushPopover.position(), true);
   }
   setSizePopoverOpen(open) {
-    if (!this.sizePopover || !this.sizePopoverButton) return;
-    if (typeof window !== "undefined" && window.curveDebug) console.log("[curve-debug] setSizePopoverOpen", open);
     this.sizePopoverOpen = open;
-    this.sizePopover.toggleClass("is-open", open);
-    this.sizePopover.setAttribute("aria-hidden", String(!open));
+    open ? this.brushPopover.open() : this.brushPopover.close();
     this.root.querySelectorAll(".ink-tool-button[aria-haspopup='dialog']").forEach((button) => {
       button.setAttribute("aria-expanded", String(open && button.dataset.tool === this.state.tool));
     });
     if (open) {
-      this.positionSizePopover();
-      window.requestAnimationFrame(() => this.positionSizePopover());
-      window.requestAnimationFrame(() => {
-        if (isBrushTool(this.state.tool)) this.updateBrushPreview(this.state.tool);
-      });
-      const focusTarget = this.state.tool === "eraser" ? ".ink-eraser-mode" : `.ink-brush-settings[data-brush-tool="${this.state.tool}"] input, .ink-brush-settings[data-brush-tool="${this.state.tool}"] button`;
       window.requestAnimationFrame(() => {
         var _a, _b;
-        return (_b = (_a = this.sizePopover) == null ? void 0 : _a.querySelector(focusTarget)) == null ? void 0 : _b.focus();
+        const focusTarget = this.state.tool === "eraser" ? ".ink-eraser-mode" : `.ink-brush-settings[data-brush-tool="${this.state.tool}"] input, .ink-brush-settings[data-brush-tool="${this.state.tool}"] button`;
+        (_b = (_a = this.sizePopover) == null ? void 0 : _a.querySelector(focusTarget)) == null ? void 0 : _b.focus();
       });
     }
-  }
-  positionSizePopover() {
-    var _a;
-    if (!this.sizePopoverOpen || !this.sizePopover || !this.sizePopoverButton) return;
-    const anchor = (_a = this.activeToolButton()) != null ? _a : this.sizePopoverButton;
-    const buttonRect = anchor.getBoundingClientRect();
-    const popoverRect = this.sizePopover.getBoundingClientRect();
-    const margin = 12;
-    const left = Math.max(margin, Math.min(window.innerWidth - popoverRect.width - margin, buttonRect.left + buttonRect.width / 2 - popoverRect.width / 2));
-    const below = buttonRect.bottom + 10;
-    const top = below + popoverRect.height <= window.innerHeight - margin ? below : Math.max(margin, buttonRect.top - popoverRect.height - 10);
-    this.sizePopover.style.left = `${left}px`;
-    this.sizePopover.style.top = `${top}px`;
   }
   activeToolButton() {
     return this.root.querySelector(`.ink-toolbar [data-tool="${this.state.tool}"]`);
@@ -24302,187 +24708,11 @@ var InkView = class extends import_obsidian.FileView {
     section.setAttribute("aria-label", label);
     return section.createDiv({ cls: "ink-toolbar-section-controls" });
   }
-  addBrushSettings(parent, tool, label, presets, maximum) {
-    var _a, _b, _c, _d;
-    const settings = this.brushSettings(tool);
-    const panel = parent.createDiv({ cls: "ink-brush-settings", attr: { "data-brush-tool": tool } });
-    panel.createDiv({ cls: "ink-settings-label", text: "Size" });
-    const input = panel.createEl("input", { attr: {
-      type: "range",
-      min: "1",
-      max: String(maximum),
-      step: "0.5",
-      value: String(settings.width),
-      "aria-label": `${label} size`,
-      "data-control": "size"
-    } });
-    input.addEventListener("input", () => {
-      settings.width = Number(input.value);
-      this.updateBrushControls(tool);
-    });
-    panel.createDiv({ cls: "ink-settings-label ink-settings-label-presets", text: "Presets" });
-    const widths = this.addToolbarSection(panel, `${label}-widths`);
-    for (const width of presets) {
-      const preset = widths.createEl("button", { cls: "ink-width-preset", attr: {
-        type: "button",
-        title: `${width} px`,
-        "aria-label": `${label} ${width} px`,
-        "data-width": String(width),
-        "data-brush-tool": tool,
-        "aria-pressed": String(settings.width === width)
-      } });
-      preset.createSpan({ cls: "ink-width-line" }).style.height = Math.min(width, 24) + "px";
-      preset.addEventListener("click", () => {
-        settings.width = width;
-        this.updateBrushControls(tool);
-      });
-    }
-    this.addColorPicker(panel, tool, label);
-    this.addRange(panel, `${label} opacity`, 0.1, 1, 0.05, settings.opacity, (value) => {
-      settings.opacity = value;
-      this.updateBrushPreview(tool);
-    });
-    if (tool === "pen") {
-      this.addRange(panel, "Smooth", 0, 100, 1, (_a = settings.smooth) != null ? _a : 0, (value) => {
-        settings.smooth = value;
-      });
-      this.addRange(panel, "Taper", 0, 100, 1, (_b = settings.taper) != null ? _b : 0, (value) => {
-        settings.taper = value;
-        this.updateBrushPreview(tool);
-      });
-      this.addRange(panel, "Pressure", 0, 100, 1, (_c = settings.pressureGain) != null ? _c : 100, (value) => {
-        settings.pressureGain = value;
-        this.updateBrushPreview(tool);
-      });
-      const curveHeader = panel.createDiv({ cls: "ink-settings-label ink-curve-header" });
-      curveHeader.createSpan({ text: "Pressure curve" });
-      const curveToggle = curveHeader.createEl("button", {
-        cls: "ink-curve-toggle",
-        attr: {
-          type: "button",
-          "aria-expanded": String(this.pressureCurveOpen),
-          "aria-label": this.pressureCurveOpen ? "Collapse pressure curve editor" : "Expand pressure curve editor"
-        }
-      });
-      (0, import_obsidian.setIcon)(curveToggle.createSpan({ cls: "ink-button-icon" }), this.pressureCurveOpen ? "chevron-up" : "chevron-down");
-      const curveBody = panel.createDiv({ cls: "ink-curve-body" });
-      if (!this.pressureCurveOpen) curveBody.style.display = "none";
-      const resetRow = curveBody.createDiv({ cls: "ink-curve-actions" });
-      const resetButton = resetRow.createEl("button", { text: "Reset", attr: { type: "button" } });
-      resetButton.addEventListener("click", () => {
-        settings.pressureCurve = void 0;
-        this.updateBrushPreview("pen");
-      });
-      this.addPressureCurveEditor(curveBody, settings);
-      curveToggle.addEventListener("click", () => {
-        var _a2;
-        this.pressureCurveOpen = !this.pressureCurveOpen;
-        curveBody.style.display = this.pressureCurveOpen ? "" : "none";
-        curveToggle.setAttribute("aria-expanded", String(this.pressureCurveOpen));
-        (0, import_obsidian.setIcon)((_a2 = curveToggle.querySelector(".ink-button-icon")) != null ? _a2 : curveToggle.createSpan({ cls: "ink-button-icon" }), this.pressureCurveOpen ? "chevron-up" : "chevron-down");
-        if (this.pressureCurveOpen) this.updateBrushPreview("pen");
-      });
-      this.addRange(panel, "Speed width", 0, 100, 1, (_d = settings.speedGain) != null ? _d : 0, (value) => {
-        settings.speedGain = value;
-        this.updateBrushPreview(tool);
-      });
-    }
-  }
   brushSettings(tool) {
     return this.state[tool];
   }
-  updateBrushPreview(tool) {
-    var _a, _b;
-    const settings = this.brushSettings(tool);
-    const preview = (_a = this.sizePopover) == null ? void 0 : _a.querySelector(`.ink-brush-settings[data-brush-tool="${tool}"] .ink-brush-preview-line`);
-    if (preview) {
-      preview.style.setProperty("--ink-preview-color", settings.color);
-      preview.style.setProperty("--ink-preview-opacity", String(settings.opacity));
-      preview.style.setProperty("--ink-preview-width", `${Math.max(2, Math.min(30, settings.width))}px`);
-    }
-    const title = (_b = this.sizePopover) == null ? void 0 : _b.querySelector(".ink-popover-title");
-    if (title) title.textContent = `${tool === "pen" ? "Pen" : "Highlighter"} settings \xB7 ${formatControlValue("Size", settings.width)}`;
-    if (tool === "pen") {
-      this.drawBrushSampleStroke(settings);
-      this.drawPressureCurveEditor(settings);
-    }
-  }
   /** Renders a sample stroke with the current pen dynamics into the brush
    *  panel's preview canvas, using the same outline geometry as real ink. */
-  drawBrushSampleStroke(settings) {
-    var _a, _b, _c, _d;
-    const canvas = (_a = this.sizePopover) == null ? void 0 : _a.querySelector(".ink-popover-preview");
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const ratio = Math.max(1, window.devicePixelRatio || 1);
-    const cssWidth = canvas.clientWidth || 200;
-    const cssHeight = canvas.clientHeight || 46;
-    if (canvas.width !== Math.round(cssWidth * ratio)) canvas.width = Math.round(cssWidth * ratio);
-    if (canvas.height !== Math.round(cssHeight * ratio)) canvas.height = Math.round(cssHeight * ratio);
-    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-    ctx.clearRect(0, 0, cssWidth, cssHeight);
-    const samples = 36;
-    const margin = Math.max(8, settings.width);
-    const usableWidth = Math.max(10, cssWidth - margin * 2);
-    const midY = cssHeight / 2;
-    const amplitude = cssHeight / 2 - Math.max(3, settings.width);
-    const points = Array.from({ length: samples }, (_, index) => {
-      const k = index / (samples - 1);
-      return {
-        x: (margin + k * usableWidth) / cssWidth,
-        y: (midY - Math.sin(k * Math.PI * 2) * amplitude * 0.8) / cssHeight,
-        pressure: 0.35 + 0.45 * Math.sin(k * Math.PI),
-        t: index * 8
-      };
-    });
-    const outline = penOutline({
-      id: "preview",
-      pageId: "preview",
-      tool: "pen",
-      color: settings.color,
-      width: settings.width,
-      opacity: settings.opacity,
-      points,
-      createdAt: 0,
-      updatedAt: 0,
-      dynamics: {
-        taper: (_b = settings.taper) != null ? _b : 0,
-        pressure: (_c = settings.pressureGain) != null ? _c : 100,
-        speed: (_d = settings.speedGain) != null ? _d : 0,
-        pressureCurve: settings.pressureCurve ? settings.pressureCurve.map((point) => [...point]) : void 0
-      }
-    }, cssWidth, cssHeight);
-    if (outline.length < 2) return;
-    ctx.globalAlpha = settings.opacity;
-    ctx.fillStyle = settings.color;
-    ctx.beginPath();
-    outline.forEach(([x, y], index) => index ? ctx.lineTo(x, y) : ctx.moveTo(x, y));
-    ctx.closePath();
-    ctx.fill();
-    ctx.globalAlpha = 1;
-  }
-  updateBrushControls(tool = isBrushTool(this.state.tool) ? this.state.tool : null) {
-    var _a, _b, _c, _d;
-    this.root.querySelectorAll(".ink-width-preset").forEach((button) => {
-      const buttonTool = button.dataset.brushTool;
-      button.setAttribute("aria-pressed", String(Number(button.dataset.width) === this.brushSettings(buttonTool).width));
-    });
-    for (const brushTool of ["pen", "highlighter"]) {
-      const panel = (_a = this.sizePopover) == null ? void 0 : _a.querySelector(`.ink-brush-settings[data-brush-tool="${brushTool}"]`);
-      const settings = this.brushSettings(brushTool);
-      const input = panel == null ? void 0 : panel.querySelector('input[data-control="size"]');
-      if (input) input.value = String(settings.width);
-      const value = panel == null ? void 0 : panel.querySelector(".ink-size-popover-header .ink-control-value");
-      if (value) value.textContent = formatControlValue("Size", settings.width);
-      this.updateBrushPreview(brushTool);
-    }
-    (_b = this.sizePopover) == null ? void 0 : _b.toggleClass("is-pen-tool", this.state.tool === "pen");
-    (_c = this.sizePopover) == null ? void 0 : _c.toggleClass("is-highlighter-tool", this.state.tool === "highlighter");
-    (_d = this.sizePopover) == null ? void 0 : _d.toggleClass("is-eraser-tool", this.state.tool === "eraser");
-    if (tool) this.updateColorSwatches(tool);
-    this.updateEraserControls();
-  }
   updateEraserControls() {
     if (!this.sizePopover) return;
     this.sizePopover.toggleClass("is-stroke-eraser", this.state.eraserMode === "stroke");
@@ -24900,7 +25130,7 @@ var InkView = class extends import_obsidian.FileView {
         this.applyPendingMergedNotebook();
         if (this.externalRefreshPending) {
           this.externalRefreshPending = false;
-          void this.reloadFromDisk().catch((error) => new import_obsidian.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
+          void this.reloadFromDisk().catch((error) => new import_obsidian2.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
         }
       }
     });
@@ -25571,7 +25801,7 @@ var InkView = class extends import_obsidian.FileView {
     this.scheduleSave();
     if (this.externalRefreshPending && this.pendingInkStrokes.length === 0) {
       this.externalRefreshPending = false;
-      void this.reloadFromDisk().catch((error) => new import_obsidian.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
+      void this.reloadFromDisk().catch((error) => new import_obsidian2.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
     }
   }
   applyPendingMergedNotebook() {
@@ -25879,7 +26109,7 @@ var InkView = class extends import_obsidian.FileView {
     };
     const text = JSON.stringify(report, null, 2);
     if (toClipboard) {
-      void navigator.clipboard.writeText(text).then(() => new import_obsidian.Notice("Ink diagnostics copied to the clipboard.")).catch((error) => new import_obsidian.Notice(`Ink Notes could not copy diagnostics: ${error instanceof Error ? error.message : String(error)}`));
+      void navigator.clipboard.writeText(text).then(() => new import_obsidian2.Notice("Ink diagnostics copied to the clipboard.")).catch((error) => new import_obsidian2.Notice(`Ink Notes could not copy diagnostics: ${error instanceof Error ? error.message : String(error)}`));
       return;
     }
     const blob = new Blob([text], { type: "application/json" });
@@ -25889,7 +26119,7 @@ var InkView = class extends import_obsidian.FileView {
     anchor.download = `ink-diagnostics-${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}.json`;
     anchor.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
-    new import_obsidian.Notice(`Exported ${report.strokes.length} stroke records.`);
+    new import_obsidian2.Notice(`Exported ${report.strokes.length} stroke records.`);
   }
   refreshEraserCursor() {
     var _a, _b, _c, _d;
@@ -25960,10 +26190,10 @@ var InkView = class extends import_obsidian.FileView {
       this.pageIndex = index;
       this.renderPageRail();
       this.renderPage();
-    })().catch((error) => new import_obsidian.Notice(`Ink Notes could not switch pages: ${error instanceof Error ? error.message : String(error)}`));
+    })().catch((error) => new import_obsidian2.Notice(`Ink Notes could not switch pages: ${error instanceof Error ? error.message : String(error)}`));
   }
   openPageMenu(event) {
-    const menu = new import_obsidian.Menu();
+    const menu = new import_obsidian2.Menu();
     for (const paper of ["blank", "ruled", "grid", "dot"]) menu.addItem((item) => item.setTitle(`Paper: ${paper}`).setChecked(this.currentPage().paper === paper).onClick(() => {
       const page = this.currentPage();
       const before = page.paper;
@@ -26173,9 +26403,9 @@ page: ${this.currentPage().id}
 \`\`\``;
     try {
       await navigator.clipboard.writeText(syntax);
-      new import_obsidian.Notice("Copied Ink page embed syntax");
+      new import_obsidian2.Notice("Copied Ink page embed syntax");
     } catch (error) {
-      new import_obsidian.Notice(`Could not copy embed syntax: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian2.Notice(`Could not copy embed syntax: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   addToolButton(parent, icon, label, tool) {
@@ -26189,7 +26419,7 @@ page: ${this.currentPage().id}
       ...hasSettings ? { "aria-haspopup": "dialog", "aria-expanded": "false" } : {}
     } });
     const iconHolder = button.createSpan({ cls: "ink-button-icon" });
-    (0, import_obsidian.setIcon)(iconHolder, icon);
+    (0, import_obsidian2.setIcon)(iconHolder, icon);
     button.addEventListener("click", () => {
       this.finishPointerInput(false);
       if (this.state.tool === tool && (tool === "pen" || tool === "highlighter" || tool === "eraser")) {
@@ -26198,12 +26428,12 @@ page: ${this.currentPage().id}
       }
       this.state.tool = tool;
       if (tool !== "lasso") this.clearSelection();
-      this.updateBrushControls();
+      this.brushPopover.update();
       this.updateToolButtons();
       this.refreshEraserCursor();
       if (this.sizePopoverOpen) {
         this.setSizePopoverOpen(true);
-        this.positionSizePopover();
+        this.brushPopover.position();
       }
     });
   }
@@ -26211,7 +26441,7 @@ page: ${this.currentPage().id}
     const button = parent.createEl("button", { cls: "ink-icon-button", attr: { type: "button", title: label, "aria-label": label } });
     button.disabled = disabled;
     const iconHolder = button.createSpan({ cls: "ink-button-icon" });
-    (0, import_obsidian.setIcon)(iconHolder, icon);
+    (0, import_obsidian2.setIcon)(iconHolder, icon);
     button.addEventListener("click", callback);
     return button;
   }
@@ -26221,83 +26451,6 @@ page: ${this.currentPage().id}
    * remove it. The curve maps raw pen pressure to the response input and is
    * captured per stroke; the sample preview re-renders on every change.
    */
-  addPressureCurveEditor(parent, settings) {
-    const editor = parent.createDiv({ cls: "ink-curve-editor", attr: { "aria-label": "Pressure mapping curve" } });
-    const canvas = editor.createEl("canvas", { cls: "ink-curve-editor-canvas" });
-    canvas.style.width = "100%";
-    canvas.style.height = "110px";
-    canvas.setAttribute("aria-hidden", "true");
-    const hit = (clientX, clientY) => {
-      const rect = canvas.getBoundingClientRect();
-      return { x: (clientX - rect.left) / rect.width, y: 1 - (clientY - rect.top) / rect.height };
-    };
-    const curve = () => settings.pressureCurve ? settings.pressureCurve.map((point) => [...point]) : [[0, 0], [1, 1]];
-    let dragIndex = -1;
-    canvas.addEventListener("pointerdown", (event) => {
-      const position = hit(event.clientX, event.clientY);
-      const points = curve();
-      let nearest = -1;
-      let nearestDistance = 0.06;
-      for (let index = 0; index < points.length; index++) {
-        const d = Math.hypot(points[index][0] - position.x, points[index][1] - position.y);
-        if (d < nearestDistance) {
-          nearest = index;
-          nearestDistance = d;
-        }
-      }
-      if (event.detail >= 2 && nearest > 0 && nearest < points.length - 1 && points.length > 2) {
-        points.splice(nearest, 1);
-        settings.pressureCurve = points;
-        dragIndex = -1;
-      } else if (nearest >= 0) {
-        dragIndex = nearest;
-      } else if (points.length < 6) {
-        const insertAt = points.findIndex((point) => point[0] > position.x);
-        const index = insertAt === -1 ? points.length - 1 : insertAt;
-        const lowY = index > 0 ? points[index - 1][1] : 0;
-        const highY = index < points.length - 1 ? points[index][1] : 1;
-        points.splice(index, 0, [position.x, Math.max(lowY, Math.min(highY, position.y))]);
-        settings.pressureCurve = points;
-        dragIndex = index;
-      }
-      canvas.setPointerCapture(event.pointerId);
-      this.updateBrushPreview("pen");
-      event.preventDefault();
-    });
-    canvas.addEventListener("pointermove", (event) => {
-      if (dragIndex < 0) return;
-      const position = hit(event.clientX, event.clientY);
-      const points = curve();
-      const point = points[dragIndex];
-      const isEnd = dragIndex === 0 || dragIndex === points.length - 1;
-      const lowY = dragIndex > 0 ? points[dragIndex - 1][1] : 0;
-      const highY = dragIndex < points.length - 1 ? points[dragIndex + 1][1] : 1;
-      point[1] = Math.max(lowY, Math.min(highY, position.y));
-      if (!isEnd) {
-        const low = points[dragIndex - 1][0] + 0.02;
-        const high = points[dragIndex + 1][0] - 0.02;
-        point[0] = Math.max(low, Math.min(high, position.x));
-      }
-      settings.pressureCurve = points;
-      if (!isEnd && dragIndex > 0 && dragIndex < points.length - 1 && point[1] <= 0.02) {
-        points.splice(dragIndex, 1);
-        dragIndex = -1;
-      }
-      settings.pressureCurve = points;
-      this.updateBrushPreview("pen");
-      event.preventDefault();
-    });
-    const endDrag = (event) => {
-      if (dragIndex < 0) return;
-      dragIndex = -1;
-      try {
-        canvas.releasePointerCapture(event.pointerId);
-      } catch (e) {
-      }
-    };
-    canvas.addEventListener("pointerup", endDrag);
-    canvas.addEventListener("pointercancel", endDrag);
-  }
   /** Renders the pressure mapping editor: grid, identity guide, curve and
    *  control points. Skipped while the popover has no layout (it is built
    *  display:none and drawn when opened). */
@@ -26351,53 +26504,6 @@ page: ${this.currentPage().id}
       ctx.lineWidth = 1.5;
       ctx.stroke();
     }
-  }
-  addColorPicker(parent, tool, toolLabel) {
-    const settings = this.brushSettings(tool);
-    parent.createDiv({ cls: "ink-settings-label", text: "Color" });
-    const control = parent.createDiv({ cls: "ink-color-control", attr: { "data-brush-tool": tool } });
-    const swatches = control.createDiv({ cls: "ink-color-swatches" });
-    for (const color of INK_COLORS) {
-      const swatch = swatches.createEl("button", { cls: "ink-color-swatch", attr: {
-        type: "button",
-        title: color.label,
-        "aria-label": `${toolLabel} ${color.label.toLowerCase()}`,
-        "aria-pressed": String(settings.color.toLowerCase() === color.value),
-        "data-color": color.value,
-        "data-brush-tool": tool
-      } });
-      swatch.style.backgroundColor = color.value;
-      if (settings.color.toLowerCase() === color.value) swatch.addClass("is-active");
-      swatch.addEventListener("click", () => {
-        settings.color = color.value;
-        this.updateColorSwatches(tool);
-      });
-    }
-    const custom = control.createEl("label", { cls: "ink-custom-color", attr: { title: "Custom color" } });
-    (0, import_obsidian.setIcon)(custom.createSpan({ cls: "ink-button-icon" }), "plus");
-    const input = custom.createEl("input", { attr: {
-      type: "color",
-      value: settings.color,
-      "aria-label": `${toolLabel} custom color`,
-      "data-brush-tool": tool
-    } });
-    input.addEventListener("input", () => {
-      settings.color = input.value;
-      this.updateColorSwatches(tool);
-    });
-  }
-  addRange(parent, name, min, max, step, value, onChange) {
-    const label = parent.createEl("label", { cls: "ink-range-control", attr: { title: name } });
-    label.addClass(`ink-range-${name.toLowerCase().replace(/\s+/g, "-")}`);
-    const header = label.createDiv({ cls: "ink-range-header" });
-    header.createSpan({ text: name });
-    const valueText = header.createSpan({ cls: "ink-control-value", text: formatControlValue(name, value) });
-    const input = label.createEl("input", { attr: { type: "range", min: String(min), max: String(max), step: String(step), value: String(value), "aria-label": name } });
-    input.addEventListener("input", () => {
-      const next = Number(input.value);
-      onChange(next);
-      valueText.textContent = formatControlValue(name, next);
-    });
   }
   layoutPage() {
     const style = getComputedStyle(this.pageScroller);
@@ -26496,7 +26602,7 @@ page: ${this.currentPage().id}
     if (this.activeSave === saving) this.activeSave = null;
   }
   reportSaveFailure(file, error) {
-    new import_obsidian.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
+    new import_obsidian2.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
   }
   async performSave(file) {
     this.syncing = true;
@@ -26509,7 +26615,7 @@ page: ${this.currentPage().id}
           this.savedRevision = Math.max(this.savedRevision, result.revision);
           if (result.merged && this.file === file) this.receiveMergedNotebook(result.merged);
         } catch (error) {
-          new import_obsidian.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
+          new import_obsidian2.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
           break;
         }
       } while (this.saveRequested || this.dirtyRevision > this.savedRevision);
@@ -26517,7 +26623,7 @@ page: ${this.currentPage().id}
       this.syncing = false;
       if (this.externalRefreshPending && this.activePointerId === null) {
         this.externalRefreshPending = false;
-        void this.reloadFromDisk().catch((error) => new import_obsidian.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
+        void this.reloadFromDisk().catch((error) => new import_obsidian2.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
       }
       if (this.dirtyRevision > this.savedRevision && this.saveRequested) this.scheduleSave();
     }
@@ -26594,17 +26700,6 @@ page: ${this.currentPage().id}
       el.toggleClass("is-active", active);
       el.setAttribute("aria-pressed", String(active));
     });
-  }
-  updateColorSwatches(tool) {
-    const settings = this.brushSettings(tool);
-    const custom = this.root.querySelector(`input[type="color"][data-brush-tool="${tool}"]`);
-    if (custom) custom.value = settings.color;
-    this.root.querySelectorAll(`.ink-color-swatch[data-brush-tool="${tool}"]`).forEach((swatch) => {
-      const active = swatch.dataset.color === settings.color.toLowerCase();
-      swatch.toggleClass("is-active", active);
-      swatch.setAttribute("aria-pressed", String(active));
-    });
-    this.updateBrushPreview(tool);
   }
   addedStrokeCommand(pageId, original) {
     let currentId = original.id;
@@ -26755,7 +26850,7 @@ page: ${this.currentPage().id}
     this.workerSession = null;
     if (this.workerFallbackReported || ((_d = this.workers) == null ? void 0 : _d.isDisabled())) return;
     this.workerFallbackReported = true;
-    new import_obsidian.Notice(`Ink Notes background processing is unavailable; using reduced-performance mode: ${error instanceof Error ? error.message : String(error)}`);
+    new import_obsidian2.Notice(`Ink Notes background processing is unavailable; using reduced-performance mode: ${error instanceof Error ? error.message : String(error)}`);
   }
   selectedStrokes() {
     return this.currentPage().strokes.filter((stroke) => this.selectedStrokeIds.has(stroke.id));
@@ -26813,9 +26908,6 @@ page: ${this.currentPage().id}
 };
 function distance2(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
-}
-function isBrushTool(tool) {
-  return tool === "pen" || tool === "highlighter";
 }
 function pointInsideRect(point, rect) {
   return point.clientX >= rect.left && point.clientX <= rect.right && point.clientY >= rect.top && point.clientY <= rect.bottom;
@@ -27113,17 +27205,9 @@ function isPointerCaptureError(error) {
   const name = error.name;
   return name === "NotFoundError" || name === "InvalidStateError";
 }
-function formatControlValue(name, value) {
-  const normalized = name.toLowerCase();
-  if (normalized === "smooth") return value === 0 ? "Direct" : String(value);
-  if (normalized === "taper") return value === 0 ? "Round" : value === 100 ? "Sharp" : `${value}%`;
-  if (normalized === "pressure") return value === 0 ? "Off" : value === 100 ? "Full" : `${value}%`;
-  if (normalized === "speed width") return value === 0 ? "Off" : `${value}%`;
-  return normalized.endsWith("opacity") ? `${Math.round(value * 100)}%` : `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(1)} px`;
-}
 
 // src/storage.ts
-var import_obsidian2 = require("obsidian");
+var import_obsidian3 = require("obsidian");
 var INK_EXTENSION = "ink";
 var INK_FOLDER = "Ink Notes";
 var NotebookFormatError = class extends Error {
@@ -27198,7 +27282,7 @@ var NotebookStore = class {
   observe(onChange) {
     const timers = /* @__PURE__ */ new Map();
     const handler = (file) => {
-      if (!(file instanceof import_obsidian2.TFile) || file.extension !== INK_EXTENSION || !file.path.startsWith(`${INK_FOLDER}/`)) return;
+      if (!(file instanceof import_obsidian3.TFile) || file.extension !== INK_EXTENSION || !file.path.startsWith(`${INK_FOLDER}/`)) return;
       const expected = this.selfWrites.get(file.path);
       const notify = () => {
         timers.delete(file.path);
@@ -27235,7 +27319,7 @@ function serialize(notebook) {
 }
 
 // src/embed.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 
 // src/embed-spec.ts
 function parseInkEmbed(source) {
@@ -27264,7 +27348,7 @@ function createInkEmbedProcessor(app, open) {
     context.addChild(new InkEmbedChild(app, el, spec, open));
   };
 }
-var InkEmbedChild = class extends import_obsidian3.MarkdownRenderChild {
+var InkEmbedChild = class extends import_obsidian4.MarkdownRenderChild {
   constructor(app, container, spec, open) {
     super(container);
     this.app = app;
@@ -27276,7 +27360,7 @@ var InkEmbedChild = class extends import_obsidian3.MarkdownRenderChild {
   onload() {
     this.unloaded = false;
     this.registerEvent(this.app.vault.on("modify", (file) => {
-      if (file instanceof import_obsidian3.TFile && file.path === this.spec.path) this.requestRender();
+      if (file instanceof import_obsidian4.TFile && file.path === this.spec.path) this.requestRender();
     }));
     this.requestRender();
   }
@@ -27293,7 +27377,7 @@ var InkEmbedChild = class extends import_obsidian3.MarkdownRenderChild {
     const el = this.containerEl;
     el.addClass("ink-embed");
     const file = this.app.vault.getAbstractFileByPath(this.spec.path);
-    if (!(file instanceof import_obsidian3.TFile)) {
+    if (!(file instanceof import_obsidian4.TFile)) {
       this.renderError(revision, new Error(`Ink notebook not found: ${this.spec.path}`));
       return;
     }
@@ -27316,10 +27400,10 @@ var InkEmbedChild = class extends import_obsidian3.MarkdownRenderChild {
     const canvas = frame.createEl("canvas", { attr: { "aria-label": `Ink preview: ${page.title}` } });
     drawPage(canvas, notebook, page);
     const button = next.createEl("button", { cls: "ink-embed-open", attr: { type: "button", "aria-label": "Open Ink notebook" } });
-    (0, import_obsidian3.setIcon)(button, "external-link");
+    (0, import_obsidian4.setIcon)(button, "external-link");
     button.createSpan({ text: "Open notebook" });
     button.addEventListener("click", () => {
-      void this.open(file, page.id).catch((error) => new import_obsidian3.Notice(`Ink Notes could not open ${file.path}: ${error instanceof Error ? error.message : String(error)}`));
+      void this.open(file, page.id).catch((error) => new import_obsidian4.Notice(`Ink Notes could not open ${file.path}: ${error instanceof Error ? error.message : String(error)}`));
     });
     if (!this.isCurrent(revision)) return;
     el.replaceChildren(...Array.from(next.childNodes));
@@ -27346,7 +27430,7 @@ function renderError(el, error) {
 }
 
 // src/pdf-view.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 
 // src/pdf-sidecar.ts
 var PDF_SIDECAR_FORMAT = 1;
@@ -27629,14 +27713,14 @@ function finitePositive2(value, fallback) {
 }
 
 // src/pdf-store.ts
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 var PdfSidecarStore = class {
   constructor(app) {
     this.vault = app.vault;
   }
   sidecarFileFor(pdfPath) {
     const file = this.vault.getAbstractFileByPath(sidecarPathFor(pdfPath));
-    return file instanceof import_obsidian4.TFile && file.name.endsWith(`.${PDF_SIDECAR_EXTENSION}`) ? file : null;
+    return file instanceof import_obsidian5.TFile && file.name.endsWith(`.${PDF_SIDECAR_EXTENSION}`) ? file : null;
   }
   /**
    * Create the empty sidecar for a PDF if it does not exist yet. Opening a
@@ -27888,7 +27972,7 @@ var PdfWriterArbiter = class {
   }
 };
 var nextViewId = 1;
-var PdfInkView = class extends import_obsidian5.FileView {
+var PdfInkView = class extends import_obsidian6.FileView {
   constructor(leaf) {
     super(leaf);
     this.viewId = `pdf-view-${nextViewId++}`;
@@ -27904,6 +27988,10 @@ var PdfInkView = class extends import_obsidian5.FileView {
     this.selectionCtx = null;
     this.previewCanvas = null;
     this.previewCtx = null;
+    this.brushPopover = null;
+    /** Predicted (speculative) tip points for the live stroke — render-only,
+     *  never stored; dropped when the real tail takes over at lift. */
+    this.predictedTip = null;
     this.statusEl = null;
     this.toolbarButtons = /* @__PURE__ */ new Map();
     this.pdfjs = null;
@@ -27962,7 +28050,7 @@ var PdfInkView = class extends import_obsidian5.FileView {
     this.saveMaxDue = 0;
     this.renderFrame = null;
     this.pendingRecoveryCandidates = null;
-    this.scope = new import_obsidian5.Scope(this.app.scope);
+    this.scope = new import_obsidian6.Scope(this.app.scope);
     this.scope.register(["Mod"], "z", () => this.undo());
     this.scope.register(["Mod", "Shift"], "z", () => this.redo());
   }
@@ -28000,7 +28088,7 @@ var PdfInkView = class extends import_obsidian5.FileView {
     if (this.mode === "editing") {
       const outcome = await this.flushSaveNow();
       if (outcome.status !== "saved") {
-        new import_obsidian5.Notice(`Ink Notes kept notes for ${(_b = (_a = this.file) == null ? void 0 : _a.basename) != null ? _b : "this PDF"} in a conflict copy: ${outcome.message}`);
+        new import_obsidian6.Notice(`Ink Notes kept notes for ${(_b = (_a = this.file) == null ? void 0 : _a.basename) != null ? _b : "this PDF"} in a conflict copy: ${outcome.message}`);
       }
       this.exitEditState();
     }
@@ -28042,7 +28130,7 @@ var PdfInkView = class extends import_obsidian5.FileView {
     if (generation !== this.loadGeneration) return;
     let pdfjs;
     try {
-      pdfjs = await (0, import_obsidian5.loadPdfJs)();
+      pdfjs = await (0, import_obsidian6.loadPdfJs)();
     } catch (error) {
       if (generation !== this.loadGeneration) return;
       this.setStatus(`Could not load the PDF renderer: ${messageOf(error)}`, true);
@@ -28116,11 +28204,11 @@ var PdfInkView = class extends import_obsidian5.FileView {
     if (mode === this.mode) return;
     if (mode === "editing") {
       if (!this.canEdit()) {
-        new import_obsidian5.Notice((_a = this.writeBlockedReason) != null ? _a : "Handwriting is not available for this PDF");
+        new import_obsidian6.Notice((_a = this.writeBlockedReason) != null ? _a : "Handwriting is not available for this PDF");
         return;
       }
       if (!this.arbiter.acquire(this.file.path, this.viewId)) {
-        new import_obsidian5.Notice("This PDF is already being edited in another Ink Notes tab; it stays read-only here");
+        new import_obsidian6.Notice("This PDF is already being edited in another Ink Notes tab; it stays read-only here");
         return;
       }
       this.writerHeld = true;
@@ -28131,17 +28219,17 @@ var PdfInkView = class extends import_obsidian5.FileView {
       this.updateToolButtons();
       this.updateHistoryButtons();
       void this.flushSaveNow().then((outcome2) => {
-        if (outcome2.status === "failed") new import_obsidian5.Notice(`Ink Notes could not save pending changes: ${outcome2.message}`);
+        if (outcome2.status === "failed") new import_obsidian6.Notice(`Ink Notes could not save pending changes: ${outcome2.message}`);
       });
       return;
     }
     const outcome = await this.flushSaveNow();
     if (outcome.status === "failed") {
-      new import_obsidian5.Notice(`Save failed, still in edit mode: ${outcome.message}`);
+      new import_obsidian6.Notice(`Save failed, still in edit mode: ${outcome.message}`);
       return;
     }
     if (outcome.status === "conflict") {
-      new import_obsidian5.Notice(`Saved a conflict copy instead of overwriting: ${outcome.message}`);
+      new import_obsidian6.Notice(`Saved a conflict copy instead of overwriting: ${outcome.message}`);
     }
     this.exitEditState();
   }
@@ -28172,7 +28260,7 @@ var PdfInkView = class extends import_obsidian5.FileView {
     if (this.mode === "editing") {
       const outcome = await this.flushSaveNow();
       if (outcome.status === "failed") {
-        new import_obsidian5.Notice(`Save failed, staying in the handwriting view: ${outcome.message}`);
+        new import_obsidian6.Notice(`Save failed, staying in the handwriting view: ${outcome.message}`);
         return;
       }
       this.exitEditState();
@@ -28242,11 +28330,11 @@ var PdfInkView = class extends import_obsidian5.FileView {
           const migrated = this.store.sidecarFileFor(file.path);
           if (migrated) await this.writeSidecar(migrated, serializeSidecar(sidecar), sidecar);
           this.attachSidecar(sidecar, serializeSidecar(sidecar), migrated != null ? migrated : recovered);
-          new import_obsidian5.Notice(`Restored handwriting notes from ${recovered.name}`);
+          new import_obsidian6.Notice(`Restored handwriting notes from ${recovered.name}`);
           return;
         }
       } catch (error) {
-        new import_obsidian5.Notice(`Recovered notes stayed at ${recovered.path}: ${messageOf(error)}`);
+        new import_obsidian6.Notice(`Recovered notes stayed at ${recovered.path}: ${messageOf(error)}`);
         this.attachSidecar(sidecar, serializeSidecar(sidecar), recovered);
         return;
       }
@@ -28289,7 +28377,7 @@ var PdfInkView = class extends import_obsidian5.FileView {
         this.renderAll();
         void this.renderPdfPage();
       } catch (error) {
-        new import_obsidian5.Notice(`Could not restore the selected notes file: ${messageOf(error)}`);
+        new import_obsidian6.Notice(`Could not restore the selected notes file: ${messageOf(error)}`);
       }
     }).open();
   }
@@ -28377,7 +28465,7 @@ var PdfInkView = class extends import_obsidian5.FileView {
   }
   addIconButton(parent, key, icon, label, onClick) {
     const button = parent.createEl("button", { cls: "ink-pdf-icon-button ink-icon-button", attr: { type: "button", "aria-label": label } });
-    (0, import_obsidian5.setIcon)(button, icon);
+    (0, import_obsidian6.setIcon)(button, icon);
     button.addEventListener("click", (event) => onClick(event));
     this.toolbarButtons.set(key, button);
   }
@@ -28386,7 +28474,7 @@ var PdfInkView = class extends import_obsidian5.FileView {
       cls: "ink-pdf-icon-button ink-icon-button ink-tool-button",
       attr: { type: "button", "data-tool": tool, "aria-label": label }
     });
-    (0, import_obsidian5.setIcon)(button, icon);
+    (0, import_obsidian6.setIcon)(button, icon);
     button.addEventListener("click", () => {
       if (this.mode !== "editing") {
         void this.setMode("editing");
@@ -28399,54 +28487,46 @@ var PdfInkView = class extends import_obsidian5.FileView {
     });
     this.toolbarButtons.set(`tool-${tool}`, button);
   }
-  /** Compact brush settings popover shared by pen and highlighter. */
+  /** Shared brush settings popover (same controller as the notebook view):
+   *  pinned sample-stroke preview, dynamics sliders, pressure mapping curve
+   *  and eraser controls. */
   addBrushPopover(parent) {
     const button = parent.createEl("button", {
       cls: "ink-pdf-icon-button ink-icon-button",
       attr: { type: "button", "aria-label": "Brush settings" }
     });
-    (0, import_obsidian5.setIcon)(button, "settings-2");
-    const popover = parent.createDiv({ cls: "ink-pdf-brush-popover" });
-    popover.createDiv({ cls: "ink-pdf-popover-title" }).setText("Color");
-    const swatches = popover.createDiv({ cls: "ink-pdf-color-row" });
-    for (const color of INK_COLORS) {
-      const swatch = swatches.createEl("button", {
-        cls: "ink-pdf-color-swatch",
-        attr: { type: "button", "aria-label": color.label }
-      });
-      swatch.setCssStyles({ background: color.value });
-      swatch.addEventListener("click", () => {
-        this.brushSettings().color = color.value;
-        this.updateToolButtons();
-      });
-    }
-    const addRange = (label, min, max, step, read, write) => {
-      const row = popover.createDiv({ cls: "ink-pdf-range-row" });
-      row.createEl("label").setText(label);
-      const input = row.createEl("input", { type: "range", attr: { min: String(min), max: String(max), step: String(step) } });
-      input.value = String(read());
-      input.addEventListener("input", () => write(Number(input.value)));
-    };
-    addRange("Width", 1, 40, 1, () => this.brushSettings().width, (value) => {
-      this.brushSettings().width = value;
+    (0, import_obsidian6.setIcon)(button, "settings-2");
+    button.addEventListener("click", () => this.brushPopover.toggle());
+    this.brushPopover = new BrushPopoverController(parent, {
+      tools: [
+        { tool: "pen", label: "Pen", presets: [2, 4, 8], maximum: 40 },
+        { tool: "highlighter", label: "Highlighter", presets: [8, 16, 24], maximum: 48 }
+      ],
+      getSettings: (tool) => this.brushSettings(),
+      activeTool: () => this.state.tool,
+      showPenDynamics: () => this.state.tool === "pen",
+      buildExtras: (body, { addRange }) => {
+        body.createDiv({ cls: "ink-settings-label", text: "Eraser size" });
+        addRange(body, "Eraser size", 6, 80, 2, this.state.eraserSize, (value) => {
+          this.state.eraserSize = value;
+        });
+        const modes = body.createDiv({ cls: "ink-pdf-color-row" });
+        for (const mode of ["stroke", "circle", "square"]) {
+          const label = { stroke: "Stroke", circle: "Circle", square: "Square" }[mode];
+          const modeButton = modes.createEl("button", { cls: "ink-pdf-mode-button", attr: { type: "button", "data-eraser-mode": mode } });
+          modeButton.setText(label);
+          modeButton.addEventListener("click", () => {
+            this.state.eraserMode = mode;
+            this.updateToolButtons();
+          });
+        }
+      },
+      onControlsChanged: () => this.updateToolButtons(),
+      anchor: () => {
+        var _a;
+        return (_a = this.toolbarButtons.get("brush")) != null ? _a : null;
+      }
     });
-    addRange("Opacity", 5, 100, 5, () => Math.round(this.brushSettings().opacity * 100), (value) => {
-      this.brushSettings().opacity = value / 100;
-    });
-    addRange("Eraser size", 6, 80, 2, () => this.state.eraserSize, (value) => {
-      this.state.eraserSize = value;
-    });
-    const modes = popover.createDiv({ cls: "ink-pdf-color-row" });
-    for (const mode of ["stroke", "circle", "square"]) {
-      const label = { stroke: "Stroke", circle: "Circle", square: "Square" }[mode];
-      const modeButton = modes.createEl("button", { cls: "ink-pdf-mode-button", attr: { type: "button", "data-eraser-mode": mode } });
-      modeButton.setText(label);
-      modeButton.addEventListener("click", () => {
-        this.state.eraserMode = mode;
-        this.updateToolButtons();
-      });
-    }
-    button.addEventListener("click", () => popover.toggleClass("is-open", !popover.hasClass("is-open")));
   }
   brushSettings() {
     return isBrushTool(this.state.tool) ? this.state[this.state.tool] : this.state.pen;
@@ -28470,7 +28550,7 @@ var PdfInkView = class extends import_obsidian5.FileView {
   }
   openPageMenu(event) {
     if (!this.sidecar) return;
-    const menu = new import_obsidian5.Menu();
+    const menu = new import_obsidian6.Menu();
     const current = this.sidecar.notePages[this.noteIndex];
     menu.addItem((item) => item.setTitle("Insert blank page after this one").setIcon("plus").onClick(() => this.withPageUndo(() => {
       var _a;
@@ -28493,7 +28573,7 @@ var PdfInkView = class extends import_obsidian5.FileView {
     if (!this.sidecar) return;
     const before = serializeSidecar(this.sidecar);
     if (!change()) {
-      new import_obsidian5.Notice(`Ink Notes could not ${label}: source PDF pages are permanent`);
+      new import_obsidian6.Notice(`Ink Notes could not ${label}: source PDF pages are permanent`);
       return;
     }
     const after = serializeSidecar(this.sidecar);
@@ -28517,7 +28597,7 @@ var PdfInkView = class extends import_obsidian5.FileView {
       this.renderAll();
       void this.renderPdfPage();
     } catch (error) {
-      new import_obsidian5.Notice(`Ink Notes could not restore the previous page state: ${messageOf(error)}`);
+      new import_obsidian6.Notice(`Ink Notes could not restore the previous page state: ${messageOf(error)}`);
     }
   }
   syncNotebookToWorker() {
@@ -28692,7 +28772,8 @@ var PdfInkView = class extends import_obsidian5.FileView {
       dynamics: this.state.tool === "pen" ? {
         taper: (_c = this.state.pen.taper) != null ? _c : 0,
         pressure: (_d = this.state.pen.pressureGain) != null ? _d : 100,
-        speed: (_e = this.state.pen.speedGain) != null ? _e : 0
+        speed: (_e = this.state.pen.speedGain) != null ? _e : 0,
+        pressureCurve: this.state.pen.pressureCurve ? this.state.pen.pressureCurve.map((point2) => [...point2]) : void 0
       } : void 0,
       createdAt: Date.now(),
       updatedAt: Date.now()
@@ -28744,9 +28825,13 @@ var PdfInkView = class extends import_obsidian5.FileView {
       }
       this.requestRender();
     }
+    const predicted = typeof event.getPredictedEvents === "function" ? event.getPredictedEvents() : [];
+    this.predictedTip = predicted.length ? predicted.map((s) => this.toPoint(s, rect)) : null;
+    if (this.predictedTip) this.requestRender();
   }
   onPointerEndHost(event, _cancelled) {
     var _a;
+    if (this.activePointerId === event.pointerId) this.predictedTip = null;
     if (this.activePointerId === null || event.pointerId !== this.activePointerId) return;
     try {
       (_a = this.inkHost) == null ? void 0 : _a.releasePointerCapture(event.pointerId);
@@ -28786,6 +28871,7 @@ var PdfInkView = class extends import_obsidian5.FileView {
       }
     }
     this.flushPenCapture();
+    this.predictedTip = null;
     this.interaction = null;
     this.activePointerId = null;
     if (interaction) {
@@ -29154,6 +29240,33 @@ var PdfInkView = class extends import_obsidian5.FileView {
     if (!stroke || !isBrushTool(stroke.tool)) return;
     (_a = this.previewCanvas) == null ? void 0 : _a.toggleClass("is-highlighter-preview", stroke.tool === "highlighter");
     drawInkStroke(ctx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    this.drawPredictedGhostTip(ctx, stroke);
+  }
+  /** Draws the predicted tip as a tapering ghost: continuous with the stroke
+   *  at the junction (deep black), fading to faint at the predicted position.
+   *  Preview-layer only; the stored stroke never includes these points. */
+  drawPredictedGhostTip(ctx, stroke) {
+    var _a, _b;
+    if (!this.predictedTip || this.predictedTip.length === 0 || !this.lastPoint) return;
+    const gain = clampPercent((_a = stroke.dynamics) == null ? void 0 : _a.pressure, 100) / 100;
+    const mapped = samplePressureCurve(this.lastPoint.pressure, normalizePressureCurve((_b = stroke.dynamics) == null ? void 0 : _b.pressureCurve));
+    const baseHalf = Math.max(0.6, stroke.width * (0.55 + 0.75 * (0.5 + (mapped - 0.5) * gain)) / 2);
+    let previous = { x: this.lastPoint.x * this.canvasLogicalWidth, y: this.lastPoint.y * this.canvasLogicalHeight };
+    const segments = this.predictedTip.length;
+    for (let index = 0; index < segments; index++) {
+      const point = { x: this.predictedTip[index].x * this.canvasLogicalWidth, y: this.predictedTip[index].y * this.canvasLogicalHeight };
+      const progress = (index + 1) / segments;
+      ctx.globalAlpha = stroke.opacity * (0.6 - 0.45 * progress);
+      ctx.lineWidth = Math.max(0.5, baseHalf * 2 * (1 - 0.45 * progress));
+      ctx.strokeStyle = stroke.color;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(previous.x, previous.y);
+      ctx.lineTo(point.x, point.y);
+      ctx.stroke();
+      previous = point;
+    }
+    ctx.globalAlpha = 1;
   }
   schedulePendingInkCommit() {
     if (this.pendingInkStrokes.length === 0) return;
@@ -29320,7 +29433,7 @@ var PdfInkView = class extends import_obsidian5.FileView {
       await this.app.vault.create(conflictPath, serializeSidecar(sidecar));
       this.sidecarRaw = diskRaw;
       this.dirty = false;
-      new import_obsidian5.Notice(`Ink Notes kept your notes in ${conflictPath}`);
+      new import_obsidian6.Notice(`Ink Notes kept your notes in ${conflictPath}`);
       return { status: "conflict", message: reason };
     } catch (error) {
       return { status: "failed", message: `${reason}; writing the conflict copy failed: ${messageOf(error)}` };
@@ -29330,12 +29443,12 @@ var PdfInkView = class extends import_obsidian5.FileView {
   async exportHandwrittenCopy() {
     if (!this.file || !this.sidecar) return;
     if (!sidecarHasInk(this.sidecar)) {
-      new import_obsidian5.Notice("This PDF has no handwriting to export yet");
+      new import_obsidian6.Notice("This PDF has no handwriting to export yet");
       return;
     }
     const outcome = await this.flushSaveNow();
     if (outcome.status === "failed") {
-      new import_obsidian5.Notice(`Export cancelled: could not save notes (${outcome.message})`);
+      new import_obsidian6.Notice(`Export cancelled: could not save notes (${outcome.message})`);
       return;
     }
     try {
@@ -29343,13 +29456,13 @@ var PdfInkView = class extends import_obsidian5.FileView {
       const output = await exportHandwrittenPdf(bytes, this.sidecar, this.file.basename);
       const target = exportPathFor(this.file.path, (candidate) => this.app.vault.getAbstractFileByPath(candidate) !== null);
       await this.app.vault.createBinary(target, output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength));
-      new import_obsidian5.Notice(`Exported ${target}`);
+      new import_obsidian6.Notice(`Exported ${target}`);
     } catch (error) {
       if (error instanceof PdfExportError) {
-        new import_obsidian5.Notice(`Export failed: ${error.message}. Your notes are untouched.`);
+        new import_obsidian6.Notice(`Export failed: ${error.message}. Your notes are untouched.`);
         return;
       }
-      new import_obsidian5.Notice(`Export failed: ${messageOf(error)}`);
+      new import_obsidian6.Notice(`Export failed: ${messageOf(error)}`);
     }
   }
   // ------------------------------------------------------------- rendering
@@ -29484,7 +29597,7 @@ function pointerSamplesOf(event) {
 function messageOf(error) {
   return error instanceof Error ? error.message : String(error);
 }
-var RecoveryChoiceModal = class extends import_obsidian5.SuggestModal {
+var RecoveryChoiceModal = class extends import_obsidian6.SuggestModal {
   constructor(app, candidates, choose) {
     super(app);
     this.candidates = candidates;
@@ -29545,7 +29658,7 @@ function around1(obj, method, createWrapper) {
 }
 
 // src/pdf-takeover.ts
-var import_obsidian6 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 var PDF_VIEW_ENHANCER_PLUGIN_IDS = ["pdf-plus"];
 function pdfTakeoverReplacement(viewState, gate, viewType) {
   var _a;
@@ -29566,7 +29679,7 @@ var PdfTabTakeover = class {
   get installed() {
     return this.uninstaller !== null;
   }
-  install(target = import_obsidian6.WorkspaceLeaf.prototype) {
+  install(target = import_obsidian7.WorkspaceLeaf.prototype) {
     if (this.uninstaller) return;
     const takeover = this;
     this.inert = false;
@@ -29611,7 +29724,7 @@ var PdfTabTakeover = class {
 var DEFAULT_SETTINGS = {
   takeOverPdfTabs: true
 };
-var InkNotesPlugin = class extends import_obsidian7.Plugin {
+var InkNotesPlugin = class extends import_obsidian8.Plugin {
   constructor() {
     super(...arguments);
     this.config = { ...DEFAULT_SETTINGS };
@@ -29622,7 +29735,7 @@ var InkNotesPlugin = class extends import_obsidian7.Plugin {
   async onload() {
     this.config = { ...DEFAULT_SETTINGS, ...await this.loadData(), ...DEFAULT_SETTINGS };
     this.store = new NotebookStore(this.app);
-    this.workers = new InkWorkerService((message) => new import_obsidian7.Notice(message));
+    this.workers = new InkWorkerService((message) => new import_obsidian8.Notice(message));
     this.register(() => this.workers.dispose());
     this.registerView(VIEW_TYPE_INK, (leaf) => this.createView(leaf));
     this.registerExtensions([INK_EXTENSION], VIEW_TYPE_INK);
@@ -29711,7 +29824,7 @@ var InkNotesPlugin = class extends import_obsidian7.Plugin {
       }),
       isPdfFile: (path) => {
         const file = this.app.vault.getAbstractFileByPath(path);
-        return file instanceof import_obsidian7.TFile && file.extension === "pdf";
+        return file instanceof import_obsidian8.TFile && file.extension === "pdf";
       }
     }), VIEW_TYPE_PDF_INK);
     this.registerView(VIEW_TYPE_PDF_INK, (leaf) => {
@@ -29723,14 +29836,14 @@ var InkNotesPlugin = class extends import_obsidian7.Plugin {
       this.takeover.install();
       this.register(() => this.takeover.uninstall());
       this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
-        if (file instanceof import_obsidian7.TFile && file.extension === "pdf") {
+        if (file instanceof import_obsidian8.TFile && file.extension === "pdf") {
           void this.pdfStore.migrateForRename(file.path, oldPath).catch(() => {
           });
         }
       }));
       this.registerEvent(this.app.vault.on("modify", (file) => {
         var _a;
-        if (!(file instanceof import_obsidian7.TFile) || ((_a = file.parent) == null ? void 0 : _a.path) !== PDF_INK_FOLDER || !file.name.endsWith(`.${PDF_SIDECAR_EXTENSION}`)) return;
+        if (!(file instanceof import_obsidian8.TFile) || ((_a = file.parent) == null ? void 0 : _a.path) !== PDF_INK_FOLDER || !file.name.endsWith(`.${PDF_SIDECAR_EXTENSION}`)) return;
         for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_PDF_INK)) {
           if (leaf.view instanceof PdfInkView) void leaf.view.reloadExternalSidecar(file.path);
         }
@@ -29766,7 +29879,7 @@ var InkNotesPlugin = class extends import_obsidian7.Plugin {
     if (pageId && leaf.view instanceof InkView) leaf.view.revealPage(pageId);
   }
   runAsync(action, operation) {
-    void action.catch((error) => new import_obsidian7.Notice(`Ink Notes could not ${operation}: ${error instanceof Error ? error.message : String(error)}`));
+    void action.catch((error) => new import_obsidian8.Notice(`Ink Notes could not ${operation}: ${error instanceof Error ? error.message : String(error)}`));
   }
   queueRefresh(file) {
     const existing = this.refreshTimers.get(file.path);
@@ -29791,13 +29904,13 @@ var InkNotesPlugin = class extends import_obsidian7.Plugin {
         }
       } while (this.pendingRefresh.has(file.path));
     } catch (error) {
-      new import_obsidian7.Notice(`Ink Notes could not reload ${file.path}: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian8.Notice(`Ink Notes could not reload ${file.path}: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       this.refreshing.delete(file.path);
     }
   }
 };
-var InkSettingTab = class extends import_obsidian7.PluginSettingTab {
+var InkSettingTab = class extends import_obsidian8.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -29841,7 +29954,7 @@ var InkSettingTab = class extends import_obsidian7.PluginSettingTab {
     }
   }
 };
-var NotebookSuggestModal = class extends import_obsidian7.SuggestModal {
+var NotebookSuggestModal = class extends import_obsidian8.SuggestModal {
   constructor(app, files, select) {
     super(app);
     this.files = files;
