@@ -231,8 +231,12 @@ export class InkView extends FileView {
   private devCoalescedSamples = 0;
   private devSamplesFed = 0;
   private devLastPointerType: string | null = null;
+  /** Reading mode: view-only. Ink tools, the popover and eraser tracking are
+   *  disabled and the page restores native panning/scrolling. */
+  private readingMode = false;
   /** The pressure curve editor stays collapsed until manually expanded. */
   private pressureCurveOpen = false;
+  private popoverTitle: HTMLElement | null = null;
   private confirmedStrokeOutlines = new Map<string, ConfirmedStrokeOutline>();
   private pendingInkStrokes: InkStroke[] = [];
   private committingInkStrokes: InkStroke[] | null = null;
@@ -444,15 +448,29 @@ export class InkView extends FileView {
     });
     const icon = button.createSpan({ cls: "ink-button-icon" });
     setIcon(icon, "sliders-horizontal");
+    void icon;
     button.title = "Brush size and opacity";
 
     const popover = container.createDiv({
       cls: "ink-size-popover",
       attr: { role: "dialog", "aria-label": "Tool settings", "aria-hidden": "true" },
     });
-    this.addBrushSettings(popover, "pen", "Pen", [2, 4, 8], 24);
-    this.addBrushSettings(popover, "highlighter", "Highlighter", [8, 16, 24], 48);
-    const eraser = popover.createDiv({ cls: "ink-eraser-settings" });
+    // Pinned header: title + live sample stroke stay visible while the
+    // settings below scroll. The header canvas is the single sample preview
+    // for every brush tool.
+    const header = popover.createDiv({ cls: "ink-popover-header" });
+    this.popoverTitle = header.createDiv({ cls: "ink-popover-title", text: "Pen settings" });
+    header.createEl("canvas", { cls: "ink-popover-preview", attr: { "aria-hidden": "true" } });
+    // Menu priority over workspace gestures: touches inside the popover never
+    // reach Obsidian's swipe handlers, so adjusting a slider cannot summon
+    // the file switcher or other menus.
+    for (const type of ["touchstart", "touchmove", "pointerdown"] as const) {
+      this.registerDomEvent(popover, type, (event) => event.stopPropagation(), { passive: type !== "touchmove" });
+    }
+    const popoverBody = popover.createDiv({ cls: "ink-popover-body" });
+    this.addBrushSettings(popoverBody, "pen", "Pen", [2, 4, 8], 24);
+    this.addBrushSettings(popoverBody, "highlighter", "Highlighter", [8, 16, 24], 48);
+    const eraser = popoverBody.createDiv({ cls: "ink-eraser-settings" });
     eraser.createDiv({ cls: "ink-size-popover-title", text: "Eraser" });
     eraser.createDiv({ cls: "ink-settings-label", text: "Mode" });
     const modes = eraser.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
@@ -471,7 +489,10 @@ export class InkView extends FileView {
       this.refreshEraserCursor();
     });
 
-    const close = (): void => this.setSizePopoverOpen(false);
+    const close = (): void => {
+      if ((window as unknown as { curveDebug?: boolean }).curveDebug) console.log("[curve-debug] close() called");
+      this.setSizePopoverOpen(false);
+    };
     button.addEventListener("click", (event) => {
       event.stopPropagation();
       this.setSizePopoverOpen(!this.sizePopoverOpen);
@@ -497,6 +518,7 @@ export class InkView extends FileView {
 
   private setSizePopoverOpen(open: boolean): void {
     if (!this.sizePopover || !this.sizePopoverButton) return;
+    if (typeof window !== "undefined" && (window as unknown as { curveDebug?: boolean }).curveDebug) console.log("[curve-debug] setSizePopoverOpen", open);
     this.sizePopoverOpen = open;
     this.sizePopover.toggleClass("is-open", open);
     this.sizePopover.setAttribute("aria-hidden", String(!open));
@@ -551,15 +573,7 @@ export class InkView extends FileView {
     const header = panel.createDiv({ cls: "ink-size-popover-header" });
     header.createSpan({ cls: "ink-size-popover-title", text: `${label} settings` });
     header.createSpan({ cls: "ink-control-value", text: formatControlValue("Size", settings.width) });
-    const preview = panel.createDiv({ cls: "ink-brush-preview", attr: { "aria-hidden": "true" } });
-    preview.createSpan({ cls: "ink-brush-preview-line" });
-    if (tool === "pen") {
-      // Live sample stroke: re-rendered from the real outline geometry on
-      // every dynamics slider change so previews match committed ink.
-      const sample = preview.createEl("canvas", { cls: "ink-brush-preview-canvas", attr: { "aria-hidden": "true" } });
-      sample.style.width = "100%";
-      sample.style.height = "40px";
-    }
+
     panel.createDiv({ cls: "ink-settings-label", text: "Size" });
     const input = panel.createEl("input", { attr: {
       type: "range", min: "1", max: String(maximum), step: "0.5", value: String(settings.width),
@@ -639,10 +653,13 @@ export class InkView extends FileView {
   private updateBrushPreview(tool: BrushTool): void {
     const settings = this.brushSettings(tool);
     const preview = this.sizePopover?.querySelector<HTMLElement>(`.ink-brush-settings[data-brush-tool="${tool}"] .ink-brush-preview-line`);
-    if (!preview) return;
-    preview.style.setProperty("--ink-preview-color", settings.color);
-    preview.style.setProperty("--ink-preview-opacity", String(settings.opacity));
-    preview.style.setProperty("--ink-preview-width", `${Math.max(2, Math.min(30, settings.width))}px`);
+    if (preview) {
+      preview.style.setProperty("--ink-preview-color", settings.color);
+      preview.style.setProperty("--ink-preview-opacity", String(settings.opacity));
+      preview.style.setProperty("--ink-preview-width", `${Math.max(2, Math.min(30, settings.width))}px`);
+    }
+    const title = this.sizePopover?.querySelector<HTMLElement>(".ink-popover-title");
+    if (title) title.textContent = `${tool === "pen" ? "Pen" : "Highlighter"} settings · ${formatControlValue("Size", settings.width)}`;
     if (tool === "pen") {
       this.drawBrushSampleStroke(settings);
       this.drawPressureCurveEditor(settings);
@@ -652,7 +669,7 @@ export class InkView extends FileView {
   /** Renders a sample stroke with the current pen dynamics into the brush
    *  panel's preview canvas, using the same outline geometry as real ink. */
   private drawBrushSampleStroke(settings: BrushSettings): void {
-    const canvas = this.sizePopover?.querySelector<HTMLCanvasElement>(`.ink-brush-settings[data-brush-tool="pen"] .ink-brush-preview-canvas`);
+    const canvas = this.sizePopover?.querySelector<HTMLCanvasElement>(".ink-popover-preview");
     if (!canvas) return;
     const ctx = canvas.getContext("2d");
     if (!ctx) return;
@@ -1222,6 +1239,7 @@ export class InkView extends FileView {
   private onPointerDown(event: InkPointerSample, source: InteractionContext["source"] = "pointer"): void {
     this.devPointerEvents += 1;
     this.devLastPointerType = event.pointerType || this.devLastPointerType;
+    if (this.readingMode) return;
     if (event.pointerType === "touch" || (source === "pointer" && event.pointerType === "pen" && this.stylusTouchInput)) return;
     this.pageNavigationGeneration += 1;
     if (this.activePointerId !== null) this.finishPointerInput(false);
@@ -2161,7 +2179,7 @@ export class InkView extends FileView {
     output.setText(lines.join("\n"));
   }
 
-  private exportDiagnosticsJson(toClipboard: boolean): void {
+  exportDiagnosticsJson(toClipboard: boolean): void {
     const environment = {
       version: this.devVersion(),
       lastPointerType: this.devLastPointerType,
@@ -2466,7 +2484,6 @@ export class InkView extends FileView {
     } });
     const iconHolder = button.createSpan({ cls: "ink-button-icon" });
     setIcon(iconHolder, icon);
-    button.createSpan({ cls: "ink-button-text", text: label });
     button.addEventListener("click", () => {
       this.finishPointerInput(false);
       if (this.state.tool === tool && (tool === "pen" || tool === "highlighter" || tool === "eraser")) {
@@ -2490,7 +2507,6 @@ export class InkView extends FileView {
     button.disabled = disabled;
     const iconHolder = button.createSpan({ cls: "ink-button-icon" });
     setIcon(iconHolder, icon);
-    button.createSpan({ cls: "ink-button-text", text: label });
     button.addEventListener("click", callback);
     return button;
   }

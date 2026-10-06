@@ -9,12 +9,13 @@ const notice = vi.fn();
 vi.mock("obsidian", () => ({
   Plugin: class {
     app = { workspace: { getLeavesOfType: vi.fn(() => []) } };
-    registerView = vi.fn(); registerExtensions = vi.fn(); addRibbonIcon = vi.fn(); addCommand = vi.fn();
+    registerView = vi.fn(); registerExtensions = vi.fn(); addRibbonIcon = vi.fn(); addCommand = vi.fn(); addSettingTab = vi.fn();
     registerMarkdownCodeBlockProcessor = registerMarkdown;
     register = register;
   },
   Notice: class { constructor(message: string) { notice(message); } },
   SuggestModal: class {},
+  PluginSettingTab: class {},
   TFile: class {},
   WorkspaceLeaf: class {},
 }));
