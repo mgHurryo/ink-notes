@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 0.8.0-beta.4 - 2026-10-07
+## 0.8.0-beta.5 - 2026-10-07
 
 - Fix the PDF ink editor's broken GUI on iPad: the shared brush popover is now mounted at the view root with fixed, viewport-clamped positioning (mainline parity) instead of nested inside the toolbar group, where the toolbar's layout context mangled it into an unreadable arc; the popover now opens/closes reliably (brush button, Escape, outside tap).
 - Fix blank toolbar icons in the PDF view: icon SVGs get explicit sizing.
