@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.7.0-beta.4 - 2026-10-06
+
+- Pressure curve editor refinements from device feedback:
+  - The mapping is enforced non-decreasing — more pressure maps to equal or more width, never less (drag is height-clamped between neighbors; new points insert between neighbor heights; storage normalization flattens dips).
+  - Dragging an interior point onto the bottom edge removes it.
+  - A Reset button restores the default linear mapping.
+  - The editor stays collapsed until manually expanded from the Pressure curve header (chevron), and draws when expanded.
+
 ## 0.7.0-beta.3 - 2026-10-06
 
 - Fix the pressure curve editor rendering blank: the draw routine was defined but never invoked, and the popover is built display:none so a build-time draw would also have had no layout. The popover now triggers a preview redraw when it opens (after layout), and point drags redraw both the curve editor and the sample stroke. Verified in a live popover with pixel sampling and screenshots.
