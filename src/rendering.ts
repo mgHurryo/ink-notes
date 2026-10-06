@@ -21,10 +21,10 @@ export function canvasResolution(width: number, height: number, dpr: number, zoo
 export function penOutline(stroke: InkStroke, width: number, height: number): number[][] {
   const pressures = smoothPenPressures(stroke.points);
   const centerline = smoothOutlineCenterline(
-    stroke.points.map((point, index) => [point.x * width, point.y * height, pressures[index]]),
+    stroke.points.map((point, index) => [point.x * width, point.y * height, pressures[index], point.t]),
     stroke.width * 0.925,
   );
-  return penRibbonPolygon(centerline, stroke.width);
+  return penRibbonPolygon(centerline, stroke);
 }
 
 /**
@@ -35,16 +35,59 @@ export function penOutline(stroke: InkStroke, width: number, height: number): nu
  * inner boundary collapses on tight loops (small handwriting with a
  * comparatively thick nib filled loop interiors and folded hooks into dots).
  * Per-point diameter follows the established convention
- * width * (0.55 + pressure * 0.75).
+ * width * (0.55 + pressure * 0.75), modulated by the stroke's captured
+ * dynamics: end taper (round caps toward sharp points), pressure response
+ * amplitude (uniform width toward full dynamics) and speed-based thinning
+ * (relative to the stroke's own median pace, so it self-scales with zoom and
+ * writing size).
  */
-function penRibbonPolygon(points: number[][], width: number): number[][] {
-  const halfWidth = (point: number[]): number =>
-    Math.max(0.3, (width * (0.55 + 0.75 * point[2])) / 2);
+function penRibbonPolygon(points: number[][], stroke: InkStroke): number[][] {
+  const taper = clampPercent(stroke.dynamics?.taper, 0);
+  const pressureGain = clampPercent(stroke.dynamics?.pressure, 100) / 100;
+  const speedGain = clampPercent(stroke.dynamics?.speed, 0) / 100;
+  // Per-point travel speed (page px/s), smoothed over the immediate
+  // neighbors to reject sample jitter.
+  const speeds: number[] = new Array(points.length);
+  for (let index = 0; index < points.length; index++) {
+    const previous = points[Math.max(0, index - 1)];
+    const following = points[Math.min(points.length - 1, index + 1)];
+    const distance = Math.hypot(following[0] - previous[0], following[1] - previous[1]);
+    const dt = Math.max(1, (following[3] - previous[3]) / 2);
+    speeds[index] = distance / (dt / 1000);
+  }
+  const sortedSpeeds = [...speeds].sort((a, b) => a - b);
+  const medianSpeed = sortedSpeeds[Math.floor(sortedSpeeds.length / 2)] || 0;
+  // Full thinning kicks in at ~2.5x the stroke's own median pace (floored so
+  // near-stationary strokes still respond).
+  const speedReference = Math.max(medianSpeed * 2.5, 60);
+  const halfWidth = (point: number[], speed: number): number => {
+    const pressure = point[2];
+    const effectivePressure = 0.5 + (pressure - 0.5) * pressureGain;
+    const speedFactor = 1 - speedGain * Math.min(speed / speedReference, 1) * 0.65;
+    return Math.max(0.3, (brushWidth * (0.55 + 0.75 * effectivePressure)) / 2) * speedFactor;
+  };
   const count = points.length;
   if (count === 0) return [];
+  // End taper: the half-width ramps to zero over rampLen at both ends.
+  let totalLength = 0;
+  const cumulative: number[] = new Array(count);
+  cumulative[0] = 0;
+  for (let index = 1; index < count; index++) {
+    totalLength += Math.hypot(points[index][0] - points[index - 1][0], points[index][1] - points[index - 1][1]);
+    cumulative[index] = totalLength;
+  }
+  const brushWidth = stroke.width;
+  const rampLength = taper * Math.min(totalLength * 0.25, brushWidth * 2);
+  const taperFactor = (distanceFromEnd: number): number => {
+    if (rampLength <= 0) return 1;
+    const m = Math.min(1, distanceFromEnd / rampLength);
+    return m * m * (3 - 2 * m);
+  };
+  const halfWidthAt = (index: number): number =>
+    halfWidth(points[index], speeds[index]) * taperFactor(Math.min(cumulative[index], totalLength - cumulative[index]));
   if (count === 1) {
     const ring: number[][] = [];
-    const radius = halfWidth(points[0]);
+    const radius = Math.max(0.3, (brushWidth * (0.55 + 0.75 * (0.5 + (points[0][2] - 0.5) * pressureGain))) / 2);
     for (let index = 0; index < 16; index++) {
       const angle = (index / 16) * Math.PI * 2;
       ring.push([points[0][0] + Math.cos(angle) * radius, points[0][1] + Math.sin(angle) * radius]);
@@ -65,7 +108,7 @@ function penRibbonPolygon(points: number[][], width: number): number[][] {
     if (length < 1e-6) { dx = 1; dy = 0; length = 1; }
     const nx = -dy / length;
     const ny = dx / length;
-    const radius = halfWidth(point);
+    const radius = halfWidthAt(index);
     left.push([point[0] + nx * radius, point[1] + ny * radius]);
     right.push([point[0] - nx * radius, point[1] - ny * radius]);
   }
@@ -77,7 +120,7 @@ function penRibbonPolygon(points: number[][], width: number): number[][] {
   let endLength = Math.hypot(ex, ey);
   if (endLength < 1e-6) { ex = 1; ey = 0; endLength = 1; }
   ex /= endLength; ey /= endLength;
-  const endRadius = halfWidth(points[lastIndex]);
+  const endRadius = halfWidthAt(lastIndex);
   for (let index = 1; index < capSegments; index++) {
     const angle = Math.PI * (index / capSegments);
     const across = Math.cos(angle), along = Math.sin(angle);
@@ -92,7 +135,7 @@ function penRibbonPolygon(points: number[][], width: number): number[][] {
   let startLength = Math.hypot(sx, sy);
   if (startLength < 1e-6) { sx = -1; sy = 0; startLength = 1; }
   sx /= startLength; sy /= startLength;
-  const startRadius = halfWidth(points[0]);
+  const startRadius = halfWidthAt(0);
   for (let index = 1; index < capSegments; index++) {
     const angle = Math.PI * (index / capSegments);
     const across = Math.cos(angle), along = Math.sin(angle);
@@ -102,6 +145,10 @@ function penRibbonPolygon(points: number[][], width: number): number[][] {
     ]);
   }
   return [...left, ...endCap, ...right.slice().reverse(), ...startCap];
+}
+
+export function clampPercent(value: unknown, fallback: number): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : fallback;
 }
 
 /**
@@ -162,7 +209,9 @@ export function drawInkStroke(ctx: CanvasRenderingContext2D, stroke: InkStroke, 
   ctx.globalCompositeOperation = stroke.tool === "highlighter" ? "multiply" : "source-over";
   if (stroke.points.length === 1) {
     const point = stroke.points[0];
-    const diameter = stroke.tool === "highlighter" ? stroke.width : stroke.width * (0.55 + point.pressure * 0.75);
+    const gain = clampPercent(stroke.dynamics?.pressure, 100) / 100;
+    const effectivePressure = 0.5 + (point.pressure - 0.5) * gain;
+    const diameter = stroke.tool === "highlighter" ? stroke.width : stroke.width * (0.55 + effectivePressure * 0.75);
     ctx.beginPath();
     ctx.arc(point.x * width, point.y * height, diameter / 2, 0, Math.PI * 2);
     ctx.fill();

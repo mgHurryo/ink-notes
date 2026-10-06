@@ -73,6 +73,71 @@ describe("outline centerline smoothing", () => {
   });
 });
 
+
+describe("pen dynamics", () => {
+  const size = 12 * 0.925;
+
+  function dynamicsStroke(points: number[][], dynamics: { taper?: number; pressure?: number; speed?: number }): number[][] {
+    return penOutline({
+      ...stroke(), width: 12, points: points.map(([x, y, p, t]) => ({ x: x / 100, y: y / 100, pressure: p, t })),
+      dynamics,
+    }, 100, 100);
+  }
+
+  function thicknessAt(outline: number[][], xLow: number, xHigh: number): number {
+    const band = outline.filter(([x]) => x >= xLow && x <= xHigh).map(([, y]) => y);
+    return Math.max(...band) - Math.min(...band);
+  }
+
+  it("taper 100 ends the stroke in a point instead of a round cap", () => {
+    const line = [[10, 50, 0.6, 0], [40, 50, 0.6, 8], [70, 50, 0.6, 16], [90, 50, 0.6, 24]];
+    const round = dynamicsStroke(line, {});
+    const sharp = dynamicsStroke(line, { taper: 100 });
+    const roundEnd = Math.min(...round.map(([x, y]) => Math.hypot(x - 90, y - 50)));
+    const sharpEnd = Math.min(...sharp.map(([x, y]) => Math.hypot(x - 90, y - 50)));
+    // The round cap reaches the endpoint at half-width; the tapered tip lands on it.
+    expect(roundEnd).toBeLessThan(size * 0.5 + 2);
+    expect(sharpEnd).toBeLessThan(1);
+  });
+
+  it("taper 0 keeps round caps", () => {
+    const line = [[10, 50, 0.6, 0], [40, 50, 0.6, 8], [70, 50, 0.6, 16], [90, 50, 0.6, 24]];
+    const round = dynamicsStroke(line, {});
+    const roundEnd = Math.min(...round.map(([x, y]) => Math.hypot(x - 90, y - 50)));
+    expect(roundEnd).toBeLessThan(size * 0.5 + 2);
+    expect(roundEnd).toBeGreaterThan(size * 0.2);
+  });
+
+  it("pressure limiter 0 renders uniform width", () => {
+    const varied = [[10, 50, 0.1, 0], [40, 50, 0.9, 8], [70, 50, 0.1, 16], [90, 50, 0.9, 24]];
+    const uniform = dynamicsStroke(varied, { pressure: 0 });
+    const thick = dynamicsStroke(varied, { pressure: 100 });
+    const uniformSpread = thicknessAt(uniform, 20, 80);
+    const thickSpread = thicknessAt(thick, 20, 80);
+    // Uniform: every point at effective pressure 0.5 → 12 * (0.55 + 0.375).
+    expect(uniformSpread).toBeCloseTo(12 * 0.925, 1);
+    // Full dynamics: pressures 0.1/0.9 span the thinning range.
+    expect(thickSpread).toBeCloseTo(12 * 1.225, 1);
+    expect(thickSpread).toBeGreaterThan(uniformSpread);
+  });
+
+  it("speed compensation thins fast segments", () => {
+    // Same geometry: slow tail samples vs a fast middle (timestamps compress).
+    const fast = [[10, 50, 0.5, 0], [40, 50, 0.5, 4], [70, 50, 0.5, 8], [90, 50, 0.5, 11]];
+    const off = dynamicsStroke(fast, { speed: 0 });
+    const on = dynamicsStroke(fast, { speed: 100 });
+    const offSpread = thicknessAt(off, 35, 65);
+    const onSpread = thicknessAt(on, 35, 65);
+    expect(onSpread).toBeLessThan(offSpread);
+  });
+
+  it("defaults preserve the historical diameter", () => {
+    const line = [[10, 50, 0.5, 0], [40, 50, 0.5, 8], [70, 50, 0.5, 16], [90, 50, 0.5, 24]];
+    const outline = dynamicsStroke(line, {});
+    expect(thicknessAt(outline, 20, 80)).toBeCloseTo(12 * (0.55 + 0.75 * 0.5), 1);
+  });
+});
+
 describe("canvas density", () => {
   it.each([0.5, 0.75, 1, 1.25, 2, 3])("matches display pixels at zoom %s", (zoom) => {
     expect(canvasResolution(300, 450, 3, zoom)).toEqual({ width: Math.round(900 * zoom), height: Math.round(1350 * zoom) });

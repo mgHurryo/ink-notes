@@ -18,7 +18,7 @@ import {
   newId,
 } from "./model";
 import { NotebookStore } from "./storage";
-import { canvasResolution, drawInkStroke } from "./rendering";
+import { canvasResolution, clampPercent, drawInkStroke, penOutline } from "./rendering";
 import { Rect, TileRenderer } from "./tiles";
 import { StrokeModeler, StrokeModelInput, StrokeModelResult, StrokeModelParams, DEFAULT_STROKE_MODEL_PARAMS, strokeModelParamsForSmoothStrength } from "./stroke-modeler";
 import type { InkWorkerResponse, NotebookOperation } from "./worker-protocol";
@@ -35,6 +35,12 @@ interface BrushSettings {
   /** Pen only: 0 keeps ink direct (raw samples, no modeling); 1..100 is
    *  the user-selected stroke-modeler strength. */
   smooth?: number;
+  /** Pen only: end shape 0 (round caps) to 100 (tapered points). */
+  taper?: number;
+  /** Pen only: pressure response amplitude 0 (uniform) to 100 (full). */
+  pressureGain?: number;
+  /** Pen only: speed-based thinning amplitude 0 (off) to 100. */
+  speedGain?: number;
 }
 
 interface ToolState {
@@ -75,6 +81,7 @@ interface InkPointerSample {
   /** Monotonic event time in ms; coalesced samples carry distinct values. */
   timeStamp?: number;
   getCoalescedEvents?: () => InkPointerSample[];
+  getPredictedEvents?: () => InkPointerSample[];
 }
 
 interface StylusTouch extends Touch {
@@ -154,7 +161,7 @@ export class InkView extends FileView {
   private pageIndex = 0;
   private state: ToolState = {
     tool: "pen",
-    pen: { color: "#1b1b1b", width: 3, opacity: 1, smooth: 0 },
+    pen: { color: "#1b1b1b", width: 3, opacity: 1, smooth: 0, taper: 0, pressureGain: 100, speedGain: 0 },
     highlighter: { color: "#f2c94c", width: 18, opacity: 0.4 },
     eraserMode: "stroke",
     eraserSize: 32,
@@ -206,6 +213,10 @@ export class InkView extends FileView {
    *  the sparse-input auto-intervention. */
   private penSampleIntervals: number[] = [];
   private lastPenSampleTime: number | null = null;
+  /** Predicted (speculative) tip points for the active stroke, page space.
+   *  Render-only: they never enter stroke.points and are dropped at lift. */
+  private predictedTip: InkPoint[] | null = null;
+  private devPredictedSamples = 0;
   /** Developer diagnostics: ring buffer of recent strokes plus live counters. */
   private strokeRecords: StrokeDiagnosticsRecord[] = [];
   private currentStrokeRecord: StrokeDiagnosticsRecord | null = null;
@@ -533,6 +544,13 @@ export class InkView extends FileView {
     header.createSpan({ cls: "ink-control-value", text: formatControlValue("Size", settings.width) });
     const preview = panel.createDiv({ cls: "ink-brush-preview", attr: { "aria-hidden": "true" } });
     preview.createSpan({ cls: "ink-brush-preview-line" });
+    if (tool === "pen") {
+      // Live sample stroke: re-rendered from the real outline geometry on
+      // every dynamics slider change so previews match committed ink.
+      const sample = preview.createEl("canvas", { cls: "ink-brush-preview-canvas", attr: { "aria-hidden": "true" } });
+      sample.style.width = "100%";
+      sample.style.height = "40px";
+    }
     panel.createDiv({ cls: "ink-settings-label", text: "Size" });
     const input = panel.createEl("input", { attr: {
       type: "range", min: "1", max: String(maximum), step: "0.5", value: String(settings.width),
@@ -563,6 +581,19 @@ export class InkView extends FileView {
       this.addRange(panel, "Smooth", 0, 100, 1, settings.smooth ?? 0, (value) => {
         settings.smooth = value;
       });
+      // Dynamics sliders re-render the sample-stroke preview on change.
+      this.addRange(panel, "Taper", 0, 100, 1, settings.taper ?? 0, (value) => {
+        settings.taper = value;
+        this.updateBrushPreview(tool);
+      });
+      this.addRange(panel, "Pressure", 0, 100, 1, settings.pressureGain ?? 100, (value) => {
+        settings.pressureGain = value;
+        this.updateBrushPreview(tool);
+      });
+      this.addRange(panel, "Speed width", 0, 100, 1, settings.speedGain ?? 0, (value) => {
+        settings.speedGain = value;
+        this.updateBrushPreview(tool);
+      });
     }
   }
 
@@ -577,6 +608,52 @@ export class InkView extends FileView {
     preview.style.setProperty("--ink-preview-color", settings.color);
     preview.style.setProperty("--ink-preview-opacity", String(settings.opacity));
     preview.style.setProperty("--ink-preview-width", `${Math.max(2, Math.min(30, settings.width))}px`);
+    if (tool === "pen") this.drawBrushSampleStroke(settings);
+  }
+
+  /** Renders a sample stroke with the current pen dynamics into the brush
+   *  panel's preview canvas, using the same outline geometry as real ink. */
+  private drawBrushSampleStroke(settings: BrushSettings): void {
+    const canvas = this.sizePopover?.querySelector<HTMLCanvasElement>(`.ink-brush-settings[data-brush-tool="pen"] .ink-brush-preview-canvas`);
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    const ratio = Math.max(1, window.devicePixelRatio || 1);
+    const cssWidth = canvas.clientWidth || 200;
+    const cssHeight = canvas.clientHeight || 46;
+    if (canvas.width !== Math.round(cssWidth * ratio)) canvas.width = Math.round(cssWidth * ratio);
+    if (canvas.height !== Math.round(cssHeight * ratio)) canvas.height = Math.round(cssHeight * ratio);
+    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
+    ctx.clearRect(0, 0, cssWidth, cssHeight);
+    // A gentle S-curve with a mid-stroke pressure swell: exercises taper,
+    // pressure response and speed compensation together.
+    const samples = 36;
+    const margin = Math.max(8, settings.width);
+    const usableWidth = Math.max(10, cssWidth - margin * 2);
+    const midY = cssHeight / 2;
+    const amplitude = cssHeight / 2 - Math.max(3, settings.width);
+    const points = Array.from({ length: samples }, (_, index) => {
+      const k = index / (samples - 1);
+      return {
+        x: (margin + k * usableWidth) / cssWidth,
+        y: (midY - Math.sin(k * Math.PI * 2) * amplitude * 0.8) / cssHeight,
+        pressure: 0.35 + 0.45 * Math.sin(k * Math.PI),
+        t: index * 8,
+      };
+    });
+    const outline = penOutline({
+      id: "preview", pageId: "preview", tool: "pen", color: settings.color, width: settings.width,
+      opacity: settings.opacity, points, createdAt: 0, updatedAt: 0,
+      dynamics: { taper: settings.taper ?? 0, pressure: settings.pressureGain ?? 100, speed: settings.speedGain ?? 0 },
+    }, cssWidth, cssHeight);
+    if (outline.length < 2) return;
+    ctx.globalAlpha = settings.opacity;
+    ctx.fillStyle = settings.color;
+    ctx.beginPath();
+    outline.forEach(([x, y], index) => (index ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+    ctx.closePath();
+    ctx.fill();
+    ctx.globalAlpha = 1;
   }
 
   private updateBrushControls(tool: BrushTool | null = isBrushTool(this.state.tool) ? this.state.tool : null): void {
@@ -837,6 +914,7 @@ export class InkView extends FileView {
         this.drawConfirmedOutline(this.previewCtx, confirmed.points, stroke.color, stroke.opacity, stroke.width, confirmed.mode);
       }
       drawImmediateStrokeTail(this.previewCtx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight, confirmed?.sampleCount ?? 0);
+      if (stroke.tool === "pen") this.drawPredictedTip(this.previewCtx, stroke);
     }
   }
 
@@ -1174,6 +1252,11 @@ export class InkView extends FileView {
       width: brush!.width,
       opacity: brush!.opacity,
       points: [point],
+      dynamics: tool === "pen" ? {
+        taper: this.state.pen.taper ?? 0,
+        pressure: this.state.pen.pressureGain ?? 100,
+        speed: this.state.pen.speedGain ?? 0,
+      } : undefined,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -1331,10 +1414,54 @@ export class InkView extends FileView {
         }
       }
     }
+    this.updatePredictedTip(event, rect, phase);
     if (changed) {
       if (this.activeStroke) this.activeStroke.updatedAt = Date.now();
       this.requestRender();
     }
+  }
+
+  /**
+   * Keeps the newest predicted-events batch (WebKit / partial Chromium) for
+   * the live ghost tip. Predicted points are speculative: they render only on
+   * the preview layer, never enter stroke.points, and are dropped at lift so
+   * the real tail takes over.
+   */
+  private updatePredictedTip(event: InkPointerSample, rect: DOMRect, phase: "move" | "up"): void {
+    if (phase === "up") { this.predictedTip = null; return; }
+    const predicted = typeof event.getPredictedEvents === "function" ? event.getPredictedEvents() : [];
+    this.devPredictedSamples += predicted.length;
+    const record = this.currentStrokeRecord;
+    if (record) record.predictedSamples = (record.predictedSamples ?? 0) + predicted.length;
+    if (predicted.length === 0) { this.predictedTip = null; return; }
+    this.predictedTip = predicted.map((sample) => this.toPoint(sample, rect));
+  }
+
+  /** Draws the predicted tip as a tapering ghost extension of the live ink:
+   *  continuous with the stroke at the junction, fading toward the predicted
+   *  position. Preview-layer only. */
+  private drawPredictedTip(ctx: CanvasRenderingContext2D, stroke: InkStroke): void {
+    const tip = this.predictedTip;
+    if (!tip || tip.length === 0 || !this.lastPoint) return;
+    const gain = clampPercent(stroke.dynamics?.pressure, 100) / 100;
+    const baseHalf = Math.max(0.6, (stroke.width * (0.55 + 0.75 * (0.5 + (this.lastPoint.pressure - 0.5) * gain))) / 2);
+    let previous = { x: this.lastPoint.x * this.canvasLogicalWidth, y: this.lastPoint.y * this.canvasLogicalHeight };
+    const segments = tip.length;
+    for (let index = 0; index < segments; index++) {
+      const point = { x: tip[index].x * this.canvasLogicalWidth, y: tip[index].y * this.canvasLogicalHeight };
+      const progress = (index + 1) / segments;
+      // Deep at the junction (continuous ink) fading to faint at the tip.
+      ctx.globalAlpha = stroke.opacity * (0.6 - 0.45 * progress);
+      ctx.lineWidth = Math.max(0.5, baseHalf * 2 * (1 - 0.45 * progress));
+      ctx.strokeStyle = stroke.color;
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(previous.x, previous.y);
+      ctx.lineTo(point.x, point.y);
+      ctx.stroke();
+      previous = point;
+    }
+    ctx.globalAlpha = 1;
   }
 
   /** Feeds raw pointer samples through the stroke modeler and stores its results. */
@@ -1626,6 +1753,7 @@ export class InkView extends FileView {
       this.activePointerId = null;
       this.penModeler = null;
       this.rawUpdateCapture = null;
+      this.predictedTip = null;
       this.tiles.resumeInkCommit();
       return;
     }
@@ -1674,6 +1802,7 @@ export class InkView extends FileView {
     this.lastPoint = null;
     this.penModeler = null;
     this.rawUpdateCapture = null;
+    this.predictedTip = null;
     this.pendingLassoPoint = null;
     this.eraserPreviewCells.clear();
     if (interaction.tool === "pen" || interaction.tool === "highlighter") {
@@ -1972,7 +2101,7 @@ export class InkView extends FileView {
     const lines: string[] = [];
     lines.push(`Ink Notes dev — build ${this.devVersion()}`);
     lines.push(`ENV pointer=${this.devLastPointerType ?? "-"} coalesced=${this.hasPointerApi("getCoalescedEvents") ? "yes" : "no"} rawupdate=${"onpointerrawupdate" in window ? "yes" : "no"} predicted=${this.hasPointerApi("getPredictedEvents") ? "yes" : "no"} touch=${navigator.maxTouchPoints ?? 0} dpr=${(window.devicePixelRatio || 1).toFixed(2)} zoom=${this.zoom.toFixed(2)}`);
-    lines.push(`INPUT events=${this.devPointerEvents} rawupdates=${this.devRawUpdates} coalescedPts=${this.devCoalescedSamples} samplesFed=${this.devSamplesFed}`);
+    lines.push(`INPUT events=${this.devPointerEvents} rawupdates=${this.devRawUpdates} coalescedPts=${this.devCoalescedSamples} samplesFed=${this.devSamplesFed} predicted=${this.devPredictedSamples}`);
     lines.push(`RATE n=${rate.count}${rate.min !== null ? ` min=${rate.min.toFixed(1)}ms median=${rate.median?.toFixed(1)}ms mean=${rate.mean?.toFixed(1)}ms max=${rate.max?.toFixed(1)}ms` : ""}${rate.mean !== null && rate.mean > 0 ? ` (~${(1000 / rate.mean).toFixed(0)} Hz)` : ""}`);
     lines.push(`SPARSE threshold=${SPARSE_SAMPLE_INTERVAL_MS}ms flagged=${this.penInputSparse() ? "YES" : "no"}`);
     lines.push(`MODE tool=${this.state.tool} smooth=${this.state.pen.smooth ?? 0} (${(this.state.pen.smooth ?? 0) === 0 ? "Direct" : "modeler strength"})`);
@@ -2970,7 +3099,7 @@ function cloneNotebook(notebook: InkNotebook): InkNotebook {
 }
 
 function cloneStroke(stroke: InkStroke): InkStroke {
-  return { ...stroke, points: clonePoints(stroke.points) };
+  return { ...stroke, points: clonePoints(stroke.points), dynamics: stroke.dynamics ? { ...stroke.dynamics } : undefined };
 }
 
 function clonePage(page: InkPage): InkPage {
@@ -3183,6 +3312,9 @@ function isPointerCaptureError(error: unknown): boolean {
 function formatControlValue(name: string, value: number): string {
   const normalized = name.toLowerCase();
   if (normalized === "smooth") return value === 0 ? "Direct" : String(value);
+  if (normalized === "taper") return value === 0 ? "Round" : value === 100 ? "Sharp" : `${value}%`;
+  if (normalized === "pressure") return value === 0 ? "Off" : value === 100 ? "Full" : `${value}%`;
+  if (normalized === "speed width") return value === 0 ? "Off" : `${value}%`;
   return normalized.endsWith("opacity")
     ? `${Math.round(value * 100)}%`
     : `${value % 1 === 0 ? value.toFixed(0) : value.toFixed(1)} px`;
