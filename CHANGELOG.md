@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+## 0.7.0-beta.2 - 2026-10-06
+
+- Fix the Taper slider being effectively binary: any value above 0 collapsed the stroke ends to a sharp point. The taper now sets a width envelope that keeps (100 − taper)% of the width at each end — 1% is visually round, mid values narrow progressively, only 100 converges to a point.
+- Taper, pressure and speed now compose instead of compounding: the taper defines the width envelope and the pressure/speed response modulates the actual width within it, so a firmly pressed tapered tail widens the whole cone rather than staying a fixed thin needle (and the pressure limiter keeps overly hard presses in check).
+- Pressure mapping curve: a 2D multi-point editor in the pen brush panel (drag points, click to add, double-click to remove) remaps raw pen pressure before the response amplitude — boosts or tames the response where the hardware feels dull or twitchy. The curve is captured per stroke, sanitized (monotonic x, clamped y, identity stripped) and rendered in the sample preview.
+- Speed compensation profile is now quadratic and capped at −35%, so the pressure response stays clearly visible when both channels are active (previously the linear −65% masked pressure variation entirely).
+
 ## 0.7.0-beta.1 - 2026-10-06
 
 - iPad predicted events: where the WebView provides getPredictedEvents (iPadOS does), the live ink now draws a tapering ghost tip that follows the pen between samples — deep black at the ink junction fading to faint at the predicted position. Predicted points are speculative and never enter the stroke; they live only on the preview layer and are dropped at lift so the real tail takes over. The developer panel now counts predicted samples per session and per stroke, so availability on a given device is verifiable.
