@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+## 0.8.0-beta.2 - 2026-10-06
+
+- Fix the tool settings popover being unable to scroll vertically on iPad: the open-state rule forced block layout, which disabled the pinned-header flex column and left the scroll body unconstrained (clipped by the popover with no scrollbar anywhere). The open popover now uses the intended flex column — the sample-stroke preview stays pinned while the settings scroll.
+- Fix the color swatches stretching into wide ellipses on iPad: the swatches now carry a higher-specificity fixed 40px circle with aspect-ratio and a max-width cap, and the swatch row wraps.
+- Vertical-only touch panning moves to the scroll body (removed from the popover root), and the body gets legacy WKWebView momentum scrolling (-webkit-overflow-scrolling).
+
 ## 0.8.0-beta.1 - 2026-10-06
 
 - PDF handwriting: opening a PDF now creates a sidecar notes file under `A_pdfinkwrittern/` and opens the tab in the Ink Notes reading view — the page renders with saved handwriting on top, and ink input stays off until you explicitly toggle edit mode.
