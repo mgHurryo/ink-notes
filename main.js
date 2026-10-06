@@ -22561,7 +22561,7 @@ var BrushPopoverController = class {
     var _a;
     this.options = options;
     this.root = parent.createDiv({
-      cls: "ink-size-popover",
+      cls: options.extraClass ? `ink-size-popover ${options.extraClass}` : "ink-size-popover",
       attr: { role: "dialog", "aria-label": "Tool settings", "aria-hidden": "true" }
     });
     const header = this.root.createDiv({ cls: "ink-popover-header" });
@@ -28082,6 +28082,7 @@ var PdfInkView = class extends import_obsidian6.FileView {
     this.buildInkHost();
     this.registerDomEvent(scroller, "scroll", () => this.onViewportMotion(), { passive: true });
     this.registerDomEvent(window, "resize", () => this.requestRender(true));
+    if (this.canEdit()) void this.setMode("editing");
   }
   async onClose() {
     var _a, _b, _c, _d, _e;
@@ -28496,8 +28497,11 @@ var PdfInkView = class extends import_obsidian6.FileView {
       attr: { type: "button", "aria-label": "Brush settings" }
     });
     (0, import_obsidian6.setIcon)(button, "settings-2");
+    this.toolbarButtons.set("brush", button);
     button.addEventListener("click", () => this.brushPopover.toggle());
-    this.brushPopover = new BrushPopoverController(parent, {
+    this.brushPopover = new BrushPopoverController(this.root, {
+      // Extra class scopes the PDF-surface rules (paper canvases, spacing).
+      extraClass: "ink-pdf-brush-popover",
       tools: [
         { tool: "pen", label: "Pen", presets: [2, 4, 8], maximum: 40 },
         { tool: "highlighter", label: "Highlighter", presets: [8, 16, 24], maximum: 48 }
