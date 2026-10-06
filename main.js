@@ -26126,7 +26126,9 @@ var InkView = class extends import_obsidian2.FileView {
     if (!this.eraserCursor) return;
     const mode = ((_a = this.interaction) == null ? void 0 : _a.tool) === "eraser" ? (_b = this.interaction.eraserMode) != null ? _b : this.state.eraserMode : this.state.eraserMode;
     const eraserSize = ((_c = this.interaction) == null ? void 0 : _c.tool) === "eraser" ? (_d = this.interaction.eraserSize) != null ? _d : this.state.eraserSize : this.state.eraserSize;
-    this.eraserCursor.toggleClass("is-visible", this.state.tool === "eraser" && this.eraserPointerInside && this.eraserHoverPoint !== null);
+    const visible = this.state.tool === "eraser" && this.eraserPointerInside && this.eraserHoverPoint !== null;
+    console.log("[curve-debug] refreshEraserCursor tool=", this.state.tool, "inside=", this.eraserPointerInside, "hover=", this.eraserHoverPoint !== null, "->", visible);
+    this.eraserCursor.toggleClass("is-visible", visible);
     this.eraserCursor.toggleClass("is-square", mode === "square");
     this.eraserCursor.toggleClass("is-stroke", mode === "stroke");
     const size = mode === "stroke" ? STROKE_ERASER_HIT_RADIUS * 2 : eraserSize;

@@ -2007,7 +2007,9 @@ export class InkView extends FileView {
     if (!this.eraserCursor) return;
     const mode = this.interaction?.tool === "eraser" ? this.interaction.eraserMode ?? this.state.eraserMode : this.state.eraserMode;
     const eraserSize = this.interaction?.tool === "eraser" ? this.interaction.eraserSize ?? this.state.eraserSize : this.state.eraserSize;
-    this.eraserCursor.toggleClass("is-visible", this.state.tool === "eraser" && this.eraserPointerInside && this.eraserHoverPoint !== null);
+    const visible = this.state.tool === "eraser" && this.eraserPointerInside && this.eraserHoverPoint !== null;
+    console.log("[curve-debug] refreshEraserCursor tool=", this.state.tool, "inside=", this.eraserPointerInside, "hover=", this.eraserHoverPoint !== null, "->", visible);
+    this.eraserCursor.toggleClass("is-visible", visible);
     this.eraserCursor.toggleClass("is-square", mode === "square");
     this.eraserCursor.toggleClass("is-stroke", mode === "stroke");
     const size = mode === "stroke" ? STROKE_ERASER_HIT_RADIUS * 2 : eraserSize;
