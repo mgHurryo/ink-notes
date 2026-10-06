@@ -1081,6 +1081,7 @@ export class PdfInkView extends FileView {
         stroke.points.push(point);
         stroke.updatedAt = Date.now();
       }
+      this.lastPoint = point;
       this.requestRender();
     }
     // Predicted (speculative) tip points from the host: render-only ghost,
@@ -1522,13 +1523,16 @@ export class PdfInkView extends FileView {
 
   /** Draws the predicted tip as a tapering ghost: continuous with the stroke
    *  at the junction (deep black), fading to faint at the predicted position.
+   *  Anchored at the live stroke tail — anchoring anywhere else sweeps faint
+   *  segments from the stroke's start to the pen on every frame.
    *  Preview-layer only; the stored stroke never includes these points. */
   private drawPredictedGhostTip(ctx: CanvasRenderingContext2D, stroke: InkStroke): void {
-    if (!this.predictedTip || this.predictedTip.length === 0 || !this.lastPoint) return;
+    const tail = stroke.points[stroke.points.length - 1];
+    if (!this.predictedTip || this.predictedTip.length === 0 || !tail) return;
     const gain = clampPercent(stroke.dynamics?.pressure, 100) / 100;
-    const mapped = samplePressureCurve(this.lastPoint.pressure, normalizePressureCurve(stroke.dynamics?.pressureCurve));
+    const mapped = samplePressureCurve(tail.pressure, normalizePressureCurve(stroke.dynamics?.pressureCurve));
     const baseHalf = Math.max(0.6, (stroke.width * (0.55 + 0.75 * (0.5 + (mapped - 0.5) * gain))) / 2);
-    let previous = { x: this.lastPoint.x * this.canvasLogicalWidth, y: this.lastPoint.y * this.canvasLogicalHeight };
+    let previous = { x: tail.x * this.canvasLogicalWidth, y: tail.y * this.canvasLogicalHeight };
     const segments = this.predictedTip.length;
     for (let index = 0; index < segments; index++) {
       const point = { x: this.predictedTip[index].x * this.canvasLogicalWidth, y: this.predictedTip[index].y * this.canvasLogicalHeight };
