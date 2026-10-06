@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+## 0.8.0-beta.3 - 2026-10-06
+
+- Polish the tool settings popover from device feedback: the duplicated per-panel "Tool settings" header is removed (the pinned header alone carries the title and live size), the scroll body keeps a visible gap between the controls and the scrollbar, and the sample-stroke and pressure-curve canvases are pinned to a paper-white background so ink previews stay legible in dark mode (previously dark ink rendered on the dark theme background and disappeared).
+- Move the developer diagnostics toggle from the toolbar into the Page options (···) menu — the toolbar is now fully icon-only, and the diagnostics panel, Export/Copy JSON (also in this menu and the Obsidian settings tab) remain available to everyone.
+
 ## 0.8.0-beta.2 - 2026-10-06
 
 - Fix the tool settings popover being unable to scroll vertically on iPad: the open-state rule forced block layout, which disabled the pinned-header flex column and left the scroll body unconstrained (clipped by the popover with no scrollbar anywhere). The open popover now uses the intended flex column — the sample-stroke preview stays pinned while the settings scroll.
