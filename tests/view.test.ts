@@ -261,20 +261,22 @@ describe("consecutive handwriting input", () => {
     expectStrokeSpan(internal.notebook.pages[0].strokes[0].points, 0.1, 0.2);
   });
 
-  it("models short moves with flowing pressure and inherits the lift pressure", () => {
+  it("models short moves with flowing pressure and clamps a rising lift reading", () => {
     const { internal } = setup();
     internal.onPointerDown(pointer(10, { clientY: 20, pressure: 0.2 }));
     internal.onPointerMove(pointer(10.25, { clientY: 20, pressure: 0.8 }));
     internal.onPointerMove(pointer(12, { clientY: 20, pressure: 0.4 }));
-    internal.onPointerUp(pointer(12, { clientY: 22, pressure: 0.6 }));
+    // iPadOS re-reports a higher pressure on the lift sample at the frozen
+    // tail position; the tail must keep the contact's fading pressure.
+    internal.onPointerUp(pointer(12.05, { clientY: 22, pressure: 0.6 }));
     const points = internal.notebook.pages[0].strokes[0].points;
     // The stroke starts exactly on the down sample and ends on the lift
     // sample; pressure flows through the modeler instead of resetting.
     expect(points[0]).toMatchObject({ x: 0.1, y: 0.2, pressure: 0.2 });
     const last = points[points.length - 1];
-    expect(last.x).toBeCloseTo(0.12, 3);
+    expect(last.x).toBeCloseTo(0.121, 2);
     expect(last.y).toBeCloseTo(0.22, 3);
-    expect(last.pressure).toBeCloseTo(0.6, 2);
+    expect(last.pressure).toBeCloseTo(0.4, 2);
     expect(points.length).toBeGreaterThan(4);
   });
 
@@ -1219,5 +1221,70 @@ describe("modeled tail and sparse history", () => {
     }
     internal.onPointerDown(pointer(10, { timeStamp: 6_000 }));
     expect(internal.penModeler).toBeNull();
+  });
+});
+
+describe("lift pressure artifact", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", globalThis);
+  });
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function lastStroke(internal: ViewInternals): InkStroke {
+    const strokes = internal.notebook.pages[0].strokes;
+    return strokes[strokes.length - 1];
+  }
+
+  it("keeps the modeled tail at the fading pressure when the lift spikes and skids", () => {
+    const { internal } = setup();
+    internal.queueWorkerOperation = vi.fn();
+    // Simulated iPadOS stream: decelerating tail, fading pressure, then a
+    // lift that skids 2px forward while re-reporting a much higher pressure.
+    internal.onPointerDown(pointer(10, { pressure: 0.7 }));
+    internal.onPointerMove(pointer(14, { pressure: 0.5 }));
+    internal.onPointerMove(pointer(16, { pressure: 0.3 }));
+    internal.onPointerMove(pointer(16.2, { pressure: 0.14 }));
+    internal.onPointerUp(pointer(16.4, { pressure: 0.76 }));
+
+    const points = lastStroke(internal).points;
+    expect(points.length).toBeGreaterThan(2);
+    for (const point of points) expect(point.pressure).toBeLessThanOrEqual(0.71);
+    const last = points[points.length - 1];
+    expect(last.pressure).toBeLessThanOrEqual(0.15);
+    expect(last.x).toBeGreaterThan(0.16);
+  });
+
+  it("keeps the raw tail at the fading pressure when the lift spikes and skids", () => {
+    const { internal } = setup();
+    internal.state.pen.smooth = 0;
+    internal.queueWorkerOperation = vi.fn();
+    internal.onPointerDown(pointer(10, { pressure: 0.7 }));
+    internal.onPointerMove(pointer(14, { pressure: 0.5 }));
+    internal.onPointerMove(pointer(16, { pressure: 0.3 }));
+    internal.onPointerMove(pointer(16.2, { pressure: 0.14 }));
+    internal.onPointerUp(pointer(16.4, { pressure: 0.76 }));
+
+    const points = lastStroke(internal).points;
+    const last = points[points.length - 1];
+    expect(last.pressure).toBeLessThanOrEqual(0.15);
+    // The skidding lift sample is still stored (its position moved).
+    expect(last.x).toBeCloseTo(0.164, 2);
+  });
+
+  it("lets a falling lift pressure flow through unchanged", () => {
+    const { internal } = setup();
+    internal.state.pen.smooth = 0;
+    internal.queueWorkerOperation = vi.fn();
+    internal.onPointerDown(pointer(10, { pressure: 0.7 }));
+    internal.onPointerMove(pointer(14, { pressure: 0.5 }));
+    internal.onPointerUp(pointer(18, { pressure: 0.2 }));
+
+    const points = lastStroke(internal).points;
+    expect(points[points.length - 1].pressure).toBeCloseTo(0.2, 2);
   });
 });

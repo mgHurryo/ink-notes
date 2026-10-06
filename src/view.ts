@@ -1315,11 +1315,13 @@ export class InkView extends FileView {
     if (interaction.tool === "pen" && this.penModeler && !this.penModeler.fallback) {
       changed = this.appendModeledPenPoints(feed, rect, phase);
     } else {
-      for (const sample of feed) {
+      for (let index = 0; index < feed.length; index++) {
+        const sample = feed[index];
         const point = this.toPoint(sample, rect);
         if (interaction.tool === "eraser") {
           changed = this.eraseAt(point, page, interaction.eraserMode, interaction.eraserSize) || changed;
         } else if (this.activeStroke && this.lastPoint) {
+          clampLiftPressure(point, phase === "up" && index === feed.length - 1 ? this.lastPoint : null);
           // Raw capture: every sample is stored exactly as delivered. Repeated
           // positions from duplicate input events still must not enter the stroke.
           if (distance(point, this.lastPoint) <= 0) continue;
@@ -1352,8 +1354,15 @@ export class InkView extends FileView {
       // Lift events (and some coalesced samples) report pressure 0. Inherit
       // the most recent raw pressure, not the modeled tip's projected
       // pressure: the modeled tip lags the pen and would drag a stale value
-      // into the tail.
-      const rawPressure = sample.pressure > 0 ? sample.pressure : capture.lastRawPressure;
+      // into the tail. iPadOS additionally re-reports a fresh, often higher
+      // pressure on the lift sample at the frozen tail position; a rising
+      // reading while the pen is leaving the surface is that artifact, and
+      // clamping to the previous sample keeps the tail from fattening into
+      // a dot.
+      const reportedPressure = sample.pressure > 0 ? sample.pressure : capture.lastRawPressure;
+      const rawPressure = isLift && reportedPressure > (capture.lastRawPressure ?? reportedPressure)
+        ? capture.lastRawPressure ?? reportedPressure
+        : reportedPressure;
       capture.lastRawPressure = rawPressure;
       const input: StrokeModelInput = {
         eventType: isLift ? "up" : "move",
@@ -2846,6 +2855,19 @@ function stylusTouchSample(touch: StylusTouch, timeStamp?: number): InkPointerSa
     // per-event, which is exactly the per-sample time for stylus input.
     timeStamp: typeof timeStamp === "number" && Number.isFinite(timeStamp) ? timeStamp : undefined,
   };
+}
+
+/**
+ * iPadOS re-reports a fresh, frequently higher pressure on the lift sample at
+ * the frozen tail position (measured in device diagnostics: the fading tail
+ * reads 0.01-0.33, the lift jumps back to 0.36-0.76). Contact force can only
+ * fall while the pen is leaving the surface, so a rising lift reading is that
+ * artifact; clamping to the previous point keeps the rendered tail from
+ * fattening into a round dot past the stroke.
+ */
+function clampLiftPressure(point: InkPoint, previous: InkPoint | null): void {
+  if (!previous || point.pressure <= previous.pressure) return;
+  point.pressure = previous.pressure;
 }
 
 function penSampleTimeMillis(sample: InkPointerSample): number {
