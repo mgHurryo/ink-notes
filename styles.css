@@ -684,3 +684,16 @@
   color: var(--text-normal);
   user-select: text;
 }
+
+/* Pressure mapping curve editor (pen panel). Pointer events drive the
+   control points, so the canvas must own its gestures. */
+.ink-curve-editor { margin: 4px 0 8px; }
+.ink-curve-editor-canvas {
+  display: block;
+  width: 100%;
+  height: 110px;
+  border-radius: 8px;
+  background: var(--ink-panel, transparent);
+  touch-action: none;
+  cursor: crosshair;
+}
