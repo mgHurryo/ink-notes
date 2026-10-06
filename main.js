@@ -28080,8 +28080,11 @@ var PdfInkView = class extends import_obsidian6.FileView {
     this.textLayer = this.pageWrap.createDiv({ cls: "ink-pdf-text-layer" });
     this.buildInkHost();
     this.registerDomEvent(scroller, "scroll", () => this.onViewportMotion(), { passive: true });
-    this.registerDomEvent(window, "resize", () => this.requestRender(true));
-    if (this.canEdit()) void this.setMode("editing");
+    this.registerDomEvent(window, "resize", () => {
+      var _a;
+      (_a = this.brushPopover) == null ? void 0 : _a.position();
+      this.requestRender(true);
+    });
   }
   async onClose() {
     var _a, _b, _c, _d, _e;
@@ -28391,6 +28394,7 @@ var PdfInkView = class extends import_obsidian6.FileView {
     this.disposeWorkerSession();
     this.initializeWorkerSession();
     this.maybeOfferRecoveryChoice();
+    if (this.mode === "reading" && this.canEdit()) void this.setMode("editing");
   }
   async writeSidecar(file, expectedRaw, sidecar) {
     try {
@@ -28497,7 +28501,28 @@ var PdfInkView = class extends import_obsidian6.FileView {
     });
     (0, import_obsidian6.setIcon)(button, "settings-2");
     this.toolbarButtons.set("brush", button);
-    button.addEventListener("click", () => this.brushPopover.toggle());
+    button.addEventListener("click", (event) => {
+      event.stopPropagation();
+      this.brushPopover.toggle();
+    });
+    this.registerDomEvent(document, "pointerdown", (event) => {
+      var _a;
+      const target = event.target;
+      if (!((_a = this.brushPopover) == null ? void 0 : _a.isOpen)) return;
+      if (target && (this.brushPopover.root.contains(target) || button.contains(target))) return;
+      this.brushPopover.close();
+    });
+    this.registerDomEvent(document, "keydown", (event) => {
+      var _a;
+      if (event.key === "Escape" && ((_a = this.brushPopover) == null ? void 0 : _a.isOpen)) {
+        this.brushPopover.close();
+        button.focus();
+      }
+    });
+    this.registerDomEvent(window, "scroll", () => {
+      var _a;
+      return (_a = this.brushPopover) == null ? void 0 : _a.position();
+    }, true);
     this.brushPopover = new BrushPopoverController(this.root, {
       // Extra class scopes the PDF-surface rules (paper canvases, spacing).
       extraClass: "ink-pdf-brush-popover",
