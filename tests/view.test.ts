@@ -47,7 +47,7 @@ interface ViewInternals {
   queueWorkerOperation(operation: NotebookOperation, transfer?: Transferable[], onApplied?: (response: InkWorkerResponse) => void): void;
   state: {
     tool: string;
-    pen: { color: string; width: number; opacity: number; smooth?: number };
+    pen: { color: string; width: number; opacity: number; smooth?: number; taper?: number; pressureGain?: number; speedGain?: number };
     highlighter: { color: string; width: number; opacity: number };
     eraserMode: "stroke" | "circle" | "square";
     eraserSize: number;
@@ -1018,6 +1018,68 @@ describe("stroke finalization", () => {
     }
     const operations = queuedOperations(internal);
     expect(operations.filter((operation) => operation.type === "complete-stroke")).toHaveLength(25);
+  });
+});
+
+
+describe("predicted events and stroke dynamics", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", globalThis);
+  });
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  function lastStroke(internal: ViewInternals): InkStroke {
+    const strokes = internal.notebook.pages[0].strokes;
+    return strokes[strokes.length - 1];
+  }
+
+  it("never stores predicted points and drops them at lift", () => {
+    const { internal } = setup();
+    internal.state.pen.smooth = 0;
+    internal.queueWorkerOperation = vi.fn();
+    const predicted = [pointer(12.5, { timeStamp: (pointerClock + 8) }), pointer(14, { timeStamp: (pointerClock + 16) })] as unknown as PointerEvent[];
+    internal.onPointerDown(pointer(10));
+    internal.onPointerMove(pointer(12, { getPredictedEvents: () => predicted } as Partial<PointerEvent>));
+    internal.onPointerUp(pointer(16));
+
+    const stored = lastStroke(internal).points.map((point) => Math.round(point.x * 100));
+    expect(stored).toEqual(expect.arrayContaining([10, 12, 16]));
+    expect(stored).not.toContain(13);
+    expect(stored).not.toContain(14);
+  });
+
+  it("captures the pen dynamics with the stroke", () => {
+    const { internal } = setup();
+    internal.state.pen.smooth = 30;
+    internal.state.pen.taper = 65;
+    internal.state.pen.pressureGain = 40;
+    internal.state.pen.speedGain = 25;
+    internal.queueWorkerOperation = vi.fn();
+    internal.onPointerDown(pointer(10));
+    internal.onPointerUp(pointer(20));
+
+    const stroke = lastStroke(internal);
+    expect(stroke.dynamics).toEqual({ taper: 65, pressure: 40, speed: 25 });
+  });
+
+  it("defaults dynamics for untouched settings", () => {
+    const { internal } = setup();
+    internal.state.pen.smooth = 0;
+    internal.state.pen.taper = 0;
+    internal.state.pen.pressureGain = 100;
+    internal.state.pen.speedGain = 0;
+    internal.queueWorkerOperation = vi.fn();
+    internal.onPointerDown(pointer(10));
+    internal.onPointerUp(pointer(20));
+
+    // Runtime strokes always carry the dynamics object; the storage layer
+    // strips all-default dynamics on save (normalizeDynamics).
+    expect(lastStroke(internal).dynamics).toEqual({ taper: 0, pressure: 100, speed: 0 });
   });
 });
 
