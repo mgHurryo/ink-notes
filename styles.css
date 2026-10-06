@@ -1,4 +1,9 @@
-.ink-notes-view {
+/* Shared design tokens. The PDF view consumes the same variables, so they
+   must resolve there too - scoping them to .ink-notes-view only left every
+   var() in the PDF toolbar and popover unresolved (transparent panels,
+   unthemed icons). */
+.ink-notes-view,
+.ink-pdf-view {
   --ink-toolbar-height: 56px;
   --ink-touch-target: 44px;
   --ink-workspace: var(--background-primary, #f5f6f8);
@@ -16,6 +21,9 @@
   --ink-radius-md: 12px;
   --ink-shadow-panel: 0 18px 50px rgb(0 0 0 / 22%), 0 2px 8px rgb(0 0 0 / 12%);
   --ink-shadow-paper: 0 1px 2px rgb(0 0 0 / 10%), 0 12px 34px rgb(0 0 0 / 13%);
+}
+
+.ink-notes-view {
   container: ink-editor / inline-size;
   display: flex;
   flex-direction: column;
@@ -32,7 +40,10 @@
 
 .ink-notes-view *,
 .ink-notes-view *::before,
-.ink-notes-view *::after { box-sizing: border-box; }
+.ink-notes-view *::after,
+.ink-pdf-view *,
+.ink-pdf-view *::before,
+.ink-pdf-view *::after { box-sizing: border-box; }
 
 .ink-toolbar {
   display: flex;
@@ -72,14 +83,14 @@
 .ink-toolbar-section-document { margin-right: 0; }
 .ink-toolbar-section-history .ink-toolbar-section-controls { gap: 0; }
 
-.ink-notes-view button {
+:is(.ink-notes-view, .ink-pdf-view) button {
   font: inherit;
   cursor: pointer;
   box-shadow: none;
   -webkit-tap-highlight-color: transparent;
 }
 
-.ink-notes-view :is(.ink-icon-button, .ink-tool-button, .ink-size-button, .ink-width-preset) {
+:is(.ink-notes-view, .ink-pdf-view) :is(.ink-icon-button, .ink-tool-button, .ink-size-button, .ink-width-preset) {
   display: inline-flex;
   flex: 0 0 var(--ink-touch-target);
   align-items: center;
@@ -96,22 +107,22 @@
   transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
 }
 
-.ink-notes-view :is(.ink-icon-button, .ink-tool-button, .ink-size-button, .ink-width-preset):hover:not(:disabled) {
+:is(.ink-notes-view, .ink-pdf-view) :is(.ink-icon-button, .ink-tool-button, .ink-size-button, .ink-width-preset):hover:not(:disabled) {
   border-color: color-mix(in srgb, var(--ink-border) 70%, transparent);
   background: var(--ink-hover);
 }
 
-.ink-notes-view :is(.ink-icon-button, .ink-tool-button, .ink-size-button, .ink-width-preset):active:not(:disabled) {
+:is(.ink-notes-view, .ink-pdf-view) :is(.ink-icon-button, .ink-tool-button, .ink-size-button, .ink-width-preset):active:not(:disabled) {
   background: color-mix(in srgb, var(--ink-hover) 75%, var(--ink-accent) 25%);
 }
 
-.ink-notes-view :is(button, input):focus-visible,
+:is(.ink-notes-view, .ink-pdf-view) :is(button, input):focus-visible,
 .ink-custom-color:focus-within {
   outline: 2px solid var(--ink-accent);
   outline-offset: 2px;
 }
 
-.ink-notes-view button:disabled {
+:is(.ink-notes-view, .ink-pdf-view) button:disabled {
   opacity: .32;
   cursor: default;
 }
@@ -306,7 +317,7 @@
 .ink-toolbar-section-pen-widths .ink-toolbar-section-controls,
 .ink-toolbar-section-highlighter-widths .ink-toolbar-section-controls { gap: 6px; }
 
-.ink-notes-view .ink-width-preset {
+:is(.ink-notes-view, .ink-pdf-view) .ink-width-preset {
   flex: 1 1 0;
   width: auto;
   border-color: var(--ink-border);
@@ -343,7 +354,7 @@
   min-width: 0;
 }
 
-.ink-notes-view .ink-color-control .ink-color-swatch {
+:is(.ink-notes-view, .ink-pdf-view) .ink-color-control .ink-color-swatch {
   position: relative;
   flex: 0 0 40px;
   width: 40px;
@@ -826,9 +837,6 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 32px;
-  height: 32px;
-  padding: 0;
   border: 1px solid transparent;
   border-radius: var(--ink-radius-sm);
   color: var(--ink-text);
