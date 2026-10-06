@@ -27,6 +27,28 @@ var import_obsidian4 = require("obsidian");
 // src/view.ts
 var import_obsidian = require("obsidian");
 
+// src/diagnostics.ts
+function intervalStats(intervals) {
+  if (intervals.length === 0) return { count: 0, min: null, median: null, mean: null, max: null };
+  const sorted = [...intervals].sort((a2, b2) => a2 - b2);
+  const middle = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+  const total = sorted.reduce((sum, value) => sum + value, 0);
+  return {
+    count: sorted.length,
+    min: sorted[0],
+    median,
+    mean: total / sorted.length,
+    max: sorted[sorted.length - 1]
+  };
+}
+var MAX_RECORDED_STROKES = 8;
+var MAX_RAW_POINT_SAMPLES = 8192;
+function pushStrokeRecord(records, record) {
+  records.push(record);
+  if (records.length > MAX_RECORDED_STROKES) records.splice(0, records.length - MAX_RECORDED_STROKES);
+}
+
 // src/model.ts
 var DEFAULT_PAGE_WIDTH = 1600;
 var DEFAULT_PAGE_HEIGHT = 2200;
@@ -1950,6 +1972,17 @@ var InkView = class extends import_obsidian.FileView {
      *  the sparse-input auto-intervention. */
     this.penSampleIntervals = [];
     this.lastPenSampleTime = null;
+    /** Developer diagnostics: ring buffer of recent strokes plus live counters. */
+    this.strokeRecords = [];
+    this.currentStrokeRecord = null;
+    this.strokeRecordCounter = 0;
+    this.pendingLiftPagePx = null;
+    this.devPanel = null;
+    this.devPointerEvents = 0;
+    this.devRawUpdates = 0;
+    this.devCoalescedSamples = 0;
+    this.devSamplesFed = 0;
+    this.devLastPointerType = null;
     this.confirmedStrokeOutlines = /* @__PURE__ */ new Map();
     this.pendingInkStrokes = [];
     this.committingInkStrokes = null;
@@ -2021,6 +2054,7 @@ var InkView = class extends import_obsidian.FileView {
   async onClose() {
     var _a, _b, _c, _d;
     this.pageNavigationGeneration += 1;
+    this.closeDevPanel();
     if (this.renderFrame !== null) window.cancelAnimationFrame(this.renderFrame);
     this.renderFrame = null;
     if (this.zoomRenderTimer !== void 0) window.clearTimeout(this.zoomRenderTimer);
@@ -2118,6 +2152,7 @@ var InkView = class extends import_obsidian.FileView {
     this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
     const pages = this.addToolbarSection(group, "Document");
     this.addIconButton(pages, "more-horizontal", "Page options", (event) => this.openPageMenu(event));
+    this.addIconButton(pages, "activity", "Developer diagnostics", () => this.toggleDevPanel());
     this.renderToolPopover();
     this.updateToolButtons();
   }
@@ -2798,6 +2833,8 @@ var InkView = class extends import_obsidian.FileView {
   }
   onPointerDown(event, source = "pointer") {
     var _a, _b;
+    this.devPointerEvents += 1;
+    this.devLastPointerType = event.pointerType || this.devLastPointerType;
     if (event.pointerType === "touch" || source === "pointer" && event.pointerType === "pen" && this.stylusTouchInput) return;
     this.pageNavigationGeneration += 1;
     if (this.activePointerId !== null) this.finishPointerInput(false);
@@ -2870,7 +2907,11 @@ var InkView = class extends import_obsidian.FileView {
       updatedAt: Date.now()
     };
     this.workerStrokePointIndex = 1;
-    if (tool === "pen" && this.shouldModelPenStroke()) this.startPenModeler(event, point, this.penModelerParams());
+    if (tool === "pen") {
+      const decision = this.penModelerDecision();
+      if (decision.engaged) this.startPenModeler(event, point, this.penModelerParams());
+      this.beginStrokeRecord(decision);
+    }
     this.queueWorkerOperation({
       type: "start-stroke",
       pageId: page.id,
@@ -2892,6 +2933,7 @@ var InkView = class extends import_obsidian.FileView {
   }
   onPointerMove(event, source = "pointer") {
     var _a, _b, _c, _d;
+    this.devPointerEvents += 1;
     if (event.pointerType === "touch") return;
     if (this.interaction && ((_a = this.interaction.source) != null ? _a : "pointer") !== source) return;
     const rect = this.pageElement.getBoundingClientRect();
@@ -2911,6 +2953,9 @@ var InkView = class extends import_obsidian.FileView {
    *  instead of waiting for the next frame-aligned pointermove batch. */
   onPointerRawUpdate(event) {
     var _a;
+    this.devPointerEvents += 1;
+    this.devRawUpdates += 1;
+    this.devLastPointerType = event.pointerType || this.devLastPointerType;
     if (this.activePointerId === null || event.pointerId !== this.activePointerId) return;
     const interaction = this.interaction;
     if (!interaction || ((_a = interaction.source) != null ? _a : "pointer") !== "pointer") return;
@@ -2925,10 +2970,12 @@ var InkView = class extends import_obsidian.FileView {
   }
   onPointerUp(event, source = "pointer") {
     var _a, _b;
+    this.devPointerEvents += 1;
     if (this.activePointerId !== event.pointerId || ((_b = (_a = this.interaction) == null ? void 0 : _a.source) != null ? _b : "pointer") !== source) return;
     const rect = this.pageElement.getBoundingClientRect();
     const point = this.toPoint(event, rect);
     const inside = pointInsideRect(event, rect);
+    this.pendingLiftPagePx = { x: point.x * this.notebook.pageWidth, y: point.y * this.notebook.pageHeight };
     this.applyPointerSamples(event, rect, "up");
     try {
       if (source === "pointer") this.releasePointer(event.pointerId);
@@ -2939,6 +2986,7 @@ var InkView = class extends import_obsidian.FileView {
   }
   onPointerCancel(event, source = "pointer") {
     var _a, _b;
+    this.devPointerEvents += 1;
     if (this.activePointerId !== event.pointerId || ((_b = (_a = this.interaction) == null ? void 0 : _a.source) != null ? _b : "pointer") !== source) return;
     this.eraserPointerInside = false;
     this.finishPointerInput(false);
@@ -2969,6 +3017,21 @@ var InkView = class extends import_obsidian.FileView {
       if (feed.length === 0) return;
     }
     this.recordPenSampleIntervals(feed);
+    this.devSamplesFed += feed.length;
+    const record = this.currentStrokeRecord;
+    if (record) {
+      record.rawSamples += feed.length;
+      if (this.devPanel && record.rawPointSamples) {
+        for (const sample of feed) {
+          if (record.rawPointSamples.length >= MAX_RAW_POINT_SAMPLES) {
+            record.rawTruncated = true;
+            break;
+          }
+          const samplePoint = this.toPoint(sample, rect);
+          record.rawPointSamples.push([samplePoint.x, samplePoint.y, samplePoint.pressure, samplePoint.t]);
+        }
+      }
+    }
     let changed = false;
     if (interaction.tool === "pen" && this.penModeler && !this.penModeler.fallback) {
       changed = this.appendModeledPenPoints(feed, rect, phase);
@@ -3070,9 +3133,55 @@ var InkView = class extends import_obsidian.FileView {
   /** Ink stays direct (raw samples, probe-style) unless the user picked a
    *  smooth strength or the device itself samples too sparsely. */
   shouldModelPenStroke() {
+    return this.penModelerDecision().engaged;
+  }
+  penModelerDecision() {
     var _a;
-    if (((_a = this.state.pen.smooth) != null ? _a : 0) > 0) return true;
-    return this.penInputSparse();
+    const smooth = (_a = this.state.pen.smooth) != null ? _a : 0;
+    if (smooth > 0) return { engaged: true, reason: "smooth" };
+    if (this.penInputSparse()) return { engaged: true, reason: "sparse" };
+    return { engaged: false, reason: "direct" };
+  }
+  beginStrokeRecord(decision) {
+    var _a;
+    if (this.currentStrokeRecord) this.finalizeStrokeRecord();
+    this.currentStrokeRecord = {
+      index: ++this.strokeRecordCounter,
+      startedAt: Date.now(),
+      durationMs: null,
+      tool: "pen",
+      smooth: (_a = this.state.pen.smooth) != null ? _a : 0,
+      engaged: decision.engaged,
+      reason: decision.reason,
+      fallback: false,
+      rawSamples: 0,
+      pointsStored: 0,
+      intervals: intervalStats(this.penSampleIntervals),
+      liftDistancePx: null,
+      // Delivered samples are retained only while the panel can show or
+      // export them; normal writing keeps no second copy of the input.
+      ...this.devPanel ? { rawPointSamples: [] } : {}
+    };
+  }
+  finalizeStrokeRecord() {
+    var _a, _b, _c, _d;
+    const record = this.currentStrokeRecord;
+    this.currentStrokeRecord = null;
+    if (!record) return;
+    record.durationMs = Date.now() - record.startedAt;
+    record.pointsStored = (_b = (_a = this.activeStroke) == null ? void 0 : _a.points.length) != null ? _b : record.pointsStored;
+    record.fallback = (_d = (_c = this.penModeler) == null ? void 0 : _c.fallback) != null ? _d : false;
+    record.intervals = intervalStats(this.penSampleIntervals);
+    const lift = this.pendingLiftPagePx;
+    this.pendingLiftPagePx = null;
+    const lastPoint = this.activeStroke && this.activeStroke.points.length > 0 ? this.activeStroke.points[this.activeStroke.points.length - 1] : null;
+    if (lift && lastPoint) {
+      record.liftDistancePx = Math.hypot(
+        lastPoint.x * this.notebook.pageWidth - lift.x,
+        lastPoint.y * this.notebook.pageHeight - lift.y
+      );
+    }
+    pushStrokeRecord(this.strokeRecords, record);
   }
   /** Sparse devices get the proven default tuning; an explicit strength maps
    *  through the slider curve. */
@@ -3131,6 +3240,8 @@ var InkView = class extends import_obsidian.FileView {
   }
   pointerSamples(event) {
     const coalesced = typeof event.getCoalescedEvents === "function" ? event.getCoalescedEvents() : [];
+    this.devCoalescedSamples += coalesced.length;
+    this.devLastPointerType = event.pointerType || this.devLastPointerType;
     return coalesced.length > 0 ? [...coalesced, event] : [event];
   }
   applyLassoPoint(point) {
@@ -3188,6 +3299,7 @@ var InkView = class extends import_obsidian.FileView {
   }
   finishPointerInput(_includeFinalSample = false) {
     this.flushPenModeler();
+    this.finalizeStrokeRecord();
     const interaction = this.interaction;
     if (!interaction) return;
     const page = this.pageById(interaction.pageId);
@@ -3477,6 +3589,108 @@ var InkView = class extends import_obsidian.FileView {
     this.eraserHoverPoint = point;
     this.eraserPointerInside = inside;
     this.refreshEraserCursor();
+  }
+  /** Developer diagnostics overlay: live capture telemetry plus per-stroke
+   *  records, exportable as JSON. Read-only; never mutates ink state. */
+  toggleDevPanel() {
+    if (this.devPanel) {
+      this.closeDevPanel();
+      return;
+    }
+    const panel = this.root.createDiv({ cls: "ink-dev-panel" });
+    const actions = panel.createDiv({ cls: "ink-dev-panel-actions" });
+    const exportButton = actions.createEl("button", { text: "Export JSON", attr: { type: "button" } });
+    exportButton.addEventListener("click", () => this.exportDiagnosticsJson(false));
+    const copyButton = actions.createEl("button", { text: "Copy JSON", attr: { type: "button" } });
+    copyButton.addEventListener("click", () => this.exportDiagnosticsJson(true));
+    panel.createDiv({ cls: "ink-dev-panel-output" });
+    this.devPanel = panel;
+    this.devPanelRefreshTimer = window.setInterval(() => this.refreshDevPanel(), 250);
+    this.refreshDevPanel();
+  }
+  closeDevPanel() {
+    var _a;
+    if (this.devPanelRefreshTimer !== void 0) {
+      window.clearInterval(this.devPanelRefreshTimer);
+      this.devPanelRefreshTimer = void 0;
+    }
+    (_a = this.devPanel) == null ? void 0 : _a.remove();
+    this.devPanel = null;
+  }
+  devVersion() {
+    var _a, _b, _c, _d;
+    const plugins = this.app.plugins;
+    return (_d = (_c = (_b = (_a = plugins == null ? void 0 : plugins.getPlugin) == null ? void 0 : _a.call(plugins, "ink-notes")) == null ? void 0 : _b.manifest) == null ? void 0 : _c.version) != null ? _d : "unknown";
+  }
+  hasPointerApi(name) {
+    return typeof PointerEvent !== "undefined" && typeof PointerEvent.prototype[name] === "function";
+  }
+  refreshDevPanel() {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+    const output = (_a = this.devPanel) == null ? void 0 : _a.querySelector(".ink-dev-panel-output");
+    if (!output) return;
+    const rate = intervalStats(this.penSampleIntervals);
+    const lines = [];
+    lines.push(`Ink Notes dev \u2014 build ${this.devVersion()}`);
+    lines.push(`ENV pointer=${(_b = this.devLastPointerType) != null ? _b : "-"} coalesced=${this.hasPointerApi("getCoalescedEvents") ? "yes" : "no"} rawupdate=${"onpointerrawupdate" in window ? "yes" : "no"} predicted=${this.hasPointerApi("getPredictedEvents") ? "yes" : "no"} touch=${(_c = navigator.maxTouchPoints) != null ? _c : 0} dpr=${(window.devicePixelRatio || 1).toFixed(2)} zoom=${this.zoom.toFixed(2)}`);
+    lines.push(`INPUT events=${this.devPointerEvents} rawupdates=${this.devRawUpdates} coalescedPts=${this.devCoalescedSamples} samplesFed=${this.devSamplesFed}`);
+    lines.push(`RATE n=${rate.count}${rate.min !== null ? ` min=${rate.min.toFixed(1)}ms median=${(_d = rate.median) == null ? void 0 : _d.toFixed(1)}ms mean=${(_e = rate.mean) == null ? void 0 : _e.toFixed(1)}ms max=${(_f = rate.max) == null ? void 0 : _f.toFixed(1)}ms` : ""}${rate.mean !== null && rate.mean > 0 ? ` (~${(1e3 / rate.mean).toFixed(0)} Hz)` : ""}`);
+    lines.push(`SPARSE threshold=${SPARSE_SAMPLE_INTERVAL_MS}ms flagged=${this.penInputSparse() ? "YES" : "no"}`);
+    lines.push(`MODE tool=${this.state.tool} smooth=${(_g = this.state.pen.smooth) != null ? _g : 0} (${((_h = this.state.pen.smooth) != null ? _h : 0) === 0 ? "Direct" : "modeler strength"})`);
+    const current = this.currentStrokeRecord;
+    if (current) {
+      lines.push(`ACTIVE #${current.index} engaged=${current.engaged ? current.reason : "no"} raw=${current.rawSamples} stored=${(_j = (_i = this.activeStroke) == null ? void 0 : _i.points.length) != null ? _j : 0} fallback=${current.fallback ? "YES" : "no"}`);
+    }
+    if (this.strokeRecords.length > 0) lines.push("STROKES (most recent last):");
+    for (const record of this.strokeRecords) {
+      const intervals = record.intervals.median !== null ? ` median=${record.intervals.median.toFixed(1)}ms` : "";
+      const lift = record.liftDistancePx !== null ? ` lift\u0394=${record.liftDistancePx.toFixed(2)}px` : "";
+      lines.push(`#${record.index} ${record.engaged ? record.reason : "direct"} raw=${record.rawSamples} stored=${record.pointsStored} ${(_k = record.durationMs) != null ? _k : "-"}ms fallback=${record.fallback ? "YES" : "no"}${intervals}${lift}${record.smooth > 0 ? ` smooth=${record.smooth}` : ""}`);
+    }
+    output.setText(lines.join("\n"));
+  }
+  exportDiagnosticsJson(toClipboard) {
+    var _a, _b;
+    const environment = {
+      version: this.devVersion(),
+      lastPointerType: this.devLastPointerType,
+      coalescedApi: this.hasPointerApi("getCoalescedEvents"),
+      rawUpdateApi: "onpointerrawupdate" in window,
+      predictedApi: this.hasPointerApi("getPredictedEvents"),
+      maxTouchPoints: (_a = navigator.maxTouchPoints) != null ? _a : 0,
+      devicePixelRatio: window.devicePixelRatio || 1,
+      zoom: this.zoom
+    };
+    const report = {
+      format: "ink-notes-diagnostics",
+      version: environment.version,
+      generatedAt: (/* @__PURE__ */ new Date()).toISOString(),
+      environment,
+      counters: {
+        pointerEvents: this.devPointerEvents,
+        rawUpdates: this.devRawUpdates,
+        coalescedSamples: this.devCoalescedSamples,
+        samplesFed: this.devSamplesFed
+      },
+      sampleIntervals: intervalStats(this.penSampleIntervals),
+      sampleIntervalsRaw: [...this.penSampleIntervals],
+      sparse: { thresholdMs: SPARSE_SAMPLE_INTERVAL_MS, flagged: this.penInputSparse() },
+      mode: { tool: this.state.tool, smooth: (_b = this.state.pen.smooth) != null ? _b : 0 },
+      strokes: this.strokeRecords
+    };
+    const text = JSON.stringify(report, null, 2);
+    if (toClipboard) {
+      void navigator.clipboard.writeText(text).then(() => new import_obsidian.Notice("Ink diagnostics copied to the clipboard.")).catch((error) => new import_obsidian.Notice(`Ink Notes could not copy diagnostics: ${error instanceof Error ? error.message : String(error)}`));
+      return;
+    }
+    const blob = new Blob([text], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `ink-diagnostics-${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}.json`;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    new import_obsidian.Notice(`Exported ${report.strokes.length} stroke records.`);
   }
   refreshEraserCursor() {
     var _a, _b, _c, _d;
@@ -4807,6 +5021,15 @@ var InkNotesPlugin = class extends import_obsidian4.Plugin {
     this.addRibbonIcon("pen-line", "Open Ink Notes", () => this.runAsync(this.openNotebook(), "open a notebook"));
     this.addCommand({ id: "open-ink-notebook", name: "Open Ink Notebook", callback: () => this.runAsync(this.openNotebook(), "open a notebook") });
     this.addCommand({ id: "create-ink-notebook", name: "Create Ink Notebook", callback: () => this.runAsync(this.createNotebook(), "create a notebook") });
+    this.addCommand({
+      id: "toggle-ink-diagnostics",
+      name: "Toggle Ink developer diagnostics",
+      callback: () => {
+        for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_INK)) {
+          if (leaf.view instanceof InkView) leaf.view.toggleDevPanel();
+        }
+      }
+    });
     this.registerMarkdownCodeBlockProcessor("ink", createInkEmbedProcessor(this.app, (file, pageId) => this.openFile(file, pageId)));
     this.register(this.store.observe((file) => this.queueRefresh(file)));
     this.register(() => {

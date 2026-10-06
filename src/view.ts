@@ -1,5 +1,12 @@
 import { FileView, Menu, Notice, Scope, TFile, WorkspaceLeaf, setIcon } from "obsidian";
 import {
+  MAX_RAW_POINT_SAMPLES,
+  ModelerEngageReason,
+  StrokeDiagnosticsRecord,
+  intervalStats,
+  pushStrokeRecord,
+} from "./diagnostics";
+import {
   InkNotebook,
   InkPage,
   InkPoint,
@@ -199,6 +206,18 @@ export class InkView extends FileView {
    *  the sparse-input auto-intervention. */
   private penSampleIntervals: number[] = [];
   private lastPenSampleTime: number | null = null;
+  /** Developer diagnostics: ring buffer of recent strokes plus live counters. */
+  private strokeRecords: StrokeDiagnosticsRecord[] = [];
+  private currentStrokeRecord: StrokeDiagnosticsRecord | null = null;
+  private strokeRecordCounter = 0;
+  private pendingLiftPagePx: { x: number; y: number } | null = null;
+  private devPanel: HTMLElement | null = null;
+  private devPanelRefreshTimer: number | undefined;
+  private devPointerEvents = 0;
+  private devRawUpdates = 0;
+  private devCoalescedSamples = 0;
+  private devSamplesFed = 0;
+  private devLastPointerType: string | null = null;
   private confirmedStrokeOutlines = new Map<string, ConfirmedStrokeOutline>();
   private pendingInkStrokes: InkStroke[] = [];
   private committingInkStrokes: InkStroke[] | null = null;
@@ -281,6 +300,7 @@ export class InkView extends FileView {
 
   async onClose(): Promise<void> {
     this.pageNavigationGeneration += 1;
+    this.closeDevPanel();
     if (this.renderFrame !== null) window.cancelAnimationFrame(this.renderFrame);
     this.renderFrame = null;
     if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
@@ -381,6 +401,7 @@ export class InkView extends FileView {
     this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
     const pages = this.addToolbarSection(group, "Document");
     this.addIconButton(pages, "more-horizontal", "Page options", (event) => this.openPageMenu(event));
+    this.addIconButton(pages, "activity", "Developer diagnostics", () => this.toggleDevPanel());
     this.renderToolPopover();
     this.updateToolButtons();
   }
@@ -1076,6 +1097,8 @@ export class InkView extends FileView {
   }
 
   private onPointerDown(event: InkPointerSample, source: InteractionContext["source"] = "pointer"): void {
+    this.devPointerEvents += 1;
+    this.devLastPointerType = event.pointerType || this.devLastPointerType;
     if (event.pointerType === "touch" || (source === "pointer" && event.pointerType === "pen" && this.stylusTouchInput)) return;
     this.pageNavigationGeneration += 1;
     if (this.activePointerId !== null) this.finishPointerInput(false);
@@ -1151,7 +1174,11 @@ export class InkView extends FileView {
       updatedAt: Date.now(),
     };
     this.workerStrokePointIndex = 1;
-    if (tool === "pen" && this.shouldModelPenStroke()) this.startPenModeler(event, point, this.penModelerParams());
+    if (tool === "pen") {
+      const decision = this.penModelerDecision();
+      if (decision.engaged) this.startPenModeler(event, point, this.penModelerParams());
+      this.beginStrokeRecord(decision);
+    }
     this.queueWorkerOperation({
       type: "start-stroke",
       pageId: page.id,
@@ -1174,6 +1201,7 @@ export class InkView extends FileView {
   }
 
   private onPointerMove(event: InkPointerSample, source: InteractionContext["source"] = "pointer"): void {
+    this.devPointerEvents += 1;
     if (event.pointerType === "touch") return;
     if (this.interaction && (this.interaction.source ?? "pointer") !== source) return;
     const rect = this.pageElement.getBoundingClientRect();
@@ -1197,6 +1225,9 @@ export class InkView extends FileView {
   /** Consumes Chromium raw hardware samples so ink forms at full pen rate
    *  instead of waiting for the next frame-aligned pointermove batch. */
   private onPointerRawUpdate(event: InkPointerSample): void {
+    this.devPointerEvents += 1;
+    this.devRawUpdates += 1;
+    this.devLastPointerType = event.pointerType || this.devLastPointerType;
     if (this.activePointerId === null || event.pointerId !== this.activePointerId) return;
     const interaction = this.interaction;
     if (!interaction || (interaction.source ?? "pointer") !== "pointer") return;
@@ -1213,10 +1244,12 @@ export class InkView extends FileView {
   }
 
   private onPointerUp(event: InkPointerSample, source: InteractionContext["source"] = "pointer"): void {
+    this.devPointerEvents += 1;
     if (this.activePointerId !== event.pointerId || (this.interaction?.source ?? "pointer") !== source) return;
     const rect = this.pageElement.getBoundingClientRect();
     const point = this.toPoint(event, rect);
     const inside = pointInsideRect(event, rect);
+    this.pendingLiftPagePx = { x: point.x * this.notebook.pageWidth, y: point.y * this.notebook.pageHeight };
     this.applyPointerSamples(event, rect, "up");
     try {
       if (source === "pointer") this.releasePointer(event.pointerId);
@@ -1227,6 +1260,7 @@ export class InkView extends FileView {
   }
 
   private onPointerCancel(event: InkPointerSample, source: InteractionContext["source"] = "pointer"): void {
+    this.devPointerEvents += 1;
     if (this.activePointerId !== event.pointerId || (this.interaction?.source ?? "pointer") !== source) return;
     this.eraserPointerInside = false;
     this.finishPointerInput(false);
@@ -1261,6 +1295,18 @@ export class InkView extends FileView {
       if (feed.length === 0) return;
     }
     this.recordPenSampleIntervals(feed);
+    this.devSamplesFed += feed.length;
+    const record = this.currentStrokeRecord;
+    if (record) {
+      record.rawSamples += feed.length;
+      if (this.devPanel && record.rawPointSamples) {
+        for (const sample of feed) {
+          if (record.rawPointSamples.length >= MAX_RAW_POINT_SAMPLES) { record.rawTruncated = true; break; }
+          const samplePoint = this.toPoint(sample, rect);
+          record.rawPointSamples.push([samplePoint.x, samplePoint.y, samplePoint.pressure, samplePoint.t]);
+        }
+      }
+    }
     let changed = false;
     if (interaction.tool === "pen" && this.penModeler && !this.penModeler.fallback) {
       changed = this.appendModeledPenPoints(feed, rect, phase);
@@ -1381,8 +1427,57 @@ export class InkView extends FileView {
   /** Ink stays direct (raw samples, probe-style) unless the user picked a
    *  smooth strength or the device itself samples too sparsely. */
   private shouldModelPenStroke(): boolean {
-    if ((this.state.pen.smooth ?? 0) > 0) return true;
-    return this.penInputSparse();
+    return this.penModelerDecision().engaged;
+  }
+
+  private penModelerDecision(): { engaged: boolean; reason: ModelerEngageReason } {
+    const smooth = this.state.pen.smooth ?? 0;
+    if (smooth > 0) return { engaged: true, reason: "smooth" };
+    if (this.penInputSparse()) return { engaged: true, reason: "sparse" };
+    return { engaged: false, reason: "direct" };
+  }
+
+  private beginStrokeRecord(decision: { engaged: boolean; reason: ModelerEngageReason }): void {
+    if (this.currentStrokeRecord) this.finalizeStrokeRecord();
+    this.currentStrokeRecord = {
+      index: ++this.strokeRecordCounter,
+      startedAt: Date.now(),
+      durationMs: null,
+      tool: "pen",
+      smooth: this.state.pen.smooth ?? 0,
+      engaged: decision.engaged,
+      reason: decision.reason,
+      fallback: false,
+      rawSamples: 0,
+      pointsStored: 0,
+      intervals: intervalStats(this.penSampleIntervals),
+      liftDistancePx: null,
+      // Delivered samples are retained only while the panel can show or
+      // export them; normal writing keeps no second copy of the input.
+      ...(this.devPanel ? { rawPointSamples: [] as number[][] } : {}),
+    };
+  }
+
+  private finalizeStrokeRecord(): void {
+    const record = this.currentStrokeRecord;
+    this.currentStrokeRecord = null;
+    if (!record) return;
+    record.durationMs = Date.now() - record.startedAt;
+    record.pointsStored = this.activeStroke?.points.length ?? record.pointsStored;
+    record.fallback = this.penModeler?.fallback ?? false;
+    record.intervals = intervalStats(this.penSampleIntervals);
+    const lift = this.pendingLiftPagePx;
+    this.pendingLiftPagePx = null;
+    const lastPoint = this.activeStroke && this.activeStroke.points.length > 0
+      ? this.activeStroke.points[this.activeStroke.points.length - 1]
+      : null;
+    if (lift && lastPoint) {
+      record.liftDistancePx = Math.hypot(
+        lastPoint.x * this.notebook.pageWidth - lift.x,
+        lastPoint.y * this.notebook.pageHeight - lift.y,
+      );
+    }
+    pushStrokeRecord(this.strokeRecords, record);
   }
 
   /** Sparse devices get the proven default tuning; an explicit strength maps
@@ -1451,6 +1546,8 @@ export class InkView extends FileView {
 
   private pointerSamples(event: InkPointerSample): InkPointerSample[] {
     const coalesced = typeof event.getCoalescedEvents === "function" ? event.getCoalescedEvents() : [];
+    this.devCoalescedSamples += coalesced.length;
+    this.devLastPointerType = event.pointerType || this.devLastPointerType;
     return coalesced.length > 0 ? [...coalesced, event] : [event];
   }
 
@@ -1506,6 +1603,7 @@ export class InkView extends FileView {
 
   private finishPointerInput(_includeFinalSample = false): void {
     this.flushPenModeler();
+    this.finalizeStrokeRecord();
     const interaction = this.interaction;
     if (!interaction) return;
     const page = this.pageById(interaction.pageId);
@@ -1818,6 +1916,109 @@ export class InkView extends FileView {
     this.eraserHoverPoint = point;
     this.eraserPointerInside = inside;
     this.refreshEraserCursor();
+  }
+
+  /** Developer diagnostics overlay: live capture telemetry plus per-stroke
+   *  records, exportable as JSON. Read-only; never mutates ink state. */
+  toggleDevPanel(): void {
+    if (this.devPanel) { this.closeDevPanel(); return; }
+    const panel = this.root.createDiv({ cls: "ink-dev-panel" });
+    const actions = panel.createDiv({ cls: "ink-dev-panel-actions" });
+    const exportButton = actions.createEl("button", { text: "Export JSON", attr: { type: "button" } });
+    exportButton.addEventListener("click", () => this.exportDiagnosticsJson(false));
+    const copyButton = actions.createEl("button", { text: "Copy JSON", attr: { type: "button" } });
+    copyButton.addEventListener("click", () => this.exportDiagnosticsJson(true));
+    panel.createDiv({ cls: "ink-dev-panel-output" });
+    this.devPanel = panel;
+    this.devPanelRefreshTimer = window.setInterval(() => this.refreshDevPanel(), 250);
+    this.refreshDevPanel();
+  }
+
+  private closeDevPanel(): void {
+    if (this.devPanelRefreshTimer !== undefined) {
+      window.clearInterval(this.devPanelRefreshTimer);
+      this.devPanelRefreshTimer = undefined;
+    }
+    this.devPanel?.remove();
+    this.devPanel = null;
+  }
+
+  private devVersion(): string {
+    const plugins = (this.app as unknown as { plugins?: { getPlugin?(id: string): { manifest?: { version?: string } } } }).plugins;
+    return plugins?.getPlugin?.("ink-notes")?.manifest?.version ?? "unknown";
+  }
+
+  private hasPointerApi(name: string): boolean {
+    return typeof PointerEvent !== "undefined" && typeof (PointerEvent.prototype as unknown as Record<string, unknown>)[name] === "function";
+  }
+
+  private refreshDevPanel(): void {
+    const output = this.devPanel?.querySelector<HTMLElement>(".ink-dev-panel-output");
+    if (!output) return;
+    const rate = intervalStats(this.penSampleIntervals);
+    const lines: string[] = [];
+    lines.push(`Ink Notes dev — build ${this.devVersion()}`);
+    lines.push(`ENV pointer=${this.devLastPointerType ?? "-"} coalesced=${this.hasPointerApi("getCoalescedEvents") ? "yes" : "no"} rawupdate=${"onpointerrawupdate" in window ? "yes" : "no"} predicted=${this.hasPointerApi("getPredictedEvents") ? "yes" : "no"} touch=${navigator.maxTouchPoints ?? 0} dpr=${(window.devicePixelRatio || 1).toFixed(2)} zoom=${this.zoom.toFixed(2)}`);
+    lines.push(`INPUT events=${this.devPointerEvents} rawupdates=${this.devRawUpdates} coalescedPts=${this.devCoalescedSamples} samplesFed=${this.devSamplesFed}`);
+    lines.push(`RATE n=${rate.count}${rate.min !== null ? ` min=${rate.min.toFixed(1)}ms median=${rate.median?.toFixed(1)}ms mean=${rate.mean?.toFixed(1)}ms max=${rate.max?.toFixed(1)}ms` : ""}${rate.mean !== null && rate.mean > 0 ? ` (~${(1000 / rate.mean).toFixed(0)} Hz)` : ""}`);
+    lines.push(`SPARSE threshold=${SPARSE_SAMPLE_INTERVAL_MS}ms flagged=${this.penInputSparse() ? "YES" : "no"}`);
+    lines.push(`MODE tool=${this.state.tool} smooth=${this.state.pen.smooth ?? 0} (${(this.state.pen.smooth ?? 0) === 0 ? "Direct" : "modeler strength"})`);
+    const current = this.currentStrokeRecord;
+    if (current) {
+      lines.push(`ACTIVE #${current.index} engaged=${current.engaged ? current.reason : "no"} raw=${current.rawSamples} stored=${this.activeStroke?.points.length ?? 0} fallback=${current.fallback ? "YES" : "no"}`);
+    }
+    if (this.strokeRecords.length > 0) lines.push("STROKES (most recent last):");
+    for (const record of this.strokeRecords) {
+      const intervals = record.intervals.median !== null ? ` median=${record.intervals.median.toFixed(1)}ms` : "";
+      const lift = record.liftDistancePx !== null ? ` liftΔ=${record.liftDistancePx.toFixed(2)}px` : "";
+      lines.push(`#${record.index} ${record.engaged ? record.reason : "direct"} raw=${record.rawSamples} stored=${record.pointsStored} ${record.durationMs ?? "-"}ms fallback=${record.fallback ? "YES" : "no"}${intervals}${lift}${record.smooth > 0 ? ` smooth=${record.smooth}` : ""}`);
+    }
+    output.setText(lines.join("\n"));
+  }
+
+  private exportDiagnosticsJson(toClipboard: boolean): void {
+    const environment = {
+      version: this.devVersion(),
+      lastPointerType: this.devLastPointerType,
+      coalescedApi: this.hasPointerApi("getCoalescedEvents"),
+      rawUpdateApi: "onpointerrawupdate" in window,
+      predictedApi: this.hasPointerApi("getPredictedEvents"),
+      maxTouchPoints: navigator.maxTouchPoints ?? 0,
+      devicePixelRatio: window.devicePixelRatio || 1,
+      zoom: this.zoom,
+    };
+    const report = {
+      format: "ink-notes-diagnostics",
+      version: environment.version,
+      generatedAt: new Date().toISOString(),
+      environment,
+      counters: {
+        pointerEvents: this.devPointerEvents,
+        rawUpdates: this.devRawUpdates,
+        coalescedSamples: this.devCoalescedSamples,
+        samplesFed: this.devSamplesFed,
+      },
+      sampleIntervals: intervalStats(this.penSampleIntervals),
+      sampleIntervalsRaw: [...this.penSampleIntervals],
+      sparse: { thresholdMs: SPARSE_SAMPLE_INTERVAL_MS, flagged: this.penInputSparse() },
+      mode: { tool: this.state.tool, smooth: this.state.pen.smooth ?? 0 },
+      strokes: this.strokeRecords,
+    };
+    const text = JSON.stringify(report, null, 2);
+    if (toClipboard) {
+      void navigator.clipboard.writeText(text)
+        .then(() => new Notice("Ink diagnostics copied to the clipboard."))
+        .catch((error) => new Notice(`Ink Notes could not copy diagnostics: ${error instanceof Error ? error.message : String(error)}`));
+      return;
+    }
+    const blob = new Blob([text], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `ink-diagnostics-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 0);
+    new Notice(`Exported ${report.strokes.length} stroke records.`);
   }
 
   private refreshEraserCursor(): void {
