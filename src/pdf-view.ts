@@ -282,6 +282,9 @@ export class PdfInkView extends FileView {
     this.buildInkHost();
     this.registerDomEvent(scroller, "scroll", () => this.onViewportMotion(), { passive: true });
     this.registerDomEvent(window, "resize", () => this.requestRender(true));
+    // Editable PDFs open straight into editing mode: the reading-first
+    // default hid the whole toolbar behind a toggle the user could not find.
+    if (this.canEdit()) void this.setMode("editing");
   }
 
   async onClose(): Promise<void> {
@@ -727,8 +730,14 @@ export class PdfInkView extends FileView {
       attr: { type: "button", "aria-label": "Brush settings" },
     });
     setIcon(button, "settings-2");
+    this.toolbarButtons.set("brush", button);
     button.addEventListener("click", () => this.brushPopover!.toggle());
-    this.brushPopover = new BrushPopoverController(parent, {
+    // Mounted at the view root with fixed positioning (mainline parity):
+    // nesting it inside the toolbar group exposed it to toolbar layout and
+    // produced the mangled arc layout on iPad.
+    this.brushPopover = new BrushPopoverController(this.root!, {
+      // Extra class scopes the PDF-surface rules (paper canvases, spacing).
+      extraClass: "ink-pdf-brush-popover",
       tools: [
         { tool: "pen", label: "Pen", presets: [2, 4, 8], maximum: 40 },
         { tool: "highlighter", label: "Highlighter", presets: [8, 16, 24], maximum: 48 },
