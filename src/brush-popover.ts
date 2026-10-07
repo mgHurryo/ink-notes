@@ -368,6 +368,7 @@ export class BrushPopoverController {
     window.requestAnimationFrame(() => {
       this.position();
       this.update();
+      this.focusSizeSlider();
     });
   }
 
@@ -375,6 +376,20 @@ export class BrushPopoverController {
     this.openState = false;
     this.root.toggleClass("is-open", false);
     this.root.setAttribute("aria-hidden", "true");
+  }
+
+  /**
+   * Keyboard entry: opening hands focus to the active tool's size slider so
+   * the dialog is immediately operable; the views hand focus back to the
+   * tool button on Escape, closing the loop without stranding keyboard
+   * users on the toolbar. Runs after the rAF so the slider exists with
+   * layout even on the popover's first open.
+   */
+  private focusSizeSlider(): void {
+    const active = this.options.activeTool();
+    if (!active || !isBrushTool(active)) return;
+    const panel = this.root.querySelector<HTMLElement>(`.ink-brush-settings[data-brush-tool="${active}"]`);
+    panel?.querySelector<HTMLInputElement>('input[data-control="size"]')?.focus();
   }
 
   toggle(): void {

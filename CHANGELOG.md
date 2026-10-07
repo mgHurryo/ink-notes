@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0-beta.26 - 2026-10-08
+
+- Page thumbnails now show content: every rail thumbnail carries a canvas that renders that page's strokes as a scaled vector snapshot (paper-color background stays). The current page's thumbnail refreshes after its ink actually changes - stroke added or removed, undo/redo, page switch, external merge - not per frame; a failed thumbnail render is contained and can never affect the main canvas.
+- Drag the page rail's right edge to widen or narrow it: the rail width follows a pointer-captured drag handle, persists to localStorage, and clamps into a usable range. Past ~260px the thumbnails reflow into multiple auto-fill grid columns that adapt as the rail grows.
+- The rail now animates: expanding and collapsing the page rail transitions its width over ~200ms instead of snapping via display:none.
+
 ## 0.8.0-beta.25 - 2026-10-08
 
 - Tool settings now persist across sessions and across both editors: the notebook and the PDF handwriting view share one saved brush configuration (pen and highlighter color, width, opacity and pen dynamics, plus eraser mode and size). Any change - sliders, swatches, eraser controls - saves automatically (500 ms debounce) and is restored on the next open; corrupted saved values fall back per-field to the defaults instead of breaking the editor.

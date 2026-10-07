@@ -21,6 +21,13 @@ Object.assign(HTMLElement.prototype, {
 export class FileView {
   app = { scope: {} };
   containerEl = document.querySelector<HTMLElement>("#host")!;
+  /** Obsidian's ItemView exposes the .view-content pane as contentEl; the
+   *  preview shell provides it as containerEl.children[1], mirroring the
+   *  [header, content] children of a real view container. Views mount
+   *  popovers on contentEl so they inherit the view's --ink-* token scope
+   *  (mounted on containerEl they fall outside it and render transparent).
+   *  Null-safe: some tests construct views without a host in the DOM. */
+  contentEl = (this.containerEl?.children[1] ?? this.containerEl) as HTMLElement;
   file = null;
   scope: any;
   cleanups: (() => void)[] = [];
