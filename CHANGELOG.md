@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.0-beta.20 - 2026-10-08
+
+- Fix the hairline white seams at sharp turns: the split ribbon runs from beta.19 abutted each other exactly, and the antialiased edges of the abutting caps left a thin unfilled sliver at every joint. Run A now keeps one segment past the turn so the bands overlap in area (along the real stroke path), closing the seams.
+
 ## 0.8.0-beta.19 - 2026-10-07
 
 - Fix mangled strokes on sharp turns and retraces (Chinese-character hooks, writing back over a line) at any brush width: the ribbon outline was one self-intersecting polygon whose opposite-wound overlap cancelled to holes under nonzero fill. The outline now splits at sharp turns into separately filled runs; straight and gently curved strokes are pixel-identical to before.

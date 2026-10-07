@@ -40,7 +40,11 @@ export function penOutline(stroke: InkStroke, width: number, height: number): nu
     const lb = Math.hypot(bx, by);
     if (la < 0.35 || lb < 0.35) continue;
     if ((ax * bx + ay * by) / (la * lb) < -0.45) {
-      runs.push(centerline.slice(start, index + 1));
+      // Run A keeps one segment past the turn so the two bands OVERLAP in
+      // area: merely abutting caps antialias into a hairline seam at every
+      // joint (the white slivers at sharp turns). The extension follows the
+      // real stroke path, so the overlap renders identically in both runs.
+      runs.push(centerline.slice(start, Math.min(index + 2, centerline.length)));
       start = index;
     }
   }
