@@ -174,7 +174,6 @@ export class PdfInkView extends InkWritingView {
     this.pageWrap = scroller.createDiv({ cls: "ink-pdf-page-wrap" });
     this.pdfCanvas = this.pageWrap.createEl("canvas", { cls: "ink-pdf-canvas" });
     this.buildInkHost();
-    this.mountBrushSettingsPopover();
     this.viewReady = true;
     this.registerDomEvent(scroller, "scroll", () => this.onViewportMotion(), { passive: true });
     this.registerDomEvent(scroller, "touchstart", (event) => this.onTouchStart(event), { passive: false });
@@ -537,8 +536,11 @@ export class PdfInkView extends InkWritingView {
     const button = this.addIconButton(parent, icon, label, onClick, disabled);
     this.toolbarButtons.set(key, button);
   }
-  protected mountBrushSettingsPopover(): void {
-    this.brushPopover = new BrushPopoverController(this.containerEl, {
+  protected ensureBrushSettingsPopover(): void {
+    if (this.brushPopover) return;
+    const parent = (this.contentEl ?? this.containerEl) as HTMLElement | undefined;
+    if (!parent?.createDiv) return;
+    this.brushPopover = new BrushPopoverController(parent, {
       // Extra class scopes the PDF-surface rules (paper canvases, spacing).
       extraClass: "ink-pdf-brush-popover",
       tools: this.brushToolConfigs(),
@@ -555,7 +557,7 @@ export class PdfInkView extends InkWritingView {
     // popover's own controls and the active tool button are exempt (the
     // tool's tap toggles it).
     this.registerDomEvent(document, "pointerdown", (event) => {
-      if (!this.brushPopover.isOpen) return;
+      if (!this.brushPopover?.isOpen) return;
       const target = event.target as HTMLElement | null;
       // Tool buttons decide their own open/close on click; a tap on another
       // tool must not close the popover first (it rebuilds for that tool).
@@ -564,7 +566,7 @@ export class PdfInkView extends InkWritingView {
       this.brushPopover.close();
     });
     this.registerDomEvent(document, "keydown", (event) => {
-      if (event.key === "Escape" && this.brushPopover.isOpen) {
+      if (event.key === "Escape" && this.brushPopover?.isOpen) {
         this.brushPopover.close();
         this.activeSettingsAnchor()?.focus();
       }
@@ -1015,15 +1017,17 @@ export class PdfInkView extends InkWritingView {
   }
   protected toggleToolSettings(anchor: HTMLElement): void {
     if (this.state.tool === "eraser") { this.toggleEraserPopover(anchor); return; }
-    this.brushPopover.toggle();
+    this.ensureBrushSettingsPopover();
+    this.brushPopover?.toggle();
   }
   protected reopenToolSettings(): void {
     if (this.state.tool === "eraser") {
       if (!this.eraserPopover) this.toggleEraserPopover(this.toolbarButtons.get(`tool-${this.state.tool}`) ?? null);
       return;
     }
-    this.brushPopover.open();
-    this.brushPopover.position();
+    this.ensureBrushSettingsPopover();
+    this.brushPopover?.open();
+    this.brushPopover?.position();
   }
 
   protected resizeOverlay(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, maxPixels: number): boolean {

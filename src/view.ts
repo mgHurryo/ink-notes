@@ -111,27 +111,26 @@ export class InkView extends InkWritingView {
     this.root.setAttribute("aria-label", "Ink Notes");
     this.root.createDiv({ cls: "ink-toolbar", attr: { role: "toolbar", "aria-label": "Ink tools" } });
     this.root.createSpan({ cls: "ink-page-status", attr: { "aria-live": "polite" } });
-    this.mountBrushSettingsPopover();
     this.renderToolbar();
     this.renderCanvas();
     this.register(() => this.closeEraserPopover());
     this.registerDomEvent(document, "pointerdown", (event) => {
-      if (!this.brushPopover.isOpen) return;
+      if (!this.brushPopover?.isOpen) return;
       const target = event.target as HTMLElement | null;
       // Tool buttons decide their own open/close on click; a tap on another
       // tool must not close the popover first (it rebuilds for that tool).
       if (target && target.closest?.(".ink-tool-button")) return;
-      if (target && this.brushPopover.root.contains(target)) return;
-      this.brushPopover.close();
+      if (target && this.brushPopover?.root.contains(target)) return;
+      this.brushPopover?.close();
     });
     this.registerDomEvent(document, "keydown", (event) => {
-      if (event.key === "Escape" && this.brushPopover.isOpen) {
+      if (event.key === "Escape" && this.brushPopover?.isOpen) {
         this.brushPopover.close();
         this.activeToolButton()?.focus();
       }
     });
-    this.registerDomEvent(window, "resize", () => this.brushPopover.position());
-    this.registerDomEvent(window, "scroll", () => this.brushPopover.position(), true);
+    this.registerDomEvent(window, "resize", () => this.brushPopover?.position());
+    this.registerDomEvent(window, "scroll", () => this.brushPopover?.position(), true);
     this.viewReady = true;
     this.renderAll();
   }
@@ -251,11 +250,6 @@ export class InkView extends InkWritingView {
     }
   }
 
-  private addSizePopover(): void {
-    this.mountBrushSettingsPopover();
-  }
-
-  
   private activeToolButton(): HTMLButtonElement | null {
     return this.root.querySelector<HTMLButtonElement>(`.ink-toolbar [data-tool="${this.state.tool}"]`);
   }
@@ -579,20 +573,23 @@ export class InkView extends InkWritingView {
     this.swipeStage = null;
   }
   protected settingsOpen(): boolean {
-    return this.state.tool === "eraser" ? this.eraserPopover !== null : this.brushPopover.isOpen;
+    return this.state.tool === "eraser" ? this.eraserPopover !== null : this.brushPopover?.isOpen ?? false;
   }
   protected toggleToolSettings(anchor: HTMLElement): void {
     if (this.state.tool === "eraser") { this.toggleEraserPopover(anchor); return; }
-    if (this.brushPopover.isOpen) this.brushPopover.close();
-    else this.brushPopover.open();
+    this.ensureBrushSettingsPopover();
+    if (!this.brushPopover) return;
+    if (this.brushPopover?.isOpen) this.brushPopover.close();
+    else this.brushPopover?.open();
   }
   protected reopenToolSettings(): void {
     if (this.state.tool === "eraser") {
       if (!this.eraserPopover) this.toggleEraserPopover(this.activeToolButton());
       return;
     }
-    this.brushPopover.open();
-    this.brushPopover.position();
+    this.ensureBrushSettingsPopover();
+    this.brushPopover?.open();
+    this.brushPopover?.position();
   }
 
   private receiveMergedNotebook(notebook: InkNotebook, alreadyMerged = false): void {
