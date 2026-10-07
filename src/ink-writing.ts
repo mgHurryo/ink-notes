@@ -36,6 +36,7 @@ import { StrokeModeler, StrokeModelInput, StrokeModelResult, StrokeModelParams, 
 import type { InkWorkerResponse, NotebookOperation } from "./worker-protocol";
 import { InkWorkerService, InkWorkerSession } from "./worker-service";
 import { canvasResolution, clampPercent, drawInkStroke, normalizePressureCurve, samplePressureCurve } from "./rendering";
+import { defaultToolState, type SharedToolState } from "./tool-state";
 
 export interface ToolState {
   tool: InkTool;
@@ -373,13 +374,9 @@ function isPointerCaptureError(error: unknown): boolean {
  * identically in both editors.
  */
 export abstract class InkWritingView extends FileView {
-  protected state: ToolState = {
-    tool: "pen",
-    pen: { color: "#1b1b1b", width: 3, opacity: 1, smooth: 0, taper: 0, pressureGain: 100, speedGain: 0, pressureCurve: undefined },
-    highlighter: { color: "#f2c94c", width: 18, opacity: 0.4 },
-    eraserMode: "stroke",
-    eraserSize: 32,
-  };
+  /** Defaults come from the persistence module so saved settings restore
+   *  against the exact same shape the editors start from. */
+  protected state: ToolState = defaultToolState();
 
   // --- view-provided geometry / render state
   protected tiles: TileRenderer | null = null;
@@ -411,6 +408,9 @@ export abstract class InkWritingView extends FileView {
   /** The eraser's own mini popover (mode + size only). */
   protected eraserPopover: HTMLElement | null = null;
   private eraserPopoverClose: (() => void) | null = null;
+
+  // --- shared persisted tool settings (wired by the plugin assembly)
+  private sharedToolSettings: SharedToolState | null = null;
 
   // --- worker pipeline
   protected workers: InkWorkerService | undefined;
@@ -596,10 +596,36 @@ export abstract class InkWritingView extends FileView {
       getSettings: (tool) => this.brushSettings(tool),
       activeTool: () => this.state.tool,
       showPenDynamics: () => this.state.tool === "pen",
-      onControlsChanged: () => this.updateEraserControls(),
+      onControlsChanged: () => {
+        this.updateEraserControls();
+        this.scheduleToolStateSave();
+      },
       anchor: () => this.activeSettingsAnchor(),
     });
     this.settingsPanel = this.brushPopover.root;
+  }
+
+  /**
+   * Adopts the plugin's shared persisted settings: pen and highlighter brush
+   * settings are aliased (both editors and the saved data then see one
+   * source of truth) while the active tool and the eraser values stay per
+   * editor - sharing the active tool would desync the other editor's
+   * toolbar from what its strokes actually use.
+   */
+  protected useSharedToolState(shared: SharedToolState): void {
+    this.sharedToolSettings = shared;
+    this.state = {
+      tool: this.state.tool,
+      pen: shared.config.pen,
+      highlighter: shared.config.highlighter,
+      eraserMode: shared.config.eraserMode,
+      eraserSize: shared.config.eraserSize,
+    };
+  }
+
+  /** Persists tool settings (debounced); safe to call on every input event. */
+  protected scheduleToolStateSave(): void {
+    this.sharedToolSettings?.scheduleSave(this.state);
   }
 
   /** The writing tools plus history - the shared middle of every toolbar. */
@@ -2191,6 +2217,7 @@ export abstract class InkWritingView extends FileView {
           candidate.setAttribute("aria-checked", String(candidate.dataset.eraserMode === mode));
         });
         this.refreshEraserCursor();
+        this.scheduleToolStateSave();
       });
     }
     pop.createDiv({ cls: "ink-settings-label", text: "Size" });
@@ -2202,6 +2229,7 @@ export abstract class InkWritingView extends FileView {
     range.addEventListener("input", () => {
       this.state.eraserSize = Number(range.value);
       this.refreshEraserCursor();
+      this.scheduleToolStateSave();
     });
     this.eraserPopover = pop;
     const place = (): void => {

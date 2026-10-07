@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("obsidian", async () => import("../dev/obsidian"));
 import { InkView } from "../src/view";
 import { createNotebook } from "../src/model";
+import { defaultToolState } from "../src/tool-state";
 import type { NotebookStore } from "../src/storage";
 import type { WorkspaceLeaf } from "obsidian";
 
@@ -112,6 +113,32 @@ describe("reference-style editor", () => {
     expect(button("Pen blue").getAttribute("aria-pressed")).toBe("true");
     expect(highlighterSize.value).toBe("24");
     expect(button("Highlighter green").getAttribute("aria-pressed")).toBe("true");
+  });
+  it("hints and applies double-click set-as-default on a swatch", () => {
+    button("Pen").click();
+    const blue = button("Pen blue");
+    expect(blue.getAttribute("title")).toContain("double-click to set as default");
+    blue.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    expect(blue.getAttribute("aria-pressed")).toBe("true");
+  });
+  it("schedules a shared-settings save when popover and eraser controls change", () => {
+    const scheduleSave = vi.fn();
+    (view as unknown as { sharedToolSettings: unknown }).sharedToolSettings = {
+      config: defaultToolState(),
+      scheduleSave,
+    };
+    button("Pen").click();
+    const size = document.querySelector<HTMLInputElement>('input[aria-label="Pen size"]')!;
+    size.value = "9";
+    size.dispatchEvent(new Event("input"));
+    expect(scheduleSave).toHaveBeenCalled();
+
+    button("Erase").click();
+    button("Erase").click();
+    const calls = scheduleSave.mock.calls.length;
+    button("Circle eraser").click();
+    expect(scheduleSave.mock.calls.length).toBe(calls + 1);
+    expect((scheduleSave.mock.calls[calls][0] as { eraserMode: string }).eraserMode).toBe("circle");
   });
   it("shows a reference cursor and only offers size + mode in the eraser mini popover", () => {
     button("Erase").click();

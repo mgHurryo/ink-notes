@@ -7,6 +7,8 @@ import { PdfInkView, PdfWriterArbiter, VIEW_TYPE_PDF_INK } from "./pdf-view";
 import { PdfSidecarStore } from "./pdf-store";
 import { PDF_INK_FOLDER, PDF_SIDECAR_EXTENSION } from "./pdf-sidecar";
 import { PDF_VIEW_ENHANCER_PLUGIN_IDS, PdfTabTakeover } from "./pdf-takeover";
+import { sanitizeToolState, storedToolState, ToolStateSaver, type SharedToolState, type StoredToolState } from "./tool-state";
+import type { ToolState } from "./ink-writing";
 
 interface InkNotesSettings {
   /** Master switch for taking over PDF tabs with the handwriting view. */
@@ -24,12 +26,28 @@ export default class InkNotesPlugin extends Plugin {
   private arbiter!: PdfWriterArbiter;
   private takeover!: PdfTabTakeover;
   config: InkNotesSettings = { ...DEFAULT_SETTINGS };
+  /** Tool settings shared by both editors; loaded sanitized in onload and
+   *  kept current by the debounced saver. */
+  private toolState: ToolState = sanitizeToolState(undefined);
+  private toolStateSaver!: ToolStateSaver;
+  private toolStateBinding!: SharedToolState;
   private refreshTimers = new Map<string, number>();
   private refreshing = new Set<string>();
   private pendingRefresh = new Set<string>();
 
   async onload(): Promise<void> {
-    this.config = { ...DEFAULT_SETTINGS, ...(await this.loadData()), ...DEFAULT_SETTINGS };
+    // Field-level read: one corrupted value falls back to its default
+    // instead of taking the whole configuration down with it.
+    const saved = (await this.loadData()) as { takeOverPdfTabs?: unknown; toolState?: unknown } | null;
+    this.config = {
+      takeOverPdfTabs: typeof saved?.takeOverPdfTabs === "boolean" ? saved.takeOverPdfTabs : DEFAULT_SETTINGS.takeOverPdfTabs,
+    };
+    this.toolState = sanitizeToolState(saved?.toolState);
+    this.toolStateSaver = new ToolStateSaver((stored) => this.persistToolState(stored));
+    this.toolStateBinding = {
+      config: this.toolState,
+      scheduleSave: (state) => this.toolStateSaver.schedule(state),
+    };
     this.store = new NotebookStore(this.app);
     this.workers = new InkWorkerService((message) => new Notice(message));
     this.register(() => this.workers.dispose());
@@ -93,11 +111,13 @@ export default class InkNotesPlugin extends Plugin {
   }
 
   onunload(): void {
+    // Best-effort: persist settings changed within the last debounce window.
+    this.toolStateSaver.flush();
     this.takeover?.uninstall();
   }
 
   private createView(leaf: WorkspaceLeaf): InkView {
-    return new InkView(leaf, this.store, this.workers);
+    return new InkView(leaf, this.store, this.workers, this.toolStateBinding);
   }
 
   /**
@@ -123,7 +143,7 @@ export default class InkNotesPlugin extends Plugin {
     }), VIEW_TYPE_PDF_INK);
     this.registerView(VIEW_TYPE_PDF_INK, (leaf) => {
       const view = new PdfInkView(leaf);
-      view.configure({ store: this.pdfStore, workers: this.workers, takeover: this.takeover, arbiter: this.arbiter });
+      view.configure({ store: this.pdfStore, workers: this.workers, takeover: this.takeover, arbiter: this.arbiter, toolState: this.toolStateBinding });
       return view;
     });
     if (this.app.vault) {
@@ -150,6 +170,27 @@ export default class InkNotesPlugin extends Plugin {
     if (!this.takeover) return;
     this.takeover.uninstall();
     if (this.config.takeOverPdfTabs && this.app.vault) this.takeover.install();
+  }
+
+  /**
+   * One writer for the data file: the plugin settings and the shared tool
+   * settings live in the same document, so saving either must carry both or
+   * the later write would clobber the earlier one's half.
+   */
+  private persistToolState(stored: StoredToolState): Promise<void> {
+    // Keep the plugin's copy of the per-editor eraser values current so a
+    // settings-tab save never regresses a newer editor change. The brush
+    // settings need no sync: the editors alias the shared objects in place.
+    this.toolState.eraserMode = stored.eraserMode;
+    this.toolState.eraserSize = stored.eraserSize;
+    return this.saveData({ takeOverPdfTabs: this.config.takeOverPdfTabs, toolState: stored }).catch((error) => {
+      new Notice(`Ink Notes could not save tool settings: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
+
+  /** Persists the plugin settings together with the latest tool settings. */
+  async persistSettings(): Promise<void> {
+    await this.saveData({ takeOverPdfTabs: this.config.takeOverPdfTabs, toolState: storedToolState(this.toolState) });
   }
 
   /** Open a PDF tab in the handwriting view on explicit request. */
@@ -228,7 +269,7 @@ class InkSettingTab extends PluginSettingTab {
     toggle.createSpan({ text: " Take over PDF tabs automatically" });
     checkbox.addEventListener("change", () => {
       this.plugin.config.takeOverPdfTabs = checkbox.checked;
-      void this.plugin.saveData(this.plugin.config);
+      void this.plugin.persistSettings();
       this.plugin.refreshPdfTakeover();
     });
 

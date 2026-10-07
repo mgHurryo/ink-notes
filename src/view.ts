@@ -13,6 +13,7 @@ import { NotebookStore } from "./storage";
 import { exportNotebookPdf, exportPathFor, notebookHasInk } from "./pdf-export";
 import { registerDocumentPointerEndEvents } from "./ink-input";
 import { InkWritingView, InkPointerSample, cloneStroke, SPARSE_SAMPLE_INTERVAL_MS } from "./ink-writing";
+import type { SharedToolState } from "./tool-state";
 export { BrushSettings, BrushTool, INK_COLORS, isBrushTool } from "./brush-popover";
 export {
   ToolState,
@@ -86,10 +87,11 @@ export class InkView extends InkWritingView {
   private devPanel: HTMLElement | null = null;
   private devPanelRefreshTimer: number | undefined;
 
-  constructor(leaf: WorkspaceLeaf, store: NotebookStore, workers?: InkWorkerService) {
+  constructor(leaf: WorkspaceLeaf, store: NotebookStore, workers?: InkWorkerService, toolState?: SharedToolState) {
     super(leaf);
     this.store = store;
     this.workers = workers;
+    if (toolState) this.useSharedToolState(toolState);
     this.scope = new Scope(this.app.scope);
     this.scope.register(["Mod"], "z", () => { this.undo(); return false; });
     this.scope.register(["Mod", "Shift"], "z", () => { this.redo(); return false; });
