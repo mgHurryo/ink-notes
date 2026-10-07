@@ -25,9 +25,7 @@ import { PdfTabTakeover } from "./pdf-takeover";
 export const VIEW_TYPE_PDF_INK = "ink-notes-pdf-view";
 
 const SAVE_CONFLICT_RETRIES = 3;
-// Zooming out below fit-width just floats the page in empty canvas; the
-// smallest PDF zoom is the fitted size.
-const PDF_ZOOM_MIN = 1;
+
 const PDF_ZOOM_MAX = 3;
 const PDF_ZOOM_STEP = 1.2;
 const PDF_PAGE_PADDING = 24;
@@ -125,6 +123,15 @@ export class PdfInkView extends InkWritingView {
   private noteIndex = 0;
   private pageBaseWidth = 700;
   private pageBaseHeight = 990;
+  /** The "smart fit" zoom: width-fill for portrait pages, height-fill when
+   *  width-fill would leave the page floating with vertical slack. */
+  private fitZoom = 1;
+  /** Set once the user zooms manually; until then every layout re-fits. */
+  private zoomTouched = false;
+  /** Offscreen renders of the neighbouring pages for instant flips. */
+  private neighbourCache = new Map<number, HTMLCanvasElement>();
+  private prewarmToken = 0;
+  private pdfRenderTimer: number | undefined;
 
   private dirty = false;
   private activeSave: Promise<SaveOutcome> | null = null;
@@ -198,6 +205,8 @@ export class PdfInkView extends InkWritingView {
     this.releaseWriter();
     this.loadGeneration += 1;
     this.cancelPdfRender();
+    if (this.pdfRenderTimer !== undefined) { window.clearTimeout(this.pdfRenderTimer); this.pdfRenderTimer = undefined; }
+    this.neighbourCache.clear();
     this.destroySwipeStage();
     this.finishPointerInput(false);
     this.discardPendingInkPreview();
@@ -678,8 +687,11 @@ export class PdfInkView extends InkWritingView {
   }
 
   private setZoom(zoom: number, target?: { x: number; y: number }, anchor?: { x: number; y: number }): void {
-    const clamped = Math.max(PDF_ZOOM_MIN, Math.min(PDF_ZOOM_MAX, zoom));
+    const clamped = Math.max(this.fitZoom, Math.min(PDF_ZOOM_MAX, zoom));
     if (clamped === this.zoom) return;
+    this.zoomTouched = true;
+    // Neighbour previews carry the old scale; re-rendering refills them.
+    this.neighbourCache.clear();
     const scroller = this.scroller;
     const page = this.pageWrap;
     if (!scroller || !page) {
@@ -700,7 +712,19 @@ export class PdfInkView extends InkWritingView {
     const after = page.getBoundingClientRect();
     scroller.scrollLeft += after.left + anchor.x * after.width - target.x;
     scroller.scrollTop += after.top + anchor.y * after.height - target.y;
-    void this.renderPdfPage();
+    // Full-page pdf.js rasters at high zoom are far too heavy per pinch
+    // step; the old bitmap stays on screen (CSS-scaled) and the real render
+    // follows once the gesture pauses.
+    this.schedulePdfRender();
+  }
+
+  /** Coalesces bitmap re-renders: at most one per 160ms of settled zoom. */
+  private schedulePdfRender(): void {
+    if (this.pdfRenderTimer !== undefined) window.clearTimeout(this.pdfRenderTimer);
+    this.pdfRenderTimer = window.setTimeout(() => {
+      this.pdfRenderTimer = undefined;
+      void this.renderPdfPage();
+    }, 160);
   }
 
   // -------------------------------------------------------------- geometry
@@ -720,6 +744,11 @@ export class PdfInkView extends InkWritingView {
     const display = this.rotatedSize(this.currentNotePage());
     this.pageBaseWidth = Math.min(980, Math.max(200, this.scroller.clientWidth - PDF_PAGE_PADDING * 2)) || 700;
     this.pageBaseHeight = this.pageBaseWidth * display.height / display.width;
+    // Smart fit: fill the width (priority) unless that leaves vertical slack -
+    // then fill the height instead, so one axis is always flush.
+    const contentHeight = Math.max(1, this.scroller.clientHeight - PDF_PAGE_PADDING * 2);
+    this.fitZoom = Math.max(1, contentHeight / this.pageBaseHeight);
+    if (!this.zoomTouched) this.zoom = this.fitZoom;
     this.pageWrap.setCssStyles({
       width: `${this.pageBaseWidth * this.zoom}px`,
       height: `${this.pageBaseHeight * this.zoom}px`,
@@ -884,12 +913,15 @@ export class PdfInkView extends InkWritingView {
     }
     const count = this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 0;
     if (neighborIndex < 0 || neighborIndex >= count) return;
+    // Keep the visible gutter between the two pages equal to the page's own
+    // edge distance, so pages never look stitched together mid-drag.
+    const gap = Math.max(12, Math.round(wrap.offsetLeft));
     const stage = scroller.createDiv({ cls: "ink-swipe-stage" });
     stage.dataset.neighbor = String(neighborIndex);
     stage.setCssStyles({
       position: "absolute", margin: "0", overflow: "hidden", background: "#fff",
       borderRadius: "2px", boxShadow: "var(--ink-shadow-paper)",
-      left: `${wrap.offsetLeft + side * wrap.offsetWidth}px`,
+      left: `${wrap.offsetLeft + side * (wrap.offsetWidth + gap)}px`,
       top: `${wrap.offsetTop}px`,
       width: `${wrap.offsetWidth}px`,
       height: `${wrap.offsetHeight}px`,
@@ -904,6 +936,14 @@ export class PdfInkView extends InkWritingView {
     const canvas = stage.createEl("canvas");
     canvas.setCssStyles({ width: "100%", height: "100%" });
     if (!notePage || notePage.sourceIndex === undefined || !this.pdfDoc) return;
+    // The prewarm cache makes the flip instant when it holds the page.
+    const cached = this.neighbourCache.get(index);
+    if (cached) {
+      canvas.width = cached.width;
+      canvas.height = cached.height;
+      canvas.getContext("2d")?.drawImage(cached, 0, 0);
+      return;
+    }
     try {
       const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
       if (!stage.isConnected) return;
@@ -912,8 +952,43 @@ export class PdfInkView extends InkWritingView {
       canvas.height = Math.max(1, Math.round(this.rotatedSize(notePage).height * scale));
       const viewport = page.getViewport({ scale });
       await page.render({ canvasContext: canvas.getContext("2d")!, viewport }).promise;
+      if (stage.isConnected && canvas.width > 0) this.neighbourCache.set(index, canvas);
     } catch {
       // The neighbour preview is best-effort; a blank page is fine.
+    }
+  }
+
+  /** Renders the neighbouring pages offscreen so flips never wait. */
+  private prewarmNeighbours(): void {
+    this.prewarmToken += 1;
+    const token = this.prewarmToken;
+    const count = this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 0;
+    for (const delta of [-1, 1]) {
+      const index = this.noteIndex + delta;
+      if (index < 0 || index >= count || this.neighbourCache.has(index)) continue;
+      void this.prewarmNeighbour(index, token);
+    }
+    for (const key of [...this.neighbourCache.keys()]) {
+      if (Math.abs(key - this.noteIndex) > 1) this.neighbourCache.delete(key);
+    }
+  }
+
+  private async prewarmNeighbour(index: number, token: number): Promise<void> {
+    const notePage = this.sidecar?.notePages[index];
+    if (!notePage || notePage.sourceIndex === undefined || !this.pdfDoc) return;
+    try {
+      const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
+      if (token !== this.prewarmToken || this.neighbourCache.has(index)) return;
+      const scale = (window.devicePixelRatio || 1) * this.zoom;
+      const buffer = document.createElement("canvas");
+      buffer.width = Math.max(1, Math.round(this.rotatedSize(notePage).width * scale));
+      buffer.height = Math.max(1, Math.round(this.rotatedSize(notePage).height * scale));
+      const viewport = page.getViewport({ scale });
+      await page.render({ canvasContext: buffer.getContext("2d")!, viewport }).promise;
+      if (token !== this.prewarmToken) return;
+      this.neighbourCache.set(index, buffer);
+    } catch {
+      // Best-effort prewarm.
     }
   }
 
@@ -1030,6 +1105,7 @@ export class PdfInkView extends InkWritingView {
       if (canvas.width !== targetWidth) canvas.width = targetWidth;
       if (canvas.height !== targetHeight) canvas.height = targetHeight;
       canvas.getContext("2d")?.drawImage(buffer, 0, 0);
+      if (!this.touchGesture) this.prewarmNeighbours();
     } catch (error) {
       if (this.pdfjs?.RenderingCancelledException && error instanceof this.pdfjs.RenderingCancelledException) return;
       if (generation === this.pdfRenderGeneration) this.setStatus(`Could not render this page: ${messageOf(error)}`, true);
@@ -1069,6 +1145,8 @@ export class PdfInkView extends InkWritingView {
     this.undoStack = [];
     this.redoStack = [];
     this.dirty = false;
+    this.zoomTouched = false;
+    this.neighbourCache.clear();
     this.clearSaveTimers();
     this.setStatus("Loading PDF…");
   }

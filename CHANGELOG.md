@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.0-beta.16 - 2026-10-07
+
+- Smart fit zoom: a PDF page opens filling its width (portrait pages) or its height when width-fill would leave it floating with vertical slack (landscape pages) - one axis is always flush with the pane. Manual zoom overrides it and never goes below the fitted size.
+- Page-swipe gutters are now dynamic: the gap between the current page and the incoming neighbour equals the page's own edge distance, so dense text pages no longer look stitched together mid-drag.
+- Zooming is dramatically smoother: the heavy full-page pdf.js raster is debounced (the previous frame stays on screen, CSS-scaled, until 160ms after the gesture settles) instead of re-rendering on every pinch step.
+- Neighbouring pages are pre-rendered in the background while you read, and the swipe stage consumes that cache - page flips show the neighbour instantly instead of waiting for its render.
+
 ## 0.8.0-beta.15 - 2026-10-07
 
 - Fix the flip settle animation: the neighbouring page now slides all the way into the page slot and stays covering it until the real page has rendered underneath - previously the incoming page slid back out of view and the old page flashed before the new one appeared, which read as a bounce back to the original page.
