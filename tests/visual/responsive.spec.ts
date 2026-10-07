@@ -155,6 +155,50 @@ test("page rail and brush popover are keyboard dismissible", async ({ page }) =>
   await expect(page.getByRole("button", { name: "Pen", exact: true })).toBeFocused();
 });
 
+test("rail thumbnails render page ink and drag-widen reflows into columns", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Pages", exact: true }).click();
+  await expect(page.locator(".ink-page-rail")).toBeVisible();
+  // The expand transition repaints thumbnails at full size; let it settle.
+  await page.waitForTimeout(300);
+  await expect.poll(async () => page.locator(".ink-page-thumb.is-active canvas").evaluate(async (canvas: HTMLCanvasElement) => {
+    if (canvas.width <= 1) return 0;
+    const context = canvas.getContext("2d");
+    if (!context) return 0;
+    const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    let ink = 0;
+    for (let index = 3; index < pixels.length; index += 4) if (pixels[index] > 0) ink++;
+    return ink;
+  })).toBeGreaterThan(0);
+
+  // Drag the right-edge handle 120px right of its rest position: the rail
+  // (default 176px) grows to 296px, past the ~260px two-column threshold.
+  const handle = page.locator(".ink-rail-resizer");
+  const railBox = await page.locator(".ink-page-rail").boundingBox();
+  const handleBox = await handle.boundingBox();
+  expect(railBox && handleBox).toBeTruthy();
+  const startX = handleBox!.x + handleBox!.width / 2;
+  const grabY = railBox!.y + 200;
+  await page.mouse.move(startX, grabY);
+  await page.mouse.down();
+  await page.mouse.move(startX + 120, grabY, { steps: 6 });
+  await page.mouse.up();
+  const rail = page.locator(".ink-page-rail");
+  await expect.poll(async () => rail.evaluate((element: HTMLElement) => element.getBoundingClientRect().width)).toBeGreaterThanOrEqual(290);
+  const columns = await page.locator(".ink-rail-thumbs").evaluate((element: HTMLElement) =>
+    getComputedStyle(element).gridTemplateColumns.split(" ").length);
+  expect(columns).toBe(2);
+  expect(await page.evaluate(() => window.localStorage.getItem("ink-notes-page-rail-width"))).toBe("296");
+  // The page keeps its layout: the scroller absorbs the rail's growth.
+  const after = await page.locator(".ink-workspace").evaluate((workspace) => {
+    const railRect = workspace.querySelector(".ink-page-rail")!.getBoundingClientRect();
+    const scroller = workspace.querySelector(".ink-page-scroller")!.getBoundingClientRect();
+    return { railRight: railRect.right, scrollerLeft: scroller.left };
+  });
+  expect(after.railRight).toBeLessThanOrEqual(after.scrollerLeft + 1);
+});
+
 test("pen and highlighter keep independent tool settings", async ({ page }) => {
   await page.goto("/");
   const pen = page.getByRole("button", { name: "Pen", exact: true });

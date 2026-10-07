@@ -22979,12 +22979,27 @@ var BrushPopoverController = class {
     window.requestAnimationFrame(() => {
       this.position();
       this.update();
+      this.focusSizeSlider();
     });
   }
   close() {
     this.openState = false;
     this.root.toggleClass("is-open", false);
     this.root.setAttribute("aria-hidden", "true");
+  }
+  /**
+   * Keyboard entry: opening hands focus to the active tool's size slider so
+   * the dialog is immediately operable; the views hand focus back to the
+   * tool button on Escape, closing the loop without stranding keyboard
+   * users on the toolbar. Runs after the rAF so the slider exists with
+   * layout even on the popover's first open.
+   */
+  focusSizeSlider() {
+    var _a;
+    const active = this.options.activeTool();
+    if (!active || !isBrushTool(active)) return;
+    const panel = this.root.querySelector(`.ink-brush-settings[data-brush-tool="${active}"]`);
+    (_a = panel == null ? void 0 : panel.querySelector('input[data-control="size"]')) == null ? void 0 : _a.focus();
   }
   toggle() {
     this.isOpen ? this.close() : this.open();
@@ -26636,6 +26651,11 @@ function unexpected(response) {
 var VIEW_TYPE_INK = "ink-notes-view";
 var SAVE_CONFLICT_RETRIES = 3;
 var OVERLAY_RESIZE_BUDGET = 4e6;
+var RAIL_WIDTH_STORAGE_KEY = "ink-notes-page-rail-width";
+var RAIL_MIN_WIDTH = 150;
+var RAIL_MAX_WIDTH = 420;
+var RAIL_TRANSITION_MS = 200;
+var THUMB_ASPECT = 0.73;
 var SaveConflictError = class extends Error {
   constructor(message) {
     super(message);
@@ -26662,6 +26682,8 @@ var InkView = class extends InkWritingView {
     this.readingMode = false;
     this.pageNavigationGeneration = 0;
     this.devPanel = null;
+    /** Live rail drag (pointerdown → pointerup) from the resize handle. */
+    this.railResize = null;
     this.swipeStage = null;
     this.store = store;
     this.workers = workers;
@@ -26730,6 +26752,8 @@ var InkView = class extends InkWritingView {
     var _a, _b, _c, _d;
     this.pageNavigationGeneration += 1;
     this.closeDevPanel();
+    if (this.railRevealTimer !== void 0) window.clearTimeout(this.railRevealTimer);
+    this.railRevealTimer = void 0;
     if (this.renderFrame !== null) window.cancelAnimationFrame(this.renderFrame);
     this.renderFrame = null;
     if (this.zoomRenderTimer !== void 0) window.clearTimeout(this.zoomRenderTimer);
@@ -26815,6 +26839,7 @@ var InkView = class extends InkWritingView {
       this.root.toggleClass("ink-rail-hidden", hidden);
       toggle.setAttribute("aria-pressed", String(!hidden));
       this.resizeCanvas();
+      if (!hidden) this.scheduleRailThumbnailRefresh();
     });
     toggle.setAttribute("aria-pressed", String(!this.root.hasClass("ink-rail-hidden")));
     this.buildWritingSections(toolbar);
@@ -26844,7 +26869,8 @@ var InkView = class extends InkWritingView {
   }
   renderCanvas() {
     const workspace = this.root.createDiv({ cls: "ink-workspace" });
-    workspace.createDiv({ cls: "ink-page-rail", attr: { "aria-label": "Notebook pages" } });
+    const rail = workspace.createDiv({ cls: "ink-page-rail", attr: { "aria-label": "Notebook pages" } });
+    this.applyStoredRailWidth(rail);
     this.pageScroller = workspace.createDiv({ cls: "ink-page-scroller" });
     this.pageExtent = this.pageScroller.createDiv({ cls: "ink-page-extent" });
     this.pageElement = this.pageExtent.createDiv({ cls: "ink-page" });
@@ -26909,17 +26935,124 @@ var InkView = class extends InkWritingView {
     this.addIconButton(actions, "chevron-down", "Move current page down", () => this.moveCurrentPage(1), this.pageIndex === this.notebook.pages.length - 1);
     this.addIconButton(actions, "copy", "Duplicate current page", () => this.duplicateCurrentPage());
     this.addIconButton(actions, "trash-2", "Delete current page", () => this.deleteCurrentPage(), this.notebook.pages.length <= 1);
+    const thumbs = rail.createDiv({ cls: "ink-rail-thumbs" });
     this.notebook.pages.forEach((page, index) => {
-      const button = rail.createEl("button", { cls: "ink-page-thumb", attr: { type: "button", title: page.title } });
+      const button = thumbs.createEl("button", { cls: "ink-page-thumb", attr: { type: "button", title: page.title } });
       if (index === this.pageIndex) button.addClass("is-active");
       button.setAttribute("aria-label", String(index + 1) + ": " + page.title);
       button.setAttribute("aria-current", String(index === this.pageIndex));
       button.createDiv({ cls: `ink-page-thumb-paper ink-paper-${page.paper}` });
+      const canvas = button.createEl("canvas", { cls: "ink-page-thumb-canvas", attr: { "aria-hidden": "true" } });
       button.createSpan({ text: String(index + 1), cls: "ink-page-thumb-number" });
       button.createSpan({ text: page.title, cls: "ink-page-thumb-title" });
       button.addEventListener("click", () => this.navigateToPage(page.id));
+      this.drawPageThumbnail(canvas, page);
     });
+    this.mountRailResizer(rail);
     (_b = (_a = rail.querySelector(".ink-page-thumb.is-active")) == null ? void 0 : _a.scrollIntoView) == null ? void 0 : _b.call(_a, { block: "nearest" });
+  }
+  /**
+   * Paints one page's strokes into its rail thumbnail as a small vector
+   * snapshot. Guarded end to end: a failed thumbnail render must never break
+   * the rail build or touch the main canvas, so the thumb just stays on its
+   * paper background. Skipped while the rail has no width (collapsed): the
+   * redraw scheduled by the expand toggle repaints at the real size.
+   */
+  drawPageThumbnail(canvas, page) {
+    try {
+      const width = canvas.clientWidth;
+      if (width <= 0) return;
+      const height = canvas.clientHeight || Math.round(width / THUMB_ASPECT);
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.max(1, Math.round(width * dpr));
+      canvas.height = Math.max(1, Math.round(height * dpr));
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
+      for (const stroke of page.strokes) drawInkStroke(ctx, stroke, width, height);
+    } catch (error) {
+      console.warn("Ink Notes could not render a page thumbnail", error);
+    }
+  }
+  /** Repaints every thumbnail from the live model (expand settle, drag end). */
+  redrawPageThumbnails() {
+    var _a;
+    const rail = (_a = this.root) == null ? void 0 : _a.querySelector(".ink-page-rail");
+    if (!rail) return;
+    rail.querySelectorAll(".ink-page-thumb canvas").forEach((canvas, index) => {
+      const page = this.notebook.pages[index];
+      if (page) this.drawPageThumbnail(canvas, page);
+    });
+  }
+  /** Repaints only the current page's thumbnail after its content changed
+   *  (stroke added/removed, undo/redo, external merge) — never per frame. */
+  refreshCurrentPageThumbnail() {
+    var _a;
+    const rail = (_a = this.root) == null ? void 0 : _a.querySelector(".ink-page-rail");
+    const canvas = rail == null ? void 0 : rail.querySelectorAll(".ink-page-thumb canvas")[this.pageIndex];
+    if (canvas) this.drawPageThumbnail(canvas, this.currentPage());
+  }
+  /** Thumbnails blank-paint while the expand transition starts from 0; once
+   *  the rail reached its width, repaint them at full resolution. */
+  scheduleRailThumbnailRefresh() {
+    if (this.railRevealTimer !== void 0) window.clearTimeout(this.railRevealTimer);
+    this.railRevealTimer = window.setTimeout(() => {
+      this.railRevealTimer = void 0;
+      if (this.viewReady && !this.root.hasClass("ink-rail-hidden")) this.redrawPageThumbnails();
+    }, RAIL_TRANSITION_MS + 30);
+  }
+  /** Applies the persisted rail width as a CSS variable so the stylesheet
+   *  keeps owning width/flex-basis (the container-query narrow width still
+   *  wins where it applies). */
+  applyStoredRailWidth(rail) {
+    try {
+      const width = Number(window.localStorage.getItem(RAIL_WIDTH_STORAGE_KEY));
+      if (Number.isFinite(width) && width >= RAIL_MIN_WIDTH && width <= RAIL_MAX_WIDTH) {
+        rail.style.setProperty("--ink-rail-width", `${Math.round(width)}px`);
+      }
+    } catch (e) {
+    }
+  }
+  /** Drag handle on the rail's right edge: horizontal pointer drag widens or
+   *  narrows the rail, the final width persists to localStorage. Pointer
+   *  capture keeps the gesture alive outside the handle's hit box. */
+  mountRailResizer(rail) {
+    const handle = rail.createDiv({ cls: "ink-rail-resizer", attr: { "aria-hidden": "true" } });
+    handle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0 || this.railResize) return;
+      event.preventDefault();
+      this.railResize = { pointerId: event.pointerId, startWidth: rail.getBoundingClientRect().width, startX: event.clientX };
+      rail.classList.add("is-resizing");
+      if (typeof handle.setPointerCapture === "function") handle.setPointerCapture(event.pointerId);
+    });
+    handle.addEventListener("pointermove", (event) => {
+      const drag = this.railResize;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      this.applyRailWidth(rail, drag.startWidth + event.clientX - drag.startX);
+    });
+    const finish = (event) => {
+      const drag = this.railResize;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      this.railResize = null;
+      rail.classList.remove("is-resizing");
+      if (typeof handle.hasPointerCapture === "function" && handle.hasPointerCapture(event.pointerId)) {
+        handle.releasePointerCapture(event.pointerId);
+      }
+      const width = parseFloat(rail.style.getPropertyValue("--ink-rail-width"));
+      if (Number.isFinite(width)) {
+        try {
+          window.localStorage.setItem(RAIL_WIDTH_STORAGE_KEY, String(width));
+        } catch (e) {
+        }
+      }
+      this.redrawPageThumbnails();
+    };
+    handle.addEventListener("pointerup", finish);
+    handle.addEventListener("pointercancel", finish);
+  }
+  applyRailWidth(rail, width) {
+    const clamped = Math.round(Math.max(RAIL_MIN_WIDTH, Math.min(RAIL_MAX_WIDTH, width)));
+    rail.style.setProperty("--ink-rail-width", `${clamped}px`);
   }
   renderPage() {
     if (!this.viewReady || this.notebook.pages.length === 0) return;
@@ -27028,10 +27161,15 @@ var InkView = class extends InkWritingView {
     this.pageNavigationGeneration += 1;
   }
   afterInputFullySettled() {
+    this.refreshCurrentPageThumbnail();
     if (this.externalRefreshPending && this.pendingInkStrokes.length === 0) {
       this.externalRefreshPending = false;
       void this.reloadFromDisk().catch((error) => new import_obsidian3.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
     }
+  }
+  afterCommand(command) {
+    super.afterCommand(command);
+    if (!command.rebuild) this.refreshCurrentPageThumbnail();
   }
   diagnosticsCaptureRawPoints() {
     return this.devPanel !== null;
@@ -27205,7 +27343,10 @@ var InkView = class extends InkWritingView {
       this.renderPage();
     } else {
       if (changes.pageRailChanged) this.updatePageStatus();
-      if (changes.currentInkChanged) this.drawStrokes(this.currentPage().strokes);
+      if (changes.currentInkChanged) {
+        this.drawStrokes(this.currentPage().strokes);
+        this.refreshCurrentPageThumbnail();
+      }
     }
   }
   // ------------------------------------------------------------ dev panel

@@ -571,18 +571,87 @@
 .ink-eraser-reference-point::after { width: 1px; height: 17px; }
 
 .ink-page-rail {
-  width: 176px;
-  flex: 0 0 176px;
+  position: relative;
+  /* Width lives in one variable so the drag handle only has to update a
+     custom property; stylesheet rules (container queries, collapse) keep
+     precedence over it. */
+  width: var(--ink-rail-width, 176px);
+  flex: 0 0 var(--ink-rail-width, 176px);
+  min-width: 0;
   padding: 14px 12px 24px;
   overflow-y: auto;
+  overflow-x: hidden;
   border-right: 1px solid var(--ink-border);
   background: var(--ink-panel);
   scrollbar-width: thin;
+  /* Expand/collapse animates the width away instead of display:none so the
+     page column grows fluidly (~200ms). visibility is animated too: it flips
+     at the END of the collapse (removing the buttons from tab order only
+     once hidden) and immediately on expand. */
+  transition: flex-basis 200ms ease, width 200ms ease, padding 200ms ease, border-width 200ms ease, visibility 200ms ease, opacity 200ms ease;
 }
 
-.ink-rail-hidden .ink-page-rail { display: none; }
+/* Collapsed: the same box at zero size. !important-free overrides win on
+   specificity (.ink-notes-view.ink-rail-hidden .ink-page-rail) over the base
+   and container-query rules; the inline --ink-rail-width custom property is
+   irrelevant here because neither declaration references it. */
+.ink-notes-view.ink-rail-hidden .ink-page-rail {
+  flex-basis: 0;
+  width: 0;
+  padding-left: 0;
+  padding-right: 0;
+  border-right-width: 0;
+  visibility: hidden;
+  opacity: 0;
+}
+
+/* The drag gesture must track the pointer; the 200ms transition would smear it. */
+.ink-page-rail.is-resizing { transition: none; }
+
+/* Right-edge drag handle. Sits inside the rail (overflow-x:hidden would clip
+   any overhang, and a classic scrollbar can claim the outermost pixels), so
+   the 14px strip keeps a usable grab area with the rail's border as its aim
+   line. Later DOM order paints it above the thumbnails. */
+.ink-rail-resizer {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 14px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.ink-rail-resizer::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  width: 2px;
+  border-radius: 1px;
+  background: transparent;
+  transition: background-color 160ms ease;
+}
+
+.ink-rail-resizer:hover::after,
+.ink-page-rail.is-resizing .ink-rail-resizer::after { background: var(--ink-accent); }
+
+/* Multi-column reflow: auto-fill keeps single-column at the default 176px
+   rail and grows to 2 columns past ~260px, 3 past ~370px. Row gap reserves
+   the room the title label needs below each thumb. */
+.ink-rail-thumbs {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  column-gap: 10px;
+  row-gap: 30px;
+}
 
 .ink-rail-header {
+  position: relative;
+  /* Above the drag handle strip so the page-action buttons stay clickable
+     under its right-edge grab area. */
+  z-index: 1;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -595,6 +664,8 @@
 .ink-rail-count { color: var(--ink-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 
 .ink-rail-actions {
+  position: relative;
+  z-index: 1;
   display: grid;
   grid-template-columns: repeat(2, minmax(44px, 1fr));
   gap: 6px;
@@ -623,7 +694,7 @@
   width: 100%;
   height: auto;
   aspect-ratio: .73;
-  margin: 0 0 34px;
+  margin: 0;
   padding: 0;
   border: 2px solid transparent;
   border-radius: 4px;
@@ -635,6 +706,15 @@
 .ink-page-thumb:hover { box-shadow: 0 4px 12px rgb(0 0 0 / 20%); }
 .ink-page-thumb.is-active { border-color: var(--ink-accent); box-shadow: 0 0 0 2px var(--ink-panel), 0 0 0 4px var(--ink-accent), 0 4px 12px rgb(0 0 0 / 18%); }
 .ink-page-thumb-paper { position: absolute; inset: 0; border-radius: 2px; }
+/* Vector snapshot of the page's ink; transparent where the page is blank. */
+.ink-page-thumb-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  border-radius: 2px;
+  pointer-events: none;
+}
 .ink-page-thumb-number { position: absolute; right: 7px; bottom: 5px; color: #555; font-size: 11px; font-variant-numeric: tabular-nums; }
 .ink-page-thumb-title { position: absolute; top: calc(100% + 10px); left: 0; width: 100%; overflow: hidden; color: var(--ink-muted); font-size: 11px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 

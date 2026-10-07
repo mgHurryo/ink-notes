@@ -13,6 +13,7 @@ import { NotebookStore } from "./storage";
 import { exportNotebookPdf, exportPathFor, notebookHasInk } from "./pdf-export";
 import { registerDocumentPointerEndEvents } from "./ink-input";
 import { InkWritingView, InkPointerSample, cloneStroke, SPARSE_SAMPLE_INTERVAL_MS } from "./ink-writing";
+import type { EditCommand } from "./ink-writing";
 import type { SharedToolState } from "./tool-state";
 export { BrushSettings, BrushTool, INK_COLORS, isBrushTool } from "./brush-popover";
 export {
@@ -54,6 +55,16 @@ interface NotebookReconciliation {
 
 const OVERLAY_RESIZE_BUDGET = 4_000_000;
 
+/** Rail width persistence. localStorage (not the plugin data file) is enough
+ *  here: the width is per-device window chrome, not notebook content. */
+const RAIL_WIDTH_STORAGE_KEY = "ink-notes-page-rail-width";
+const RAIL_MIN_WIDTH = 150;
+const RAIL_MAX_WIDTH = 420;
+/** Keep in sync with the 200ms expand/collapse transition on .ink-page-rail. */
+const RAIL_TRANSITION_MS = 200;
+/** Fallback for the CSS aspect-ratio(.73) thumb box when clientHeight is 0. */
+const THUMB_ASPECT = 0.73;
+
 class SaveConflictError extends Error {
   constructor(message: string) {
     super(message);
@@ -86,6 +97,10 @@ export class InkView extends InkWritingView {
   private pageNavigationGeneration = 0;
   private devPanel: HTMLElement | null = null;
   private devPanelRefreshTimer: number | undefined;
+  /** Live rail drag (pointerdown → pointerup) from the resize handle. */
+  private railResize: { pointerId: number; startWidth: number; startX: number } | null = null;
+  /** Deferred thumbnail redraw while the rail's expand transition runs. */
+  private railRevealTimer: number | undefined;
 
   constructor(leaf: WorkspaceLeaf, store: NotebookStore, workers?: InkWorkerService, toolState?: SharedToolState) {
     super(leaf);
@@ -140,6 +155,8 @@ export class InkView extends InkWritingView {
   async onClose(): Promise<void> {
     this.pageNavigationGeneration += 1;
     this.closeDevPanel();
+    if (this.railRevealTimer !== undefined) window.clearTimeout(this.railRevealTimer);
+    this.railRevealTimer = undefined;
     if (this.renderFrame !== null) window.cancelAnimationFrame(this.renderFrame);
     this.renderFrame = null;
     if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
@@ -226,6 +243,9 @@ export class InkView extends InkWritingView {
       this.root.toggleClass("ink-rail-hidden", hidden);
       toggle.setAttribute("aria-pressed", String(!hidden));
       this.resizeCanvas();
+      // Thumbnails skipped painting while the rail was collapsed (zero
+      // width); repaint once the expand transition has revealed them.
+      if (!hidden) this.scheduleRailThumbnailRefresh();
     });
     toggle.setAttribute("aria-pressed", String(!this.root.hasClass("ink-rail-hidden")));
     this.buildWritingSections(toolbar);
@@ -260,7 +280,8 @@ export class InkView extends InkWritingView {
 
   private renderCanvas(): void {
     const workspace = this.root.createDiv({ cls: "ink-workspace" });
-    workspace.createDiv({ cls: "ink-page-rail", attr: { "aria-label": "Notebook pages" } });
+    const rail = workspace.createDiv({ cls: "ink-page-rail", attr: { "aria-label": "Notebook pages" } });
+    this.applyStoredRailWidth(rail);
     this.pageScroller = workspace.createDiv({ cls: "ink-page-scroller" });
     this.pageExtent = this.pageScroller.createDiv({ cls: "ink-page-extent" });
     this.pageElement = this.pageExtent.createDiv({ cls: "ink-page" });
@@ -328,17 +349,135 @@ export class InkView extends InkWritingView {
     this.addIconButton(actions, "chevron-down", "Move current page down", () => this.moveCurrentPage(1), this.pageIndex === this.notebook.pages.length - 1);
     this.addIconButton(actions, "copy", "Duplicate current page", () => this.duplicateCurrentPage());
     this.addIconButton(actions, "trash-2", "Delete current page", () => this.deleteCurrentPage(), this.notebook.pages.length <= 1);
+    const thumbs = rail.createDiv({ cls: "ink-rail-thumbs" });
     this.notebook.pages.forEach((page, index) => {
-      const button = rail!.createEl("button", { cls: "ink-page-thumb", attr: { type: "button", title: page.title } });
+      const button = thumbs.createEl("button", { cls: "ink-page-thumb", attr: { type: "button", title: page.title } });
       if (index === this.pageIndex) button.addClass("is-active");
       button.setAttribute("aria-label", String(index + 1) + ": " + page.title);
       button.setAttribute("aria-current", String(index === this.pageIndex));
+      // Paper class stays on the background layer; the canvas above it carries
+      // a vector snapshot of the page's ink (transparent where unwritten).
       button.createDiv({ cls: `ink-page-thumb-paper ink-paper-${page.paper}` });
+      const canvas = button.createEl("canvas", { cls: "ink-page-thumb-canvas", attr: { "aria-hidden": "true" } });
       button.createSpan({ text: String(index + 1), cls: "ink-page-thumb-number" });
       button.createSpan({ text: page.title, cls: "ink-page-thumb-title" });
       button.addEventListener("click", () => this.navigateToPage(page.id));
+      this.drawPageThumbnail(canvas, page);
     });
+    this.mountRailResizer(rail);
     rail.querySelector<HTMLElement>(".ink-page-thumb.is-active")?.scrollIntoView?.({ block: "nearest" });
+  }
+
+  /**
+   * Paints one page's strokes into its rail thumbnail as a small vector
+   * snapshot. Guarded end to end: a failed thumbnail render must never break
+   * the rail build or touch the main canvas, so the thumb just stays on its
+   * paper background. Skipped while the rail has no width (collapsed): the
+   * redraw scheduled by the expand toggle repaints at the real size.
+   */
+  private drawPageThumbnail(canvas: HTMLCanvasElement, page: InkPage): void {
+    try {
+      const width = canvas.clientWidth;
+      if (width <= 0) return;
+      const height = canvas.clientHeight || Math.round(width / THUMB_ASPECT);
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = Math.max(1, Math.round(width * dpr));
+      canvas.height = Math.max(1, Math.round(height * dpr));
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
+      ctx.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
+      for (const stroke of page.strokes) drawInkStroke(ctx, stroke, width, height);
+    } catch (error) {
+      console.warn("Ink Notes could not render a page thumbnail", error);
+    }
+  }
+
+  /** Repaints every thumbnail from the live model (expand settle, drag end). */
+  private redrawPageThumbnails(): void {
+    const rail = this.root?.querySelector<HTMLElement>(".ink-page-rail");
+    if (!rail) return;
+    rail.querySelectorAll<HTMLCanvasElement>(".ink-page-thumb canvas").forEach((canvas, index) => {
+      const page = this.notebook.pages[index];
+      if (page) this.drawPageThumbnail(canvas, page);
+    });
+  }
+
+  /** Repaints only the current page's thumbnail after its content changed
+   *  (stroke added/removed, undo/redo, external merge) — never per frame. */
+  private refreshCurrentPageThumbnail(): void {
+    const rail = this.root?.querySelector<HTMLElement>(".ink-page-rail");
+    const canvas = rail?.querySelectorAll<HTMLCanvasElement>(".ink-page-thumb canvas")[this.pageIndex];
+    if (canvas) this.drawPageThumbnail(canvas, this.currentPage());
+  }
+
+  /** Thumbnails blank-paint while the expand transition starts from 0; once
+   *  the rail reached its width, repaint them at full resolution. */
+  private scheduleRailThumbnailRefresh(): void {
+    if (this.railRevealTimer !== undefined) window.clearTimeout(this.railRevealTimer);
+    this.railRevealTimer = window.setTimeout(() => {
+      this.railRevealTimer = undefined;
+      if (this.viewReady && !this.root.hasClass("ink-rail-hidden")) this.redrawPageThumbnails();
+    }, RAIL_TRANSITION_MS + 30);
+  }
+
+  /** Applies the persisted rail width as a CSS variable so the stylesheet
+   *  keeps owning width/flex-basis (the container-query narrow width still
+   *  wins where it applies). */
+  private applyStoredRailWidth(rail: HTMLElement): void {
+    try {
+      const width = Number(window.localStorage.getItem(RAIL_WIDTH_STORAGE_KEY));
+      if (Number.isFinite(width) && width >= RAIL_MIN_WIDTH && width <= RAIL_MAX_WIDTH) {
+        rail.style.setProperty("--ink-rail-width", `${Math.round(width)}px`);
+      }
+    } catch {
+      // localStorage can be unavailable (privacy modes); the CSS default holds.
+    }
+  }
+
+  /** Drag handle on the rail's right edge: horizontal pointer drag widens or
+   *  narrows the rail, the final width persists to localStorage. Pointer
+   *  capture keeps the gesture alive outside the handle's hit box. */
+  private mountRailResizer(rail: HTMLElement): void {
+    const handle = rail.createDiv({ cls: "ink-rail-resizer", attr: { "aria-hidden": "true" } });
+    handle.addEventListener("pointerdown", (event: PointerEvent) => {
+      if (event.button !== 0 || this.railResize) return;
+      event.preventDefault();
+      this.railResize = { pointerId: event.pointerId, startWidth: rail.getBoundingClientRect().width, startX: event.clientX };
+      // The width must track the pointer exactly; the expand/collapse
+      // transition would otherwise lag every drag step by 200ms.
+      rail.classList.add("is-resizing");
+      if (typeof handle.setPointerCapture === "function") handle.setPointerCapture(event.pointerId);
+    });
+    handle.addEventListener("pointermove", (event: PointerEvent) => {
+      const drag = this.railResize;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      this.applyRailWidth(rail, drag.startWidth + event.clientX - drag.startX);
+    });
+    const finish = (event: PointerEvent) => {
+      const drag = this.railResize;
+      if (!drag || drag.pointerId !== event.pointerId) return;
+      this.railResize = null;
+      rail.classList.remove("is-resizing");
+      if (typeof handle.hasPointerCapture === "function" && handle.hasPointerCapture(event.pointerId)) {
+        handle.releasePointerCapture(event.pointerId);
+      }
+      const width = parseFloat(rail.style.getPropertyValue("--ink-rail-width"));
+      if (Number.isFinite(width)) {
+        try {
+          window.localStorage.setItem(RAIL_WIDTH_STORAGE_KEY, String(width));
+        } catch {
+          // Persistence is best-effort; the drag result still applies live.
+        }
+      }
+      this.redrawPageThumbnails();
+    };
+    handle.addEventListener("pointerup", finish);
+    handle.addEventListener("pointercancel", finish);
+  }
+
+  private applyRailWidth(rail: HTMLElement, width: number): void {
+    const clamped = Math.round(Math.max(RAIL_MIN_WIDTH, Math.min(RAIL_MAX_WIDTH, width)));
+    rail.style.setProperty("--ink-rail-width", `${clamped}px`);
   }
 
   private renderPage(): void {
@@ -447,10 +586,19 @@ export class InkView extends InkWritingView {
     this.pageNavigationGeneration += 1;
   }
   protected afterInputFullySettled(): void {
+    // Runs at pointerup and again after the tile ink commit, so the current
+    // page's thumbnail tracks both the raw and the finalized stroke.
+    this.refreshCurrentPageThumbnail();
     if (this.externalRefreshPending && this.pendingInkStrokes.length === 0) {
       this.externalRefreshPending = false;
       void this.reloadFromDisk().catch((error) => new Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
     }
+  }
+  protected afterCommand(command: EditCommand): void {
+    super.afterCommand(command);
+    // Rebuild commands already re-rendered the rail through renderAll();
+    // the cheap stroke-level undo/redo path only redraws the canvas.
+    if (!command.rebuild) this.refreshCurrentPageThumbnail();
   }
   protected diagnosticsCaptureRawPoints(): boolean { return this.devPanel !== null; }
   protected performScheduledSave(): void { void this.save(); }
@@ -622,7 +770,10 @@ export class InkView extends InkWritingView {
       this.renderPage();
     } else {
       if (changes.pageRailChanged) this.updatePageStatus();
-      if (changes.currentInkChanged) this.drawStrokes(this.currentPage().strokes);
+      if (changes.currentInkChanged) {
+        this.drawStrokes(this.currentPage().strokes);
+        this.refreshCurrentPageThumbnail();
+      }
     }
   }
 
