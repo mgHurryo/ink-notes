@@ -889,6 +889,8 @@
   flex: 1 1 auto;
   overflow: auto;
   padding: 24px;
+  /* A theme-aware "desk" around the page instead of raw white bands. */
+  background: color-mix(in srgb, var(--ink-text) 9%, var(--ink-panel));
 }
 
 .ink-pdf-page-wrap {

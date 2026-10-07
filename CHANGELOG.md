@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0-beta.15 - 2026-10-07
+
+- Fix the flip settle animation: the neighbouring page now slides all the way into the page slot and stays covering it until the real page has rendered underneath - previously the incoming page slid back out of view and the old page flashed before the new one appeared, which read as a bounce back to the original page.
+- The PDF editor's smallest zoom is now fit-width (100%): zooming out no longer floats a tiny page in a field of empty canvas.
+- The area around the PDF page gets a theme-aware desk tint (deep grey in dark themes, light grey in light themes) instead of raw white bands on all sides.
+- The PDF page no longer flashes blank while zooming or resizing: frames render into an offscreen buffer and swap onto the visible canvas only when complete (resizing the visible canvas wipes it, which is what flashed).
+- While a handwriting view is open, touches on the writing surface no longer reach the app chrome at all (stop-propagation): Obsidian's left/right sidebar edge swipes can never interrupt writing - previously they fired only sometimes because the gesture handlers consumed the touches inconsistently. The raw white bands around the page (including at maximum zoom, where they were the scroller's padding peeking out at the scroll limits) are now the theme-aware desk tint.
+
 ## 0.8.0-beta.14 - 2026-10-07
 
 - Fix handwriting landing up-left of the pen in the PDF editor: the ink overlay's coordinate space was the PDF's point size (e.g. 595pt for A4) while every mapping assumed the page box's pixel size (notebook behaviour), so strokes were proportionally compressed toward the top-left. The logical space is now the page box, matching the notebook editor. This also corrects committed tiles, the eraser radius and the modeler space in the PDF editor.
