@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.0-beta.27 - 2026-10-08
+
+- The PDF handwriting view now has a page preview rail: a permanent left column with one thumbnail per page, rendered from the actual PDF page content at thumbnail scale (~120px wide, ~0.2 pdf.js scale). Click a thumbnail to jump to that page; the current page stays highlighted. No new buttons - the rail is always there, like the notebook editor's page rail, and it scrolls for long documents.
+- Thumbnails render on demand, visible range first: opening a fifty-page PDF does not render fifty pages. Rendered thumbnails live in their own small cache (evicted beyond one page from the current page, like the neighbour prewarm cache), and a thumbnail next to the current page can be downscaled straight from the existing neighbour pre-raster for an instant first frame.
+
 ## 0.8.0-beta.26 - 2026-10-08
 
 - Page thumbnails now show content: every rail thumbnail carries a canvas that renders that page's strokes as a scaled vector snapshot (paper-color background stays). The current page's thumbnail refreshes after its ink actually changes - stroke added or removed, undo/redo, page switch, external merge - not per frame; a failed thumbnail render is contained and can never affect the main canvas.
