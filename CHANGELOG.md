@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.0-beta.13 - 2026-10-07
+
+- Fix the zoomed page being squashed by its own scroller: the beta.12 centring turned the scroller into a flex container, and once the zoomed page grew past the pane the flex layout compressed the page's height instead of letting it scroll - flattening the rendered text, pinning the apparent background size, and mis-mapping every stroke at higher zooms. The page box no longer shrinks (`flex: none`) in either editor.
+- Page-flip drag rework: the page now follows the finger while dragging, a flip needs a deliberate drag (a fifth of the pane width, minimum 96px - previously a twitch flipped instantly), extra dragging past a page keeps flipping, and releasing the finger settles the page back with an animation.
+
 ## 0.8.0-beta.12 - 2026-10-07
 
 - True centre zoom anchoring in both editors: the page now sits dead-centre in its scroller while it fits (auto margins collapse to zero once it overflows, so panning and the anchor math keep working). Previously the page hung from the top edge, so zooming pivoted around the top-centre.

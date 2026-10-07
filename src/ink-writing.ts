@@ -537,6 +537,9 @@ export abstract class InkWritingView extends FileView {
   protected onToolSelected(_tool: InkTool): void {}
   /** View hook for the horizontal page-flip gesture (Photos-style). */
   protected swipeNavigate(_delta: number): void {}
+  /** View hook: the page-flip drag moved by `offset` px (page follows the
+   *  finger); null ends the drag and plays the settle animation. */
+  protected swipeDrag(_offset: number | null): void {}
   protected settingsOpen(): boolean { return false; }
   protected toggleToolSettings(): void {}
   /** Re-open the settings popover at the (new) active tool's anchor. */
@@ -1169,6 +1172,8 @@ export abstract class InkWritingView extends FileView {
     // Cancel native tap recognition before the guards, including Pencil
     // contact and final touchend events with no remaining contacts.
     if (event.cancelable && event.touches.length < 2) event.preventDefault();
+    // Ending a page-flip drag springs the page back with the settle animation.
+    if (this.touchGesture?.axis === "x") this.swipeDrag(null);
     this.touchGesture = null;
     this.healStaleInteraction(Array.from(event.touches));
     const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus");
@@ -1238,10 +1243,17 @@ export abstract class InkWritingView extends FileView {
       if (gesture.axis === "x") {
         // Photos-style page flip: a horizontally dominant drag when the
         // document cannot scroll sideways flips pages instead of panning.
-        if (Math.abs(totalX - gesture.swipeDone) > 64) {
-          this.swipeNavigate(totalX > gesture.swipeDone ? -1 : 1);
+        // The page follows the finger; the flip needs a deliberate drag
+        // (a fifth of the pane, not a twitch) and the rest springs back.
+        const dragOffset = totalX - gesture.swipeDone;
+        const flipThreshold = Math.max(96, this.inputScroller().clientWidth * 0.2);
+        if (Math.abs(dragOffset) > flipThreshold) {
+          this.swipeNavigate(dragOffset > 0 ? -1 : 1);
           gesture.swipeDone = totalX;
+          this.swipeDrag(totalX - gesture.swipeDone);
+          return;
         }
+        this.swipeDrag(dragOffset);
         return;
       }
       scroller.scrollLeft += gesture.x - a.clientX;

@@ -172,6 +172,7 @@ export class PdfInkView extends InkWritingView {
     this.registerDomEvent(scroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(scroller, "touchcancel", (event) => {
       this.onStylusTouch(event);
+      if (this.touchGesture?.axis === "x") this.swipeDrag(null);
       this.touchGesture = null;
     }, { passive: false });
     // Pane operations (splits, drags, sidebar toggles) resize this view
@@ -853,6 +854,17 @@ export class PdfInkView extends InkWritingView {
 
   protected swipeNavigate(delta: number): void {
     this.navigatePages(delta);
+  }
+
+  protected swipeDrag(offset: number | null): void {
+    const wrap = this.pageWrap;
+    if (!wrap) return;
+    if (offset === null) {
+      wrap.setCssStyles({ transition: "transform 180ms ease-out", transform: "translateX(0px)" });
+      return;
+    }
+    const clamped = Math.max(-140, Math.min(140, offset));
+    wrap.setCssStyles({ transition: "none", transform: `translateX(${clamped}px)` });
   }
   protected settingsOpen(): boolean { return this.brushPopover?.isOpen ?? false; }
   protected toggleToolSettings(): void {
