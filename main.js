@@ -26779,9 +26779,10 @@ var InkView = class extends InkWritingView {
     extent.style.transform = `translateX(${-delta * width}px)`;
     this.swipeStage.style.transition = "transform 160ms ease-out";
     this.swipeStage.style.transform = `translateX(${-side * width}px)`;
-    if (this.swipeStageTimer !== void 0) window.clearTimeout(this.swipeStageTimer);
-    this.swipeStageTimer = window.setTimeout(() => {
-      this.swipeStageTimer = void 0;
+    let committed = false;
+    const commit = () => {
+      if (committed || !this.swipeStage) return;
+      committed = true;
       const stage = this.swipeStage;
       if (stage) {
         stage.style.transition = "none";
@@ -26798,7 +26799,10 @@ var InkView = class extends InkWritingView {
         this.swipeStageTimer = void 0;
         this.destroySwipeStage();
       }, 650);
-    }, 170);
+    };
+    extent.addEventListener("transitionend", commit, { once: true });
+    if (this.swipeStageTimer !== void 0) window.clearTimeout(this.swipeStageTimer);
+    this.swipeStageTimer = window.setTimeout(commit, 280);
   }
   destroySwipeStage() {
     var _a;
@@ -29143,14 +29147,18 @@ var PdfInkView = class extends InkWritingView {
     const width = wrap.offsetWidth;
     wrap.setCssStyles({ transition: "transform 160ms ease-out", transform: `translateX(${-delta * width}px)` });
     this.swipeStage.setCssStyles({ transition: "transform 160ms ease-out", transform: `translateX(${-side * width}px)` });
-    if (this.swipeStageTimer !== void 0) window.clearTimeout(this.swipeStageTimer);
-    this.swipeStageTimer = window.setTimeout(() => {
-      this.swipeStageTimer = void 0;
+    let committed = false;
+    const commit = () => {
+      if (committed || !this.swipeStage) return;
+      committed = true;
       const stage = this.swipeStage;
-      if (stage) stage.setCssStyles({ transition: "none", left: `${wrap.offsetLeft}px`, transform: "none" });
+      stage.setCssStyles({ transition: "none", left: `${wrap.offsetLeft}px`, transform: "none" });
       wrap.setCssStyles({ transition: "none", transform: "none" });
       void this.navigatePages(delta).finally(() => this.destroySwipeStage());
-    }, 170);
+    };
+    wrap.addEventListener("transitionend", commit, { once: true });
+    if (this.swipeStageTimer !== void 0) window.clearTimeout(this.swipeStageTimer);
+    this.swipeStageTimer = window.setTimeout(commit, 280);
   }
   destroySwipeStage() {
     var _a;
