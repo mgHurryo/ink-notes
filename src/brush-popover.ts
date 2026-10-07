@@ -444,10 +444,17 @@ export class BrushPopoverController {
     if (outline.length < 2) return;
     ctx.globalAlpha = settings.opacity;
     ctx.fillStyle = settings.color;
-    ctx.beginPath();
-    outline.forEach(([x, y], index) => (index ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
-    ctx.closePath();
-    ctx.fill();
+    let tracing = false;
+    for (const [x, y] of outline) {
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        if (tracing) { ctx.closePath(); ctx.fill(); }
+        tracing = false;
+        continue;
+      }
+      if (!tracing) { ctx.beginPath(); tracing = true; ctx.moveTo(x, y); continue; }
+      ctx.lineTo(x, y);
+    }
+    if (tracing) { ctx.closePath(); ctx.fill(); }
     ctx.globalAlpha = 1;
   }
 

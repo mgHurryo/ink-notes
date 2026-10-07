@@ -7,7 +7,7 @@ interface CachedPath {
   size: number;
   width: number;
   height: number;
-  path: Path2D;
+  paths: Path2D[];
 }
 
 const paths = new WeakMap<InkStroke, CachedPath>();
@@ -24,7 +24,33 @@ export function penOutline(stroke: InkStroke, width: number, height: number): nu
     stroke.points.map((point, index) => [point.x * width, point.y * height, pressures[index], point.t]),
     stroke.width * 0.925,
   );
-  return penRibbonPolygon(centerline, stroke);
+  // A single ribbon polygon folds when the stroke doubles back on itself
+  // (Chinese hooks, retraces): the offset chains cross and nonzero-winding
+  // fill cancels the overlap to holes. Split at sharp turns (>~120 deg) and
+  // emit one capped ribbon per run, separated by NaN points; consumers fill
+  // each run separately so overlaps paint instead of cancelling.
+  const runs: number[][][] = [];
+  let start = 0;
+  for (let index = 1; index < centerline.length - 1; index++) {
+    const ax = centerline[index][0] - centerline[index - 1][0];
+    const ay = centerline[index][1] - centerline[index - 1][1];
+    const bx = centerline[index + 1][0] - centerline[index][0];
+    const by = centerline[index + 1][1] - centerline[index][1];
+    const la = Math.hypot(ax, ay);
+    const lb = Math.hypot(bx, by);
+    if (la < 0.35 || lb < 0.35) continue;
+    if ((ax * bx + ay * by) / (la * lb) < -0.45) {
+      runs.push(centerline.slice(start, index + 1));
+      start = index;
+    }
+  }
+  runs.push(centerline.slice(start));
+  const flat: number[][] = [];
+  runs.forEach((run, runIndex) => {
+    if (runIndex > 0) flat.push([Number.NaN, Number.NaN]);
+    flat.push(...penRibbonPolygon(run, stroke));
+  });
+  return flat;
 }
 
 /**
@@ -288,32 +314,34 @@ export function drawInkStroke(ctx: CanvasRenderingContext2D, stroke: InkStroke, 
     if (!cached || cached.points !== stroke.points || cached.count !== stroke.points.length
       || cached.updatedAt !== stroke.updatedAt || cached.size !== stroke.width || cached.width !== width || cached.height !== height) {
       cached = { points: stroke.points, count: stroke.points.length, updatedAt: stroke.updatedAt, size: stroke.width,
-        width, height, path: createPenPath(stroke, width, height) };
+        width, height, paths: createPenPaths(stroke, width, height) };
       paths.set(stroke, cached);
     }
-    // Composite once so segment overlaps cannot accumulate alpha at their edges.
-    ctx.fill(cached.path);
+    // Runs fill separately: within a run the polygon composites once so
+    // segment overlaps cannot accumulate alpha, while retraced runs paint
+    // over their predecessor instead of cancelling its winding to holes.
+    for (const run of cached.paths) ctx.fill(run);
   }
   ctx.restore();
 }
 
-function createPenPath(stroke: InkStroke, width: number, height: number): Path2D {
-  const path = new Path2D();
+function createPenPaths(stroke: InkStroke, width: number, height: number): Path2D[] {
   const outline = penOutline(stroke, width, height);
-  if (outline.length > 0) {
-    const first = outline[0];
-    // The outline already contains rounded caps and pressure geometry and is
-    // the final ink shape. Render it as a plain polygon: with dense input it
-    // is already smooth, and curve fitting across the long segments of a
-    // sparsely sampled fast stroke would cut its corners into arcs.
-    path.moveTo(first[0], first[1]);
-    for (let index = 1; index < outline.length; index++) {
-      const point = outline[index];
-      path.lineTo(point[0], point[1]);
-    }
-    path.closePath();
+  // The outline already contains rounded caps and pressure geometry and is
+  // the final ink shape. Render it as plain polygons: with dense input it is
+  // already smooth, and curve fitting across the long segments of a
+  // sparsely sampled fast stroke would cut its corners into arcs. NaN
+  // separators start a new run; runs fill separately so a retraced band
+  // keeps its ink instead of cancelling against the band it retraces.
+  const paths: Path2D[] = [];
+  let path: Path2D | null = null;
+  for (const [x, y] of outline) {
+    if (!Number.isFinite(x) || !Number.isFinite(y)) { path = null; continue; }
+    if (!path) { path = new Path2D(); paths.push(path); path.moveTo(x, y); continue; }
+    path.lineTo(x, y);
   }
-  return path;
+  for (const run of paths) run.closePath();
+  return paths;
 }
 
 function drawSmoothPath(ctx: CanvasRenderingContext2D, points: InkPoint[], width: number, height: number): void {

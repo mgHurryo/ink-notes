@@ -411,17 +411,25 @@ function drawWorkerStroke(ctx: CanvasRenderingContext2D, stroke: InkStroke, widt
   ctx.globalAlpha = stroke.opacity;
   ctx.fillStyle = stroke.color;
   ctx.globalCompositeOperation = "source-over";
-  ctx.beginPath();
   if (outline.length >= 2) {
-    // The outline is the final ink shape; render it as a plain polygon so
-    // sparse fast-written corners land exactly where the pen turned. Curve
-    // fitting across its long segments would cut them into arcs.
-    ctx.moveTo(outline[0], outline[1]);
-    for (let index = 2; index < outline.length; index += 2) {
-      ctx.lineTo(outline[index], outline[index + 1]);
+    // The outline is the final ink shape; render it as plain polygons so
+    // sparse fast-written corners land exactly where the pen turned. NaN
+    // separators split retraced runs, which fill separately so a retraced
+    // band keeps its ink instead of cancelling its neighbour's winding.
+    let tracing = false;
+    for (let index = 0; index < outline.length; index += 2) {
+      const x = outline[index];
+      const y = outline[index + 1];
+      if (!Number.isFinite(x) || !Number.isFinite(y)) {
+        if (tracing) { ctx.closePath(); ctx.fill(); }
+        ctx.beginPath();
+        tracing = false;
+        continue;
+      }
+      if (!tracing) { ctx.beginPath(); tracing = true; ctx.moveTo(x, y); continue; }
+      ctx.lineTo(x, y);
     }
-    ctx.closePath();
-    ctx.fill();
+    if (tracing) { ctx.closePath(); ctx.fill(); }
   }
   ctx.restore();
 }
