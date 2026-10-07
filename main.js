@@ -22872,11 +22872,14 @@ var BrushPopoverController = class {
         "aria-label": this.curveOpen ? "Collapse pressure curve editor" : "Expand pressure curve editor"
       }
     });
-    (0, import_obsidian.setIcon)(curveToggle.createSpan({ cls: "ink-button-icon" }), this.curveOpen ? "chevron-up" : "chevron-down");
+    const curveIcon = curveToggle.createSpan({ cls: "ink-button-icon" });
+    (0, import_obsidian.setIcon)(curveIcon, this.curveOpen ? "chevron-up" : "chevron-down");
     curveToggle.addEventListener("click", () => {
       this.curveOpen = !this.curveOpen;
-      this.update();
-      requestAnimationFrame(() => this.drawPressureCurve(settings));
+      curveToggle.setAttribute("aria-expanded", String(this.curveOpen));
+      (0, import_obsidian.setIcon)(curveIcon, this.curveOpen ? "chevron-up" : "chevron-down");
+      curveBody.style.display = this.curveOpen ? "" : "none";
+      if (this.curveOpen) requestAnimationFrame(() => this.drawPressureCurve(settings));
     });
     const curveBody = body.createDiv({ cls: "ink-curve-body" });
     if (!this.curveOpen) curveBody.style.display = "none";
@@ -23806,9 +23809,15 @@ var InkWritingView = class extends import_obsidian2.FileView {
   /** Re-open the settings popover at the (new) active tool's anchor. */
   reopenToolSettings() {
   }
-  /** The tool button the settings popover currently anchors to. */
+  /**
+   * The toolbar the settings popover centers under. Anchoring to the whole
+   * toolbar (not the small tool button) puts the popover mid-screen where
+   * the user expects it, and taps on the toolbar still exempt it from
+   * outside-close.
+   */
   activeSettingsAnchor() {
-    return this.toolbarRoot().querySelector(`.ink-tool-button[data-tool="${this.state.tool}"]`);
+    var _a;
+    return (_a = this.toolbarRoot().querySelector(".ink-toolbar")) != null ? _a : this.toolbarRoot().firstElementChild;
   }
   /**
    * ONE popover entry for both editors: same controller, same tools, same
@@ -23816,9 +23825,12 @@ var InkWritingView = class extends import_obsidian2.FileView {
    * optional extra class. Opens through re-tapping a tool; there is no
    * separate settings button on the toolbar.
    */
-  mountBrushSettingsPopover(extraClass) {
-    this.brushPopover = new BrushPopoverController(this.containerEl, {
-      extraClass,
+  ensureBrushSettingsPopover() {
+    var _a;
+    if (this.brushPopover) return;
+    const parent = (_a = this.contentEl) != null ? _a : this.containerEl;
+    if (!(parent == null ? void 0 : parent.createDiv)) return;
+    this.brushPopover = new BrushPopoverController(parent, {
       tools: this.brushToolConfigs(),
       getSettings: (tool) => this.brushSettings(tool),
       activeTool: () => this.state.tool,
@@ -25304,12 +25316,11 @@ var InkWritingView = class extends import_obsidian2.FileView {
    * own mini popover anchored to its tool button instead of the full brush
    * panel. Outside taps, Escape and a second tap close it.
    */
-  toggleEraserPopover(anchor) {
+  toggleEraserPopover(_anchor) {
     if (this.eraserPopover) {
       this.closeEraserPopover();
       return;
     }
-    if (!anchor) return;
     const pop = this.containerEl.createDiv({ cls: "ink-eraser-popover", attr: { role: "dialog", "aria-label": "Eraser settings" } });
     pop.createDiv({ cls: "ink-size-popover-title", text: "Eraser" });
     const modes = pop.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
@@ -25337,15 +25348,15 @@ var InkWritingView = class extends import_obsidian2.FileView {
     });
     this.eraserPopover = pop;
     const place = () => {
-      const anchorRect = anchor.getBoundingClientRect();
       const rect = pop.getBoundingClientRect();
-      pop.style.top = `${Math.max(8, Math.min(window.innerHeight - rect.height - 8, anchorRect.bottom + 6))}px`;
-      pop.style.left = `${Math.max(8, Math.min(window.innerWidth - rect.width - 8, anchorRect.left + anchorRect.width / 2 - rect.width / 2))}px`;
+      const area = this.inputScroller().getBoundingClientRect();
+      pop.style.top = `${Math.max(8, area.top + 12)}px`;
+      pop.style.left = `${Math.max(8, area.left + (area.width - rect.width) / 2)}px`;
     };
     place();
     const onOutside = (event) => {
       const target = event.target;
-      if (target && (pop.contains(target) || anchor.contains(target))) return;
+      if (target && pop.contains(target)) return;
       this.closeEraserPopover();
     };
     const onKey = (event) => {
@@ -25400,6 +25411,7 @@ var InkWritingView = class extends import_obsidian2.FileView {
     const iconHolder = button.createSpan({ cls: "ink-button-icon" });
     (0, import_obsidian2.setIcon)(iconHolder, icon);
     button.addEventListener("click", () => {
+      var _a;
       this.finishPointerInput(false);
       if (this.state.tool === tool && hasSettings) {
         this.toggleToolSettings(button);
@@ -25408,7 +25420,7 @@ var InkWritingView = class extends import_obsidian2.FileView {
       this.onToolSelected(tool);
       this.state.tool = tool;
       if (tool !== "lasso") this.clearSelection();
-      this.brushPopover.update();
+      (_a = this.brushPopover) == null ? void 0 : _a.update();
       this.updateToolButtons();
       this.refreshEraserCursor();
       if (this.settingsOpen()) this.reopenToolSettings();
@@ -26545,27 +26557,32 @@ var InkView = class extends InkWritingView {
     this.root.setAttribute("aria-label", "Ink Notes");
     this.root.createDiv({ cls: "ink-toolbar", attr: { role: "toolbar", "aria-label": "Ink tools" } });
     this.root.createSpan({ cls: "ink-page-status", attr: { "aria-live": "polite" } });
-    this.mountBrushSettingsPopover();
     this.renderToolbar();
     this.renderCanvas();
     this.register(() => this.closeEraserPopover());
     this.registerDomEvent(document, "pointerdown", (event) => {
-      var _a;
-      if (!this.brushPopover.isOpen) return;
+      var _a, _b, _c, _d;
+      if (!((_a = this.brushPopover) == null ? void 0 : _a.isOpen)) return;
       const target = event.target;
-      if (target && ((_a = target.closest) == null ? void 0 : _a.call(target, ".ink-tool-button"))) return;
-      if (target && this.brushPopover.root.contains(target)) return;
-      this.brushPopover.close();
+      if (target && ((_b = target.closest) == null ? void 0 : _b.call(target, ".ink-tool-button"))) return;
+      if (target && ((_c = this.brushPopover) == null ? void 0 : _c.root.contains(target))) return;
+      (_d = this.brushPopover) == null ? void 0 : _d.close();
     });
     this.registerDomEvent(document, "keydown", (event) => {
-      var _a;
-      if (event.key === "Escape" && this.brushPopover.isOpen) {
+      var _a, _b;
+      if (event.key === "Escape" && ((_a = this.brushPopover) == null ? void 0 : _a.isOpen)) {
         this.brushPopover.close();
-        (_a = this.activeToolButton()) == null ? void 0 : _a.focus();
+        (_b = this.activeToolButton()) == null ? void 0 : _b.focus();
       }
     });
-    this.registerDomEvent(window, "resize", () => this.brushPopover.position());
-    this.registerDomEvent(window, "scroll", () => this.brushPopover.position(), true);
+    this.registerDomEvent(window, "resize", () => {
+      var _a;
+      return (_a = this.brushPopover) == null ? void 0 : _a.position();
+    });
+    this.registerDomEvent(window, "scroll", () => {
+      var _a;
+      return (_a = this.brushPopover) == null ? void 0 : _a.position();
+    }, true);
     this.viewReady = true;
     this.renderAll();
   }
@@ -26681,9 +26698,6 @@ var InkView = class extends InkWritingView {
     } catch (error) {
       new import_obsidian3.Notice(`Export failed: ${error instanceof Error ? error.message : String(error)}`);
     }
-  }
-  addSizePopover() {
-    this.mountBrushSettingsPopover();
   }
   activeToolButton() {
     return this.root.querySelector(`.ink-toolbar [data-tool="${this.state.tool}"]`);
@@ -27008,23 +27022,29 @@ var InkView = class extends InkWritingView {
     this.swipeStage = null;
   }
   settingsOpen() {
-    return this.state.tool === "eraser" ? this.eraserPopover !== null : this.brushPopover.isOpen;
+    var _a, _b;
+    return this.state.tool === "eraser" ? this.eraserPopover !== null : (_b = (_a = this.brushPopover) == null ? void 0 : _a.isOpen) != null ? _b : false;
   }
   toggleToolSettings(anchor) {
+    var _a, _b;
     if (this.state.tool === "eraser") {
       this.toggleEraserPopover(anchor);
       return;
     }
-    if (this.brushPopover.isOpen) this.brushPopover.close();
-    else this.brushPopover.open();
+    this.ensureBrushSettingsPopover();
+    if (!this.brushPopover) return;
+    if ((_a = this.brushPopover) == null ? void 0 : _a.isOpen) this.brushPopover.close();
+    else (_b = this.brushPopover) == null ? void 0 : _b.open();
   }
   reopenToolSettings() {
+    var _a, _b;
     if (this.state.tool === "eraser") {
       if (!this.eraserPopover) this.toggleEraserPopover(this.activeToolButton());
       return;
     }
-    this.brushPopover.open();
-    this.brushPopover.position();
+    this.ensureBrushSettingsPopover();
+    (_a = this.brushPopover) == null ? void 0 : _a.open();
+    (_b = this.brushPopover) == null ? void 0 : _b.position();
   }
   receiveMergedNotebook(notebook, alreadyMerged = false) {
     this.pendingMergedNotebook = this.pendingMergedNotebook ? mergeNotebooks(this.pendingMergedNotebook, notebook) : notebook;
@@ -28419,7 +28439,6 @@ var PdfInkView = class extends InkWritingView {
     this.pageWrap = scroller.createDiv({ cls: "ink-pdf-page-wrap" });
     this.pdfCanvas = this.pageWrap.createEl("canvas", { cls: "ink-pdf-canvas" });
     this.buildInkHost();
-    this.mountBrushSettingsPopover();
     this.viewReady = true;
     this.registerDomEvent(scroller, "scroll", () => this.onViewportMotion(), { passive: true });
     this.registerDomEvent(scroller, "touchstart", (event) => this.onTouchStart(event), { passive: false });
@@ -28758,8 +28777,12 @@ var PdfInkView = class extends InkWritingView {
     const button = this.addIconButton(parent, icon, label, onClick, disabled);
     this.toolbarButtons.set(key, button);
   }
-  mountBrushSettingsPopover() {
-    this.brushPopover = new BrushPopoverController(this.containerEl, {
+  ensureBrushSettingsPopover() {
+    var _a;
+    if (this.brushPopover) return;
+    const parent = (_a = this.contentEl) != null ? _a : this.containerEl;
+    if (!(parent == null ? void 0 : parent.createDiv)) return;
+    this.brushPopover = new BrushPopoverController(parent, {
       // Extra class scopes the PDF-surface rules (paper canvases, spacing).
       extraClass: "ink-pdf-brush-popover",
       tools: this.brushToolConfigs(),
@@ -28771,18 +28794,18 @@ var PdfInkView = class extends InkWritingView {
     });
     this.settingsPanel = this.brushPopover.root;
     this.registerDomEvent(document, "pointerdown", (event) => {
-      var _a;
-      if (!this.brushPopover.isOpen) return;
+      var _a2, _b;
+      if (!((_a2 = this.brushPopover) == null ? void 0 : _a2.isOpen)) return;
       const target = event.target;
-      if (target && ((_a = target.closest) == null ? void 0 : _a.call(target, ".ink-tool-button"))) return;
+      if (target && ((_b = target.closest) == null ? void 0 : _b.call(target, ".ink-tool-button"))) return;
       if (target && this.brushPopover.root.contains(target)) return;
       this.brushPopover.close();
     });
     this.registerDomEvent(document, "keydown", (event) => {
-      var _a;
-      if (event.key === "Escape" && this.brushPopover.isOpen) {
+      var _a2, _b;
+      if (event.key === "Escape" && ((_a2 = this.brushPopover) == null ? void 0 : _a2.isOpen)) {
         this.brushPopover.close();
-        (_a = this.activeSettingsAnchor()) == null ? void 0 : _a.focus();
+        (_b = this.activeSettingsAnchor()) == null ? void 0 : _b.focus();
       }
     });
     this.registerDomEvent(window, "scroll", () => this.brushPopover.position(), true);
@@ -29181,20 +29204,23 @@ var PdfInkView = class extends InkWritingView {
     return this.state.tool === "eraser" ? this.eraserPopover !== null : (_b = (_a = this.brushPopover) == null ? void 0 : _a.isOpen) != null ? _b : false;
   }
   toggleToolSettings(anchor) {
+    var _a;
     if (this.state.tool === "eraser") {
       this.toggleEraserPopover(anchor);
       return;
     }
-    this.brushPopover.toggle();
+    this.ensureBrushSettingsPopover();
+    (_a = this.brushPopover) == null ? void 0 : _a.toggle();
   }
   reopenToolSettings() {
-    var _a;
+    var _a, _b, _c;
     if (this.state.tool === "eraser") {
       if (!this.eraserPopover) this.toggleEraserPopover((_a = this.toolbarButtons.get(`tool-${this.state.tool}`)) != null ? _a : null);
       return;
     }
-    this.brushPopover.open();
-    this.brushPopover.position();
+    this.ensureBrushSettingsPopover();
+    (_b = this.brushPopover) == null ? void 0 : _b.open();
+    (_c = this.brushPopover) == null ? void 0 : _c.position();
   }
   resizeOverlay(canvas, ctx, maxPixels) {
     const { x, y, width, height } = this.viewport;
