@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.0-beta.19 - 2026-10-07
+
+- Fix mangled strokes on sharp turns and retraces (Chinese-character hooks, writing back over a line) at any brush width: the ribbon outline was one self-intersecting polygon whose opposite-wound overlap cancelled to holes under nonzero fill. The outline now splits at sharp turns into separately filled runs; straight and gently curved strokes are pixel-identical to before.
+- Fix the swipe flip flashing at the end: the settle animation now travels the same distance as the drag did (including the dynamic gutter), so the incoming page no longer snaps the last few pixels when it takes over the slot.
+- The notebook swipe stage now covers the page box instead of the surrounding extent, fixing the incoming page appearing horizontally stretched (the reported squash) and matching the PDF editor's flip.
+- Notebook paper lines no longer flicker or change count while zooming: the paper scale snaps to whole device pixels so the rasterizer cannot re-snap the ruled-line background every frame.
+
 ## 0.8.0-beta.18 - 2026-10-07
 
 - Fix the flip animation being cut short: the page change was committed on a fixed 170ms timer while the slide ran 160ms - on busy frames the timer won, so the page slid halfway and the next one snapped in with no animation. The flip now commits when the slide transition actually finishes (with a fallback timer), so the animation always plays through.

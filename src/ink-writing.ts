@@ -1678,16 +1678,24 @@ export abstract class InkWritingView extends FileView {
       ctx.stroke();
     } else {
       ctx.globalCompositeOperation = "source-over";
-      ctx.beginPath();
-      // The outline is the final ink shape; render it as a plain polygon so
+      // The outline is the final ink shape; render it as plain polygons so
       // live ink, retained previews and committed tiles all keep sparse
-      // fast-written corners exactly where the pen turned.
-      ctx.moveTo(points[0] * scaleX, points[1] * scaleY);
-      for (let index = 2; index < points.length; index += 2) {
-        ctx.lineTo(points[index] * scaleX, points[index + 1] * scaleY);
+      // fast-written corners exactly where the pen turned. NaN separators
+      // split retraced runs, which fill separately so a retraced band keeps
+      // its ink instead of cancelling its neighbour's winding to holes.
+      let tracing = false;
+      for (let index = 0; index < points.length; index += 2) {
+        const x = points[index] * scaleX;
+        const y = points[index + 1] * scaleY;
+        if (!Number.isFinite(x) || !Number.isFinite(y)) {
+          if (tracing) { ctx.closePath(); ctx.fill(); }
+          tracing = false;
+          continue;
+        }
+        if (!tracing) { ctx.beginPath(); tracing = true; ctx.moveTo(x, y); continue; }
+        ctx.lineTo(x, y);
       }
-      ctx.closePath();
-      ctx.fill();
+      if (tracing) { ctx.closePath(); ctx.fill(); }
     }
     ctx.restore();
   }
