@@ -251,12 +251,17 @@ export class BrushPopoverController {
         "aria-label": this.curveOpen ? "Collapse pressure curve editor" : "Expand pressure curve editor",
       },
     });
-    setIcon(curveToggle.createSpan({ cls: "ink-button-icon" }), this.curveOpen ? "chevron-up" : "chevron-down");
+    const curveIcon = curveToggle.createSpan({ cls: "ink-button-icon" });
+    setIcon(curveIcon, this.curveOpen ? "chevron-up" : "chevron-down");
+    // update() only re-syncs values - the curve body's visibility must be
+    // flipped right here, or the toggle spins a field without ever showing
+    // the editor.
     curveToggle.addEventListener("click", () => {
       this.curveOpen = !this.curveOpen;
-      this.update();
-      // The canvas has no layout until the expanded body is laid out.
-      requestAnimationFrame(() => this.drawPressureCurve(settings));
+      curveToggle.setAttribute("aria-expanded", String(this.curveOpen));
+      setIcon(curveIcon, this.curveOpen ? "chevron-up" : "chevron-down");
+      curveBody.style.display = this.curveOpen ? "" : "none";
+      if (this.curveOpen) requestAnimationFrame(() => this.drawPressureCurve(settings));
     });
     const curveBody = body.createDiv({ cls: "ink-curve-body" });
     if (!this.curveOpen) curveBody.style.display = "none";

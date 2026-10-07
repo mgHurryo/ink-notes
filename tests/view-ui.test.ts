@@ -77,6 +77,7 @@ describe("reference-style editor", () => {
     expect(document.querySelector(".ink-page-status")?.textContent).toBe("2 / 2");
   });
   it("synchronizes preset, slider and custom-color selection", () => {
+    button("Pen").click();   // re-tap opens the brush panel (lazy mount)
     button("Pen 8 px").click();
     button("Pen").click();
     const size = document.querySelector<HTMLInputElement>('input[aria-label="Pen size"]')!;
@@ -162,6 +163,7 @@ describe("reference-style editor", () => {
     expect(button("Zoom in")).toBeNull();
     expect(button("Zoom out")).toBeNull();
     expect(button("Reset zoom")).toBeNull();
+    button("Pen").click();   // lazy: the panel exists once opened
     expect(document.querySelector(".ink-size-popover")).not.toBeNull();
   });
 });
