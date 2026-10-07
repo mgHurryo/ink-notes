@@ -533,14 +533,20 @@ export class InkView extends InkWritingView {
     }
     if (neighborIndex < 0 || neighborIndex >= this.notebook.pages.length) return;
     const neighbor = this.notebook.pages[neighborIndex];
+    // Position the stage over the PAGE box, not the extent: the extent adds
+    // the centering gutters, and covering it with a page-sized snapshot
+    // stretched the incoming page horizontally (the reported squash). The
+    // gutter also gives the swipe the same dynamic gap as the PDF view.
+    const page = this.pageElement;
+    const gap = Math.max(12, Math.round(page.offsetLeft));
     const stage = this.pageScroller.createDiv({ cls: `ink-page ink-paper-${neighbor.paper} ink-swipe-stage` });
     stage.dataset.neighbor = String(neighborIndex);
     stage.setCssStyles({
       position: "absolute", margin: "0", overflow: "hidden",
-      left: `${extent.offsetLeft + side * extent.offsetWidth}px`,
-      top: `${extent.offsetTop}px`,
-      width: `${extent.offsetWidth}px`,
-      height: `${extent.offsetHeight}px`,
+      left: `${extent.offsetLeft + page.offsetLeft + side * (page.offsetWidth + gap)}px`,
+      top: `${extent.offsetTop + page.offsetTop}px`,
+      width: `${page.offsetWidth}px`,
+      height: `${page.offsetHeight}px`,
       transform: "translateX(0px)",
     });
     const canvas = stage.createEl("canvas");
@@ -574,11 +580,13 @@ export class InkView extends InkWritingView {
     // Same gallery geometry as the PDF view: the neighbour slides into the
     // page slot and covers it until the real page renders underneath.
     const side = Number(this.swipeStage.dataset.neighbor) - this.pageIndex;
-    const width = extent.offsetWidth;
+    const page = this.pageElement;
+    const width = page.offsetWidth;
+    const gap = Math.max(12, Math.round(page.offsetLeft));
     extent.style.transition = "transform 160ms ease-out";
     extent.style.transform = `translateX(${-delta * width}px)`;
     this.swipeStage.style.transition = "transform 160ms ease-out";
-    this.swipeStage.style.transform = `translateX(${-side * width}px)`;
+    this.swipeStage.style.transform = `translateX(${-side * (width + gap)}px)`;
     // Commit only when the slide has actually finished (see the PDF view).
     let committed = false;
     const commit = (): void => {
@@ -590,10 +598,10 @@ export class InkView extends InkWritingView {
       const stage = this.swipeStage;
       if (stage) {
         stage.style.transition = "none";
-        stage.style.left = `${extent.offsetLeft}px`;
-        stage.style.top = `${extent.offsetTop}px`;
-        stage.style.width = `${extent.offsetWidth}px`;
-        stage.style.height = `${extent.offsetHeight}px`;
+        stage.style.left = `${extent.offsetLeft + page.offsetLeft}px`;
+        stage.style.top = `${extent.offsetTop + page.offsetTop}px`;
+        stage.style.width = `${page.offsetWidth}px`;
+        stage.style.height = `${page.offsetHeight}px`;
         stage.style.transform = "none";
       }
       extent.style.transition = "none";
@@ -1077,7 +1085,13 @@ export class InkView extends InkWritingView {
     this.pageElement.style.width = displayWidth + "px";
     this.pageElement.style.height = displayHeight + "px";
     if (typeof this.pageElement.style.setProperty === "function") {
-      this.pageElement.style.setProperty("--ink-page-scale", String(this.zoom));
+      // Snap the paper scale so one ruled cell is a whole number of device
+      // pixels: fractional background sizes get re-snapped by the
+      // rasterizer every frame, which flickered the lines and changed their
+      // count while zooming.
+      const dpr = window.devicePixelRatio || 1;
+      const devicePixels = Math.max(1, Math.round(32 * this.zoom * dpr));
+      this.pageElement.style.setProperty("--ink-page-scale", String(devicePixels / (32 * dpr)));
     }
     this.pageElement.style.zoom = "";
     this.pageElement.style.transform = "none";

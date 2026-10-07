@@ -1009,8 +1009,12 @@ export class PdfInkView extends InkWritingView {
     // the real page has rendered underneath, so the old canvas never flashes.
     const side = Number(this.swipeStage.dataset.neighbor) - this.noteIndex;
     const width = wrap.offsetWidth;
+    // The stage sits one width PLUS the dynamic gutter away from the page;
+    // the settle target must cover the same distance or the stage visibly
+    // snaps the last few pixels when it takes over the slot.
+    const gap = Math.max(12, Math.round(wrap.offsetLeft));
     wrap.setCssStyles({ transition: "transform 160ms ease-out", transform: `translateX(${-delta * width}px)` });
-    this.swipeStage.setCssStyles({ transition: "transform 160ms ease-out", transform: `translateX(${-side * width}px)` });
+    this.swipeStage.setCssStyles({ transition: "transform 160ms ease-out", transform: `translateX(${-side * (width + gap)}px)` });
     // Commit only when the slide has actually finished - a fixed timer cut
     // the animation short on busy frames, snapping the second page in
     // mid-slide ("flips halfway, then it just appears").
