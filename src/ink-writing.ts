@@ -567,9 +567,15 @@ export abstract class InkWritingView extends FileView {
   protected toggleToolSettings(_anchor: HTMLElement): void {}
   /** Re-open the settings popover at the (new) active tool's anchor. */
   protected reopenToolSettings(): void {}
-  /** The tool button the settings popover currently anchors to. */
+  /**
+   * The toolbar the settings popover centers under. Anchoring to the whole
+   * toolbar (not the small tool button) puts the popover mid-screen where
+   * the user expects it, and taps on the toolbar still exempt it from
+   * outside-close.
+   */
   protected activeSettingsAnchor(): HTMLElement | null {
-    return this.toolbarRoot().querySelector<HTMLElement>(`.ink-tool-button[data-tool="${this.state.tool}"]`);
+    return (this.toolbarRoot().querySelector<HTMLElement>(".ink-toolbar") ??
+      this.toolbarRoot().firstElementChild as HTMLElement | null);
   }
 
   /**
@@ -578,9 +584,14 @@ export abstract class InkWritingView extends FileView {
    * optional extra class. Opens through re-tapping a tool; there is no
    * separate settings button on the toolbar.
    */
-  protected mountBrushSettingsPopover(extraClass?: string): void {
-    this.brushPopover = new BrushPopoverController(this.containerEl, {
-      extraClass,
+  protected ensureBrushSettingsPopover(): void {
+    if (this.brushPopover) return;
+    // Mount inside the view root: the popover is a sibling of the themed
+    // view when hung on the container, and every --ink-* token would be
+    // out of scope (transparent background, lost border, broken layout).
+    const parent = (this.contentEl ?? this.containerEl) as HTMLElement | undefined;
+    if (!parent?.createDiv) return;
+    this.brushPopover = new BrushPopoverController(parent, {
       tools: this.brushToolConfigs(),
       getSettings: (tool) => this.brushSettings(tool),
       activeTool: () => this.state.tool,
@@ -2165,9 +2176,8 @@ export abstract class InkWritingView extends FileView {
    * own mini popover anchored to its tool button instead of the full brush
    * panel. Outside taps, Escape and a second tap close it.
    */
-  protected toggleEraserPopover(anchor: HTMLElement | null): void {
+  protected toggleEraserPopover(_anchor: HTMLElement | null): void {
     if (this.eraserPopover) { this.closeEraserPopover(); return; }
-    if (!anchor) return;
     const pop = this.containerEl.createDiv({ cls: "ink-eraser-popover", attr: { role: "dialog", "aria-label": "Eraser settings" } });
     pop.createDiv({ cls: "ink-size-popover-title", text: "Eraser" });
     const modes = pop.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
@@ -2195,15 +2205,17 @@ export abstract class InkWritingView extends FileView {
     });
     this.eraserPopover = pop;
     const place = (): void => {
-      const anchorRect = anchor.getBoundingClientRect();
+      // Center over the writing area, just below the toolbar - the user
+      // reads it as part of the editor, not as a button dropdown.
       const rect = pop.getBoundingClientRect();
-      pop.style.top = `${Math.max(8, Math.min(window.innerHeight - rect.height - 8, anchorRect.bottom + 6))}px`;
-      pop.style.left = `${Math.max(8, Math.min(window.innerWidth - rect.width - 8, anchorRect.left + anchorRect.width / 2 - rect.width / 2))}px`;
+      const area = this.inputScroller().getBoundingClientRect();
+      pop.style.top = `${Math.max(8, area.top + 12)}px`;
+      pop.style.left = `${Math.max(8, area.left + (area.width - rect.width) / 2)}px`;
     };
     place();
     const onOutside = (event: PointerEvent): void => {
       const target = event.target as Node | null;
-      if (target && (pop.contains(target) || anchor.contains(target))) return;
+      if (target && pop.contains(target)) return;
       this.closeEraserPopover();
     };
     const onKey = (event: KeyboardEvent): void => {
@@ -2269,7 +2281,7 @@ export abstract class InkWritingView extends FileView {
       this.onToolSelected(tool);
       this.state.tool = tool;
       if (tool !== "lasso") this.clearSelection();
-      this.brushPopover.update();
+      this.brushPopover?.update();
       this.updateToolButtons();
       this.refreshEraserCursor();
       if (this.settingsOpen()) this.reopenToolSettings();
