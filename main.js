@@ -23640,12 +23640,28 @@ var InkWritingView = class extends import_obsidian2.FileView {
   /** View hook before a tool button selects a tool (PDF: enter editing). */
   onToolSelected(_tool) {
   }
-  /** View hook for the horizontal page-flip gesture (Photos-style). */
-  swipeNavigate(_delta) {
-  }
-  /** View hook: the page-flip drag moved by `offset` px (page follows the
-   *  finger); null ends the drag and plays the settle animation. */
+  /** View hook: the page-flip drag moved by `offset` px — the page and the
+   *  neighbouring page slide along with the finger. */
   swipeDrag(_offset) {
+  }
+  /** View hook: the drag ended. delta is -1/+1 to flip (animated slide to
+   *  the neighbouring page) or 0 to spring back. */
+  swipeSettle(_delta) {
+  }
+  settlePageFlip(event) {
+    const gesture = this.touchGesture;
+    if (!gesture || gesture.axis !== "x") return;
+    if (Array.from(event.touches).some((touch) => touch.identifier === gesture.ids[0])) return;
+    const width = this.inputScroller().clientWidth;
+    const travel = gesture.dragX;
+    const fling = Math.abs(gesture.velocity) > 0.35 && Math.abs(travel) > 24;
+    const crossed = Math.abs(travel) > width * 0.35;
+    this.swipeSettle(fling || crossed ? travel > 0 ? -1 : 1 : 0);
+  }
+  /** Cancels an in-flight page-flip drag (spring back, no flip). */
+  cancelPageFlip() {
+    var _a;
+    if (((_a = this.touchGesture) == null ? void 0 : _a.axis) === "x") this.swipeSettle(0);
   }
   settingsOpen() {
     return false;
@@ -24221,11 +24237,10 @@ var InkWritingView = class extends import_obsidian2.FileView {
   }
   // ---------------------------------------------------------------- touch
   onTouchStart(event) {
-    var _a;
     if (this.inputLocked()) return;
     if (this.onStylusTouch(event)) return;
     if (event.cancelable && event.touches.length < 2) event.preventDefault();
-    if (((_a = this.touchGesture) == null ? void 0 : _a.axis) === "x") this.swipeDrag(null);
+    this.settlePageFlip(event);
     this.touchGesture = null;
     this.healStaleInteraction(Array.from(event.touches));
     const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus");
@@ -24245,7 +24260,10 @@ var InkWritingView = class extends import_obsidian2.FileView {
       startX: x,
       startY: y,
       axis: null,
-      swipeDone: 0,
+      lastX: x,
+      lastT: typeof event.timeStamp === "number" ? event.timeStamp : 0,
+      velocity: 0,
+      dragX: 0,
       pageX: (x - rect.left) / rect.width,
       pageY: (y - rect.top) / rect.height
     };
@@ -24293,18 +24311,22 @@ var InkWritingView = class extends import_obsidian2.FileView {
       const totalY = a.clientY - gesture.startY;
       if (gesture.axis === null && Math.max(Math.abs(totalX), Math.abs(totalY)) > 10) {
         const scrollableX = scroller.scrollWidth > scroller.clientWidth + 4;
-        gesture.axis = !scrollableX && Math.abs(totalX) > Math.abs(totalY) * 1.5 ? "x" : "y";
+        let flipAllowed = !scrollableX;
+        if (scrollableX) {
+          const atLeft = scroller.scrollLeft <= 2;
+          const atRight = scroller.scrollLeft >= scroller.scrollWidth - scroller.clientWidth - 2;
+          flipAllowed = totalX > 0 && atLeft || totalX < 0 && atRight;
+        }
+        gesture.axis = Math.abs(totalX) > Math.abs(totalY) * 1.5 && flipAllowed ? "x" : "y";
       }
       if (gesture.axis === "x") {
-        const dragOffset = totalX - gesture.swipeDone;
-        const flipThreshold = Math.max(96, this.inputScroller().clientWidth * 0.2);
-        if (Math.abs(dragOffset) > flipThreshold) {
-          this.swipeNavigate(dragOffset > 0 ? -1 : 1);
-          gesture.swipeDone = totalX;
-          this.swipeDrag(totalX - gesture.swipeDone);
-          return;
-        }
-        this.swipeDrag(dragOffset);
+        const now = typeof event.timeStamp === "number" ? event.timeStamp : gesture.lastT + 16;
+        const dt = Math.max(1, now - gesture.lastT);
+        gesture.velocity = 0.8 * gesture.velocity + 0.2 * ((a.clientX - gesture.lastX) / dt);
+        gesture.lastX = a.clientX;
+        gesture.lastT = now;
+        gesture.dragX = totalX;
+        this.swipeDrag(totalX);
         return;
       }
       scroller.scrollLeft += gesture.x - a.clientX;
@@ -26259,6 +26281,7 @@ var InkView = class extends InkWritingView {
     this.sizePopoverOpen = false;
     this.pageNavigationGeneration = 0;
     this.devPanel = null;
+    this.swipeStage = null;
     this.store = store;
     this.workers = workers;
     this.scope = new import_obsidian3.Scope(this.app.scope);
@@ -26307,6 +26330,7 @@ var InkView = class extends InkWritingView {
     this.finishPointerInput(false);
     this.cancelPendingInkCommitTimer();
     this.clearSaveTimers();
+    this.destroySwipeStage();
     if (this.file && (this.dirtyRevision > this.savedRevision || this.activeSave)) await this.save(this.file);
     (_b = (_a = this.tiles) == null ? void 0 : _a.setBackend) == null ? void 0 : _b.call(_a, null);
     (_c = this.workerSession) == null ? void 0 : _c.dispose();
@@ -26516,9 +26540,8 @@ var InkView = class extends InkWritingView {
     this.registerDomEvent(this.pageScroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchcancel", (event) => {
-      var _a;
       this.onStylusTouch(event);
-      if (((_a = this.touchGesture) == null ? void 0 : _a.axis) === "x") this.swipeDrag(null);
+      this.cancelPageFlip();
       this.touchGesture = null;
     }, { passive: false });
     const observer = new ResizeObserver(() => this.resizeCanvas());
@@ -26677,20 +26700,97 @@ var InkView = class extends InkWritingView {
   applyGestureZoom(value, focus, anchor) {
     this.setZoom(value, focus, anchor);
   }
-  swipeNavigate(delta) {
-    this.changePage(delta);
-  }
   swipeDrag(offset) {
     const extent = this.pageExtent;
     if (!extent) return;
-    if (offset === null) {
-      extent.style.transition = "transform 180ms ease-out";
-      extent.style.transform = "translateX(0px)";
+    this.ensureSwipeStage(offset);
+    extent.style.transition = "none";
+    extent.style.transform = `translateX(${offset}px)`;
+    if (this.swipeStage) {
+      this.swipeStage.style.transition = "none";
+      this.swipeStage.style.transform = `translateX(${offset}px)`;
+    }
+  }
+  /** Slides a cheap vector snapshot of the neighbouring page in beside the
+   *  current one while dragging (tiles stay on the live page). */
+  ensureSwipeStage(offset) {
+    const extent = this.pageExtent;
+    if (!extent) return;
+    const side = offset > 0 ? -1 : 1;
+    const neighborIndex = this.pageIndex + side;
+    if (this.swipeStage) {
+      if (Number(this.swipeStage.dataset.neighbor) === neighborIndex) return;
+      this.destroySwipeStage();
+    }
+    if (neighborIndex < 0 || neighborIndex >= this.notebook.pages.length) return;
+    const neighbor = this.notebook.pages[neighborIndex];
+    const stage = this.pageScroller.createDiv({ cls: `ink-page ink-paper-${neighbor.paper} ink-swipe-stage` });
+    stage.dataset.neighbor = String(neighborIndex);
+    stage.setCssStyles({
+      position: "absolute",
+      margin: "0",
+      overflow: "hidden",
+      left: `${extent.offsetLeft + side * extent.offsetWidth}px`,
+      top: `${extent.offsetTop}px`,
+      width: `${extent.offsetWidth}px`,
+      height: `${extent.offsetHeight}px`,
+      transform: "translateX(0px)"
+    });
+    const canvas = stage.createEl("canvas");
+    canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%";
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.max(1, Math.round(this.canvasLogicalWidth * dpr));
+    canvas.height = Math.max(1, Math.round(this.canvasLogicalHeight * dpr));
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      for (const stroke of neighbor.strokes) drawInkStroke(ctx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    }
+    this.swipeStage = stage;
+  }
+  swipeSettle(delta) {
+    const extent = this.pageExtent;
+    if (!extent) {
+      this.destroySwipeStage();
       return;
     }
-    extent.style.transition = "none";
-    const clamped = Math.max(-140, Math.min(140, offset));
-    extent.style.transform = `translateX(${clamped}px)`;
+    if (!delta || !this.swipeStage) {
+      extent.style.transition = "transform 200ms ease-out";
+      extent.style.transform = "translateX(0px)";
+      if (this.swipeStage) {
+        this.swipeStage.style.transition = "transform 200ms ease-out";
+        this.swipeStage.style.transform = "translateX(0px)";
+      }
+      if (this.swipeStageTimer === void 0) {
+        this.swipeStageTimer = window.setTimeout(() => {
+          this.swipeStageTimer = void 0;
+          this.destroySwipeStage();
+        }, 230);
+      }
+      return;
+    }
+    const width = extent.offsetWidth;
+    extent.style.transition = "transform 200ms ease-out";
+    extent.style.transform = `translateX(${delta === 1 ? -width : width}px)`;
+    this.swipeStage.style.transition = "transform 200ms ease-out";
+    this.swipeStage.style.transform = "translateX(0px)";
+    if (this.swipeStageTimer !== void 0) window.clearTimeout(this.swipeStageTimer);
+    this.swipeStageTimer = window.setTimeout(() => {
+      this.swipeStageTimer = void 0;
+      this.destroySwipeStage();
+      extent.style.transition = "none";
+      extent.style.transform = "none";
+      this.changePage(delta);
+    }, 210);
+  }
+  destroySwipeStage() {
+    var _a;
+    if (this.swipeStageTimer !== void 0) {
+      window.clearTimeout(this.swipeStageTimer);
+      this.swipeStageTimer = void 0;
+    }
+    (_a = this.swipeStage) == null ? void 0 : _a.remove();
+    this.swipeStage = null;
   }
   settingsOpen() {
     return this.sizePopoverOpen;
@@ -28232,6 +28332,7 @@ var PdfInkView = class extends InkWritingView {
     this.activeSave = null;
     this.saveRequested = false;
     this.pendingRecoveryCandidates = null;
+    this.swipeStage = null;
     this.scope = new import_obsidian7.Scope(this.app.scope);
     this.scope.register(["Mod"], "z", () => this.undo());
     this.scope.register(["Mod", "Shift"], "z", () => this.redo());
@@ -28267,9 +28368,8 @@ var PdfInkView = class extends InkWritingView {
     this.registerDomEvent(scroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
     this.registerDomEvent(scroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(scroller, "touchcancel", (event) => {
-      var _a;
       this.onStylusTouch(event);
-      if (((_a = this.touchGesture) == null ? void 0 : _a.axis) === "x") this.swipeDrag(null);
+      this.cancelPageFlip();
       this.touchGesture = null;
     }, { passive: false });
     const observer = new ResizeObserver(() => {
@@ -28291,6 +28391,7 @@ var PdfInkView = class extends InkWritingView {
     this.releaseWriter();
     this.loadGeneration += 1;
     this.cancelPdfRender();
+    this.destroySwipeStage();
     this.finishPointerInput(false);
     this.discardPendingInkPreview();
     this.clearSaveTimers();
@@ -28765,8 +28866,8 @@ var PdfInkView = class extends InkWritingView {
       width: `${this.pageBaseWidth * this.zoom}px`,
       height: `${this.pageBaseHeight * this.zoom}px`
     });
-    this.canvasLogicalWidth = Math.max(1, Math.round(display.width * 64) / 64);
-    this.canvasLogicalHeight = Math.max(1, Math.round(display.height * 64) / 64);
+    this.canvasLogicalWidth = Math.max(1, Math.round(this.pageBaseWidth * 64) / 64);
+    this.canvasLogicalHeight = Math.max(1, Math.round(this.pageBaseHeight * 64) / 64);
     (_a = this.tiles) == null ? void 0 : _a.setDisplayScale(this.zoom);
     const page = (_b = this.sidecar) == null ? void 0 : _b.notebook.pages[this.noteIndex];
     if (page) (_c = this.tiles) == null ? void 0 : _c.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight);
@@ -28881,18 +28982,98 @@ var PdfInkView = class extends InkWritingView {
   applyGestureZoom(value, focus, anchor) {
     this.setZoom(value, focus, anchor);
   }
-  swipeNavigate(delta) {
-    this.navigatePages(delta);
-  }
   swipeDrag(offset) {
     const wrap = this.pageWrap;
     if (!wrap) return;
-    if (offset === null) {
-      wrap.setCssStyles({ transition: "transform 180ms ease-out", transform: "translateX(0px)" });
+    this.ensureSwipeStage(offset);
+    wrap.setCssStyles({ transition: "none", transform: `translateX(${offset}px)` });
+    if (this.swipeStage) this.swipeStage.setCssStyles({ transition: "none", transform: `translateX(${offset}px)` });
+  }
+  /** Slides the neighbouring page in beside the current one while dragging. */
+  ensureSwipeStage(offset) {
+    var _a, _b, _c, _d;
+    const wrap = this.pageWrap;
+    const scroller = this.scroller;
+    if (!wrap || !scroller) return;
+    const side = offset > 0 ? -1 : 1;
+    const neighborIndex = this.noteIndex + side;
+    if (this.swipeStage) {
+      if (Number(this.swipeStage.dataset.neighbor) === neighborIndex) return;
+      this.destroySwipeStage();
+    }
+    const count = (_d = (_c = (_a = this.sidecar) == null ? void 0 : _a.notePages.length) != null ? _c : (_b = this.pdfDoc) == null ? void 0 : _b.numPages) != null ? _d : 0;
+    if (neighborIndex < 0 || neighborIndex >= count) return;
+    const stage = scroller.createDiv({ cls: "ink-swipe-stage" });
+    stage.dataset.neighbor = String(neighborIndex);
+    stage.setCssStyles({
+      position: "absolute",
+      margin: "0",
+      overflow: "hidden",
+      background: "#fff",
+      borderRadius: "2px",
+      boxShadow: "var(--ink-shadow-paper)",
+      left: `${wrap.offsetLeft + side * wrap.offsetWidth}px`,
+      top: `${wrap.offsetTop}px`,
+      width: `${wrap.offsetWidth}px`,
+      height: `${wrap.offsetHeight}px`,
+      transform: "translateX(0px)"
+    });
+    this.swipeStage = stage;
+    void this.renderSwipeStagePage(stage, neighborIndex);
+  }
+  async renderSwipeStagePage(stage, index) {
+    var _a;
+    const notePage = (_a = this.sidecar) == null ? void 0 : _a.notePages[index];
+    const canvas = stage.createEl("canvas");
+    canvas.setCssStyles({ width: "100%", height: "100%" });
+    if (!notePage || notePage.sourceIndex === void 0 || !this.pdfDoc) return;
+    try {
+      const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
+      if (!stage.isConnected) return;
+      const scale = (window.devicePixelRatio || 1) * this.zoom;
+      canvas.width = Math.max(1, Math.round(this.rotatedSize(notePage).width * scale));
+      canvas.height = Math.max(1, Math.round(this.rotatedSize(notePage).height * scale));
+      const viewport = page.getViewport({ scale });
+      await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+    } catch (e) {
+    }
+  }
+  swipeSettle(delta) {
+    const wrap = this.pageWrap;
+    if (!wrap) {
+      this.destroySwipeStage();
       return;
     }
-    const clamped = Math.max(-140, Math.min(140, offset));
-    wrap.setCssStyles({ transition: "none", transform: `translateX(${clamped}px)` });
+    if (!delta || !this.swipeStage) {
+      wrap.setCssStyles({ transition: "transform 200ms ease-out", transform: "translateX(0px)" });
+      if (this.swipeStage) this.swipeStage.setCssStyles({ transition: "transform 200ms ease-out", transform: "translateX(0px)" });
+      if (this.swipeStageTimer === void 0) {
+        this.swipeStageTimer = window.setTimeout(() => {
+          this.swipeStageTimer = void 0;
+          this.destroySwipeStage();
+        }, 230);
+      }
+      return;
+    }
+    const width = wrap.offsetWidth;
+    wrap.setCssStyles({ transition: "transform 200ms ease-out", transform: `translateX(${delta === 1 ? -width : width}px)` });
+    this.swipeStage.setCssStyles({ transition: "transform 200ms ease-out", transform: "translateX(0px)" });
+    if (this.swipeStageTimer !== void 0) window.clearTimeout(this.swipeStageTimer);
+    this.swipeStageTimer = window.setTimeout(() => {
+      this.swipeStageTimer = void 0;
+      this.destroySwipeStage();
+      wrap.setCssStyles({ transition: "none", transform: "none" });
+      this.navigatePages(delta);
+    }, 210);
+  }
+  destroySwipeStage() {
+    var _a;
+    if (this.swipeStageTimer !== void 0) {
+      window.clearTimeout(this.swipeStageTimer);
+      this.swipeStageTimer = void 0;
+    }
+    (_a = this.swipeStage) == null ? void 0 : _a.remove();
+    this.swipeStage = null;
   }
   settingsOpen() {
     var _a, _b;
