@@ -432,10 +432,13 @@ export abstract class InkWritingView extends FileView {
     startX: number;
     startY: number;
     /** Locked drag axis; "x" on a horizontally-dominant drag that cannot
-     *  scroll (the page-flip gesture), "y" for panning. */
+     *  scroll past its edge (the page-flip gesture), "y" for panning. */
     axis: "x" | "y" | null;
-    /** Horizontal drag offset already consumed by page flips. */
-    swipeDone: number;
+    /** Page-flip drag telemetry: last sample and smoothed velocity (px/ms). */
+    lastX: number;
+    lastT: number;
+    velocity: number;
+    dragX: number;
     /** Gesture-start midpoint, normalized page space (pinch anchor). */
     pageX: number;
     pageY: number;
@@ -535,11 +538,28 @@ export abstract class InkWritingView extends FileView {
 
   /** View hook before a tool button selects a tool (PDF: enter editing). */
   protected onToolSelected(_tool: InkTool): void {}
-  /** View hook for the horizontal page-flip gesture (Photos-style). */
-  protected swipeNavigate(_delta: number): void {}
-  /** View hook: the page-flip drag moved by `offset` px (page follows the
-   *  finger); null ends the drag and plays the settle animation. */
-  protected swipeDrag(_offset: number | null): void {}
+  /** View hook: the page-flip drag moved by `offset` px — the page and the
+   *  neighbouring page slide along with the finger. */
+  protected swipeDrag(_offset: number): void {}
+  /** View hook: the drag ended. delta is -1/+1 to flip (animated slide to
+   *  the neighbouring page) or 0 to spring back. */
+  protected swipeSettle(_delta: number): void {}
+
+  private settlePageFlip(event: TouchEvent): void {
+    const gesture = this.touchGesture;
+    if (!gesture || gesture.axis !== "x") return;
+    if (Array.from(event.touches).some((touch) => touch.identifier === gesture.ids[0])) return;
+    const width = this.inputScroller().clientWidth;
+    const travel = gesture.dragX;
+    const fling = Math.abs(gesture.velocity) > 0.35 && Math.abs(travel) > 24;
+    const crossed = Math.abs(travel) > width * 0.35;
+    this.swipeSettle(fling || crossed ? (travel > 0 ? -1 : 1) : 0);
+  }
+
+  /** Cancels an in-flight page-flip drag (spring back, no flip). */
+  protected cancelPageFlip(): void {
+    if (this.touchGesture?.axis === "x") this.swipeSettle(0);
+  }
   protected settingsOpen(): boolean { return false; }
   protected toggleToolSettings(): void {}
   /** Re-open the settings popover at the (new) active tool's anchor. */
@@ -1172,8 +1192,9 @@ export abstract class InkWritingView extends FileView {
     // Cancel native tap recognition before the guards, including Pencil
     // contact and final touchend events with no remaining contacts.
     if (event.cancelable && event.touches.length < 2) event.preventDefault();
-    // Ending a page-flip drag springs the page back with the settle animation.
-    if (this.touchGesture?.axis === "x") this.swipeDrag(null);
+    // Lifting the dragging finger decides the flip once: by travel distance
+    // or by fling velocity; anything less springs back with the animation.
+    this.settlePageFlip(event);
     this.touchGesture = null;
     this.healStaleInteraction(Array.from(event.touches));
     const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus");
@@ -1188,7 +1209,9 @@ export abstract class InkWritingView extends FileView {
       ids: b ? [a.identifier, b.identifier] : [a.identifier],
       distance: b ? Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) : 0,
       zoom: this.zoom, x, y, startX: x, startY: y,
-      axis: null, swipeDone: 0,
+      axis: null,
+      lastX: x, lastT: typeof event.timeStamp === "number" ? event.timeStamp : 0,
+      velocity: 0, dragX: 0,
       pageX: (x - rect.left) / rect.width,
       pageY: (y - rect.top) / rect.height,
     };
@@ -1237,23 +1260,29 @@ export abstract class InkWritingView extends FileView {
       const totalX = a.clientX - gesture.startX;
       const totalY = a.clientY - gesture.startY;
       if (gesture.axis === null && Math.max(Math.abs(totalX), Math.abs(totalY)) > 10) {
+        // A horizontal drag flips pages when the document cannot scroll
+        // sideways at all, or when it is zoomed but already scrolled to the
+        // edge the drag is heading for (gallery behaviour while zoomed).
         const scrollableX = scroller.scrollWidth > scroller.clientWidth + 4;
-        gesture.axis = !scrollableX && Math.abs(totalX) > Math.abs(totalY) * 1.5 ? "x" : "y";
+        let flipAllowed = !scrollableX;
+        if (scrollableX) {
+          const atLeft = scroller.scrollLeft <= 2;
+          const atRight = scroller.scrollLeft >= scroller.scrollWidth - scroller.clientWidth - 2;
+          flipAllowed = (totalX > 0 && atLeft) || (totalX < 0 && atRight);
+        }
+        gesture.axis = Math.abs(totalX) > Math.abs(totalY) * 1.5 && flipAllowed ? "x" : "y";
       }
       if (gesture.axis === "x") {
-        // Photos-style page flip: a horizontally dominant drag when the
-        // document cannot scroll sideways flips pages instead of panning.
-        // The page follows the finger; the flip needs a deliberate drag
-        // (a fifth of the pane, not a twitch) and the rest springs back.
-        const dragOffset = totalX - gesture.swipeDone;
-        const flipThreshold = Math.max(96, this.inputScroller().clientWidth * 0.2);
-        if (Math.abs(dragOffset) > flipThreshold) {
-          this.swipeNavigate(dragOffset > 0 ? -1 : 1);
-          gesture.swipeDone = totalX;
-          this.swipeDrag(totalX - gesture.swipeDone);
-          return;
-        }
-        this.swipeDrag(dragOffset);
+        // Gallery drag: the page follows the finger one-to-one (the view
+        // slides the neighbouring page in alongside); the flip itself is
+        // decided once, on release, by distance or fling velocity.
+        const now = typeof event.timeStamp === "number" ? event.timeStamp : gesture.lastT + 16;
+        const dt = Math.max(1, now - gesture.lastT);
+        gesture.velocity = 0.8 * gesture.velocity + 0.2 * ((a.clientX - gesture.lastX) / dt);
+        gesture.lastX = a.clientX;
+        gesture.lastT = now;
+        gesture.dragX = totalX;
+        this.swipeDrag(totalX);
         return;
       }
       scroller.scrollLeft += gesture.x - a.clientX;

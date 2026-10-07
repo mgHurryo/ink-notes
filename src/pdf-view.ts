@@ -172,7 +172,7 @@ export class PdfInkView extends InkWritingView {
     this.registerDomEvent(scroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(scroller, "touchcancel", (event) => {
       this.onStylusTouch(event);
-      if (this.touchGesture?.axis === "x") this.swipeDrag(null);
+      this.cancelPageFlip();
       this.touchGesture = null;
     }, { passive: false });
     // Pane operations (splits, drags, sidebar toggles) resize this view
@@ -196,6 +196,7 @@ export class PdfInkView extends InkWritingView {
     this.releaseWriter();
     this.loadGeneration += 1;
     this.cancelPdfRender();
+    this.destroySwipeStage();
     this.finishPointerInput(false);
     this.discardPendingInkPreview();
     this.clearSaveTimers();
@@ -721,8 +722,13 @@ export class PdfInkView extends InkWritingView {
       width: `${this.pageBaseWidth * this.zoom}px`,
       height: `${this.pageBaseHeight * this.zoom}px`,
     });
-    this.canvasLogicalWidth = Math.max(1, Math.round(display.width * 64) / 64);
-    this.canvasLogicalHeight = Math.max(1, Math.round(display.height * 64) / 64);
+    // The overlay/tile coordinate space must be the PAGE BOX at zoom 1, not
+    // the PDF's point size: every ink mapping (viewport crop, overlay
+    // transforms, tiles, modeler) assumes one logical unit == one box pixel,
+    // exactly like the notebook editor derives its logical size from its
+    // layout. Point-size units compressed all ink toward the top-left.
+    this.canvasLogicalWidth = Math.max(1, Math.round(this.pageBaseWidth * 64) / 64);
+    this.canvasLogicalHeight = Math.max(1, Math.round(this.pageBaseHeight * 64) / 64);
     this.tiles?.setDisplayScale(this.zoom);
     const page = this.sidecar?.notebook.pages[this.noteIndex];
     if (page) this.tiles?.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight);
@@ -852,19 +858,90 @@ export class PdfInkView extends InkWritingView {
     this.setZoom(value, focus, anchor);
   }
 
-  protected swipeNavigate(delta: number): void {
-    this.navigatePages(delta);
-  }
+  private swipeStage: HTMLElement | null = null;
+  private swipeStageTimer: number | undefined;
 
-  protected swipeDrag(offset: number | null): void {
+  protected swipeDrag(offset: number): void {
     const wrap = this.pageWrap;
     if (!wrap) return;
-    if (offset === null) {
-      wrap.setCssStyles({ transition: "transform 180ms ease-out", transform: "translateX(0px)" });
+    this.ensureSwipeStage(offset);
+    wrap.setCssStyles({ transition: "none", transform: `translateX(${offset}px)` });
+    if (this.swipeStage) this.swipeStage.setCssStyles({ transition: "none", transform: `translateX(${offset}px)` });
+  }
+
+  /** Slides the neighbouring page in beside the current one while dragging. */
+  private ensureSwipeStage(offset: number): void {
+    const wrap = this.pageWrap;
+    const scroller = this.scroller;
+    if (!wrap || !scroller) return;
+    const side = offset > 0 ? -1 : 1; // dragging right reveals the previous page on the left
+    const neighborIndex = this.noteIndex + side;
+    if (this.swipeStage) {
+      if (Number(this.swipeStage.dataset.neighbor) === neighborIndex) return;
+      this.destroySwipeStage();
+    }
+    const count = this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 0;
+    if (neighborIndex < 0 || neighborIndex >= count) return;
+    const stage = scroller.createDiv({ cls: "ink-swipe-stage" });
+    stage.dataset.neighbor = String(neighborIndex);
+    stage.setCssStyles({
+      position: "absolute", margin: "0", overflow: "hidden", background: "#fff",
+      borderRadius: "2px", boxShadow: "var(--ink-shadow-paper)",
+      left: `${wrap.offsetLeft + side * wrap.offsetWidth}px`,
+      top: `${wrap.offsetTop}px`,
+      width: `${wrap.offsetWidth}px`,
+      height: `${wrap.offsetHeight}px`,
+      transform: "translateX(0px)",
+    });
+    this.swipeStage = stage;
+    void this.renderSwipeStagePage(stage, neighborIndex);
+  }
+
+  private async renderSwipeStagePage(stage: HTMLElement, index: number): Promise<void> {
+    const notePage = this.sidecar?.notePages[index];
+    const canvas = stage.createEl("canvas");
+    canvas.setCssStyles({ width: "100%", height: "100%" });
+    if (!notePage || notePage.sourceIndex === undefined || !this.pdfDoc) return;
+    try {
+      const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
+      if (!stage.isConnected) return;
+      const scale = (window.devicePixelRatio || 1) * this.zoom;
+      canvas.width = Math.max(1, Math.round(this.rotatedSize(notePage).width * scale));
+      canvas.height = Math.max(1, Math.round(this.rotatedSize(notePage).height * scale));
+      const viewport = page.getViewport({ scale });
+      await page.render({ canvasContext: canvas.getContext("2d")!, viewport }).promise;
+    } catch {
+      // The neighbour preview is best-effort; a blank page is fine.
+    }
+  }
+
+  protected swipeSettle(delta: number): void {
+    const wrap = this.pageWrap;
+    if (!wrap) { this.destroySwipeStage(); return; }
+    if (!delta || !this.swipeStage) {
+      wrap.setCssStyles({ transition: "transform 200ms ease-out", transform: "translateX(0px)" });
+      if (this.swipeStage) this.swipeStage.setCssStyles({ transition: "transform 200ms ease-out", transform: "translateX(0px)" });
+      if (this.swipeStageTimer === undefined) {
+        this.swipeStageTimer = window.setTimeout(() => { this.swipeStageTimer = undefined; this.destroySwipeStage(); }, 230);
+      }
       return;
     }
-    const clamped = Math.max(-140, Math.min(140, offset));
-    wrap.setCssStyles({ transition: "none", transform: `translateX(${clamped}px)` });
+    const width = wrap.offsetWidth;
+    wrap.setCssStyles({ transition: "transform 200ms ease-out", transform: `translateX(${delta === 1 ? -width : width}px)` });
+    this.swipeStage!.setCssStyles({ transition: "transform 200ms ease-out", transform: "translateX(0px)" });
+    if (this.swipeStageTimer !== undefined) window.clearTimeout(this.swipeStageTimer);
+    this.swipeStageTimer = window.setTimeout(() => {
+      this.swipeStageTimer = undefined;
+      this.destroySwipeStage();
+      wrap.setCssStyles({ transition: "none", transform: "none" });
+      this.navigatePages(delta);
+    }, 210);
+  }
+
+  private destroySwipeStage(): void {
+    if (this.swipeStageTimer !== undefined) { window.clearTimeout(this.swipeStageTimer); this.swipeStageTimer = undefined; }
+    this.swipeStage?.remove();
+    this.swipeStage = null;
   }
   protected settingsOpen(): boolean { return this.brushPopover?.isOpen ?? false; }
   protected toggleToolSettings(): void {
