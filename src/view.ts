@@ -579,9 +579,11 @@ export class InkView extends InkWritingView {
     extent.style.transform = `translateX(${-delta * width}px)`;
     this.swipeStage.style.transition = "transform 160ms ease-out";
     this.swipeStage.style.transform = `translateX(${-side * width}px)`;
-    if (this.swipeStageTimer !== undefined) window.clearTimeout(this.swipeStageTimer);
-    this.swipeStageTimer = window.setTimeout(() => {
-      this.swipeStageTimer = undefined;
+    // Commit only when the slide has actually finished (see the PDF view).
+    let committed = false;
+    const commit = (): void => {
+      if (committed || !this.swipeStage) return;
+      committed = true;
       // The stage keeps covering the page slot until the real page rendered
       // underneath; re-sync it to the live geometry so a transient relayout
       // after changePage can never show it (or the page) squashed.
@@ -598,7 +600,10 @@ export class InkView extends InkWritingView {
       extent.style.transform = "none";
       this.changePage(delta);
       this.swipeStageTimer = window.setTimeout(() => { this.swipeStageTimer = undefined; this.destroySwipeStage(); }, 650);
-    }, 170);
+    };
+    extent.addEventListener("transitionend", commit, { once: true });
+    if (this.swipeStageTimer !== undefined) window.clearTimeout(this.swipeStageTimer);
+    this.swipeStageTimer = window.setTimeout(commit, 280);
   }
 
   private destroySwipeStage(): void {

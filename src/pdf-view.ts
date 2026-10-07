@@ -1011,14 +1011,21 @@ export class PdfInkView extends InkWritingView {
     const width = wrap.offsetWidth;
     wrap.setCssStyles({ transition: "transform 160ms ease-out", transform: `translateX(${-delta * width}px)` });
     this.swipeStage.setCssStyles({ transition: "transform 160ms ease-out", transform: `translateX(${-side * width}px)` });
-    if (this.swipeStageTimer !== undefined) window.clearTimeout(this.swipeStageTimer);
-    this.swipeStageTimer = window.setTimeout(() => {
-      this.swipeStageTimer = undefined;
+    // Commit only when the slide has actually finished - a fixed timer cut
+    // the animation short on busy frames, snapping the second page in
+    // mid-slide ("flips halfway, then it just appears").
+    let committed = false;
+    const commit = (): void => {
+      if (committed || !this.swipeStage) return;
+      committed = true;
       const stage = this.swipeStage;
-      if (stage) stage.setCssStyles({ transition: "none", left: `${wrap.offsetLeft}px`, transform: "none" });
+      stage.setCssStyles({ transition: "none", left: `${wrap.offsetLeft}px`, transform: "none" });
       wrap.setCssStyles({ transition: "none", transform: "none" });
       void this.navigatePages(delta).finally(() => this.destroySwipeStage());
-    }, 170);
+    };
+    wrap.addEventListener("transitionend", commit, { once: true });
+    if (this.swipeStageTimer !== undefined) window.clearTimeout(this.swipeStageTimer);
+    this.swipeStageTimer = window.setTimeout(commit, 280);
   }
 
   private destroySwipeStage(): void {
