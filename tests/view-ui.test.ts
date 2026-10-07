@@ -112,16 +112,16 @@ describe("reference-style editor", () => {
     expect(highlighterSize.value).toBe("24");
     expect(button("Highlighter green").getAttribute("aria-pressed")).toBe("true");
   });
-  it("shows a reference cursor and only offers size for local erasers", () => {
+  it("shows a reference cursor and only offers size + mode in the eraser mini popover", () => {
     button("Erase").click();
     button("Erase").click();
-    const popover = document.querySelector<HTMLElement>(".ink-size-popover")!;
+    const popover = document.querySelector<HTMLElement>(".ink-eraser-popover")!;
     const size = document.querySelector<HTMLInputElement>('input[aria-label="Eraser size"]')!;
-    expect(popover.classList.contains("is-stroke-eraser")).toBe(true);
-    expect(document.querySelector(".ink-stroke-eraser-hint")?.textContent).toContain("Size is fixed");
+    const strokeMode = popover.querySelector<HTMLElement>('[data-eraser-mode="stroke"]')!;
+    expect(strokeMode.getAttribute("aria-checked")).toBe("true");
     expect(document.querySelector(".ink-eraser-reference-point")).not.toBeNull();
     button("Circle eraser").click();
-    expect(popover.classList.contains("is-stroke-eraser")).toBe(false);
+    expect(strokeMode.getAttribute("aria-checked")).toBe("false");
     size.value = "48";
     size.dispatchEvent(new Event("input"));
     const cursor = document.querySelector<HTMLElement>(".ink-eraser-cursor")!;

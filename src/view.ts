@@ -233,18 +233,14 @@ export class InkView extends InkWritingView {
   private addSizePopover(parent: HTMLElement): void {
     const container = parent.createDiv({ cls: "ink-size-popover-control" });
     const button = container.createEl("button", {
-      cls: "ink-size-button",
+      cls: "ink-icon-button",
       attr: {
         type: "button",
-        "aria-label": "Brush size",
-        "aria-hidden": "true",
-        tabindex: "-1",
+        "aria-label": "Brush settings",
+        "aria-haspopup": "dialog",
       },
     });
-    const icon = button.createSpan({ cls: "ink-button-icon" });
-    setIcon(icon, "sliders-horizontal");
-    void icon;
-    button.title = "Brush size and opacity";
+    setIcon(button.createSpan({ cls: "ink-button-icon" }), "sliders-horizontal");
 
     // Shared brush settings popover (same controller as the PDF view): pinned
     // preview header, vertical-only scroll body, gesture shield included.
@@ -253,7 +249,6 @@ export class InkView extends InkWritingView {
       getSettings: (tool) => this.brushSettings(tool),
       activeTool: () => this.state.tool,
       showPenDynamics: () => this.state.tool === "pen",
-      buildExtras: (body, api) => this.buildEraserSettings(body, api.addRange),
       onControlsChanged: () => this.updateEraserControls(),
       anchor: () => this.activeToolButton() ?? this.sizePopoverButton,
     });
@@ -619,11 +614,18 @@ export class InkView extends InkWritingView {
     this.swipeStage?.remove();
     this.swipeStage = null;
   }
-  protected settingsOpen(): boolean { return this.sizePopoverOpen; }
-  protected toggleToolSettings(): void {
+  protected settingsOpen(): boolean {
+    return this.state.tool === "eraser" ? this.eraserPopover !== null : this.sizePopoverOpen;
+  }
+  protected toggleToolSettings(anchor: HTMLElement): void {
+    if (this.state.tool === "eraser") { this.toggleEraserPopover(anchor); return; }
     this.setSizePopoverOpen(!this.sizePopoverOpen);
   }
   protected reopenToolSettings(): void {
+    if (this.state.tool === "eraser") {
+      if (!this.eraserPopover) this.toggleEraserPopover(this.activeToolButton());
+      return;
+    }
     this.setSizePopoverOpen(true);
     this.brushPopover.position();
   }

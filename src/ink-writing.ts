@@ -408,6 +408,9 @@ export abstract class InkWritingView extends FileView {
   protected brushPopover!: BrushPopoverController;
   /** Popover root; reflects the eraser mode state (is-stroke-eraser). */
   protected settingsPanel: HTMLElement | null = null;
+  /** The eraser's own mini popover (mode + size only). */
+  protected eraserPopover: HTMLElement | null = null;
+  private eraserPopoverClose: (() => void) | null = null;
 
   // --- worker pipeline
   protected workers: InkWorkerService | undefined;
@@ -561,7 +564,7 @@ export abstract class InkWritingView extends FileView {
     if (this.touchGesture?.axis === "x") this.swipeSettle(0);
   }
   protected settingsOpen(): boolean { return false; }
-  protected toggleToolSettings(): void {}
+  protected toggleToolSettings(_anchor: HTMLElement): void {}
   /** Re-open the settings popover at the (new) active tool's anchor. */
   protected reopenToolSettings(): void {}
   /** Whether the diagnostics panel wants raw point samples retained. */
@@ -2122,6 +2125,76 @@ export abstract class InkWritingView extends FileView {
     return this.state[tool];
   }
 
+  /**
+   * The eraser needs exactly two controls - mode and size - so it gets its
+   * own mini popover anchored to its tool button instead of the full brush
+   * panel. Outside taps, Escape and a second tap close it.
+   */
+  protected toggleEraserPopover(anchor: HTMLElement | null): void {
+    if (this.eraserPopover) { this.closeEraserPopover(); return; }
+    if (!anchor) return;
+    const pop = this.containerEl.createDiv({ cls: "ink-eraser-popover", attr: { role: "dialog", "aria-label": "Eraser settings" } });
+    pop.createDiv({ cls: "ink-size-popover-title", text: "Eraser" });
+    const modes = pop.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
+    for (const [mode, label, shortLabel, iconName] of [["stroke", "Stroke eraser", "Stroke", "eraser"], ["circle", "Circle eraser", "Circle", "circle"], ["square", "Square eraser", "Square", "square"]] as const) {
+      const modeButton = modes.createEl("button", { cls: "ink-eraser-mode", attr: { type: "button", role: "radio", title: label, "aria-label": label, "aria-checked": String(this.state.eraserMode === mode), "data-eraser-mode": mode } });
+      setIcon(modeButton.createSpan({ cls: "ink-button-icon" }), iconName);
+      modeButton.createSpan({ cls: "ink-eraser-mode-label", text: shortLabel });
+      modeButton.addEventListener("click", () => {
+        this.state.eraserMode = mode;
+        modes.querySelectorAll<HTMLElement>(".ink-eraser-mode").forEach((candidate) => {
+          candidate.setAttribute("aria-checked", String(candidate.dataset.eraserMode === mode));
+        });
+        this.refreshEraserCursor();
+      });
+    }
+    pop.createDiv({ cls: "ink-settings-label", text: "Size" });
+    const range = pop.createEl("input", { attr: { type: "range", "aria-label": "Eraser size" } });
+    range.min = "8";
+    range.max = "160";
+    range.step = "2";
+    range.value = String(this.state.eraserSize);
+    range.addEventListener("input", () => {
+      this.state.eraserSize = Number(range.value);
+      this.refreshEraserCursor();
+    });
+    this.eraserPopover = pop;
+    const place = (): void => {
+      const anchorRect = anchor.getBoundingClientRect();
+      const rect = pop.getBoundingClientRect();
+      pop.style.top = `${Math.max(8, Math.min(window.innerHeight - rect.height - 8, anchorRect.bottom + 6))}px`;
+      pop.style.left = `${Math.max(8, Math.min(window.innerWidth - rect.width - 8, anchorRect.left + anchorRect.width / 2 - rect.width / 2))}px`;
+    };
+    place();
+    const onOutside = (event: PointerEvent): void => {
+      const target = event.target as Node | null;
+      if (target && (pop.contains(target) || anchor.contains(target))) return;
+      this.closeEraserPopover();
+    };
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") this.closeEraserPopover();
+    };
+    const onRelayout = (): void => place();
+    document.addEventListener("pointerdown", onOutside, true);
+    document.addEventListener("keydown", onKey, true);
+    window.addEventListener("resize", onRelayout);
+    window.addEventListener("scroll", onRelayout, true);
+    this.eraserPopoverClose = () => {
+      document.removeEventListener("pointerdown", onOutside, true);
+      document.removeEventListener("keydown", onKey, true);
+      window.removeEventListener("resize", onRelayout);
+      window.removeEventListener("scroll", onRelayout, true);
+    };
+    this.register(() => this.closeEraserPopover());
+  }
+
+  protected closeEraserPopover(): void {
+    this.eraserPopoverClose?.();
+    this.eraserPopoverClose = null;
+    this.eraserPopover?.remove();
+    this.eraserPopover = null;
+  }
+
   // -------------------------------------------------------------- toolbar
 
   protected addToolbarSection(parent: HTMLElement, label: string): HTMLElement {
@@ -2155,7 +2228,7 @@ export abstract class InkWritingView extends FileView {
     button.addEventListener("click", () => {
       this.finishPointerInput(false);
       if (this.state.tool === tool && hasSettings) {
-        this.toggleToolSettings();
+        this.toggleToolSettings(button);
         return;
       }
       this.onToolSelected(tool);
@@ -2176,30 +2249,6 @@ export abstract class InkWritingView extends FileView {
     });
   }
 
-  /** Eraser settings block for the shared brush popover (ink markup: icon
-   *  mode radios, stroke-eraser hint, size slider). */
-  protected buildEraserSettings(body: HTMLElement,
-    addRange: (parent: HTMLElement, name: string, min: number, max: number, step: number, value: number, onChange: (value: number) => void) => void): void {
-    const eraser = body.createDiv({ cls: "ink-eraser-settings" });
-    eraser.createDiv({ cls: "ink-size-popover-title", text: "Eraser" });
-    eraser.createDiv({ cls: "ink-settings-label", text: "Mode" });
-    const modes = eraser.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
-    for (const [mode, label, shortLabel, iconName] of [["stroke", "Stroke eraser", "Stroke", "eraser"], ["circle", "Circle eraser", "Circle", "circle"], ["square", "Square eraser", "Square", "square"]] as const) {
-      const modeButton = modes.createEl("button", { cls: "ink-eraser-mode", attr: { type: "button", role: "radio", title: label, "aria-label": label, "aria-checked": String(this.state.eraserMode === mode), "data-eraser-mode": mode } });
-      setIcon(modeButton.createSpan({ cls: "ink-button-icon" }), iconName);
-      modeButton.createSpan({ cls: "ink-eraser-mode-label", text: shortLabel });
-      modeButton.addEventListener("click", () => {
-        this.state.eraserMode = mode;
-        this.updateEraserControls();
-      });
-    }
-    eraser.createDiv({ cls: "ink-stroke-eraser-hint", text: "Erases the entire touched stroke. Size is fixed." });
-    addRange(eraser, "Eraser size", 8, 160, 2, this.state.eraserSize, (value: number) => {
-      this.state.eraserSize = value;
-      this.refreshEraserCursor();
-    });
-  }
-
   /** Per-tool brush presets; the ink standard applies to both editors. */
   protected brushToolConfigs(): { tool: "pen" | "highlighter"; label: string; presets: number[]; maximum: number }[] {
     return [
@@ -2209,11 +2258,11 @@ export abstract class InkWritingView extends FileView {
   }
 
   protected updateEraserControls(): void {
-    if (!this.settingsPanel) return;
-    this.settingsPanel.toggleClass("is-stroke-eraser", this.state.eraserMode === "stroke");
-    this.settingsPanel.querySelectorAll<HTMLElement>(".ink-eraser-mode").forEach((button) => {
-      button.setAttribute("aria-checked", String(button.dataset.eraserMode === this.state.eraserMode));
-    });
     this.refreshEraserCursor();
+    if (this.eraserPopover) {
+      this.eraserPopover.querySelectorAll<HTMLElement>(".ink-eraser-mode").forEach((button) => {
+        button.setAttribute("aria-checked", String(button.dataset.eraserMode === this.state.eraserMode));
+      });
+    }
   }
 }

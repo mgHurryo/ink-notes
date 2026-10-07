@@ -531,6 +531,11 @@ export class PdfInkView extends InkWritingView {
       if (!this.editingLocked()) this.redo();
     }, this.redoStack.length === 0);
 
+    const pagesGroup = this.addToolbarSection(toolbar, "Pages");
+    const indicator = pagesGroup.createDiv({ cls: "ink-pdf-page-indicator" });
+    indicator.setText("–");
+    this.toolbarButtons.set("indicator", indicator);
+
     const docGroup = this.addToolbarSection(toolbar, "Document");
     this.addTrackedIconButton(docGroup, "pages", "more-horizontal", "Page options", (event) => {
       if (!this.editingLocked()) this.openPageMenu(event);
@@ -538,11 +543,6 @@ export class PdfInkView extends InkWritingView {
     this.addTrackedIconButton(docGroup, "export", "download", "Export PDF with handwriting", () => {
       if (!this.editingLocked()) void this.exportHandwrittenCopy();
     });
-
-    const pagesGroup = this.addToolbarSection(toolbar, "Pages");
-    const indicator = pagesGroup.createDiv({ cls: "ink-pdf-page-indicator" });
-    indicator.setText("–");
-    this.toolbarButtons.set("indicator", indicator);
 
     this.updateToolButtons();
     this.updateHistoryButtons();
@@ -592,7 +592,6 @@ export class PdfInkView extends InkWritingView {
       getSettings: (tool) => this.brushSettings(tool),
       activeTool: () => this.state.tool,
       showPenDynamics: () => this.state.tool === "pen",
-      buildExtras: (body, api) => this.buildEraserSettings(body, api.addRange),
       onControlsChanged: () => this.updateEraserControls(),
       anchor: () => this.toolbarButtons.get("brush") ?? null,
     });
@@ -1037,11 +1036,18 @@ export class PdfInkView extends InkWritingView {
     this.swipeStage?.remove();
     this.swipeStage = null;
   }
-  protected settingsOpen(): boolean { return this.brushPopover?.isOpen ?? false; }
-  protected toggleToolSettings(): void {
+  protected settingsOpen(): boolean {
+    return this.state.tool === "eraser" ? this.eraserPopover !== null : this.brushPopover?.isOpen ?? false;
+  }
+  protected toggleToolSettings(anchor: HTMLElement): void {
+    if (this.state.tool === "eraser") { this.toggleEraserPopover(anchor); return; }
     this.brushPopover.toggle();
   }
   protected reopenToolSettings(): void {
+    if (this.state.tool === "eraser") {
+      if (!this.eraserPopover) this.toggleEraserPopover(this.toolbarButtons.get(`tool-${this.state.tool}`) ?? null);
+      return;
+    }
     this.brushPopover.open();
     this.brushPopover.position();
   }
