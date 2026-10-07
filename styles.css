@@ -688,7 +688,10 @@
   color: var(--ink-danger);
 }
 
-.ink-notes-view .ink-page-thumb {
+/* Thumbnail buttons are shared with the PDF view's page rail; the PDF view
+   overrides the aspect ratio inline per page (PDF pages vary, notebook pages
+   are all the notebook's aspect). */
+:is(.ink-notes-view, .ink-pdf-view) .ink-page-thumb {
   position: relative;
   display: block;
   width: 100%;
@@ -905,6 +908,25 @@
   padding: 0;
   background: var(--ink-workspace);
 }
+
+/* Page rail + scroller row: the rail is a permanent left column, the page
+   scroller takes the remaining width. */
+.ink-pdf-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+/* The PDF rail reuses the notebook rail chrome (.ink-page-rail); it is a bit
+   narrower so a ~120px-wide page thumbnail fills the single column, and has
+   no per-thumb title label, so rows sit tighter. */
+.ink-pdf-view .ink-page-rail {
+  --ink-rail-width: 148px;
+  padding: 12px;
+}
+
+.ink-pdf-view .ink-rail-thumbs { row-gap: 10px; }
 
 .ink-pdf-toolbar {
   display: flex;

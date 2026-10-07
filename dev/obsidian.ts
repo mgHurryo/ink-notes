@@ -17,6 +17,8 @@ Object.assign(HTMLElement.prototype, {
   addClass(this: HTMLElement, name: string) { this.classList.add(name); },
   hasClass(this: HTMLElement, name: string) { return this.classList.contains(name); },
   toggleClass(this: HTMLElement, name: string, value: boolean) { this.classList.toggle(name, value); },
+  setText(this: HTMLElement, text: string) { this.textContent = text; return this; },
+  setCssStyles(this: HTMLElement, styles: Record<string, string>) { Object.assign(this.style, styles); },
 });
 export class FileView {
   app = { scope: {} };
@@ -80,6 +82,13 @@ export class Notice { constructor(message: string) { console.warn(message); } }
 export class TFile {}
 export class WorkspaceLeaf {}
 export class App {}
+/** pdf-view's RecoveryChoiceModal extends this at module load; the preview
+ *  never opens one, the jsdom unit tests only need the class to exist. */
+export class SuggestModal<T> {
+  constructor(_app?: unknown) {}
+  open(): void {}
+  onClose(): void {}
+}
 export class MarkdownRenderChild {
   constructor(public containerEl: HTMLElement) {}
   registerEvent(_event: unknown) {}
