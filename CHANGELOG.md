@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.0-beta.18 - 2026-10-07
+
+- Fix the flip animation being cut short: the page change was committed on a fixed 170ms timer while the slide ran 160ms - on busy frames the timer won, so the page slid halfway and the next one snapped in with no animation. The flip now commits when the slide transition actually finishes (with a fallback timer), so the animation always plays through.
+
 ## 0.8.0-beta.17 - 2026-10-07
 
 - The smart fit is now contain-fit: the whole page is always visible with the tighter axis flush - a tall Word page fits the height completely (no scrolling needed to see the bottom), a landscape page fills the width edge to edge. The previous build scaled landscape pages to the height instead, which forced horizontal scrolling before a flip.
