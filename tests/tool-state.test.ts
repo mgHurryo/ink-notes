@@ -1,0 +1,126 @@
+// @vitest-environment jsdom
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { defaultToolState, sanitizeToolState, storedToolState, ToolStateSaver, TOOL_STATE_SAVE_DEBOUNCE_MS } from "../src/tool-state";
+import type { StoredToolState } from "../src/tool-state";
+
+describe("tool state persistence", () => {
+  describe("sanitizeToolState", () => {
+    it("falls back to the defaults for missing or non-object data", () => {
+      for (const raw of [undefined, null, 42, "saved"]) {
+        expect(sanitizeToolState(raw)).toEqual(defaultToolState());
+      }
+    });
+
+    it("round-trips a stored snapshot unchanged", () => {
+      const state = defaultToolState();
+      state.pen.color = "#195bff";
+      state.pen.width = 8;
+      state.pen.smooth = 35;
+      state.pen.pressureCurve = [[0, 0], [0.5, 0.4], [1, 1]];
+      state.highlighter.color = "#f23c42";
+      state.highlighter.width = 24;
+      state.highlighter.opacity = 0.55;
+      state.eraserMode = "square";
+      state.eraserSize = 64;
+      expect(sanitizeToolState(storedToolState(state))).toEqual(state);
+    });
+
+    it("degrades only the invalid field, keeping valid siblings", () => {
+      const state = sanitizeToolState({
+        pen: { color: "nope", width: 12, opacity: 0.5 },
+        highlighter: { color: "#123456" },
+        eraserMode: "circle",
+        eraserSize: 64,
+      });
+      expect(state.pen.color).toBe("#1b1b1b");
+      expect(state.pen.width).toBe(12);
+      expect(state.pen.opacity).toBe(0.5);
+      expect(state.highlighter.color).toBe("#123456");
+      expect(state.highlighter.width).toBe(18);
+      expect(state.eraserMode).toBe("circle");
+      expect(state.eraserSize).toBe(64);
+    });
+
+    it("clamps numbers into their control ranges", () => {
+      const state = sanitizeToolState({
+        pen: { width: 999, opacity: 5, smooth: -3, taper: 42, pressureGain: 1000, speedGain: 1 },
+        eraserSize: 999,
+        eraserMode: "square",
+      });
+      expect(state.pen.width).toBe(24);
+      expect(state.pen.opacity).toBe(1);
+      expect(state.pen.smooth).toBe(0);
+      expect(state.pen.taper).toBe(42);
+      expect(state.pen.pressureGain).toBe(100);
+      expect(state.pen.speedGain).toBe(1);
+      expect(state.eraserSize).toBe(160);
+      expect(sanitizeToolState({ highlighter: { width: 99 } }).highlighter.width).toBe(48);
+    });
+
+    it("drops dynamics fields the highlighter does not expose", () => {
+      const state = sanitizeToolState({ highlighter: { smooth: 33, taper: 50 } });
+      expect(state.highlighter.smooth).toBeUndefined();
+      expect(state.highlighter.taper).toBeUndefined();
+    });
+
+    it("keeps an ordered pressure curve and discards a broken one", () => {
+      expect(sanitizeToolState({ pen: { pressureCurve: [[0, 0], [0.5, 0.25], [1, 1]] } }).pen.pressureCurve)
+        .toEqual([[0, 0], [0.5, 0.25], [1, 1]]);
+      expect(sanitizeToolState({ pen: { pressureCurve: [[0, 0], [1, 2]] } }).pen.pressureCurve)
+        .toEqual([[0, 0], [1, 1]]);
+      for (const broken of [[[0.6, 0], [0.4, 1]], [[0, "x"]], "up", [[0, 0]]]) {
+        expect(sanitizeToolState({ pen: { pressureCurve: broken } }).pen.pressureCurve).toBeUndefined();
+      }
+    });
+
+    it("rejects non-finite numbers and unknown eraser modes", () => {
+      const state = sanitizeToolState({ pen: { width: Number.NaN }, eraserSize: Number.POSITIVE_INFINITY, eraserMode: "magic" });
+      expect(state.pen.width).toBe(3);
+      expect(state.eraserSize).toBe(32);
+      expect(state.eraserMode).toBe("stroke");
+    });
+  });
+
+  describe("storedToolState", () => {
+    it("strips the session tool and deep-copies the curve", () => {
+      const source = defaultToolState();
+      source.pen.pressureCurve = [[0, 0], [1, 1]];
+      const stored = storedToolState(source);
+      expect(stored).not.toHaveProperty("tool");
+      expect(stored.pen.pressureCurve).toEqual([[0, 0], [1, 1]]);
+      stored.pen.pressureCurve![0][0] = 9;
+      expect(source.pen.pressureCurve![0][0]).toBe(0);
+    });
+  });
+
+  describe("ToolStateSaver", () => {
+    beforeEach(() => vi.useFakeTimers());
+    afterEach(() => vi.useRealTimers());
+
+    it("saves once, a full debounce after the last change", () => {
+      const save = vi.fn(async (_state: StoredToolState) => undefined);
+      const saver = new ToolStateSaver(save);
+      const second = defaultToolState();
+      second.pen.width = 8;
+      saver.schedule(defaultToolState());
+      vi.advanceTimersByTime(300);
+      saver.schedule(second);
+      vi.advanceTimersByTime(TOOL_STATE_SAVE_DEBOUNCE_MS - 1);
+      expect(save).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(save).toHaveBeenCalledTimes(1);
+      expect(save.mock.calls[0][0].pen.width).toBe(8);
+    });
+
+    it("flush() persists immediately, then stays idle", () => {
+      const save = vi.fn(async (_state: StoredToolState) => undefined);
+      const saver = new ToolStateSaver(save);
+      saver.schedule(defaultToolState());
+      saver.flush();
+      expect(save).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(TOOL_STATE_SAVE_DEBOUNCE_MS * 2);
+      saver.flush();
+      expect(save).toHaveBeenCalledTimes(1);
+    });
+  });
+});

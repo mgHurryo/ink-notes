@@ -4,6 +4,7 @@ import { canvasResolution } from "./rendering";
 import { BrushPopoverController } from "./brush-popover";
 import { registerDocumentPointerEndEvents } from "./ink-input";
 import { InkWritingView } from "./ink-writing";
+import type { SharedToolState } from "./tool-state";
 import { TileRenderer } from "./tiles";
 import { InkWorkerService } from "./worker-service";
 import {
@@ -147,11 +148,12 @@ export class PdfInkView extends InkWritingView {
   }
 
   /** Wired by the plugin right after construction. */
-  configure(deps: { store: PdfSidecarStore; workers: InkWorkerService; takeover: PdfTabTakeover; arbiter: PdfWriterArbiter }): void {
+  configure(deps: { store: PdfSidecarStore; workers: InkWorkerService; takeover: PdfTabTakeover; arbiter: PdfWriterArbiter; toolState?: SharedToolState }): void {
     this.store = deps.store;
     this.workers = deps.workers;
     this.takeover = deps.takeover;
     this.arbiter = deps.arbiter;
+    if (deps.toolState) this.useSharedToolState(deps.toolState);
   }
 
   getDisplayText(): string {
@@ -547,7 +549,10 @@ export class PdfInkView extends InkWritingView {
       getSettings: (tool) => this.brushSettings(tool),
       activeTool: () => this.state.tool,
       showPenDynamics: () => this.state.tool === "pen",
-      onControlsChanged: () => this.updateEraserControls(),
+      onControlsChanged: () => {
+        this.updateEraserControls();
+        this.scheduleToolStateSave();
+      },
       anchor: () => this.activeSettingsAnchor(),
     });
     this.settingsPanel = this.brushPopover.root;
