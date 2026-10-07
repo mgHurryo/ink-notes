@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0-beta.25 - 2026-10-08
+
+- Tool settings now persist across sessions and across both editors: the notebook and the PDF handwriting view share one saved brush configuration (pen and highlighter color, width, opacity and pen dynamics, plus eraser mode and size). Any change - sliders, swatches, eraser controls - saves automatically (500 ms debounce) and is restored on the next open; corrupted saved values fall back per-field to the defaults instead of breaking the editor.
+- Double-click a color swatch to make that color the tool's default: it is saved with the shared settings and pre-selected next session. A single click still just selects the color for now.
+- Fix the "Take over PDF tabs automatically" setting not surviving a restart: the loader re-applied the default over the saved value, so the checkbox reset itself on every launch.
+
 ## 0.8.0-beta.21 - 2026-10-08
 
 - Ink rendering rebuilt from polygon ribbons to stamped primitives: every sample point contributes a disc and every segment a connecting trapezoid, all wound the same direction and filled as one path. Same-direction overlaps add their winding instead of cancelling, so sharp turns, retraces and Chinese-style hooks can no longer produce holes, notches or hairline seams - at any brush width - while the single fill still keeps translucent strokes from double-darkening. Committed tiles, retained previews, live confirmed outlines and the brush-panel sample all share the new geometry.
