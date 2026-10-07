@@ -1,6 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.8.0-beta.9 - 2026-10-07
+
+- Extract the shared writing layer (`src/ink-writing.ts`): pointer capture, raw-update consumption, coalesced-sample feeding, stroke-modeler engagement (smooth/sparse/direct), lift-pressure clamping, preview/commit lifecycle, eraser and lasso behavior, history-stack mechanics and save scheduling now live once and serve both the notebook and PDF editors. Every fix in this layer applies to both.
+- The PDF editor adopts the notebook pipeline wholesale and drops its forked one, fixing several drifts: the sparse-input modeler engagement was dead (intervals were reset at pointerdown), sparse strokes used the wrong modeler tuning, `pointerrawupdate` samples were never consumed, and saves could run mid-stroke instead of deferring to the next idle window.
+- The PDF preview now uses the same worker-confirmed outline + live-tail rendering and confirmed-outline retention as the notebook editor, with a matching confirmed-preview layer, and the ghost tip anchors at the live stroke tail in both editors.
+- The PDF eraser cursor adopts the notebook cursor (mode-aware size, stroke/circle/square states, reference point) and the eraser hover model.
+- Undo stacks are capped at 200 entries in both editors (previously unbounded in the notebook view); this is the only intentional behavior change for the notebook editor.
 
 ## 0.8.0-beta.4 - 2026-10-07
 

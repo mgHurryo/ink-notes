@@ -1,32 +1,12 @@
-import { App, FileView, Menu, Notice, Scope, SuggestModal, TFile, WorkspaceLeaf, loadPdfJs, setIcon } from "obsidian";
-import { InkPage, InkPoint, InkStroke, InkTool, newId } from "./model";
-import { canvasResolution, clampPercent, drawInkStroke, normalizePressureCurve, samplePressureCurve } from "./rendering";
+import { App, Menu, Notice, Scope, SuggestModal, TFile, WorkspaceLeaf, loadPdfJs, setIcon } from "obsidian";
+import { InkNotebook, InkPage, InkStroke, InkTool, createNotebook } from "./model";
+import { canvasResolution } from "./rendering";
 import { BrushPopoverController } from "./brush-popover";
+import { INK_COLORS } from "./brush-popover";
 import { registerDocumentPointerEndEvents } from "./ink-input";
-import { StrokeModelInput, StrokeModeler, StrokeModelResult, strokeModelParamsForSmoothStrength } from "./stroke-modeler";
+import { InkWritingView, ToolState } from "./ink-writing";
 import { TileRenderer } from "./tiles";
-import { InkWorkerService, InkWorkerSession } from "./worker-service";
-import {
-  BrushSettings,
-  EraserMode,
-  INK_COLORS,
-  InkPointerSample,
-  ToolState,
-  boundsForPointSets,
-  clampLiftPressure,
-  clonePoints,
-  cloneStroke,
-  constrainDelta,
-  distance,
-  eraseStrokeSegments,
-  isBrushTool,
-  packStrokePoints,
-  penSampleTimeMillis,
-  pointInPolygon,
-  selectionBounds,
-  strokeIntersectsEraser,
-  translatePoints,
-} from "./view";
+import { InkWorkerService } from "./worker-service";
 import {
   PdfSidecar,
   PdfSidecarFormatError,
@@ -45,15 +25,13 @@ import { PdfTabTakeover } from "./pdf-takeover";
 
 export const VIEW_TYPE_PDF_INK = "ink-notes-pdf-view";
 
-const STROKE_ERASER_HIT_RADIUS = 10;
-const SAVE_IDLE_DELAY = 1_500;
-const SAVE_MAX_DELAY = 10_000;
 const SAVE_CONFLICT_RETRIES = 3;
-const INK_COMMIT_IDLE_DELAY = 180;
 const PDF_ZOOM_MIN = 0.5;
 const PDF_ZOOM_MAX = 3;
 const PDF_ZOOM_STEP = 1.2;
 const PDF_PAGE_PADDING = 24;
+const SELECTION_OVERLAY_BUDGET = 4_000_000;
+const PREVIEW_OVERLAY_BUDGET = 12_000_000;
 
 export type PdfViewMode = "reading" | "editing";
 export type SaveOutcome = { status: "saved" } | { status: "conflict"; message: string } | { status: "failed"; message: string };
@@ -105,45 +83,10 @@ interface PdfJsLib {
   RenderingCancelledException?: new (...args: unknown[]) => Error;
 }
 
-/** Capture-time state for modeling one active pen stroke. */
-interface PenCapture {
-  modeler: StrokeModeler;
-  pageWidth: number;
-  pageHeight: number;
-  lastInput: StrokeModelInput | null;
-  fallback: boolean;
-}
-
-interface Interaction {
-  pointerId: number;
-  pageId: string;
-  tool: InkTool;
-  eraserMode?: EraserMode;
-  eraserSize?: number;
-}
-
-interface EditCommand {
-  undo: () => void;
-  redo: () => void;
-}
-
-interface LassoDrag {
-  start: InkPoint;
-  pageId: string;
-  strokes: InkStroke[];
-  before: Map<string, InkPoint[]>;
-  bounds: { minX: number; minY: number; maxX: number; maxY: number } | null;
-  dx: number;
-  dy: number;
-}
-
-interface SidecarLoad {
-  sidecar: PdfSidecar;
-  raw: string;
-  file: TFile;
-}
-
 let nextViewId = 1;
+
+/** Fallback model when no sidecar is attached; keeps undo/redo seams safe. */
+const EMPTY_NOTEBOOK = createNotebook();
 
 /**
  * Handwriting view for PDF tabs. Opens in reading mode; editing unlocks only
@@ -151,12 +94,16 @@ let nextViewId = 1;
  * fingerprint check. The PDF page renders with Obsidian's own pdf.js below
  * the shared ink tile pipeline, so strokes persist through the same
  * merge/tombstone machinery as .ink notebooks.
+ *
+ * The writing pipeline itself (pointer capture, stroke modeling, previews,
+ * eraser, lasso, history, save scheduling) is the shared InkWritingView; this
+ * class supplies the PDF seams: sidecar storage, page geometry, mode/writer
+ * arbitration and the pdf.js canvas underneath the ink host.
  */
-export class PdfInkView extends FileView {
+export class PdfInkView extends InkWritingView {
   readonly viewId = `pdf-view-${nextViewId++}`;
 
   private store!: PdfSidecarStore;
-  private workers!: InkWorkerService;
   private takeover!: PdfTabTakeover;
   private arbiter!: PdfWriterArbiter;
 
@@ -167,15 +114,8 @@ export class PdfInkView extends FileView {
   private pdfCanvas: HTMLCanvasElement | null = null;
   private textLayer: HTMLElement | null = null;
   private inkHost: HTMLElement | null = null;
-  private eraserCursor: HTMLElement | null = null;
   private selectionCanvas: HTMLCanvasElement | null = null;
   private selectionCtx: CanvasRenderingContext2D | null = null;
-  private previewCanvas: HTMLCanvasElement | null = null;
-  private previewCtx: CanvasRenderingContext2D | null = null;
-  private brushPopover: BrushPopoverController | null = null;
-  /** Predicted (speculative) tip points for the live stroke — render-only,
-   *  never stored; dropped when the real tail takes over at lift. */
-  private predictedTip: InkPoint[] | null = null;
   private statusEl: HTMLElement | null = null;
   private toolbarButtons = new Map<string, HTMLElement>();
 
@@ -195,58 +135,25 @@ export class PdfInkView extends FileView {
 
   private sourcePages: PdfSourcePageGeometry[] = [];
   private noteIndex = 0;
-  private zoom = 1;
   private pageBaseWidth = 700;
   private pageBaseHeight = 990;
-  private canvasLogicalWidth = 1;
-  private canvasLogicalHeight = 1;
-  private viewport = { x: 0, y: 0, width: 1, height: 1 };
+  private brushPopover: BrushPopoverController | null = null;
 
-  private tiles: TileRenderer | null = null;
-  private session: InkWorkerSession | null = null;
-  private workerRevision = 0;
-
-  private state: ToolState = {
-    tool: "pen",
-    pen: { color: INK_COLORS[0].value, width: 3, opacity: 1, smooth: 60, taper: 30, pressureGain: 70, speedGain: 0 },
-    highlighter: { color: "#ffe94a", width: 14, opacity: 0.4 },
-    eraserMode: "stroke",
-    eraserSize: 24,
-  };
-
-  private interaction: Interaction | null = null;
-  private activePointerId: number | null = null;
-  private activeStroke: InkStroke | null = null;
-  private lastPoint: InkPoint | null = null;
-  private workerStrokePointIndex = 0;
-  private penCapture: PenCapture | null = null;
-  private penSampleIntervals: number[] = [];
-  private pendingInkStrokes: InkStroke[] = [];
-  private pendingInkPageId: string | null = null;
-  private committingInkStrokes: InkStroke[] | null = null;
-  private inkCommitTimer: number | undefined;
-  private erasedCandidateIds = new Set<string>();
-  private erasedStrokeIds = new Set<string>();
-  private eraserReplacementIds = new Set<string>();
-  private erasedStrokes: InkStroke[] = [];
-  private eraserReplacements: InkStroke[] = [];
-  private lassoPath: InkPoint[] = [];
-  private lassoDrag: LassoDrag | null = null;
-  private selectedStrokeIds = new Set<string>();
-
-  private undoStack: EditCommand[] = [];
-  private redoStack: EditCommand[] = [];
   private dirty = false;
   private activeSave: Promise<SaveOutcome> | null = null;
   private saveRequested = false;
-  private saveTimer: number | undefined;
-  private saveMaxDue = 0;
-  private renderFrame: number | null = null;
   private zoomTimer: number | undefined;
   private pendingRecoveryCandidates: TFile[] | null = null;
 
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
+    this.state = {
+      tool: "pen",
+      pen: { color: INK_COLORS[0].value, width: 3, opacity: 1, smooth: 60, taper: 30, pressureGain: 70, speedGain: 0 },
+      highlighter: { color: "#ffe94a", width: 14, opacity: 0.4 },
+      eraserMode: "stroke",
+      eraserSize: 24,
+    };
     this.scope = new Scope(this.app.scope);
     this.scope.register(["Mod"], "z", () => this.undo());
     this.scope.register(["Mod", "Shift"], "z", () => this.redo());
@@ -298,15 +205,15 @@ export class PdfInkView extends FileView {
     }
     this.loadGeneration += 1;
     this.cancelPdfRender();
-    this.finalizeInput();
+    this.finishPointerInput(false);
     this.discardPendingInkPreview();
-    this.clearSaveTimer();
+    this.clearSaveTimers();
     if (this.renderFrame !== null) window.cancelAnimationFrame(this.renderFrame);
     if (this.zoomTimer !== undefined) window.clearTimeout(this.zoomTimer);
     this.tiles?.dispose();
     this.tiles = null;
-    this.session?.dispose();
-    this.session = null;
+    this.workerSession?.dispose();
+    this.workerSession = null;
     void this.pdfDoc?.destroy().catch(() => undefined);
     this.pdfDoc = null;
     this.root = null;
@@ -367,7 +274,7 @@ export class PdfInkView extends FileView {
   }
 
   async onUnloadFile(_file: TFile): Promise<void> {
-    this.finalizeInput();
+    this.finishPointerInput(false);
     this.loadGeneration += 1;
     this.cancelPdfRender();
     this.discardPendingInkPreview();
@@ -449,20 +356,20 @@ export class PdfInkView extends FileView {
   }
 
   private exitEditState(): void {
-    this.finalizeInput();
+    this.finishPointerInput(false);
     this.discardPendingInkPreview();
     this.mode = "reading";
-    this.selectedStrokeIds.clear();
-    this.lassoPath = [];
-    this.lassoDrag = null;
+    this.clearSelection();
     this.releaseWriter();
     this.root?.removeClass("ink-pdf-editing");
     this.root?.addClass("ink-pdf-reading");
     this.textLayer?.removeAttribute("aria-hidden");
-    this.hideEraserCursor();
+    this.eraserHoverPoint = null;
+    this.eraserPointerInside = false;
+    this.refreshEraserCursor();
     this.updateToolButtons();
     this.updateHistoryButtons();
-    this.drawSelection();
+    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
     this.setStatus(this.writeBlockedReason ?? "");
   }
 
@@ -628,27 +535,24 @@ export class PdfInkView extends FileView {
 
   private initializeWorkerSession(): void {
     if (!this.sidecar) return;
-    const session = this.workers.createSession(() => ({ notebook: this.sidecar!.notebook, revision: this.workerRevision }));
-    this.session = session;
-    if (session.canRenderTiles()) this.tiles?.setBackend(session, () => this.disableWorkerSession());
-    void session.initializeRaw(JSON.stringify(this.sidecar.notebook), this.workerRevision).catch(() => this.disableWorkerSession());
-  }
-
-  private disableWorkerSession(): void {
-    this.tiles?.setBackend(null);
+    const session = this.workers!.createSession(() => ({ notebook: this.sidecar!.notebook, revision: this.workerRevision }));
+    this.workerSession = session;
+    if (session.canRenderTiles()) this.tiles?.setBackend(session, (error) => {
+      if (this.workerSession === session) this.disableWorkerSession(error);
+    });
+    void session.initializeRaw(JSON.stringify(this.sidecar.notebook), this.workerRevision).catch((error) => this.disableWorkerSession(error));
   }
 
   private disposeWorkerSession(): void {
     this.tiles?.setBackend(null);
-    this.session?.dispose();
-    this.session = null;
+    this.workerSession?.dispose();
+    this.workerSession = null;
   }
 
-  private queueWorkerOperation(operation: Parameters<InkWorkerSession["apply"]>[1], transfer?: Transferable[]): void {
-    const session = this.session;
-    if (!session) return;
+  private syncNotebookToWorker(): void {
+    if (!this.sidecar) return;
     this.workerRevision += 1;
-    void session.apply(this.workerRevision, operation, transfer).catch(() => this.disableWorkerSession());
+    void this.workerSession?.apply(this.workerRevision, { type: "replace-notebook", notebook: this.sidecar.notebook }).catch((error) => this.disableWorkerSession(error));
   }
 
   // -------------------------------------------------------------- toolbar
@@ -721,9 +625,7 @@ export class PdfInkView extends FileView {
         void this.setMode("editing");
       }
       this.state.tool = tool;
-      this.selectedStrokeIds.clear();
-      this.lassoPath = [];
-      this.lassoDrag = null;
+      this.clearSelection();
       this.updateToolButtons();
     });
     this.toolbarButtons.set(`tool-${tool}`, button);
@@ -770,7 +672,7 @@ export class PdfInkView extends FileView {
         { tool: "pen", label: "Pen", presets: [2, 4, 8], maximum: 40 },
         { tool: "highlighter", label: "Highlighter", presets: [8, 16, 24], maximum: 48 },
       ],
-      getSettings: (tool) => this.brushSettings(),
+      getSettings: (tool) => this.brushSettings(tool),
       activeTool: () => this.state.tool,
       showPenDynamics: () => this.state.tool === "pen",
       buildExtras: (body, { addRange }) => {
@@ -779,7 +681,7 @@ export class PdfInkView extends FileView {
           this.state.eraserSize = value;
         });
         const modes = body.createDiv({ cls: "ink-pdf-color-row" });
-        for (const mode of ["stroke", "circle", "square"] as EraserMode[]) {
+        for (const mode of ["stroke", "circle", "square"] as const) {
           const label = { stroke: "Stroke", circle: "Circle", square: "Square" }[mode];
           const modeButton = modes.createEl("button", { cls: "ink-pdf-mode-button", attr: { type: "button", "data-eraser-mode": mode } });
           modeButton.setText(label);
@@ -794,10 +696,6 @@ export class PdfInkView extends FileView {
     });
   }
 
-  private brushSettings(): BrushSettings {
-    return isBrushTool(this.state.tool) ? this.state[this.state.tool] : this.state.pen;
-  }
-
   private updateToolButtons(): void {
     for (const tool of ["pen", "highlighter", "eraser", "lasso"] as InkTool[]) {
       this.toolbarButtons.get(`tool-${tool}`)?.toggleClass("is-active", this.mode === "editing" && this.state.tool === tool);
@@ -805,7 +703,7 @@ export class PdfInkView extends FileView {
     this.toolbarButtons.get("mode")?.toggleClass("is-active", this.mode === "editing");
   }
 
-  private updateHistoryButtons(): void {
+  protected updateHistoryButtons(): void {
     this.toolbarButtons.get("undo")?.toggleClass("is-disabled", this.undoStack.length === 0);
     this.toolbarButtons.get("redo")?.toggleClass("is-disabled", this.redoStack.length === 0);
   }
@@ -877,17 +775,19 @@ export class PdfInkView extends FileView {
     }
   }
 
-  private syncNotebookToWorker(): void {
+  private markSidecarChanged(): void {
     if (!this.sidecar) return;
-    this.workerRevision += 1;
-    void this.session?.apply(this.workerRevision, { type: "replace-notebook", notebook: this.sidecar.notebook }).catch(() => this.disableWorkerSession());
+    this.sidecar.updatedAt = Date.now();
+    this.sidecar.notebook.updatedAt = this.sidecar.updatedAt;
+    this.dirty = true;
+    this.scheduleSave();
   }
 
   navigatePages(delta: number): void {
     const count = this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 1;
     const next = this.noteIndex + delta;
     if (next < 0 || next >= count) return;
-    this.finalizeInput();
+    this.finishPointerInput(false);
     this.noteIndex = next;
     this.updatePageIndicator();
     this.layoutPage();
@@ -945,8 +845,8 @@ export class PdfInkView extends FileView {
     };
     this.tiles?.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine);
     this.resizeSelectionCanvas();
-    this.resizePreviewCanvas();
-    this.drawSelection();
+    this.resizePreview();
+    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
     if (this.activeStroke) this.drawPreview();
   }
 
@@ -959,25 +859,43 @@ export class PdfInkView extends FileView {
   private buildInkHost(): void {
     const host = this.pageWrap!.createDiv({ cls: "ink-page ink-pdf-ink-host" });
     this.inkHost = host;
-    this.eraserCursor = host.createDiv({ cls: "ink-eraser-cursor" });
+    this.eraserCursor = host.createDiv({ cls: "ink-eraser-cursor", attr: { "aria-hidden": "true" } });
+    this.eraserCursor.createSpan({ cls: "ink-eraser-reference-point" });
     const tileLayer = host.createDiv({ cls: "ink-tile-layer" });
     this.tiles = new TileRenderer(tileLayer);
-    this.selectionCanvas = host.createEl("canvas", { cls: "ink-selection-canvas" });
+    this.selectionCanvas = host.createEl("canvas", { cls: "ink-canvas ink-selection-canvas" });
     this.selectionCtx = this.selectionCanvas.getContext("2d");
-    this.previewCanvas = host.createEl("canvas", { cls: "ink-preview-canvas" });
+    this.confirmedPreviewCanvas = host.createEl("canvas", { cls: "ink-canvas ink-confirmed-preview-canvas" });
+    this.confirmedPreviewCanvas.style.pointerEvents = "none";
+    this.confirmedPreviewCtx = this.confirmedPreviewCanvas.getContext("2d");
+    this.previewCanvas = host.createEl("canvas", { cls: "ink-canvas ink-preview-canvas" });
+    this.previewCanvas.style.pointerEvents = "none";
     this.previewCtx = this.previewCanvas.getContext("2d");
-    host.addEventListener("pointerenter", (event) => this.onPointerEnter(event as PointerEvent));
-    host.addEventListener("pointerdown", (event) => this.onPointerDownHost(event as PointerEvent));
-    host.addEventListener("pointermove", (event) => this.onPointerMoveHost(event as PointerEvent));
-    host.addEventListener("pointerup", (event) => this.onPointerEndHost(event as PointerEvent, false));
-    host.addEventListener("pointercancel", (event) => this.onPointerEndHost(event as PointerEvent, true));
-    host.addEventListener("pointerleave", () => this.hideEraserCursor());
+    host.addEventListener("pointerenter", (event) => this.onPointerEnter(event));
+    host.addEventListener("pointerdown", (event) => this.onPointerDown(event));
+    host.addEventListener("pointermove", (event) => this.onPointerMove(event));
+    // Chromium hosts (Obsidian desktop) stream every hardware pen sample as it
+    // arrives; the notebook editor has consumed these for ages and the PDF
+    // view now shares that pipeline wholesale.
+    if ("onpointerrawupdate" in window) {
+      host.addEventListener("pointerrawupdate", (event) => this.onPointerRawUpdate(event as PointerEvent));
+    }
+    host.addEventListener("pointerup", (event) => this.onPointerUp(event));
+    host.addEventListener("pointercancel", (event) => this.onPointerCancel(event));
+    host.addEventListener("lostpointercapture", (event) => this.onLostPointerCapture(event));
+    host.addEventListener("pointerleave", () => {
+      this.eraserPointerInside = false;
+      this.refreshEraserCursor();
+    });
     host.addEventListener("wheel", (event) => this.onWheel(event as WheelEvent), { passive: false });
     // Shared with the notebook editor: catches the stroke end when iPadOS
     // interrupts a Pencil (system gesture, haptic tick) or the pen lifts
     // outside an uncaptured host - otherwise the stroke stays preview-only
     // and the next render wipes it ("write a stroke, lose a stroke").
-    registerDocumentPointerEndEvents(host, (cleanup) => this.register(cleanup), (event, cancelled) => this.onPointerEndHost(event, cancelled));
+    registerDocumentPointerEndEvents(host, (cleanup) => this.register(cleanup), (event, cancelled) => {
+      void cancelled;
+      this.onDocumentPointerEnd(event);
+    });
   }
 
   private onWheel(event: WheelEvent): void {
@@ -986,536 +904,99 @@ export class PdfInkView extends FileView {
     this.setZoom(this.zoom * (event.deltaY < 0 ? PDF_ZOOM_STEP : 1 / PDF_ZOOM_STEP));
   }
 
-  private toPoint(event: InkPointerSample, rect: DOMRect): InkPoint {
-    const pressure = event.pressure > 0 ? event.pressure : this.lastPoint?.pressure ?? 0.5;
-    return {
-      x: Math.min(1, Math.max(0, (event.clientX - rect.left) / rect.width)),
-      y: Math.min(1, Math.max(0, (event.clientY - rect.top) / rect.height)),
-      pressure,
-      tiltX: event.tiltX,
-      tiltY: event.tiltY,
-      t: penSampleTimeMillis(event),
-    };
+  // ------------------------------------------------------ writing-layer seams
+
+  protected currentNotebook(): InkNotebook {
+    return this.sidecar?.notebook ?? EMPTY_NOTEBOOK;
   }
 
-  // ----------------------------------------------------------------- input
+  protected currentPage(): InkPage {
+    return this.sidecar?.notebook.pages[this.noteIndex] ?? EMPTY_NOTEBOOK.pages[0]!;
+  }
+
+  protected inputRect(): DOMRect {
+    return this.inkHost!.getBoundingClientRect();
+  }
+
+  protected inputHost(): HTMLElement | undefined {
+    return this.inkHost ?? undefined;
+  }
+
+  protected inputLocked(): boolean {
+    return this.editingLocked();
+  }
 
   private editingLocked(): boolean {
     return this.mode !== "editing" || !this.canEdit() || !this.writerHeld;
   }
 
-  private onPointerEnter(event: PointerEvent): void {
-    if (event.pointerType === "touch" || this.editingLocked() || this.state.tool !== "eraser") return;
-    this.updateEraserCursor(this.toPoint(event, this.inkHost!.getBoundingClientRect()));
+  protected pagePixelSize(): { width: number; height: number } {
+    return { width: this.canvasLogicalWidth, height: this.canvasLogicalHeight };
   }
 
-  private onPointerDownHost(event: PointerEvent): void {
-    if (this.editingLocked() || event.pointerType === "touch") return;
-    if (this.activePointerId !== null) this.finalizeInput();
-    try {
-      this.inkHost!.setPointerCapture(event.pointerId);
-    } catch {
-      // Capture is best-effort; WebKit can transiently reject a reused pen id.
-    }
-    this.clearSaveTimer();
-    this.activePointerId = event.pointerId;
-    const page = this.sidecar!.notebook.pages[this.noteIndex];
-    this.interaction = {
-      pointerId: event.pointerId,
-      pageId: page.id,
-      tool: this.state.tool,
-      eraserMode: this.state.tool === "eraser" ? this.state.eraserMode : undefined,
-      eraserSize: this.state.tool === "eraser" ? this.state.eraserSize : undefined,
-    };
-    this.tiles?.beginInput();
-    this.cancelPendingInkCommitTimer();
-    if (isBrushTool(this.state.tool)) this.tiles?.pauseInkCommit();
-    const point = this.toPoint(event, this.inkHost!.getBoundingClientRect());
-    this.lastPoint = point;
-    this.penSampleIntervals = [];
-    if (this.state.tool === "eraser") {
-      if (this.eraseAt(point, page)) this.requestRender();
-      return;
-    }
-    if (this.state.tool === "lasso") {
-      const bounds = selectionBounds(page.strokes.filter((stroke) => this.selectedStrokeIds.has(stroke.id)));
-      if (bounds && point.x >= bounds.minX && point.x <= bounds.maxX && point.y >= bounds.minY && point.y <= bounds.maxY) {
-        const strokes = page.strokes.filter((stroke) => this.selectedStrokeIds.has(stroke.id));
-        const before = new Map(strokes.map((stroke) => [stroke.id, clonePoints(stroke.points)]));
-        this.lassoDrag = { start: point, pageId: page.id, strokes, before, bounds, dx: 0, dy: 0 };
-      } else {
-        this.selectedStrokeIds.clear();
-        this.lassoPath = [point];
-        this.drawSelection();
-      }
-      return;
-    }
-    const brush = this.brushSettings();
-    this.activeStroke = {
-      id: newId("stroke"),
-      pageId: page.id,
-      tool: this.state.tool,
-      color: brush.color,
-      width: brush.width,
-      opacity: brush.opacity,
-      points: [point],
-      dynamics: this.state.tool === "pen" ? {
-        taper: this.state.pen.taper ?? 0,
-        pressure: this.state.pen.pressureGain ?? 100,
-        speed: this.state.pen.speedGain ?? 0,
-        pressureCurve: this.state.pen.pressureCurve ? this.state.pen.pressureCurve.map((point) => [...point]) : undefined,
-      } : undefined,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
-    this.workerStrokePointIndex = 1;
-    if (this.state.tool === "pen") this.startPenCapture(point);
-    this.queueWorkerOperation({
-      type: "start-stroke",
-      pageId: page.id,
-      stroke: { ...this.activeStroke, points: [{ ...point }] },
-      previewWidth: this.canvasLogicalWidth,
-      previewHeight: this.canvasLogicalHeight,
-      pageUpdatedAt: page.updatedAt,
-      notebookUpdatedAt: this.sidecar!.notebook.updatedAt,
-    });
-    page.strokes.push(this.activeStroke);
-    this.requestRender();
+  protected onModelMutated(): void {
+    if (!this.sidecar) return;
+    this.sidecar.updatedAt = Date.now();
+    this.dirty = true;
   }
 
-  private onPointerMoveHost(event: PointerEvent): void {
-    if (this.activePointerId === null || event.pointerId !== this.activePointerId || this.editingLocked()) return;
-    const interaction = this.interaction;
-    if (!interaction) return;
-    const rect = this.inkHost!.getBoundingClientRect();
-    for (const sample of pointerSamplesOf(event)) {
-      if (sample.pointerId !== this.activePointerId) continue;
-      const point = this.toPoint(sample, rect);
-      if (interaction.tool === "eraser") {
-        this.updateEraserCursor(point);
-        const page = this.sidecar!.notebook.pages[this.noteIndex];
-        if (this.eraseAt(point, page)) this.requestRender();
-        continue;
-      }
-      if (interaction.tool === "lasso") {
-        this.applyLassoPoint(point);
-        this.drawSelection();
-        continue;
-      }
-      const stroke = this.activeStroke;
-      if (!stroke) continue;
-      const previous = stroke.points[stroke.points.length - 1];
-      if (distance(point, previous) < 0.001) continue;
-      this.penSampleIntervals.push(Math.max(0, point.t - previous.t));
-      if (this.penCapture && !this.penCapture.fallback) {
-        this.appendModeledPoint(point);
-      } else {
-        clampLiftPressure(point, previous);
-        stroke.points.push(point);
-        stroke.updatedAt = Date.now();
-      }
-      this.lastPoint = point;
-      this.requestRender();
-    }
-    // Predicted (speculative) tip points from the host: render-only ghost,
-    // never stored; dropped when the real tail takes over at lift.
-    const predicted = typeof event.getPredictedEvents === "function" ? event.getPredictedEvents() : [];
-    this.predictedTip = predicted.length ? predicted.map((s) => this.toPoint(s, rect)) : null;
-    if (this.predictedTip) this.requestRender();
+  protected onRenderResize(): void {
+    this.layoutPage();
   }
 
-  private onPointerEndHost(event: PointerEvent, _cancelled: boolean): void {
-    if (this.activePointerId === event.pointerId) this.predictedTip = null;
-    if (this.activePointerId === null || event.pointerId !== this.activePointerId) return;
-    try {
-      this.inkHost?.releasePointerCapture(event.pointerId);
-    } catch {
-      // Already released.
-    }
-    this.finalizeInput();
+  protected renderInteractionFrame(): void {
+    if (this.activeStroke) this.drawPreview();
+    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
 
-  private applyLassoPoint(point: InkPoint): void {
-    if (this.lassoDrag) {
-      const bounds = this.lassoDrag.bounds;
-      const dx = constrainDelta(point.x - this.lassoDrag.start.x, bounds?.minX ?? 0, bounds?.maxX ?? 1);
-      const dy = constrainDelta(point.y - this.lassoDrag.start.y, bounds?.minY ?? 0, bounds?.maxY ?? 1);
-      if (dx === this.lassoDrag.dx && dy === this.lassoDrag.dy) return;
-      this.lassoDrag.dx = dx;
-      this.lassoDrag.dy = dy;
-      return;
-    }
-    const previous = this.lassoPath[this.lassoPath.length - 1];
-    if (!previous || distance(point, previous) < 0.001) return;
-    this.lassoPath.push(point);
+  protected drawStrokes(_strokes: InkStroke[]): void {
+    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
 
-  /**
-   * Commit the active interaction. Runs on pointerup/pointercancel and before
-   * page switches, mode changes, and view close — like InkView, a stroke that
-   * already reached the model is always finished, never discarded.
-   */
-  private finalizeInput(): void {
-    const interaction = this.interaction;
-    if (this.activePointerId === null && !interaction) return;
-    const pointerId = this.activePointerId;
-    if (pointerId !== null) {
-      try {
-        this.inkHost?.releasePointerCapture(pointerId);
-      } catch {
-        // Already released.
-      }
-    }
-    this.flushPenCapture();
-    this.predictedTip = null;
-    this.interaction = null;
-    this.activePointerId = null;
-    if (interaction) {
-      const page = this.sidecar?.notebook.pages.find((candidate) => candidate.id === interaction.pageId) ?? null;
-      if (page) {
-        this.flushWorkerStrokePoints();
-        if (interaction.tool === "lasso") this.finishLasso(page);
-        else if (interaction.tool === "eraser") this.finishEraser(page);
-        else if (this.activeStroke) this.finishBrushStroke(page);
-      }
-    }
-    this.activeStroke = null;
-    this.workerStrokePointIndex = 0;
-    this.lastPoint = null;
-    this.penCapture = null;
-    this.hideEraserCursor();
-    this.tiles?.resumeInkCommit();
-    if (this.pendingInkStrokes.length > 0) this.schedulePendingInkCommit();
-    this.scheduleSave();
-    this.updateHistoryButtons();
+  protected drawInteractiveStrokes(_strokes: InkStroke[], _refine?: boolean): void {
+    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
 
-  private finishBrushStroke(page: InkPage): void {
-    const stroke = this.activeStroke!;
-    this.markSidecarChanged();
-    if (!this.pendingInkStrokes.includes(stroke)) this.pendingInkStrokes.push(stroke);
-    this.pendingInkPageId = page.id;
-    this.queueWorkerOperation({
-      type: "complete-stroke",
-      pageId: page.id,
-      strokeId: stroke.id,
-      pageUpdatedAt: page.updatedAt,
-      notebookUpdatedAt: this.sidecar!.notebook.updatedAt,
-    });
-    this.pushCommand({
-      undo: () => this.removeStrokeById(page, stroke.id),
-      redo: () => this.restoreStroke(page, stroke),
-    });
+  protected beginLassoPreview(_page: InkPage): void {
+    // The dashed drag box drawn by drawSelection tracks the drag; the PDF view
+    // does not lift the selected ink onto a separate canvas while dragging.
   }
 
-  private finishEraser(page: InkPage): void {
-    if (this.erasedStrokes.length === 0) return;
-    this.markSidecarChanged();
-    const erased = this.erasedStrokes;
-    const replacements = this.eraserReplacements;
-    const replacementIds = new Set(replacements.map((stroke) => stroke.id));
-    this.queueWorkerOperation({
-      type: "patch-strokes",
-      pageId: page.id,
-      upsert: replacements.map(cloneStroke),
-      remove: [...new Set([...erased.map((stroke) => stroke.id), ...replacementIds])],
-      deletedStrokeIds: [...page.deletedStrokeIds],
-      pageUpdatedAt: page.updatedAt,
-      notebookUpdatedAt: this.sidecar!.notebook.updatedAt,
-    });
-    this.pushCommand({
-      undo: () => {
-        page.strokes = page.strokes.filter((stroke) => !replacementIds.has(stroke.id));
-        page.strokes.push(...erased.map(cloneStroke));
-        page.strokes.sort((left, right) => left.createdAt - right.createdAt);
-        page.deletedStrokeIds = page.deletedStrokeIds.filter((id) => !erased.some((stroke) => stroke.id === id) && !replacementIds.has(id));
-        this.afterStrokeHistory(page);
-      },
-      redo: () => {
-        page.strokes = page.strokes.filter((stroke) => !erased.some((candidate) => candidate.id === stroke.id));
-        page.strokes.push(...replacements.map(cloneStroke));
-        page.strokes.sort((left, right) => left.createdAt - right.createdAt);
-        for (const stroke of erased) if (!page.deletedStrokeIds.includes(stroke.id)) page.deletedStrokeIds.push(stroke.id);
-        this.afterStrokeHistory(page);
-      },
-    });
-    this.erasedStrokes = [];
-    this.eraserReplacements = [];
-    this.erasedCandidateIds.clear();
-    this.erasedStrokeIds.clear();
-    this.eraserReplacementIds.clear();
+  protected commitLassoPreview(_page: InkPage): void {
+    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
 
-  private finishLasso(page: InkPage): void {
-    if (this.lassoDrag) {
-      const drag = this.lassoDrag;
-      this.lassoDrag = null;
-      if (drag.dx !== 0 || drag.dy !== 0) {
-        this.markSidecarChanged();
-        const dx = drag.dx;
-        const dy = drag.dy;
-        for (const stroke of drag.strokes) {
-          stroke.points = translatePoints(stroke.points, dx, dy);
-          stroke.updatedAt = Date.now();
-        }
-        this.queueWorkerOperation({
-          type: "translate-strokes",
-          pageId: page.id,
-          strokeIds: drag.strokes.map((stroke) => stroke.id),
-          dx,
-          dy,
-          pageUpdatedAt: page.updatedAt,
-          notebookUpdatedAt: this.sidecar!.notebook.updatedAt,
-        });
-        const ids = new Set(drag.strokes.map((stroke) => stroke.id));
-        this.pushCommand({
-          undo: () => {
-            for (const stroke of page.strokes) {
-              if (!ids.has(stroke.id)) continue;
-              const original = drag.before.get(stroke.id);
-              if (original) stroke.points = clonePoints(original);
-              stroke.updatedAt = Date.now();
-            }
-            this.afterStrokeHistory(page);
-          },
-          redo: () => {
-            for (const stroke of page.strokes) {
-              if (!ids.has(stroke.id)) continue;
-              stroke.points = translatePoints(drag.before.get(stroke.id) ?? stroke.points, dx, dy);
-              stroke.updatedAt = Date.now();
-            }
-            this.afterStrokeHistory(page);
-          },
-        });
-      }
-    } else if (this.lassoPath.length > 2) {
-      this.selectedStrokeIds = new Set(
-        page.strokes.filter((stroke) => stroke.points.some((point) => pointInPolygon(point, this.lassoPath))).map((stroke) => stroke.id),
-      );
-    }
-    this.lassoPath = [];
-    this.drawSelection();
+  protected hideLassoPreview(): void {
+    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
 
-  private afterStrokeHistory(page: InkPage): void {
-    this.markSidecarChanged();
-    this.queueWorkerOperation({
-      type: "patch-strokes",
-      pageId: page.id,
-      upsert: page.strokes.map(cloneStroke),
-      remove: [],
-      deletedStrokeIds: [...page.deletedStrokeIds],
-      pageUpdatedAt: page.updatedAt,
-      notebookUpdatedAt: this.sidecar!.notebook.updatedAt,
-    });
-    this.renderAll();
-  }
-
-  private removeStrokeById(page: InkPage, strokeId: string): void {
-    page.strokes = page.strokes.filter((stroke) => stroke.id !== strokeId);
-    if (!page.deletedStrokeIds.includes(strokeId)) page.deletedStrokeIds.push(strokeId);
-    this.afterStrokeHistory(page);
-  }
-
-  private restoreStroke(page: InkPage, stroke: InkStroke): void {
-    page.deletedStrokeIds = page.deletedStrokeIds.filter((id) => id !== stroke.id);
-    if (!page.strokes.some((candidate) => candidate.id === stroke.id)) page.strokes.push(cloneStroke(stroke));
-    this.afterStrokeHistory(page);
-  }
-
-  // --------------------------------------------------------------- eraser
-
-  /** Mirrors InkView.eraseAt: id-tracked so one drag can re-erase replacements. */
-  private eraseAt(point: InkPoint, page: InkPage): boolean {
-    const mode = this.interaction?.eraserMode ?? this.state.eraserMode;
-    const size = this.interaction?.eraserSize ?? this.state.eraserSize;
-    const radius = mode === "stroke" ? STROKE_ERASER_HIT_RADIUS : size / 2;
-    const indexed = this.tiles?.queryNear(point, radius) ?? page.strokes;
-    const candidates = [...new Map([...indexed, ...this.eraserReplacements].map((stroke) => [stroke.id, stroke])).values()]
-      .filter((stroke) => !this.erasedCandidateIds.has(stroke.id));
-    const removed = candidates.filter((stroke) => strokeIntersectsEraser(stroke, point, radius, mode, this.canvasLogicalWidth, this.canvasLogicalHeight));
-    if (removed.length === 0) return false;
-    for (const stroke of removed) {
-      this.erasedCandidateIds.add(stroke.id);
-      if (!this.eraserReplacementIds.has(stroke.id) && !this.erasedStrokeIds.has(stroke.id)) {
-        this.erasedStrokeIds.add(stroke.id);
-        this.erasedStrokes.push(cloneStroke(stroke));
-      }
-      if (this.eraserReplacementIds.delete(stroke.id)) {
-        this.eraserReplacements = this.eraserReplacements.filter((candidate) => candidate.id !== stroke.id);
-      }
-      page.strokes = page.strokes.filter((candidate) => candidate.id !== stroke.id);
-      page.deletedStrokeIds.push(stroke.id);
-    }
-    if (mode !== "stroke") {
-      const now = Date.now();
-      for (const stroke of removed) {
-        for (const points of eraseStrokeSegments(stroke, point, radius, mode, this.canvasLogicalWidth, this.canvasLogicalHeight)) {
-          if (points.length === 0) continue;
-          const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, createdAt: now, updatedAt: now };
-          page.strokes.push(replacement);
-          this.eraserReplacementIds.add(replacement.id);
-          this.eraserReplacements.push(cloneStroke(replacement));
-        }
-      }
-      page.strokes.sort((left, right) => left.createdAt - right.createdAt);
-    }
-    this.tiles?.patchStrokes(this.eraserReplacements, removed.map((stroke) => stroke.id), page.strokes);
-    return true;
-  }
-
-  private updateEraserCursor(point: InkPoint): void {
-    if (!this.eraserCursor) return;
-    const size = this.state.eraserSize * this.zoom;
-    this.eraserCursor.setCssStyles({
-      display: "block",
-      width: `${size}px`,
-      height: `${size}px`,
-      // CSS centers the cursor with translate(-50%, -50%), so position the
-      // top-left at the raw point instead of pre-subtracting half the size.
-      left: `${point.x * this.canvasLogicalWidth * this.zoom}px`,
-      top: `${point.y * this.canvasLogicalHeight * this.zoom}px`,
-    });
-  }
-
-  private hideEraserCursor(): void {
-    this.eraserCursor?.setCssStyles({ display: "none" });
-  }
-
-  // ------------------------------------------------------------------- pen
-
-  private startPenCapture(point: InkPoint): void {
-    const sparse = this.isSparsePenInput();
-    if ((this.state.pen.smooth ?? 0) <= 0 && !sparse) return;
-    const modeler = new StrokeModeler(strokeModelParamsForSmoothStrength((this.state.pen.smooth ?? 0) > 0 ? this.state.pen.smooth! : 100));
-    this.penCapture = {
-      modeler,
-      pageWidth: this.canvasLogicalWidth,
-      pageHeight: this.canvasLogicalHeight,
-      lastInput: null,
-      fallback: false,
-    };
-    this.feedPenCapture("down", point);
-  }
-
-  private appendModeledPoint(point: InkPoint): void {
-    this.feedPenCapture("move", point);
-  }
-
-  private feedPenCapture(type: StrokeModelInput["eventType"], point: InkPoint): void {
-    const capture = this.penCapture;
-    const stroke = this.activeStroke;
-    if (!capture || !stroke) return;
-    const input: StrokeModelInput = {
-      eventType: type,
-      position: { x: point.x * capture.pageWidth, y: point.y * capture.pageHeight },
-      time: point.t / 1000,
-      pressure: point.pressure,
-      tiltX: point.tiltX,
-      tiltY: point.tiltY,
-    };
-    if (capture.lastInput && input.time < capture.lastInput.time) input.time = capture.lastInput.time;
-    try {
-      const results: StrokeModelResult[] = capture.modeler.update(input);
-      capture.lastInput = input;
-      for (const result of results) {
-        const normalized: InkPoint = {
-          x: result.position.x / capture.pageWidth,
-          y: result.position.y / capture.pageHeight,
-          pressure: result.pressure ?? point.pressure,
-          tiltX: result.tiltX,
-          tiltY: result.tiltY,
-          t: result.time * 1000,
-        };
-        const previous = stroke.points[stroke.points.length - 1];
-        if (previous && distance(normalized, previous) < 0.0004) continue;
-        stroke.points.push(normalized);
-      }
-      stroke.updatedAt = Date.now();
-    } catch {
-      capture.fallback = true;
-      if (!stroke.points.some((candidate) => candidate.x === point.x && candidate.y === point.y)) stroke.points.push(point);
-    }
-  }
-
-  private flushPenCapture(): void {
-    const capture = this.penCapture;
-    const stroke = this.activeStroke;
-    if (!capture || capture.fallback || !stroke) return;
-    if (!capture.modeler.strokeInProgress) return;
-    // Synthesize the missing up so the modeler releases the stroke cleanly.
-    const last = stroke.points[stroke.points.length - 1];
-    if (last) this.feedPenCapture("up", last);
-  }
-
-  /** Sparse input streams get modeling even with smoothing off (mirrors InkView). */
-  private isSparsePenInput(): boolean {
-    if (this.penSampleIntervals.length < 8) return false;
-    const recent = [...this.penSampleIntervals.slice(-32)].sort((left, right) => left - right);
-    return recent[Math.floor(recent.length / 2)] > 24;
-  }
-
-  private flushWorkerStrokePoints(): void {
-    const stroke = this.activeStroke;
-    if (!stroke || !isBrushTool(stroke.tool)) return;
-    if (this.workerStrokePointIndex >= stroke.points.length) return;
-    const points = packStrokePoints(stroke.points, this.workerStrokePointIndex);
-    this.workerStrokePointIndex = stroke.points.length;
-    this.queueWorkerOperation({
-      type: "append-stroke-points",
-      pageId: stroke.pageId,
-      strokeId: stroke.id,
-      points,
-      previewWidth: this.canvasLogicalWidth,
-      previewHeight: this.canvasLogicalHeight,
-      pageUpdatedAt: stroke.updatedAt,
-      notebookUpdatedAt: this.sidecar!.notebook.updatedAt,
-    }, [points.buffer]);
-  }
-
-  // -------------------------------------------------------------- previews
-
-  private requestRender(resize = false): void {
-    if (this.renderFrame !== null) return;
-    this.renderFrame = window.requestAnimationFrame(() => {
-      this.renderFrame = null;
-      if (resize) this.layoutPage();
-      if (this.activeStroke) this.drawPreview();
-      this.drawSelection();
-    });
+  protected resizeOverlay(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, maxPixels: number): boolean {
+    const { x, y, width, height } = this.viewport;
+    const resolution = canvasResolution(width, height, window.devicePixelRatio || 1, this.zoom, maxPixels);
+    const left = `${x * this.zoom}px`;
+    const top = `${y * this.zoom}px`;
+    const displayWidth = `${width * this.zoom}px`;
+    const displayHeight = `${height * this.zoom}px`;
+    const changed = canvas.width !== resolution.width || canvas.height !== resolution.height
+      || canvas.style.left !== left || canvas.style.top !== top
+      || canvas.style.width !== displayWidth || canvas.style.height !== displayHeight;
+    if (canvas.width !== resolution.width) canvas.width = resolution.width;
+    if (canvas.height !== resolution.height) canvas.height = resolution.height;
+    canvas.setCssStyles({ left, top, width: displayWidth, height: displayHeight });
+    const scaleX = resolution.width / width;
+    const scaleY = resolution.height / height;
+    ctx.setTransform(scaleX, 0, 0, scaleY, -x * scaleX, -y * scaleY);
+    return changed;
   }
 
   private resizeSelectionCanvas(): void {
     if (!this.selectionCanvas || !this.selectionCtx) return;
-    this.resizeOverlay(this.selectionCanvas, this.selectionCtx, 4_000_000);
+    this.resizeOverlay(this.selectionCanvas, this.selectionCtx, SELECTION_OVERLAY_BUDGET);
   }
 
-  private resizePreviewCanvas(): void {
-    if (!this.previewCanvas || !this.previewCtx) return;
-    this.resizeOverlay(this.previewCanvas, this.previewCtx, 12_000_000);
-  }
-
-  private resizeOverlay(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, maxPixels: number): void {
-    const { x, y, width, height } = this.viewport;
-    const resolution = canvasResolution(width, height, window.devicePixelRatio || 1, this.zoom, maxPixels);
-    if (canvas.width !== resolution.width) canvas.width = resolution.width;
-    if (canvas.height !== resolution.height) canvas.height = resolution.height;
-    canvas.setCssStyles({
-      left: `${x * this.zoom}px`,
-      top: `${y * this.zoom}px`,
-      width: `${width * this.zoom}px`,
-      height: `${height * this.zoom}px`,
-    });
-    const scaleX = resolution.width / width;
-    const scaleY = resolution.height / height;
-    ctx.setTransform(scaleX, 0, 0, scaleY, -x * scaleX, -y * scaleY);
-  }
-
-  private drawSelection(): void {
+  protected drawSelection(width: number, height: number): void {
     if (!this.selectionCtx || !this.selectionCanvas) return;
     const ctx = this.selectionCtx;
-    const width = this.canvasLogicalWidth;
-    const height = this.canvasLogicalHeight;
     ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
     if (this.mode !== "editing") return;
     ctx.save();
@@ -1537,153 +1018,125 @@ export class PdfInkView extends FileView {
     ctx.restore();
   }
 
-  /**
-   * Live stroke preview: renders the whole stroke each frame. InkView refines
-   * this with worker outlines; the PDF view keeps v1 simple because PDF pages
-   * are point-sized (≈600-800 logical px) and typical annotation strokes are
-   * short, so the per-frame outline cost stays negligible.
-   */
-  private drawPreview(): void {
-    if (!this.previewCtx) return;
-    const ctx = this.previewCtx;
-    const stroke = this.activeStroke;
-    ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
-    if (!stroke || !isBrushTool(stroke.tool)) return;
-    this.previewCanvas?.toggleClass("is-highlighter-preview", stroke.tool === "highlighter");
-    drawInkStroke(ctx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
-    this.drawPredictedGhostTip(ctx, stroke);
+  // ------------------------------------------------------------- rendering
+
+  private cancelPdfRender(): void {
+    this.pdfRenderTask?.cancel();
+    this.pdfRenderTask = null;
+    this.textLayerTask?.cancel?.();
+    this.textLayerTask = null;
   }
 
-  /** Draws the predicted tip as a tapering ghost: continuous with the stroke
-   *  at the junction (deep black), fading to faint at the predicted position.
-   *  Anchored at the live stroke tail — anchoring anywhere else sweeps faint
-   *  segments from the stroke's start to the pen on every frame.
-   *  Preview-layer only; the stored stroke never includes these points. */
-  private drawPredictedGhostTip(ctx: CanvasRenderingContext2D, stroke: InkStroke): void {
-    const tail = stroke.points[stroke.points.length - 1];
-    if (!this.predictedTip || this.predictedTip.length === 0 || !tail) return;
-    const gain = clampPercent(stroke.dynamics?.pressure, 100) / 100;
-    const mapped = samplePressureCurve(tail.pressure, normalizePressureCurve(stroke.dynamics?.pressureCurve));
-    const baseHalf = Math.max(0.6, (stroke.width * (0.55 + 0.75 * (0.5 + (mapped - 0.5) * gain))) / 2);
-    let previous = { x: tail.x * this.canvasLogicalWidth, y: tail.y * this.canvasLogicalHeight };
-    const segments = this.predictedTip.length;
-    for (let index = 0; index < segments; index++) {
-      const point = { x: this.predictedTip[index].x * this.canvasLogicalWidth, y: this.predictedTip[index].y * this.canvasLogicalHeight };
-      const progress = (index + 1) / segments;
-      ctx.globalAlpha = stroke.opacity * (0.6 - 0.45 * progress);
-      ctx.lineWidth = Math.max(0.5, baseHalf * 2 * (1 - 0.45 * progress));
-      ctx.strokeStyle = stroke.color;
-      ctx.lineCap = "round";
-      ctx.beginPath();
-      ctx.moveTo(previous.x, previous.y);
-      ctx.lineTo(point.x, point.y);
-      ctx.stroke();
-      previous = point;
+  private async renderPdfPage(): Promise<void> {
+    const canvas = this.pdfCanvas;
+    if (!canvas) return;
+    const generation = ++this.pdfRenderGeneration;
+    this.cancelPdfRender();
+    const notePage = this.currentNotePage();
+    const display = this.rotatedSize(notePage);
+    const scale = (window.devicePixelRatio || 1) * this.zoom;
+    canvas.width = Math.max(1, Math.round(display.width * scale));
+    canvas.height = Math.max(1, Math.round(display.height * scale));
+    canvas.setCssStyles({ width: "100%", height: "100%" });
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    if (!notePage || notePage.sourceIndex === undefined || !this.pdfDoc) {
+      // A blank note page: plain paper, ink only.
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      this.textLayer?.empty();
+      return;
     }
-    ctx.globalAlpha = 1;
+    try {
+      const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
+      if (generation !== this.pdfRenderGeneration) return;
+      const viewport = page.getViewport({ scale });
+      const task = page.render({ canvasContext: ctx, viewport });
+      this.pdfRenderTask = task;
+      await task.promise;
+      if (generation !== this.pdfRenderGeneration) return;
+      this.pdfRenderTask = null;
+    } catch (error) {
+      if (this.pdfjs?.RenderingCancelledException && error instanceof this.pdfjs.RenderingCancelledException) return;
+      if (generation === this.pdfRenderGeneration) this.setStatus(`Could not render this page: ${messageOf(error)}`, true);
+      return;
+    }
+    if (this.mode === "reading") await this.renderTextLayer(notePage, generation);
   }
 
-  private schedulePendingInkCommit(): void {
-    if (this.pendingInkStrokes.length === 0) return;
-    this.cancelPendingInkCommitTimer();
-    this.inkCommitTimer = window.setTimeout(() => {
-      this.inkCommitTimer = undefined;
-      this.startPendingInkCommit();
-    }, INK_COMMIT_IDLE_DELAY);
-  }
-
-  private cancelPendingInkCommitTimer(): void {
-    if (this.inkCommitTimer === undefined) return;
-    window.clearTimeout(this.inkCommitTimer);
-    this.inkCommitTimer = undefined;
-  }
-
-  private startPendingInkCommit(): void {
-    const page = this.sidecar?.notebook.pages[this.noteIndex];
-    if (!page || !this.tiles || this.activePointerId !== null || this.committingInkStrokes
-      || this.pendingInkStrokes.length === 0 || this.pendingInkPageId !== page.id) return;
-    const batch = [...this.pendingInkStrokes];
-    this.committingInkStrokes = batch;
-    this.tiles.patchStrokes(batch, [], page.strokes);
-    this.tiles.commitInk(batch, this.viewport, (window.devicePixelRatio || 1) * this.zoom, (committed) => {
-      if (this.committingInkStrokes !== batch) return;
-      this.committingInkStrokes = null;
-      if (!committed) {
-        this.tiles?.removeStrokes(batch.map((stroke) => stroke.id));
-        if (this.activePointerId === null) this.schedulePendingInkCommit();
-        return;
+  private async renderTextLayer(notePage: PdfSidecarNotePage, generation: number): Promise<void> {
+    const container = this.textLayer;
+    const pdfjs = this.pdfjs;
+    if (!container || !pdfjs || !this.pdfDoc || notePage.sourceIndex === undefined) return;
+    container.empty();
+    try {
+      const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
+      if (generation !== this.pdfRenderGeneration) return;
+      const viewport = page.getViewport({ scale: this.zoom });
+      const textContent = await page.getTextContent?.();
+      if (!textContent || generation !== this.pdfRenderGeneration) return;
+      let task: PdfJsTextLayerTask | null = null;
+      if (pdfjs.TextLayer) {
+        task = await new pdfjs.TextLayer({ textContentSource: textContent, container, viewport }).render();
+      } else if (pdfjs.renderTextLayer) {
+        task = pdfjs.renderTextLayer({ textContentSource: textContent, container, viewport });
       }
-      const ids = new Set(batch.map((stroke) => stroke.id));
-      this.pendingInkStrokes = this.pendingInkStrokes.filter((stroke) => !ids.has(stroke.id));
-      if (this.pendingInkStrokes.length === 0) this.pendingInkPageId = null;
-      this.previewCtx?.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
-      if (this.pendingInkStrokes.length > 0) this.schedulePendingInkCommit();
-    });
+      if (!task) return;
+      this.textLayerTask = task;
+      await task.promise;
+      if (generation === this.pdfRenderGeneration) this.textLayerTask = null;
+    } catch {
+      // Text selection is progressive enhancement; rendering errors stay silent.
+    }
   }
 
-  private discardPendingInkPreview(): void {
-    this.cancelPendingInkCommitTimer();
-    this.committingInkStrokes = null;
-    this.pendingInkStrokes = [];
-    this.pendingInkPageId = null;
-    this.tiles?.cancelInkCommit();
-    if (this.previewCanvas) this.previewCanvas.width = 1;
+  protected renderAll(): void {
+    this.clampNoteIndex();
+    this.updatePageIndicator();
+    this.updateToolButtons();
+    this.updateHistoryButtons();
+    const page = this.sidecar?.notebook.pages[this.noteIndex];
+    if (page && this.tiles) {
+      this.tiles.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight);
+      this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
+    }
+    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
 
-  // ----------------------------------------------------------- undo / redo
+  private clampNoteIndex(): void {
+    const count = this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 1;
+    this.noteIndex = Math.max(0, Math.min(this.noteIndex, count - 1));
+  }
 
-  private pushCommand(command: EditCommand): void {
-    this.undoStack.push(command);
-    if (this.undoStack.length > 200) this.undoStack.shift();
+  private resetViewState(): void {
+    this.cancelPdfRender();
+    this.finishPointerInput(false);
+    this.discardPendingInkPreview();
+    this.mode = "reading";
+    this.releaseWriter();
+    this.pdfDoc = null;
+    this.sourcePages = [];
+    this.noteIndex = 0;
+    this.zoom = 1;
+    this.writeBlockedReason = null;
+    this.pendingRecoveryCandidates = null;
+    this.undoStack = [];
     this.redoStack = [];
+    this.dirty = false;
+    this.clearSaveTimers();
+    this.root?.removeClass("ink-pdf-editing");
+    this.root?.addClass("ink-pdf-reading");
+    this.setStatus("Loading PDF…");
   }
 
-  private undo(): void {
-    const command = this.undoStack.pop();
-    if (!command) return;
-    command.undo();
-    this.redoStack.push(command);
-    this.updateHistoryButtons();
-  }
-
-  private redo(): void {
-    const command = this.redoStack.pop();
-    if (!command) return;
-    command.redo();
-    this.undoStack.push(command);
-    this.updateHistoryButtons();
+  private setStatus(message: string, isError = false): void {
+    if (!this.statusEl) return;
+    this.statusEl.setText(message);
+    this.statusEl.toggleClass("is-error", isError);
+    this.statusEl.toggle(message.length > 0);
   }
 
   // --------------------------------------------------------------- saving
-
-  private markSidecarChanged(): void {
-    if (!this.sidecar) return;
-    this.sidecar.updatedAt = Date.now();
-    this.sidecar.notebook.updatedAt = this.sidecar.updatedAt;
-    this.dirty = true;
-    this.scheduleSave();
-  }
-
-  private scheduleSave(): void {
-    if (!this.dirty || !this.sidecar) return;
-    this.clearSaveTimer();
-    const now = Date.now();
-    if (this.saveMaxDue < now) this.saveMaxDue = now + SAVE_MAX_DELAY;
-    const delay = Math.min(SAVE_IDLE_DELAY, Math.max(0, this.saveMaxDue - now));
-    this.saveTimer = window.setTimeout(() => {
-      this.saveTimer = undefined;
-      void this.flushSaveNow().then((outcome) => {
-        if (outcome.status === "saved") this.setStatus("");
-        else this.setStatus(`Save ${outcome.status}: ${outcome.message}`, true);
-      });
-    }, delay);
-  }
-
-  private clearSaveTimer(): void {
-    if (this.saveTimer === undefined) return;
-    window.clearTimeout(this.saveTimer);
-    this.saveTimer = undefined;
-  }
 
   /**
    * Sidecar save: CAS write with bounded merge retries. Callers gate mode
@@ -1708,6 +1161,13 @@ export class PdfInkView extends FileView {
       if (outcome.status === "saved" && this.dirty) return this.flushSaveNow();
     }
     return outcome;
+  }
+
+  protected performScheduledSave(): void {
+    void this.flushSaveNow().then((outcome) => {
+      if (outcome.status === "saved") this.setStatus("");
+      else this.setStatus(`Save ${outcome.status}: ${outcome.message}`, true);
+    });
   }
 
   private async performSave(): Promise<SaveOutcome> {
@@ -1799,139 +1259,6 @@ export class PdfInkView extends FileView {
     }
   }
 
-  // ------------------------------------------------------------- rendering
-
-  private cancelPdfRender(): void {
-    this.pdfRenderTask?.cancel();
-    this.pdfRenderTask = null;
-    this.textLayerTask?.cancel?.();
-    this.textLayerTask = null;
-  }
-
-  private async renderPdfPage(): Promise<void> {
-    const canvas = this.pdfCanvas;
-    if (!canvas) return;
-    const generation = ++this.pdfRenderGeneration;
-    this.cancelPdfRender();
-    const notePage = this.currentNotePage();
-    const display = this.rotatedSize(notePage);
-    const scale = (window.devicePixelRatio || 1) * this.zoom;
-    canvas.width = Math.max(1, Math.round(display.width * scale));
-    canvas.height = Math.max(1, Math.round(display.height * scale));
-    canvas.setCssStyles({ width: "100%", height: "100%" });
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    if (!notePage || notePage.sourceIndex === undefined || !this.pdfDoc) {
-      // A blank note page: plain paper, ink only.
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      this.textLayer?.empty();
-      return;
-    }
-    try {
-      const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
-      if (generation !== this.pdfRenderGeneration) return;
-      const viewport = page.getViewport({ scale });
-      const task = page.render({ canvasContext: ctx, viewport });
-      this.pdfRenderTask = task;
-      await task.promise;
-      if (generation !== this.pdfRenderGeneration) return;
-      this.pdfRenderTask = null;
-    } catch (error) {
-      if (this.pdfjs?.RenderingCancelledException && error instanceof this.pdfjs.RenderingCancelledException) return;
-      if (generation === this.pdfRenderGeneration) this.setStatus(`Could not render this page: ${messageOf(error)}`, true);
-      return;
-    }
-    if (this.mode === "reading") await this.renderTextLayer(notePage, generation);
-  }
-
-  private async renderTextLayer(notePage: PdfSidecarNotePage, generation: number): Promise<void> {
-    const container = this.textLayer;
-    const pdfjs = this.pdfjs;
-    if (!container || !pdfjs || !this.pdfDoc || notePage.sourceIndex === undefined) return;
-    container.empty();
-    try {
-      const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
-      if (generation !== this.pdfRenderGeneration) return;
-      const viewport = page.getViewport({ scale: this.zoom });
-      const textContent = await page.getTextContent?.();
-      if (!textContent || generation !== this.pdfRenderGeneration) return;
-      let task: PdfJsTextLayerTask | null = null;
-      if (pdfjs.TextLayer) {
-        task = await new pdfjs.TextLayer({ textContentSource: textContent, container, viewport }).render();
-      } else if (pdfjs.renderTextLayer) {
-        task = pdfjs.renderTextLayer({ textContentSource: textContent, container, viewport });
-      }
-      if (!task) return;
-      this.textLayerTask = task;
-      await task.promise;
-      if (generation === this.pdfRenderGeneration) this.textLayerTask = null;
-    } catch {
-      // Text selection is progressive enhancement; rendering errors stay silent.
-    }
-  }
-
-  private renderAll(): void {
-    this.clampNoteIndex();
-    this.updatePageIndicator();
-    this.updateToolButtons();
-    this.updateHistoryButtons();
-    const page = this.sidecar?.notebook.pages[this.noteIndex];
-    if (page && this.tiles) {
-      this.tiles.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight);
-      this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
-    }
-    this.drawSelection();
-  }
-
-  private clampNoteIndex(): void {
-    const count = this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 1;
-    this.noteIndex = Math.max(0, Math.min(this.noteIndex, count - 1));
-  }
-
-  private resetViewState(): void {
-    this.cancelPdfRender();
-    this.finalizeInput();
-    this.discardPendingInkPreview();
-    this.mode = "reading";
-    this.releaseWriter();
-    this.pdfDoc = null;
-    this.sourcePages = [];
-    this.noteIndex = 0;
-    this.zoom = 1;
-    this.writeBlockedReason = null;
-    this.pendingRecoveryCandidates = null;
-    this.undoStack = [];
-    this.redoStack = [];
-    this.dirty = false;
-    this.clearSaveTimer();
-    this.root?.removeClass("ink-pdf-editing");
-    this.root?.addClass("ink-pdf-reading");
-    this.setStatus("Loading PDF…");
-  }
-
-  private setStatus(message: string, isError = false): void {
-    if (!this.statusEl) return;
-    this.statusEl.setText(message);
-    this.statusEl.toggleClass("is-error", isError);
-    this.statusEl.toggle(message.length > 0);
-  }
-
-}
-
-function pointerSamplesOf(event: PointerEvent): InkPointerSample[] {
-  const coalesced = typeof event.getCoalescedEvents === "function" ? event.getCoalescedEvents() : [];
-  const toSample = (sample: PointerEvent): InkPointerSample => ({
-    pointerId: sample.pointerId,
-    pointerType: sample.pointerType,
-    clientX: sample.clientX,
-    clientY: sample.clientY,
-    pressure: sample.pressure,
-    tiltX: sample.tiltX,
-    tiltY: sample.tiltY,
-    timeStamp: sample.timeStamp,
-  });
-  return coalesced.length > 0 ? [...coalesced.map(toSample), toSample(event)] : [toSample(event)];
 }
 
 function messageOf(error: unknown): string {

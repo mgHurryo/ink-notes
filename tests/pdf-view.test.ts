@@ -37,9 +37,9 @@ interface PdfViewInternals {
   markSidecarChanged(): void;
   withPageUndo(change: () => boolean, label: string): void;
   restoreSidecarSnapshot(snapshot: string): void;
-  onPointerDownHost(event: PointerEvent): void;
-  onPointerMoveHost(event: PointerEvent): void;
-  onPointerEndHost(event: PointerEvent, cancelled: boolean): void;
+  onPointerDown(event: PointerEvent): void;
+  onPointerMove(event: PointerEvent): void;
+  onPointerUp(event: PointerEvent, source?: string): void;
   finalizeInput(): void;
   undo(): void;
   redo(): void;
@@ -115,6 +115,7 @@ function setup() {
     getBoundingClientRect: () => ({ left: 0, top: 0, right: 595, bottom: 842, width: 595, height: 842 }),
     setPointerCapture: vi.fn(),
     releasePointerCapture: vi.fn(),
+    hasPointerCapture: vi.fn(() => false),
     addEventListener: vi.fn(),
   };
 
@@ -170,7 +171,7 @@ describe("mode gating", () => {
     // to exercise the gate itself.
     await internal.setMode("reading");
     expect(internal.mode).toBe("reading");
-    internal.onPointerDownHost(pointer(100, 100));
+    internal.onPointerDown(pointer(100, 100));
     expect(sidecar.notebook.pages[0].strokes).toHaveLength(0);
   });
 
@@ -223,10 +224,10 @@ describe("pen pipeline", () => {
   it("records a stroke in the embedded notebook and queues worker operations", async () => {
     const { internal, sidecar, appliedOps } = setup();
     await internal.setMode("editing");
-    internal.onPointerDownHost(pointer(60, 60));
-    internal.onPointerMoveHost(pointer(120, 90));
-    internal.onPointerMoveHost(pointer(180, 120));
-    internal.onPointerEndHost(pointer(200, 140), false);
+    internal.onPointerDown(pointer(60, 60));
+    internal.onPointerMove(pointer(120, 90));
+    internal.onPointerMove(pointer(180, 120));
+    internal.onPointerUp(pointer(200, 140));
 
     expect(sidecar.notebook.pages[0].strokes).toHaveLength(1);
     const points = sidecar.notebook.pages[0].strokes[0].points;
@@ -239,16 +240,16 @@ describe("pen pipeline", () => {
   it("keeps completed strokes out of the tile exclusion only after commit", async () => {
     const { internal } = setup();
     await internal.setMode("editing");
-    internal.onPointerDownHost(pointer(60, 60));
-    internal.onPointerEndHost(pointer(200, 140), false);
+    internal.onPointerDown(pointer(60, 60));
+    internal.onPointerUp(pointer(200, 140));
     expect(internal.sidecar.notebook.pages[0].strokes).toHaveLength(1);
   });
 
   it("supports undo and redo of a stroke via patch operations", async () => {
     const { internal, sidecar, appliedOps } = setup();
     await internal.setMode("editing");
-    internal.onPointerDownHost(pointer(60, 60));
-    internal.onPointerEndHost(pointer(200, 140), false);
+    internal.onPointerDown(pointer(60, 60));
+    internal.onPointerUp(pointer(200, 140));
     internal.undo();
     expect(sidecar.notebook.pages[0].strokes).toHaveLength(0);
     expect(sidecar.notebook.pages[0].deletedStrokeIds).toHaveLength(1);
@@ -342,11 +343,12 @@ describe("predicted ghost tip", () => {
   it("tracks the pen tail and anchors the ghost at the stroke tail, not the start", async () => {
     const { view, internal } = setup();
     await internal.setMode("editing");
-    internal.onPointerDownHost(pointer(100, 420));
-    internal.onPointerMoveHost(pointer(300, 420));
-    expect(internal.lastPoint!.x).toBeCloseTo(300 / 595.28, 3);
+    internal.onPointerDown(pointer(100, 420));
+    internal.onPointerMove(pointer(300, 420));
+    // Unified writing layer: lastPoint is the live stroke tail (modeled output).
+    expect(internal.lastPoint).toBe(internal.activeStroke!.points[internal.activeStroke!.points.length - 1]);
     const predictedSample = { pointerId: 7, pointerType: "pen", clientX: 340, clientY: 422, pressure: 0.5, tiltX: 0, tiltY: 0, timeStamp: pointerClock += 8 };
-    internal.onPointerMoveHost(Object.assign(pointer(310, 421), { getPredictedEvents: () => [predictedSample] }) as PointerEvent);
+    internal.onPointerMove(Object.assign(pointer(310, 421), { getPredictedEvents: () => [predictedSample] }) as PointerEvent);
     expect(internal.predictedTip).toHaveLength(1);
     expect(internal.predictedTip![0].x).toBeCloseTo(340 / 595.28, 3);
 
@@ -354,7 +356,7 @@ describe("predicted ghost tip", () => {
     const lineTo = vi.fn();
     const ghostCtx = { beginPath: vi.fn(), moveTo, lineTo, stroke: vi.fn() } as unknown as CanvasRenderingContext2D;
     const stroke = internal.activeStroke!;
-    (view as unknown as PdfViewInternals & { drawPredictedGhostTip(ctx: CanvasRenderingContext2D, stroke: InkStroke): void }).drawPredictedGhostTip(ghostCtx, stroke);
+    (view as unknown as PdfViewInternals & { drawPredictedTip(ctx: CanvasRenderingContext2D, stroke: InkStroke): void }).drawPredictedTip(ghostCtx, stroke);
 
     const tail = stroke.points[stroke.points.length - 1];
     expect(moveTo).toHaveBeenCalled();
