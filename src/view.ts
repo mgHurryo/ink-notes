@@ -31,7 +31,7 @@ export {
   constrainDelta,
   distance,
 } from "./ink-writing";
-import { canvasResolution } from "./rendering";
+import { canvasResolution, drawInkStroke } from "./rendering";
 import { BrushPopoverController, BrushSettings } from "./brush-popover";
 import { TileRenderer } from "./tiles";
 import type { NotebookOperation } from "./worker-protocol";
@@ -128,6 +128,7 @@ export class InkView extends InkWritingView {
     this.finishPointerInput(false);
     this.cancelPendingInkCommitTimer();
     this.clearSaveTimers();
+    this.destroySwipeStage();
     if (this.file && (this.dirtyRevision > this.savedRevision || this.activeSave)) await this.save(this.file);
     this.tiles?.setBackend?.(null);
     this.workerSession?.dispose();
@@ -352,7 +353,7 @@ export class InkView extends InkWritingView {
     this.registerDomEvent(this.pageScroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchcancel", (event) => {
       this.onStylusTouch(event);
-      if (this.touchGesture?.axis === "x") this.swipeDrag(null);
+      this.cancelPageFlip();
       this.touchGesture = null;
     }, { passive: false });
     const observer = new ResizeObserver(() => this.resizeCanvas());
@@ -504,21 +505,91 @@ export class InkView extends InkWritingView {
     this.setZoom(value, focus, anchor);
   }
 
-  protected swipeNavigate(delta: number): void {
-    this.changePage(delta);
-  }
+  private swipeStage: HTMLElement | null = null;
+  private swipeStageTimer: number | undefined;
 
-  protected swipeDrag(offset: number | null): void {
+  protected swipeDrag(offset: number): void {
     const extent = this.pageExtent;
     if (!extent) return;
-    if (offset === null) {
-      extent.style.transition = "transform 180ms ease-out";
+    this.ensureSwipeStage(offset);
+    extent.style.transition = "none";
+    extent.style.transform = `translateX(${offset}px)`;
+    if (this.swipeStage) {
+      this.swipeStage.style.transition = "none";
+      this.swipeStage.style.transform = `translateX(${offset}px)`;
+    }
+  }
+
+  /** Slides a cheap vector snapshot of the neighbouring page in beside the
+   *  current one while dragging (tiles stay on the live page). */
+  private ensureSwipeStage(offset: number): void {
+    const extent = this.pageExtent;
+    if (!extent) return;
+    const side = offset > 0 ? -1 : 1;
+    const neighborIndex = this.pageIndex + side;
+    if (this.swipeStage) {
+      if (Number(this.swipeStage.dataset.neighbor) === neighborIndex) return;
+      this.destroySwipeStage();
+    }
+    if (neighborIndex < 0 || neighborIndex >= this.notebook.pages.length) return;
+    const neighbor = this.notebook.pages[neighborIndex];
+    const stage = this.pageScroller.createDiv({ cls: `ink-page ink-paper-${neighbor.paper} ink-swipe-stage` });
+    stage.dataset.neighbor = String(neighborIndex);
+    stage.setCssStyles({
+      position: "absolute", margin: "0", overflow: "hidden",
+      left: `${extent.offsetLeft + side * extent.offsetWidth}px`,
+      top: `${extent.offsetTop}px`,
+      width: `${extent.offsetWidth}px`,
+      height: `${extent.offsetHeight}px`,
+      transform: "translateX(0px)",
+    });
+    const canvas = stage.createEl("canvas");
+    canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%";
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.max(1, Math.round(this.canvasLogicalWidth * dpr));
+    canvas.height = Math.max(1, Math.round(this.canvasLogicalHeight * dpr));
+    const ctx = canvas.getContext("2d");
+    if (ctx) {
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      for (const stroke of neighbor.strokes) drawInkStroke(ctx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    }
+    this.swipeStage = stage;
+  }
+
+  protected swipeSettle(delta: number): void {
+    const extent = this.pageExtent;
+    if (!extent) { this.destroySwipeStage(); return; }
+    if (!delta || !this.swipeStage) {
+      extent.style.transition = "transform 200ms ease-out";
       extent.style.transform = "translateX(0px)";
+      if (this.swipeStage) {
+        this.swipeStage.style.transition = "transform 200ms ease-out";
+        this.swipeStage.style.transform = "translateX(0px)";
+      }
+      if (this.swipeStageTimer === undefined) {
+        this.swipeStageTimer = window.setTimeout(() => { this.swipeStageTimer = undefined; this.destroySwipeStage(); }, 230);
+      }
       return;
     }
-    extent.style.transition = "none";
-    const clamped = Math.max(-140, Math.min(140, offset));
-    extent.style.transform = `translateX(${clamped}px)`;
+    const width = extent.offsetWidth;
+    extent.style.transition = "transform 200ms ease-out";
+    extent.style.transform = `translateX(${delta === 1 ? -width : width}px)`;
+    this.swipeStage.style.transition = "transform 200ms ease-out";
+    this.swipeStage.style.transform = "translateX(0px)";
+    if (this.swipeStageTimer !== undefined) window.clearTimeout(this.swipeStageTimer);
+    this.swipeStageTimer = window.setTimeout(() => {
+      this.swipeStageTimer = undefined;
+      this.destroySwipeStage();
+      extent.style.transition = "none";
+      extent.style.transform = "none";
+      this.changePage(delta);
+    }, 210);
+  }
+
+  private destroySwipeStage(): void {
+    if (this.swipeStageTimer !== undefined) { window.clearTimeout(this.swipeStageTimer); this.swipeStageTimer = undefined; }
+    this.swipeStage?.remove();
+    this.swipeStage = null;
   }
   protected settingsOpen(): boolean { return this.sizePopoverOpen; }
   protected toggleToolSettings(): void {

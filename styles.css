@@ -480,6 +480,7 @@
 
 .ink-page-scroller {
   flex: 1;
+  position: relative;
   display: flex;
   flex-direction: column;
   min-width: 0;

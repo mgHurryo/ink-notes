@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0-beta.14 - 2026-10-07
+
+- Fix handwriting landing up-left of the pen in the PDF editor: the ink overlay's coordinate space was the PDF's point size (e.g. 595pt for A4) while every mapping assumed the page box's pixel size (notebook behaviour), so strokes were proportionally compressed toward the top-left. The logical space is now the page box, matching the notebook editor. This also corrects committed tiles, the eraser radius and the modeler space in the PDF editor.
+- Gallery-style page flipping: the current page follows the finger one-to-one while the neighbouring page slides in beside it (the PDF editor renders the real neighbouring page; the notebook draws a vector snapshot). The flip is decided once, on release, by travel distance (over a third of the pane) or by fling velocity - long drags no longer skip ahead several pages, and a flick with a small travel flips.
+- Zoomed flipping: when the page is zoomed and scrolls sideways, a horizontal drag pans as before, but from a scroll edge it flips pages in that direction (gallery behaviour while zoomed).
+
 ## 0.8.0-beta.13 - 2026-10-07
 
 - Fix the zoomed page being squashed by its own scroller: the beta.12 centring turned the scroller into a flex container, and once the zoomed page grew past the pane the flex layout compressed the page's height instead of letting it scroll - flattening the rendered text, pinning the apparent background size, and mis-mapping every stroke at higher zooms. The page box no longer shrinks (`flex: none`) in either editor.
