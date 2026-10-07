@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0-beta.10 - 2026-10-07
+
+- Continue the unification at the UI layer, everything on the notebook editor's standard: the shared writing layer now also owns the toolbar components (icon button, tool button with its click contract, sections, active/disabled states), the interaction render pass (frame routing, selection, lasso preview with the lifted-stroke drag, eraser cell preview), the touch gesture handlers (Scribble stylus-touch ownership and two-finger pinch/pan) and the brush settings popover's eraser block and tool presets.
+- The PDF editor adopts the notebook look and behavior wholesale: same tool icons (pen-line/highlighter/eraser/lasso-select), same labels, same toolbar button DOM and states, same tool presets (pen maximum 24) and eraser settings UI (icon mode radios, 8-160 slider, stroke-eraser hint), same eraser cursor, and same notebook defaults (direct ink, #1b1b1b pen, 18px highlighter, eraser 32) - it previously shipped smoothed ink with different colors and a different eraser range out of the box.
+- The PDF editor gains the notebook's touch handling in editing mode: Apple Pencil Scribble now works and two-finger pinch/pan zooms the page; reading mode keeps native scrolling (the handlers are gated on the edit lock).
+- The PDF lasso drag now lifts the selected strokes onto a dedicated canvas that follows the drag (previously only a dashed box moved while the ink stayed put until release).
+- Intentional PDF behavior changes beyond parity: selecting a tool in reading mode still enters editing; undo/redo buttons use the disabled attribute (styled by the shared rule); the in-popover eraser mode buttons are the notebook's icon radios.
+
 ## 0.8.0-beta.9 - 2026-10-07
 
 - Extract the shared writing layer (`src/ink-writing.ts`): pointer capture, raw-update consumption, coalesced-sample feeding, stroke-modeler engagement (smooth/sparse/direct), lift-pressure clamping, preview/commit lifecycle, eraser and lasso behavior, history-stack mechanics and save scheduling now live once and serve both the notebook and PDF editors. Every fix in this layer applies to both.

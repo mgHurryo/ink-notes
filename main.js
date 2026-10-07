@@ -23560,10 +23560,18 @@ var InkWritingView = class extends import_obsidian2.FileView {
     this.canvasLogicalWidth = 1;
     this.canvasLogicalHeight = 1;
     this.viewReady = false;
+    this.lassoCanvas = null;
+    this.lassoCtx = null;
+    this.previewCanvas = null;
+    this.previewCtx = null;
+    this.confirmedPreviewCanvas = null;
+    this.confirmedPreviewCtx = null;
     this.eraserHoverPoint = null;
     this.eraserPointerInside = false;
     this.renderFrame = null;
     this.resizeRequested = false;
+    /** Popover root; reflects the eraser mode state (is-stroke-eraser). */
+    this.settingsPanel = null;
     this.workerSession = null;
     this.workerRevision = 0;
     this.workerFallbackReported = false;
@@ -23591,10 +23599,6 @@ var InkWritingView = class extends import_obsidian2.FileView {
     this.devPredictedSamples = 0;
     // --- ink preview / commit
     this.confirmedStrokeOutlines = /* @__PURE__ */ new Map();
-    this.previewCanvas = null;
-    this.previewCtx = null;
-    this.confirmedPreviewCanvas = null;
-    this.confirmedPreviewCtx = null;
     this.pendingInkStrokes = [];
     this.committingInkStrokes = null;
     this.pendingInkPageId = null;
@@ -23628,6 +23632,18 @@ var InkWritingView = class extends import_obsidian2.FileView {
   /** True while gestures must not start new input (reading mode, locks). */
   inputLocked() {
     return false;
+  }
+  // ------------------------------------------------------- tool switching
+  /** View hook before a tool button selects a tool (PDF: enter editing). */
+  onToolSelected(_tool) {
+  }
+  settingsOpen() {
+    return false;
+  }
+  toggleToolSettings() {
+  }
+  /** Re-open the settings popover at the (new) active tool's anchor. */
+  reopenToolSettings() {
   }
   /** Whether the diagnostics panel wants raw point samples retained. */
   diagnosticsCaptureRawPoints() {
@@ -24191,6 +24207,65 @@ var InkWritingView = class extends import_obsidian2.FileView {
     }
     return true;
   }
+  // ---------------------------------------------------------------- touch
+  onTouchStart(event) {
+    if (this.inputLocked()) return;
+    if (this.onStylusTouch(event)) return;
+    if (event.cancelable && event.touches.length < 2) event.preventDefault();
+    this.touchGesture = null;
+    const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus");
+    if (this.activePointerId !== null || touches.length < 1 || touches.length > 2) return;
+    event.preventDefault();
+    const [a, b] = touches;
+    if (!a) return;
+    const x = b ? (a.clientX + b.clientX) / 2 : a.clientX;
+    const y = b ? (a.clientY + b.clientY) / 2 : a.clientY;
+    const rect = this.inputRect();
+    this.touchGesture = {
+      ids: b ? [a.identifier, b.identifier] : [a.identifier],
+      distance: b ? Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) : 0,
+      zoom: this.zoom,
+      x,
+      y,
+      pageX: (x - rect.left) / rect.width,
+      pageY: (y - rect.top) / rect.height
+    };
+  }
+  onTouchMove(event) {
+    if (this.inputLocked()) return;
+    if (this.onStylusTouch(event)) return;
+    if (this.activePointerId !== null) {
+      this.touchGesture = null;
+      return;
+    }
+    const gesture = this.touchGesture;
+    if (!gesture) return;
+    const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus");
+    const a = touches.find((touch) => touch.identifier === gesture.ids[0]);
+    const b = touches.find((touch) => touch.identifier === gesture.ids[1]);
+    if (touches.length !== gesture.ids.length || !a || gesture.ids.length === 2 && !b) {
+      this.onTouchStart(event);
+      return;
+    }
+    event.preventDefault();
+    if (!b) {
+      this.inputScroller().scrollLeft += gesture.x - a.clientX;
+      this.inputScroller().scrollTop += gesture.y - a.clientY;
+      gesture.x = a.clientX;
+      gesture.y = a.clientY;
+      return;
+    }
+    if (gesture.distance < 1) {
+      this.onTouchStart(event);
+      return;
+    }
+    const distanceNow = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    this.applyGestureZoom(
+      gesture.zoom * distanceNow / gesture.distance,
+      { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 },
+      { x: gesture.pageX, y: gesture.pageY }
+    );
+  }
   // --------------------------------------------------------------- eraser
   eraseAt(point, page, mode = this.state.eraserMode, size = this.state.eraserSize) {
     var _a, _b, _c;
@@ -24278,9 +24353,6 @@ var InkWritingView = class extends import_obsidian2.FileView {
     if (!previous || distance2(point, previous) < 1e-3) return false;
     this.lassoPath.push(point);
     return true;
-  }
-  /** View hook: a selection drag moved by (dx, dy) in page space. */
-  onLassoDragMoved(_dx, _dy) {
   }
   flushPendingLassoPoint() {
     const point = this.pendingLassoPoint;
@@ -24551,6 +24623,131 @@ var InkWritingView = class extends import_obsidian2.FileView {
     }
     ctx.restore();
   }
+  /** Per-frame content render (interaction previews, selection). */
+  renderInteractionFrame() {
+    var _a;
+    if (this.lassoDrag) this.drawLassoInteraction();
+    else if (((_a = this.interaction) == null ? void 0 : _a.tool) === "eraser") this.drawEraserInteraction();
+    else if (this.hasInkPreview()) this.drawPreview();
+    else this.drawStrokes(this.currentPage().strokes);
+  }
+  drawStrokes(strokes) {
+    var _a, _b;
+    if (!this.ctx) return;
+    (_a = this.tiles) == null ? void 0 : _a.sync(strokes, this.tileExclusion());
+    (_b = this.tiles) == null ? void 0 : _b.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
+    this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
+    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+    this.drawPreview();
+  }
+  drawInteractiveStrokes(strokes, refine = false) {
+    var _a;
+    if (!this.ctx) return;
+    (_a = this.tiles) == null ? void 0 : _a.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine);
+    this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
+    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+  }
+  drawEraserInteraction() {
+    var _a;
+    if (!this.ctx) return;
+    const cells = [...this.eraserPreviewCells];
+    this.eraserPreviewCells.clear();
+    (_a = this.tiles) == null ? void 0 : _a.previewInteractiveCells(cells, this.viewport, (window.devicePixelRatio || 1) * this.zoom);
+    this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
+    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+  }
+  drawSelection(width, height) {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    ctx.save();
+    ctx.strokeStyle = "#2f80ed";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    if (this.lassoPath.length > 1) {
+      ctx.beginPath();
+      ctx.moveTo(this.lassoPath[0].x * width, this.lassoPath[0].y * height);
+      for (const point of this.lassoPath.slice(1)) ctx.lineTo(point.x * width, point.y * height);
+      ctx.closePath();
+      ctx.stroke();
+    }
+    const bounds = selectionBounds(this.selectedStrokes());
+    if (bounds) ctx.strokeRect(bounds.minX * width, bounds.minY * height, (bounds.maxX - bounds.minX) * width, (bounds.maxY - bounds.minY) * height);
+    ctx.restore();
+  }
+  beginLassoPreview(page) {
+    var _a, _b;
+    const drag = this.lassoDrag;
+    if (!drag || !this.lassoCanvas || !this.lassoCtx) return;
+    const selected = new Set(drag.strokes.map((stroke) => stroke.id));
+    (_a = this.tiles) == null ? void 0 : _a.patchStrokes([], [...selected], page.strokes);
+    (_b = this.tiles) == null ? void 0 : _b.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, false);
+    const resolution = canvasResolution(
+      this.canvasLogicalWidth,
+      this.canvasLogicalHeight,
+      window.devicePixelRatio || 1,
+      this.zoom,
+      4e6
+    );
+    this.lassoCanvas.width = resolution.width;
+    this.lassoCanvas.height = resolution.height;
+    this.lassoCanvas.style.left = "0";
+    this.lassoCanvas.style.top = "0";
+    this.lassoCanvas.style.width = `${this.canvasLogicalWidth * this.zoom}px`;
+    this.lassoCanvas.style.height = `${this.canvasLogicalHeight * this.zoom}px`;
+    this.lassoCtx.setTransform(
+      resolution.width / this.canvasLogicalWidth,
+      0,
+      0,
+      resolution.height / this.canvasLogicalHeight,
+      0,
+      0
+    );
+    this.lassoCtx.clearRect(0, 0, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    for (const stroke of drag.strokes) drawInkStroke(this.lassoCtx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    this.lassoCanvas.style.transform = "translate(0px, 0px)";
+    this.lassoCanvas.style.display = "block";
+  }
+  onLassoDragMoved(dx, dy) {
+    if (!this.lassoCanvas) return;
+    this.lassoCanvas.style.transform = `translate(${dx * this.canvasLogicalWidth * this.zoom}px, ${dy * this.canvasLogicalHeight * this.zoom}px)`;
+  }
+  drawLassoInteraction() {
+    const drag = this.lassoDrag;
+    if (!drag || !this.ctx) return;
+    this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
+    const bounds = drag.bounds;
+    if (!bounds) return;
+    this.ctx.save();
+    this.ctx.strokeStyle = "#2f80ed";
+    this.ctx.lineWidth = 1.5;
+    this.ctx.setLineDash([6, 4]);
+    this.ctx.strokeRect(
+      (bounds.minX + drag.dx) * this.canvasLogicalWidth,
+      (bounds.minY + drag.dy) * this.canvasLogicalHeight,
+      (bounds.maxX - bounds.minX) * this.canvasLogicalWidth,
+      (bounds.maxY - bounds.minY) * this.canvasLogicalHeight
+    );
+    this.ctx.restore();
+  }
+  commitLassoPreview(page) {
+    var _a, _b;
+    (_a = this.tiles) == null ? void 0 : _a.patchStrokes(this.selectedStrokes(), [], page.strokes);
+    (_b = this.tiles) == null ? void 0 : _b.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true, () => {
+      var _a2;
+      this.hideLassoPreview();
+      if (this.viewReady && page === this.currentPage()) {
+        (_a2 = this.ctx) == null ? void 0 : _a2.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
+        this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+        this.drawPreview();
+      }
+    });
+  }
+  hideLassoPreview() {
+    if (!this.lassoCanvas) return;
+    this.lassoCanvas.style.display = "none";
+    this.lassoCanvas.style.transform = "none";
+    this.lassoCanvas.width = this.lassoCanvas.height = 1;
+  }
   flushWorkerStrokePoints() {
     const stroke = this.activeStroke;
     const interaction = this.interaction;
@@ -24703,6 +24900,12 @@ var InkWritingView = class extends import_obsidian2.FileView {
     else this.drawInteractiveStrokes(this.currentPage().strokes, true);
     this.scheduleSave();
   }
+  updateHistoryButtons() {
+    const undo = this.toolbarRoot().querySelector("[aria-label='Undo']");
+    const redo = this.toolbarRoot().querySelector("[aria-label='Redo']");
+    if (undo) undo.disabled = this.undoStack.length === 0;
+    if (redo) redo.disabled = this.redoStack.length === 0;
+  }
   addedStrokeCommand(pageId, original) {
     let currentId = original.id;
     let template = original;
@@ -24832,6 +25035,93 @@ var InkWritingView = class extends import_obsidian2.FileView {
   // --------------------------------------------------------------- brushes
   brushSettings(tool) {
     return this.state[tool];
+  }
+  // -------------------------------------------------------------- toolbar
+  addToolbarSection(parent, label) {
+    const section = parent.createDiv({ cls: "ink-toolbar-section" });
+    section.addClass(`ink-toolbar-section-${label.toLowerCase()}`);
+    section.setAttribute("role", "group");
+    section.setAttribute("aria-label", label);
+    return section.createDiv({ cls: "ink-toolbar-section-controls" });
+  }
+  addIconButton(parent, icon, label, callback, disabled = false) {
+    const button = parent.createEl("button", { cls: "ink-icon-button", attr: { type: "button", title: label, "aria-label": label } });
+    button.disabled = disabled;
+    const iconHolder = button.createSpan({ cls: "ink-button-icon" });
+    (0, import_obsidian2.setIcon)(iconHolder, icon);
+    button.addEventListener("click", callback);
+    return button;
+  }
+  addToolButton(parent, icon, label, tool) {
+    const hasSettings = tool === "pen" || tool === "highlighter" || tool === "eraser";
+    const button = parent.createEl("button", { cls: "ink-tool-button", attr: {
+      type: "button",
+      title: label,
+      "aria-label": label,
+      "aria-pressed": String(this.state.tool === tool),
+      "data-tool": tool,
+      ...hasSettings ? { "aria-haspopup": "dialog", "aria-expanded": "false" } : {}
+    } });
+    const iconHolder = button.createSpan({ cls: "ink-button-icon" });
+    (0, import_obsidian2.setIcon)(iconHolder, icon);
+    button.addEventListener("click", () => {
+      this.finishPointerInput(false);
+      if (this.state.tool === tool && hasSettings) {
+        this.toggleToolSettings();
+        return;
+      }
+      this.onToolSelected(tool);
+      this.state.tool = tool;
+      if (tool !== "lasso") this.clearSelection();
+      this.brushPopover.update();
+      this.updateToolButtons();
+      this.refreshEraserCursor();
+      if (this.settingsOpen()) this.reopenToolSettings();
+    });
+  }
+  updateToolButtons() {
+    this.toolbarRoot().querySelectorAll(".ink-tool-button").forEach((el) => {
+      const active = el.getAttribute("data-tool") === this.state.tool;
+      el.toggleClass("is-active", active);
+      el.setAttribute("aria-pressed", String(active));
+    });
+  }
+  /** Eraser settings block for the shared brush popover (ink markup: icon
+   *  mode radios, stroke-eraser hint, size slider). */
+  buildEraserSettings(body, addRange) {
+    const eraser = body.createDiv({ cls: "ink-eraser-settings" });
+    eraser.createDiv({ cls: "ink-size-popover-title", text: "Eraser" });
+    eraser.createDiv({ cls: "ink-settings-label", text: "Mode" });
+    const modes = eraser.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
+    for (const [mode, label, shortLabel, iconName] of [["stroke", "Stroke eraser", "Stroke", "eraser"], ["circle", "Circle eraser", "Circle", "circle"], ["square", "Square eraser", "Square", "square"]]) {
+      const modeButton = modes.createEl("button", { cls: "ink-eraser-mode", attr: { type: "button", role: "radio", title: label, "aria-label": label, "aria-checked": String(this.state.eraserMode === mode), "data-eraser-mode": mode } });
+      (0, import_obsidian2.setIcon)(modeButton.createSpan({ cls: "ink-button-icon" }), iconName);
+      modeButton.createSpan({ cls: "ink-eraser-mode-label", text: shortLabel });
+      modeButton.addEventListener("click", () => {
+        this.state.eraserMode = mode;
+        this.updateEraserControls();
+      });
+    }
+    eraser.createDiv({ cls: "ink-stroke-eraser-hint", text: "Erases the entire touched stroke. Size is fixed." });
+    addRange(eraser, "Eraser size", 8, 160, 2, this.state.eraserSize, (value) => {
+      this.state.eraserSize = value;
+      this.refreshEraserCursor();
+    });
+  }
+  /** Per-tool brush presets; the ink standard applies to both editors. */
+  brushToolConfigs() {
+    return [
+      { tool: "pen", label: "Pen", presets: [2, 4, 8], maximum: 24 },
+      { tool: "highlighter", label: "Highlighter", presets: [8, 16, 24], maximum: 48 }
+    ];
+  }
+  updateEraserControls() {
+    if (!this.settingsPanel) return;
+    this.settingsPanel.toggleClass("is-stroke-eraser", this.state.eraserMode === "stroke");
+    this.settingsPanel.querySelectorAll(".ink-eraser-mode").forEach((button) => {
+      button.setAttribute("aria-checked", String(button.dataset.eraserMode === this.state.eraserMode));
+    });
+    this.refreshEraserCursor();
   }
 };
 
@@ -26075,33 +26365,11 @@ var InkView = class extends InkWritingView {
     void icon;
     button.title = "Brush size and opacity";
     const brushPopover = new BrushPopoverController(container, {
-      tools: [
-        { tool: "pen", label: "Pen", presets: [2, 4, 8], maximum: 24 },
-        { tool: "highlighter", label: "Highlighter", presets: [8, 16, 24], maximum: 48 }
-      ],
+      tools: this.brushToolConfigs(),
       getSettings: (tool) => this.brushSettings(tool),
       activeTool: () => this.state.tool,
       showPenDynamics: () => this.state.tool === "pen",
-      buildExtras: (body, { addRange }) => {
-        const eraser = body.createDiv({ cls: "ink-eraser-settings" });
-        eraser.createDiv({ cls: "ink-size-popover-title", text: "Eraser" });
-        eraser.createDiv({ cls: "ink-settings-label", text: "Mode" });
-        const modes = eraser.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
-        for (const [mode, label, shortLabel, iconName] of [["stroke", "Stroke eraser", "Stroke", "eraser"], ["circle", "Circle eraser", "Circle", "circle"], ["square", "Square eraser", "Square", "square"]]) {
-          const modeButton = modes.createEl("button", { cls: "ink-eraser-mode", attr: { type: "button", role: "radio", title: label, "aria-label": label, "aria-checked": String(this.state.eraserMode === mode), "data-eraser-mode": mode } });
-          (0, import_obsidian3.setIcon)(modeButton.createSpan({ cls: "ink-button-icon" }), iconName);
-          modeButton.createSpan({ cls: "ink-eraser-mode-label", text: shortLabel });
-          modeButton.addEventListener("click", () => {
-            this.state.eraserMode = mode;
-            this.updateEraserControls();
-          });
-        }
-        eraser.createDiv({ cls: "ink-stroke-eraser-hint", text: "Erases the entire touched stroke. Size is fixed." });
-        addRange(eraser, "Eraser size", 8, 160, 2, this.state.eraserSize, (value) => {
-          this.state.eraserSize = value;
-          this.refreshEraserCursor();
-        });
-      },
+      buildExtras: (body, api) => this.buildEraserSettings(body, api.addRange),
       onControlsChanged: () => this.updateEraserControls(),
       anchor: () => {
         var _a;
@@ -26109,6 +26377,7 @@ var InkView = class extends InkWritingView {
       }
     });
     this.sizePopover = brushPopover.root;
+    this.settingsPanel = brushPopover.root;
     this.sizePopoverButton = button;
     this.brushPopover = brushPopover;
     button.addEventListener("click", (event) => {
@@ -26147,21 +26416,6 @@ var InkView = class extends InkWritingView {
   }
   activeToolButton() {
     return this.root.querySelector(`.ink-toolbar [data-tool="${this.state.tool}"]`);
-  }
-  addToolbarSection(parent, label) {
-    const section = parent.createDiv({ cls: "ink-toolbar-section" });
-    section.addClass(`ink-toolbar-section-${label.toLowerCase()}`);
-    section.setAttribute("role", "group");
-    section.setAttribute("aria-label", label);
-    return section.createDiv({ cls: "ink-toolbar-section-controls" });
-  }
-  updateEraserControls() {
-    if (!this.sizePopover) return;
-    this.sizePopover.toggleClass("is-stroke-eraser", this.state.eraserMode === "stroke");
-    this.sizePopover.querySelectorAll(".ink-eraser-mode").forEach((button) => {
-      button.setAttribute("aria-checked", String(button.dataset.eraserMode === this.state.eraserMode));
-    });
-    this.refreshEraserCursor();
   }
   renderCanvas() {
     const workspace = this.root.createDiv({ cls: "ink-workspace" });
@@ -26294,28 +26548,6 @@ var InkView = class extends InkWritingView {
     }
     if (refine) this.tiles.prewarm(this.notebook.pages.filter((_, index) => Math.abs(index - this.pageIndex) === 1));
   }
-  drawStrokes(strokes) {
-    if (!this.ctx || !this.pageElement) return;
-    this.tiles.sync(strokes, this.tileExclusion());
-    this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
-    this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
-    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
-    this.drawPreview();
-  }
-  drawInteractiveStrokes(strokes, refine = false) {
-    if (!this.ctx || !this.pageElement) return;
-    this.tiles.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine);
-    this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
-    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
-  }
-  drawEraserInteraction() {
-    if (!this.ctx || !this.pageElement) return;
-    const cells = [...this.eraserPreviewCells];
-    this.eraserPreviewCells.clear();
-    this.tiles.previewInteractiveCells(cells, this.viewport, (window.devicePixelRatio || 1) * this.zoom);
-    this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
-    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
-  }
   onViewportMotion() {
     this.updateViewport(false);
     if (this.zoomRenderTimer !== void 0) window.clearTimeout(this.zoomRenderTimer);
@@ -26326,13 +26558,6 @@ var InkView = class extends InkWritingView {
   }
   onRenderResize() {
     this.resizeCanvas();
-  }
-  renderInteractionFrame() {
-    var _a;
-    if (this.lassoDrag) this.drawLassoInteraction();
-    else if (((_a = this.interaction) == null ? void 0 : _a.tool) === "eraser") this.drawEraserInteraction();
-    else if (this.hasInkPreview()) this.drawPreview();
-    else this.drawStrokes(this.currentPage().strokes);
   }
   resizeOverlay(canvas, ctx, maxPixels = OVERLAY_RESIZE_BUDGET) {
     const { x, y, width, height } = this.viewport;
@@ -26350,94 +26575,6 @@ var InkView = class extends InkWritingView {
     canvas.style.bottom = "auto";
     ctx.setTransform(resolution.width / width, 0, 0, resolution.height / height, -x * (resolution.width / width), -y * (resolution.height / height));
     return changed;
-  }
-  beginLassoPreview(page) {
-    const drag = this.lassoDrag;
-    if (!drag || !this.lassoCanvas) return;
-    const selected = new Set(drag.strokes.map((stroke) => stroke.id));
-    this.tiles.patchStrokes([], [...selected], page.strokes);
-    this.tiles.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, false);
-    const resolution = canvasResolution(
-      this.canvasLogicalWidth,
-      this.canvasLogicalHeight,
-      window.devicePixelRatio || 1,
-      this.zoom,
-      OVERLAY_RESIZE_BUDGET
-    );
-    this.lassoCanvas.width = resolution.width;
-    this.lassoCanvas.height = resolution.height;
-    this.lassoCanvas.style.left = "0";
-    this.lassoCanvas.style.top = "0";
-    this.lassoCanvas.style.width = `${this.canvasLogicalWidth * this.zoom}px`;
-    this.lassoCanvas.style.height = `${this.canvasLogicalHeight * this.zoom}px`;
-    this.lassoCtx.setTransform(
-      resolution.width / this.canvasLogicalWidth,
-      0,
-      0,
-      resolution.height / this.canvasLogicalHeight,
-      0,
-      0
-    );
-    this.lassoCtx.clearRect(0, 0, this.canvasLogicalWidth, this.canvasLogicalHeight);
-    for (const stroke of drag.strokes) drawInkStroke(this.lassoCtx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
-    this.lassoCanvas.style.transform = "translate(0px, 0px)";
-    this.lassoCanvas.style.display = "block";
-  }
-  onLassoDragMoved(dx, dy) {
-    if (!this.lassoCanvas) return;
-    this.lassoCanvas.style.transform = `translate(${dx * this.canvasLogicalWidth * this.zoom}px, ${dy * this.canvasLogicalHeight * this.zoom}px)`;
-  }
-  drawLassoInteraction() {
-    const drag = this.lassoDrag;
-    if (!drag) return;
-    this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
-    const bounds = drag.bounds;
-    if (!bounds) return;
-    this.ctx.save();
-    this.ctx.strokeStyle = "#2f80ed";
-    this.ctx.lineWidth = 1.5;
-    this.ctx.setLineDash([6, 4]);
-    this.ctx.strokeRect(
-      (bounds.minX + drag.dx) * this.canvasLogicalWidth,
-      (bounds.minY + drag.dy) * this.canvasLogicalHeight,
-      (bounds.maxX - bounds.minX) * this.canvasLogicalWidth,
-      (bounds.maxY - bounds.minY) * this.canvasLogicalHeight
-    );
-    this.ctx.restore();
-  }
-  commitLassoPreview(page) {
-    this.tiles.patchStrokes(this.selectedStrokes(), [], page.strokes);
-    this.tiles.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true, () => {
-      this.hideLassoPreview();
-      if (this.viewReady && page === this.currentPage()) {
-        this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
-        this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
-        this.drawPreview();
-      }
-    });
-  }
-  hideLassoPreview() {
-    if (!this.lassoCanvas) return;
-    this.lassoCanvas.style.display = "none";
-    this.lassoCanvas.style.transform = "none";
-    this.lassoCanvas.width = this.lassoCanvas.height = 1;
-  }
-  drawSelection(width, height) {
-    const ctx = this.ctx;
-    ctx.save();
-    ctx.strokeStyle = "#2f80ed";
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([6, 4]);
-    if (this.lassoPath.length > 1) {
-      ctx.beginPath();
-      ctx.moveTo(this.lassoPath[0].x * width, this.lassoPath[0].y * height);
-      for (const point of this.lassoPath.slice(1)) ctx.lineTo(point.x * width, point.y * height);
-      ctx.closePath();
-      ctx.stroke();
-    }
-    const bounds = selectionBounds(this.selectedStrokes());
-    if (bounds) ctx.strokeRect(bounds.minX * width, bounds.minY * height, (bounds.maxX - bounds.minX) * width, (bounds.maxY - bounds.minY) * height);
-    ctx.restore();
   }
   // ------------------------------------------------------ writing-layer seams
   currentNotebook() {
@@ -26475,6 +26612,25 @@ var InkView = class extends InkWritingView {
   }
   performScheduledSave() {
     void this.save();
+  }
+  toolbarRoot() {
+    return this.root;
+  }
+  inputScroller() {
+    return this.pageScroller;
+  }
+  applyGestureZoom(value, focus, anchor) {
+    this.setZoom(value, focus, anchor);
+  }
+  settingsOpen() {
+    return this.sizePopoverOpen;
+  }
+  toggleToolSettings() {
+    this.setSizePopoverOpen(!this.sizePopoverOpen);
+  }
+  reopenToolSettings() {
+    this.setSizePopoverOpen(true);
+    this.brushPopover.position();
   }
   receiveMergedNotebook(notebook, alreadyMerged = false) {
     this.pendingMergedNotebook = this.pendingMergedNotebook ? mergeNotebooks(this.pendingMergedNotebook, notebook) : notebook;
@@ -26874,43 +27030,6 @@ page: ${this.currentPage().id}
       new import_obsidian3.Notice(`Could not copy embed syntax: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  addToolButton(parent, icon, label, tool) {
-    const hasSettings = tool === "pen" || tool === "highlighter" || tool === "eraser";
-    const button = parent.createEl("button", { cls: "ink-tool-button", attr: {
-      type: "button",
-      title: label,
-      "aria-label": label,
-      "aria-pressed": String(this.state.tool === tool),
-      "data-tool": tool,
-      ...hasSettings ? { "aria-haspopup": "dialog", "aria-expanded": "false" } : {}
-    } });
-    const iconHolder = button.createSpan({ cls: "ink-button-icon" });
-    (0, import_obsidian3.setIcon)(iconHolder, icon);
-    button.addEventListener("click", () => {
-      this.finishPointerInput(false);
-      if (this.state.tool === tool && (tool === "pen" || tool === "highlighter" || tool === "eraser")) {
-        this.setSizePopoverOpen(!this.sizePopoverOpen);
-        return;
-      }
-      this.state.tool = tool;
-      if (tool !== "lasso") this.clearSelection();
-      this.brushPopover.update();
-      this.updateToolButtons();
-      this.refreshEraserCursor();
-      if (this.sizePopoverOpen) {
-        this.setSizePopoverOpen(true);
-        this.brushPopover.position();
-      }
-    });
-  }
-  addIconButton(parent, icon, label, callback, disabled = false) {
-    const button = parent.createEl("button", { cls: "ink-icon-button", attr: { type: "button", title: label, "aria-label": label } });
-    button.disabled = disabled;
-    const iconHolder = button.createSpan({ cls: "ink-button-icon" });
-    (0, import_obsidian3.setIcon)(iconHolder, icon);
-    button.addEventListener("click", callback);
-    return button;
-  }
   /**
    * 2D multi-point pressure mapping editor: drag points (endpoints move
    * vertically), click empty space to add one, double-click a point to
@@ -27022,62 +27141,6 @@ page: ${this.currentPage().id}
     event.preventDefault();
     this.setZoom(this.zoom * (event.deltaY > 0 ? 0.92 : 1.08), { x: event.clientX, y: event.clientY });
   }
-  onTouchStart(event) {
-    if (this.onStylusTouch(event)) return;
-    if (event.cancelable && event.touches.length < 2) event.preventDefault();
-    this.touchGesture = null;
-    const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus");
-    if (this.activePointerId !== null || touches.length < 1 || touches.length > 2) return;
-    event.preventDefault();
-    const [a, b] = touches;
-    if (!a) return;
-    const x = b ? (a.clientX + b.clientX) / 2 : a.clientX;
-    const y = b ? (a.clientY + b.clientY) / 2 : a.clientY;
-    const rect = this.pageElement.getBoundingClientRect();
-    this.touchGesture = {
-      ids: b ? [a.identifier, b.identifier] : [a.identifier],
-      distance: b ? Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) : 0,
-      zoom: this.zoom,
-      x,
-      y,
-      pageX: (x - rect.left) / rect.width,
-      pageY: (y - rect.top) / rect.height
-    };
-  }
-  onTouchMove(event) {
-    if (this.onStylusTouch(event)) return;
-    if (this.activePointerId !== null) {
-      this.touchGesture = null;
-      return;
-    }
-    const gesture = this.touchGesture;
-    if (!gesture) return;
-    const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus");
-    const a = touches.find((touch) => touch.identifier === gesture.ids[0]);
-    const b = touches.find((touch) => touch.identifier === gesture.ids[1]);
-    if (touches.length !== gesture.ids.length || !a || gesture.ids.length === 2 && !b) {
-      this.onTouchStart(event);
-      return;
-    }
-    event.preventDefault();
-    if (!b) {
-      this.pageScroller.scrollLeft += gesture.x - a.clientX;
-      this.pageScroller.scrollTop += gesture.y - a.clientY;
-      gesture.x = a.clientX;
-      gesture.y = a.clientY;
-      return;
-    }
-    if (gesture.distance < 1) {
-      this.onTouchStart(event);
-      return;
-    }
-    const distanceNow = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-    this.setZoom(
-      gesture.zoom * distanceNow / gesture.distance,
-      { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 },
-      { x: gesture.pageX, y: gesture.pageY }
-    );
-  }
   // ------------------------------------------------------- notebook saving
   async save(file = this.file) {
     if (!file) return;
@@ -27160,19 +27223,6 @@ page: ${this.currentPage().id}
       raw = await this.store.readRaw(file);
     }
     throw new SaveConflictError(`Cannot save ${file.path || "notebook"}: the file kept changing`);
-  }
-  updateHistoryButtons() {
-    const undo = this.root.querySelector("[aria-label='Undo']");
-    const redo = this.root.querySelector("[aria-label='Redo']");
-    if (undo) undo.disabled = this.undoStack.length === 0;
-    if (redo) redo.disabled = this.redoStack.length === 0;
-  }
-  updateToolButtons() {
-    this.root.querySelectorAll(".ink-tool-button").forEach((el) => {
-      const active = el.getAttribute("data-tool") === this.state.tool;
-      el.toggleClass("is-active", active);
-      el.setAttribute("aria-pressed", String(active));
-    });
   }
   resetInteraction() {
     var _a;
@@ -28093,8 +28143,6 @@ var PdfInkView = class extends InkWritingView {
     this.pdfCanvas = null;
     this.textLayer = null;
     this.inkHost = null;
-    this.selectionCanvas = null;
-    this.selectionCtx = null;
     this.statusEl = null;
     this.toolbarButtons = /* @__PURE__ */ new Map();
     this.pdfjs = null;
@@ -28113,18 +28161,10 @@ var PdfInkView = class extends InkWritingView {
     this.noteIndex = 0;
     this.pageBaseWidth = 700;
     this.pageBaseHeight = 990;
-    this.brushPopover = null;
     this.dirty = false;
     this.activeSave = null;
     this.saveRequested = false;
     this.pendingRecoveryCandidates = null;
-    this.state = {
-      tool: "pen",
-      pen: { color: INK_COLORS[0].value, width: 3, opacity: 1, smooth: 60, taper: 30, pressureGain: 70, speedGain: 0 },
-      highlighter: { color: "#ffe94a", width: 14, opacity: 0.4 },
-      eraserMode: "stroke",
-      eraserSize: 24
-    };
     this.scope = new import_obsidian7.Scope(this.app.scope);
     this.scope.register(["Mod"], "z", () => this.undo());
     this.scope.register(["Mod", "Shift"], "z", () => this.redo());
@@ -28155,7 +28195,15 @@ var PdfInkView = class extends InkWritingView {
     this.pdfCanvas = this.pageWrap.createEl("canvas", { cls: "ink-pdf-canvas" });
     this.textLayer = this.pageWrap.createDiv({ cls: "ink-pdf-text-layer" });
     this.buildInkHost();
+    this.viewReady = true;
     this.registerDomEvent(scroller, "scroll", () => this.onViewportMotion(), { passive: true });
+    this.registerDomEvent(scroller, "touchstart", (event) => this.onTouchStart(event), { passive: false });
+    this.registerDomEvent(scroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
+    this.registerDomEvent(scroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
+    this.registerDomEvent(scroller, "touchcancel", (event) => {
+      this.onStylusTouch(event);
+      this.touchGesture = null;
+    }, { passive: false });
     this.registerDomEvent(window, "resize", () => {
       var _a;
       (_a = this.brushPopover) == null ? void 0 : _a.position();
@@ -28504,141 +28552,90 @@ var PdfInkView = class extends InkWritingView {
   // -------------------------------------------------------------- toolbar
   renderToolbar(root) {
     const toolbar = root.createDiv({ cls: "ink-pdf-toolbar" });
-    const group = (cls) => toolbar.createDiv({ cls: `ink-pdf-toolbar-group ${cls}` });
-    const modeGroup = group("ink-pdf-mode-group");
-    this.addIconButton(modeGroup, "mode", "eye", "Toggle handwriting editing", () => void this.setMode(this.mode === "editing" ? "reading" : "editing"));
-    const navGroup = group("ink-pdf-nav-group");
-    this.addIconButton(navGroup, "prev", "arrow-left", "Previous page", () => this.navigatePages(-1));
+    const modeGroup = this.addToolbarSection(toolbar, "Mode");
+    this.addTrackedIconButton(modeGroup, "mode", "eye", "Toggle handwriting editing", () => void this.setMode(this.mode === "editing" ? "reading" : "editing"));
+    const navGroup = this.addToolbarSection(toolbar, "Pages");
+    this.addTrackedIconButton(navGroup, "prev", "arrow-left", "Previous page", () => this.navigatePages(-1));
     const indicator = navGroup.createDiv({ cls: "ink-pdf-page-indicator" });
     indicator.setText("\u2013");
     this.toolbarButtons.set("indicator", indicator);
-    this.addIconButton(navGroup, "next", "arrow-right", "Next page", () => this.navigatePages(1));
-    const zoomGroup = group("ink-pdf-zoom-group");
-    this.addIconButton(zoomGroup, "zoom-out", "minus", "Zoom out", () => this.setZoom(this.zoom / PDF_ZOOM_STEP));
-    this.addIconButton(zoomGroup, "zoom-reset", "scan", "Reset zoom", () => this.setZoom(1));
-    this.addIconButton(zoomGroup, "zoom-in", "plus", "Zoom in", () => this.setZoom(this.zoom * PDF_ZOOM_STEP));
-    const toolGroup = group("ink-pdf-tool-group");
-    this.addToolButton(toolGroup, "pen", "pen-tool", "Pen");
-    this.addToolButton(toolGroup, "highlighter", "highlighter", "Highlighter");
-    this.addToolButton(toolGroup, "eraser", "eraser", "Eraser");
-    this.addToolButton(toolGroup, "lasso", "lasso", "Lasso");
+    this.addTrackedIconButton(navGroup, "next", "arrow-right", "Next page", () => this.navigatePages(1));
+    const zoomGroup = this.addToolbarSection(toolbar, "Zoom");
+    this.addTrackedIconButton(zoomGroup, "zoom-out", "minus", "Zoom out", () => this.setZoom(this.zoom / PDF_ZOOM_STEP));
+    this.addTrackedIconButton(zoomGroup, "zoom-reset", "scan", "Reset zoom", () => this.setZoom(1));
+    this.addTrackedIconButton(zoomGroup, "zoom-in", "plus", "Zoom in", () => this.setZoom(this.zoom * PDF_ZOOM_STEP));
+    const toolGroup = this.addToolbarSection(toolbar, "Draw");
+    this.addToolButton(toolGroup, "pen-line", "Pen", "pen");
+    this.addToolButton(toolGroup, "highlighter", "Highlight", "highlighter");
+    this.addToolButton(toolGroup, "eraser", "Erase", "eraser");
+    this.addToolButton(toolGroup, "lasso-select", "Select", "lasso");
     this.addBrushPopover(toolGroup);
-    const historyGroup = group("ink-pdf-history-group");
-    this.addIconButton(historyGroup, "undo", "undo-2", "Undo", () => {
+    const historyGroup = this.addToolbarSection(toolbar, "History");
+    this.addTrackedIconButton(historyGroup, "undo", "undo-2", "Undo", () => {
       if (!this.editingLocked()) this.undo();
-    });
-    this.addIconButton(historyGroup, "redo", "redo-2", "Redo", () => {
+    }, this.undoStack.length === 0);
+    this.addTrackedIconButton(historyGroup, "redo", "redo-2", "Redo", () => {
       if (!this.editingLocked()) this.redo();
-    });
-    const docGroup = group("ink-pdf-doc-group");
-    this.addIconButton(docGroup, "pages", "files", "Page options (blank pages, export, built-in viewer)", (event) => {
+    }, this.redoStack.length === 0);
+    const docGroup = this.addToolbarSection(toolbar, "Document");
+    this.addTrackedIconButton(docGroup, "pages", "more-horizontal", "Page options", (event) => {
       if (!this.editingLocked()) this.openPageMenu(event);
     });
-    this.addIconButton(docGroup, "export", "download", "Export PDF with handwriting", () => {
+    this.addTrackedIconButton(docGroup, "export", "download", "Export PDF with handwriting", () => {
       if (!this.editingLocked()) void this.exportHandwrittenCopy();
     });
     this.updateToolButtons();
     this.updateHistoryButtons();
     this.updatePageIndicator();
   }
-  addIconButton(parent, key, icon, label, onClick) {
-    const button = parent.createEl("button", { cls: "ink-pdf-icon-button ink-icon-button", attr: { type: "button", "aria-label": label } });
-    (0, import_obsidian7.setIcon)(button.createSpan({ cls: "ink-button-icon" }), icon);
-    button.addEventListener("click", (event) => onClick(event));
+  addTrackedIconButton(parent, key, icon, label, onClick, disabled = false) {
+    const button = this.addIconButton(parent, icon, label, onClick, disabled);
     this.toolbarButtons.set(key, button);
   }
-  addToolButton(parent, tool, icon, label) {
-    const button = parent.createEl("button", {
-      cls: "ink-pdf-icon-button ink-icon-button ink-tool-button",
-      attr: { type: "button", "data-tool": tool, "aria-label": label }
-    });
-    (0, import_obsidian7.setIcon)(button.createSpan({ cls: "ink-button-icon" }), icon);
-    button.addEventListener("click", () => {
-      if (this.mode !== "editing") {
-        void this.setMode("editing");
-      }
-      this.state.tool = tool;
-      this.clearSelection();
-      this.updateToolButtons();
-    });
-    this.toolbarButtons.set(`tool-${tool}`, button);
-  }
-  /** Shared brush settings popover (same controller as the notebook view):
-   *  pinned sample-stroke preview, dynamics sliders, pressure mapping curve
-   *  and eraser controls. */
   addBrushPopover(parent) {
     const button = parent.createEl("button", {
-      cls: "ink-pdf-icon-button ink-icon-button",
-      attr: { type: "button", "aria-label": "Brush settings" }
+      cls: "ink-icon-button",
+      attr: { type: "button", "aria-label": "Brush settings", "aria-haspopup": "dialog" }
     });
-    (0, import_obsidian7.setIcon)(button.createSpan({ cls: "ink-button-icon" }), "settings-2");
+    (0, import_obsidian7.setIcon)(button.createSpan({ cls: "ink-button-icon" }), "sliders-horizontal");
     this.toolbarButtons.set("brush", button);
     button.addEventListener("click", (event) => {
       event.stopPropagation();
       this.brushPopover.toggle();
     });
     this.registerDomEvent(document, "pointerdown", (event) => {
-      var _a;
       const target = event.target;
-      if (!((_a = this.brushPopover) == null ? void 0 : _a.isOpen)) return;
+      if (!this.brushPopover.isOpen) return;
       if (target && (this.brushPopover.root.contains(target) || button.contains(target))) return;
       this.brushPopover.close();
     });
     this.registerDomEvent(document, "keydown", (event) => {
-      var _a;
-      if (event.key === "Escape" && ((_a = this.brushPopover) == null ? void 0 : _a.isOpen)) {
+      if (event.key === "Escape" && this.brushPopover.isOpen) {
         this.brushPopover.close();
         button.focus();
       }
     });
-    this.registerDomEvent(window, "scroll", () => {
-      var _a;
-      return (_a = this.brushPopover) == null ? void 0 : _a.position();
-    }, true);
+    this.registerDomEvent(window, "scroll", () => this.brushPopover.position(), true);
     this.brushPopover = new BrushPopoverController(this.root, {
       // Extra class scopes the PDF-surface rules (paper canvases, spacing).
       extraClass: "ink-pdf-brush-popover",
-      tools: [
-        { tool: "pen", label: "Pen", presets: [2, 4, 8], maximum: 40 },
-        { tool: "highlighter", label: "Highlighter", presets: [8, 16, 24], maximum: 48 }
-      ],
+      tools: this.brushToolConfigs(),
       getSettings: (tool) => this.brushSettings(tool),
       activeTool: () => this.state.tool,
       showPenDynamics: () => this.state.tool === "pen",
-      buildExtras: (body, { addRange }) => {
-        body.createDiv({ cls: "ink-settings-label", text: "Eraser size" });
-        addRange(body, "Eraser size", 6, 80, 2, this.state.eraserSize, (value) => {
-          this.state.eraserSize = value;
-        });
-        const modes = body.createDiv({ cls: "ink-pdf-color-row" });
-        for (const mode of ["stroke", "circle", "square"]) {
-          const label = { stroke: "Stroke", circle: "Circle", square: "Square" }[mode];
-          const modeButton = modes.createEl("button", { cls: "ink-pdf-mode-button", attr: { type: "button", "data-eraser-mode": mode } });
-          modeButton.setText(label);
-          modeButton.addEventListener("click", () => {
-            this.state.eraserMode = mode;
-            this.updateToolButtons();
-          });
-        }
-      },
-      onControlsChanged: () => this.updateToolButtons(),
+      buildExtras: (body, api) => this.buildEraserSettings(body, api.addRange),
+      onControlsChanged: () => this.updateEraserControls(),
       anchor: () => {
         var _a;
         return (_a = this.toolbarButtons.get("brush")) != null ? _a : null;
       }
     });
+    this.settingsPanel = this.brushPopover.root;
   }
   updateToolButtons() {
-    var _a, _b;
-    for (const tool of ["pen", "highlighter", "eraser", "lasso"]) {
-      (_a = this.toolbarButtons.get(`tool-${tool}`)) == null ? void 0 : _a.toggleClass("is-active", this.mode === "editing" && this.state.tool === tool);
-    }
-    (_b = this.toolbarButtons.get("mode")) == null ? void 0 : _b.toggleClass("is-active", this.mode === "editing");
-  }
-  updateHistoryButtons() {
-    var _a, _b;
-    (_a = this.toolbarButtons.get("undo")) == null ? void 0 : _a.toggleClass("is-disabled", this.undoStack.length === 0);
-    (_b = this.toolbarButtons.get("redo")) == null ? void 0 : _b.toggleClass("is-disabled", this.redoStack.length === 0);
+    var _a;
+    super.updateToolButtons();
+    (_a = this.toolbarButtons.get("mode")) == null ? void 0 : _a.toggleClass("is-active", this.mode === "editing");
   }
   updatePageIndicator() {
     const indicator = this.toolbarButtons.get("indicator");
@@ -28781,14 +28778,18 @@ var PdfInkView = class extends InkWritingView {
     this.eraserCursor.createSpan({ cls: "ink-eraser-reference-point" });
     const tileLayer = host.createDiv({ cls: "ink-tile-layer" });
     this.tiles = new TileRenderer(tileLayer);
-    this.selectionCanvas = host.createEl("canvas", { cls: "ink-canvas ink-selection-canvas" });
-    this.selectionCtx = this.selectionCanvas.getContext("2d");
+    this.canvas = host.createEl("canvas", { cls: "ink-canvas ink-selection-canvas" });
+    this.ctx = this.canvas.getContext("2d");
+    this.lassoCanvas = host.createEl("canvas", { cls: "ink-canvas ink-lasso-preview-canvas" });
+    this.lassoCanvas.style.pointerEvents = "none";
+    this.lassoCtx = this.lassoCanvas.getContext("2d");
     this.confirmedPreviewCanvas = host.createEl("canvas", { cls: "ink-canvas ink-confirmed-preview-canvas" });
     this.confirmedPreviewCanvas.style.pointerEvents = "none";
     this.confirmedPreviewCtx = this.confirmedPreviewCanvas.getContext("2d");
     this.previewCanvas = host.createEl("canvas", { cls: "ink-canvas ink-preview-canvas" });
     this.previewCanvas.style.pointerEvents = "none";
     this.previewCtx = this.previewCanvas.getContext("2d");
+    host.style.touchAction = "none";
     host.addEventListener("pointerenter", (event) => this.onPointerEnter(event));
     host.addEventListener("pointerdown", (event) => this.onPointerDown(event));
     host.addEventListener("pointermove", (event) => this.onPointerMove(event));
@@ -28846,23 +28847,28 @@ var PdfInkView = class extends InkWritingView {
   onRenderResize() {
     this.layoutPage();
   }
-  renderInteractionFrame() {
-    if (this.activeStroke) this.drawPreview();
-    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+  toolbarRoot() {
+    return this.root;
   }
-  drawStrokes(_strokes) {
-    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+  inputScroller() {
+    return this.scroller;
   }
-  drawInteractiveStrokes(_strokes, _refine) {
-    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+  applyGestureZoom(value, _focus, _anchor) {
+    this.setZoom(value);
   }
-  beginLassoPreview(_page) {
+  onToolSelected(_tool) {
+    if (this.mode !== "editing") void this.setMode("editing");
   }
-  commitLassoPreview(_page) {
-    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+  settingsOpen() {
+    var _a, _b;
+    return (_b = (_a = this.brushPopover) == null ? void 0 : _a.isOpen) != null ? _b : false;
   }
-  hideLassoPreview() {
-    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+  toggleToolSettings() {
+    this.brushPopover.toggle();
+  }
+  reopenToolSettings() {
+    this.brushPopover.open();
+    this.brushPopover.position();
   }
   resizeOverlay(canvas, ctx, maxPixels) {
     const { x, y, width, height } = this.viewport;
@@ -28881,36 +28887,8 @@ var PdfInkView = class extends InkWritingView {
     return changed;
   }
   resizeSelectionCanvas() {
-    if (!this.selectionCanvas || !this.selectionCtx) return;
-    this.resizeOverlay(this.selectionCanvas, this.selectionCtx, SELECTION_OVERLAY_BUDGET);
-  }
-  drawSelection(width, height) {
-    var _a;
-    if (!this.selectionCtx || !this.selectionCanvas) return;
-    const ctx = this.selectionCtx;
-    ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
-    if (this.mode !== "editing") return;
-    ctx.save();
-    ctx.strokeStyle = "#2f80ed";
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([6, 4]);
-    if (this.lassoPath.length > 1) {
-      ctx.beginPath();
-      ctx.moveTo(this.lassoPath[0].x * width, this.lassoPath[0].y * height);
-      for (const point of this.lassoPath.slice(1)) ctx.lineTo(point.x * width, point.y * height);
-      ctx.closePath();
-      ctx.stroke();
-    }
-    if ((_a = this.lassoDrag) == null ? void 0 : _a.bounds) {
-      const bounds = this.lassoDrag.bounds;
-      ctx.strokeRect(
-        (bounds.minX + this.lassoDrag.dx) * width,
-        (bounds.minY + this.lassoDrag.dy) * height,
-        (bounds.maxX - bounds.minX) * width,
-        (bounds.maxY - bounds.minY) * height
-      );
-    }
-    ctx.restore();
+    if (!this.canvas || !this.ctx) return;
+    this.resizeOverlay(this.canvas, this.ctx, SELECTION_OVERLAY_BUDGET);
   }
   // ------------------------------------------------------------- rendering
   cancelPdfRender() {

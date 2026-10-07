@@ -1,10 +1,9 @@
 import { App, Menu, Notice, Scope, SuggestModal, TFile, WorkspaceLeaf, loadPdfJs, setIcon } from "obsidian";
-import { InkNotebook, InkPage, InkStroke, InkTool, createNotebook } from "./model";
+import { InkNotebook, InkPage, InkTool, createNotebook } from "./model";
 import { canvasResolution } from "./rendering";
 import { BrushPopoverController } from "./brush-popover";
-import { INK_COLORS } from "./brush-popover";
 import { registerDocumentPointerEndEvents } from "./ink-input";
-import { InkWritingView, ToolState } from "./ink-writing";
+import { InkWritingView } from "./ink-writing";
 import { TileRenderer } from "./tiles";
 import { InkWorkerService } from "./worker-service";
 import {
@@ -31,7 +30,6 @@ const PDF_ZOOM_MAX = 3;
 const PDF_ZOOM_STEP = 1.2;
 const PDF_PAGE_PADDING = 24;
 const SELECTION_OVERLAY_BUDGET = 4_000_000;
-const PREVIEW_OVERLAY_BUDGET = 12_000_000;
 
 export type PdfViewMode = "reading" | "editing";
 export type SaveOutcome = { status: "saved" } | { status: "conflict"; message: string } | { status: "failed"; message: string };
@@ -114,8 +112,6 @@ export class PdfInkView extends InkWritingView {
   private pdfCanvas: HTMLCanvasElement | null = null;
   private textLayer: HTMLElement | null = null;
   private inkHost: HTMLElement | null = null;
-  private selectionCanvas: HTMLCanvasElement | null = null;
-  private selectionCtx: CanvasRenderingContext2D | null = null;
   private statusEl: HTMLElement | null = null;
   private toolbarButtons = new Map<string, HTMLElement>();
 
@@ -137,7 +133,6 @@ export class PdfInkView extends InkWritingView {
   private noteIndex = 0;
   private pageBaseWidth = 700;
   private pageBaseHeight = 990;
-  private brushPopover: BrushPopoverController | null = null;
 
   private dirty = false;
   private activeSave: Promise<SaveOutcome> | null = null;
@@ -147,13 +142,6 @@ export class PdfInkView extends InkWritingView {
 
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
-    this.state = {
-      tool: "pen",
-      pen: { color: INK_COLORS[0].value, width: 3, opacity: 1, smooth: 60, taper: 30, pressureGain: 70, speedGain: 0 },
-      highlighter: { color: "#ffe94a", width: 14, opacity: 0.4 },
-      eraserMode: "stroke",
-      eraserSize: 24,
-    };
     this.scope = new Scope(this.app.scope);
     this.scope.register(["Mod"], "z", () => this.undo());
     this.scope.register(["Mod", "Shift"], "z", () => this.redo());
@@ -188,7 +176,15 @@ export class PdfInkView extends InkWritingView {
     this.pdfCanvas = this.pageWrap.createEl("canvas", { cls: "ink-pdf-canvas" });
     this.textLayer = this.pageWrap.createDiv({ cls: "ink-pdf-text-layer" });
     this.buildInkHost();
+    this.viewReady = true;
     this.registerDomEvent(scroller, "scroll", () => this.onViewportMotion(), { passive: true });
+    this.registerDomEvent(scroller, "touchstart", (event) => this.onTouchStart(event), { passive: false });
+    this.registerDomEvent(scroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
+    this.registerDomEvent(scroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
+    this.registerDomEvent(scroller, "touchcancel", (event) => {
+      this.onStylusTouch(event);
+      this.touchGesture = null;
+    }, { passive: false });
     this.registerDomEvent(window, "resize", () => {
       this.brushPopover?.position();
       this.requestRender(true);
@@ -559,43 +555,42 @@ export class PdfInkView extends InkWritingView {
 
   private renderToolbar(root: HTMLElement): void {
     const toolbar = root.createDiv({ cls: "ink-pdf-toolbar" });
-    const group = (cls: string) => toolbar.createDiv({ cls: `ink-pdf-toolbar-group ${cls}` });
 
-    const modeGroup = group("ink-pdf-mode-group");
-    this.addIconButton(modeGroup, "mode", "eye", "Toggle handwriting editing", () => void this.setMode(this.mode === "editing" ? "reading" : "editing"));
+    const modeGroup = this.addToolbarSection(toolbar, "Mode");
+    this.addTrackedIconButton(modeGroup, "mode", "eye", "Toggle handwriting editing", () => void this.setMode(this.mode === "editing" ? "reading" : "editing"));
 
-    const navGroup = group("ink-pdf-nav-group");
-    this.addIconButton(navGroup, "prev", "arrow-left", "Previous page", () => this.navigatePages(-1));
+    const navGroup = this.addToolbarSection(toolbar, "Pages");
+    this.addTrackedIconButton(navGroup, "prev", "arrow-left", "Previous page", () => this.navigatePages(-1));
     const indicator = navGroup.createDiv({ cls: "ink-pdf-page-indicator" });
     indicator.setText("–");
     this.toolbarButtons.set("indicator", indicator);
-    this.addIconButton(navGroup, "next", "arrow-right", "Next page", () => this.navigatePages(1));
+    this.addTrackedIconButton(navGroup, "next", "arrow-right", "Next page", () => this.navigatePages(1));
 
-    const zoomGroup = group("ink-pdf-zoom-group");
-    this.addIconButton(zoomGroup, "zoom-out", "minus", "Zoom out", () => this.setZoom(this.zoom / PDF_ZOOM_STEP));
-    this.addIconButton(zoomGroup, "zoom-reset", "scan", "Reset zoom", () => this.setZoom(1));
-    this.addIconButton(zoomGroup, "zoom-in", "plus", "Zoom in", () => this.setZoom(this.zoom * PDF_ZOOM_STEP));
+    const zoomGroup = this.addToolbarSection(toolbar, "Zoom");
+    this.addTrackedIconButton(zoomGroup, "zoom-out", "minus", "Zoom out", () => this.setZoom(this.zoom / PDF_ZOOM_STEP));
+    this.addTrackedIconButton(zoomGroup, "zoom-reset", "scan", "Reset zoom", () => this.setZoom(1));
+    this.addTrackedIconButton(zoomGroup, "zoom-in", "plus", "Zoom in", () => this.setZoom(this.zoom * PDF_ZOOM_STEP));
 
-    const toolGroup = group("ink-pdf-tool-group");
-    this.addToolButton(toolGroup, "pen", "pen-tool", "Pen");
-    this.addToolButton(toolGroup, "highlighter", "highlighter", "Highlighter");
-    this.addToolButton(toolGroup, "eraser", "eraser", "Eraser");
-    this.addToolButton(toolGroup, "lasso", "lasso", "Lasso");
+    const toolGroup = this.addToolbarSection(toolbar, "Draw");
+    this.addToolButton(toolGroup, "pen-line", "Pen", "pen");
+    this.addToolButton(toolGroup, "highlighter", "Highlight", "highlighter");
+    this.addToolButton(toolGroup, "eraser", "Erase", "eraser");
+    this.addToolButton(toolGroup, "lasso-select", "Select", "lasso");
     this.addBrushPopover(toolGroup);
 
-    const historyGroup = group("ink-pdf-history-group");
-    this.addIconButton(historyGroup, "undo", "undo-2", "Undo", () => {
+    const historyGroup = this.addToolbarSection(toolbar, "History");
+    this.addTrackedIconButton(historyGroup, "undo", "undo-2", "Undo", () => {
       if (!this.editingLocked()) this.undo();
-    });
-    this.addIconButton(historyGroup, "redo", "redo-2", "Redo", () => {
+    }, this.undoStack.length === 0);
+    this.addTrackedIconButton(historyGroup, "redo", "redo-2", "Redo", () => {
       if (!this.editingLocked()) this.redo();
-    });
+    }, this.redoStack.length === 0);
 
-    const docGroup = group("ink-pdf-doc-group");
-    this.addIconButton(docGroup, "pages", "files", "Page options (blank pages, export, built-in viewer)", (event) => {
+    const docGroup = this.addToolbarSection(toolbar, "Document");
+    this.addTrackedIconButton(docGroup, "pages", "more-horizontal", "Page options", (event) => {
       if (!this.editingLocked()) this.openPageMenu(event);
     });
-    this.addIconButton(docGroup, "export", "download", "Export PDF with handwriting", () => {
+    this.addTrackedIconButton(docGroup, "export", "download", "Export PDF with handwriting", () => {
       if (!this.editingLocked()) void this.exportHandwrittenCopy();
     });
 
@@ -604,46 +599,21 @@ export class PdfInkView extends InkWritingView {
     this.updatePageIndicator();
   }
 
-  private addIconButton(parent: HTMLElement, key: string, icon: string, label: string, onClick: (event: MouseEvent) => void): void {
-    const button = parent.createEl("button", { cls: "ink-pdf-icon-button ink-icon-button", attr: { type: "button", "aria-label": label } });
-    // Icon inside a .ink-button-icon span, exactly like the notebook toolbar:
-    // iPadOS sizes a bare svg inside the button unreliably (icons collapsed
-    // to dots), while the notebook's wrapped structure renders correctly.
-    setIcon(button.createSpan({ cls: "ink-button-icon" }), icon);
-    button.addEventListener("click", (event) => onClick(event));
+  private addTrackedIconButton(parent: HTMLElement, key: string, icon: string, label: string, onClick: (event: MouseEvent) => void, disabled = false): void {
+    const button = this.addIconButton(parent, icon, label, onClick, disabled);
     this.toolbarButtons.set(key, button);
   }
 
-  private addToolButton(parent: HTMLElement, tool: InkTool, icon: string, label: string): void {
-    const button = parent.createEl("button", {
-      cls: "ink-pdf-icon-button ink-icon-button ink-tool-button",
-      attr: { type: "button", "data-tool": tool, "aria-label": label },
-    });
-    setIcon(button.createSpan({ cls: "ink-button-icon" }), icon);
-    button.addEventListener("click", () => {
-      if (this.mode !== "editing") {
-        void this.setMode("editing");
-      }
-      this.state.tool = tool;
-      this.clearSelection();
-      this.updateToolButtons();
-    });
-    this.toolbarButtons.set(`tool-${tool}`, button);
-  }
-
-  /** Shared brush settings popover (same controller as the notebook view):
-   *  pinned sample-stroke preview, dynamics sliders, pressure mapping curve
-   *  and eraser controls. */
   private addBrushPopover(parent: HTMLElement): void {
     const button = parent.createEl("button", {
-      cls: "ink-pdf-icon-button ink-icon-button",
-      attr: { type: "button", "aria-label": "Brush settings" },
+      cls: "ink-icon-button",
+      attr: { type: "button", "aria-label": "Brush settings", "aria-haspopup": "dialog" },
     });
-    setIcon(button.createSpan({ cls: "ink-button-icon" }), "settings-2");
+    setIcon(button.createSpan({ cls: "ink-button-icon" }), "sliders-horizontal");
     this.toolbarButtons.set("brush", button);
     button.addEventListener("click", (event) => {
       event.stopPropagation();
-      this.brushPopover!.toggle();
+      this.brushPopover.toggle();
     });
     // Tap-outside closes — anywhere outside the popover itself, including the
     // paper: a fullscreen PDF pane has no "outside the view" to tap, and the
@@ -651,61 +621,37 @@ export class PdfInkView extends InkWritingView {
     // controls and the toggle button are exempt (the button's click toggles).
     this.registerDomEvent(document, "pointerdown", (event) => {
       const target = event.target as HTMLElement | null;
-      if (!this.brushPopover?.isOpen) return;
+      if (!this.brushPopover.isOpen) return;
       if (target && (this.brushPopover.root.contains(target) || button.contains(target))) return;
       this.brushPopover.close();
     });
     this.registerDomEvent(document, "keydown", (event) => {
-      if (event.key === "Escape" && this.brushPopover?.isOpen) {
+      if (event.key === "Escape" && this.brushPopover.isOpen) {
         this.brushPopover.close();
         button.focus();
       }
     });
-    this.registerDomEvent(window, "scroll", () => this.brushPopover?.position(), true);
+    this.registerDomEvent(window, "scroll", () => this.brushPopover.position(), true);
     // Mounted at the view root with fixed positioning (mainline parity):
     // nesting it inside the toolbar group exposed it to toolbar layout and
     // produced the mangled arc layout on iPad.
     this.brushPopover = new BrushPopoverController(this.root!, {
       // Extra class scopes the PDF-surface rules (paper canvases, spacing).
       extraClass: "ink-pdf-brush-popover",
-      tools: [
-        { tool: "pen", label: "Pen", presets: [2, 4, 8], maximum: 40 },
-        { tool: "highlighter", label: "Highlighter", presets: [8, 16, 24], maximum: 48 },
-      ],
+      tools: this.brushToolConfigs(),
       getSettings: (tool) => this.brushSettings(tool),
       activeTool: () => this.state.tool,
       showPenDynamics: () => this.state.tool === "pen",
-      buildExtras: (body, { addRange }) => {
-        body.createDiv({ cls: "ink-settings-label", text: "Eraser size" });
-        addRange(body, "Eraser size", 6, 80, 2, this.state.eraserSize, (value: number) => {
-          this.state.eraserSize = value;
-        });
-        const modes = body.createDiv({ cls: "ink-pdf-color-row" });
-        for (const mode of ["stroke", "circle", "square"] as const) {
-          const label = { stroke: "Stroke", circle: "Circle", square: "Square" }[mode];
-          const modeButton = modes.createEl("button", { cls: "ink-pdf-mode-button", attr: { type: "button", "data-eraser-mode": mode } });
-          modeButton.setText(label);
-          modeButton.addEventListener("click", () => {
-            this.state.eraserMode = mode;
-            this.updateToolButtons();
-          });
-        }
-      },
-      onControlsChanged: () => this.updateToolButtons(),
+      buildExtras: (body, api) => this.buildEraserSettings(body, api.addRange),
+      onControlsChanged: () => this.updateEraserControls(),
       anchor: () => this.toolbarButtons.get("brush") ?? null,
     });
+    this.settingsPanel = this.brushPopover.root;
   }
 
-  private updateToolButtons(): void {
-    for (const tool of ["pen", "highlighter", "eraser", "lasso"] as InkTool[]) {
-      this.toolbarButtons.get(`tool-${tool}`)?.toggleClass("is-active", this.mode === "editing" && this.state.tool === tool);
-    }
+  protected updateToolButtons(): void {
+    super.updateToolButtons();
     this.toolbarButtons.get("mode")?.toggleClass("is-active", this.mode === "editing");
-  }
-
-  protected updateHistoryButtons(): void {
-    this.toolbarButtons.get("undo")?.toggleClass("is-disabled", this.undoStack.length === 0);
-    this.toolbarButtons.get("redo")?.toggleClass("is-disabled", this.redoStack.length === 0);
   }
 
   private updatePageIndicator(): void {
@@ -863,14 +809,19 @@ export class PdfInkView extends InkWritingView {
     this.eraserCursor.createSpan({ cls: "ink-eraser-reference-point" });
     const tileLayer = host.createDiv({ cls: "ink-tile-layer" });
     this.tiles = new TileRenderer(tileLayer);
-    this.selectionCanvas = host.createEl("canvas", { cls: "ink-canvas ink-selection-canvas" });
-    this.selectionCtx = this.selectionCanvas.getContext("2d");
+    this.canvas = host.createEl("canvas", { cls: "ink-canvas ink-selection-canvas" });
+    this.ctx = this.canvas.getContext("2d")!;
+    this.lassoCanvas = host.createEl("canvas", { cls: "ink-canvas ink-lasso-preview-canvas" });
+    this.lassoCanvas.style.pointerEvents = "none";
+    this.lassoCtx = this.lassoCanvas.getContext("2d");
     this.confirmedPreviewCanvas = host.createEl("canvas", { cls: "ink-canvas ink-confirmed-preview-canvas" });
     this.confirmedPreviewCanvas.style.pointerEvents = "none";
     this.confirmedPreviewCtx = this.confirmedPreviewCanvas.getContext("2d");
     this.previewCanvas = host.createEl("canvas", { cls: "ink-canvas ink-preview-canvas" });
     this.previewCanvas.style.pointerEvents = "none";
     this.previewCtx = this.previewCanvas.getContext("2d");
+    // The paper owns the gestures in editing mode (same as the notebook page).
+    host.style.touchAction = "none";
     host.addEventListener("pointerenter", (event) => this.onPointerEnter(event));
     host.addEventListener("pointerdown", (event) => this.onPointerDown(event));
     host.addEventListener("pointermove", (event) => this.onPointerMove(event));
@@ -944,30 +895,22 @@ export class PdfInkView extends InkWritingView {
     this.layoutPage();
   }
 
-  protected renderInteractionFrame(): void {
-    if (this.activeStroke) this.drawPreview();
-    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+  protected toolbarRoot(): HTMLElement { return this.root!; }
+  protected inputScroller(): HTMLElement { return this.scroller!; }
+  protected applyGestureZoom(value: number, _focus: { x: number; y: number }, _anchor: { x: number; y: number }): void {
+    this.setZoom(value);
   }
-
-  protected drawStrokes(_strokes: InkStroke[]): void {
-    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+  protected onToolSelected(_tool: InkTool): void {
+    // Selecting a tool from reading mode enters editing (PDF-specific affordance).
+    if (this.mode !== "editing") void this.setMode("editing");
   }
-
-  protected drawInteractiveStrokes(_strokes: InkStroke[], _refine?: boolean): void {
-    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+  protected settingsOpen(): boolean { return this.brushPopover?.isOpen ?? false; }
+  protected toggleToolSettings(): void {
+    this.brushPopover.toggle();
   }
-
-  protected beginLassoPreview(_page: InkPage): void {
-    // The dashed drag box drawn by drawSelection tracks the drag; the PDF view
-    // does not lift the selected ink onto a separate canvas while dragging.
-  }
-
-  protected commitLassoPreview(_page: InkPage): void {
-    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
-  }
-
-  protected hideLassoPreview(): void {
-    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+  protected reopenToolSettings(): void {
+    this.brushPopover.open();
+    this.brushPopover.position();
   }
 
   protected resizeOverlay(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, maxPixels: number): boolean {
@@ -990,32 +933,8 @@ export class PdfInkView extends InkWritingView {
   }
 
   private resizeSelectionCanvas(): void {
-    if (!this.selectionCanvas || !this.selectionCtx) return;
-    this.resizeOverlay(this.selectionCanvas, this.selectionCtx, SELECTION_OVERLAY_BUDGET);
-  }
-
-  protected drawSelection(width: number, height: number): void {
-    if (!this.selectionCtx || !this.selectionCanvas) return;
-    const ctx = this.selectionCtx;
-    ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
-    if (this.mode !== "editing") return;
-    ctx.save();
-    ctx.strokeStyle = "#2f80ed";
-    ctx.lineWidth = 1.5;
-    ctx.setLineDash([6, 4]);
-    if (this.lassoPath.length > 1) {
-      ctx.beginPath();
-      ctx.moveTo(this.lassoPath[0].x * width, this.lassoPath[0].y * height);
-      for (const point of this.lassoPath.slice(1)) ctx.lineTo(point.x * width, point.y * height);
-      ctx.closePath();
-      ctx.stroke();
-    }
-    if (this.lassoDrag?.bounds) {
-      const bounds = this.lassoDrag.bounds;
-      ctx.strokeRect((bounds.minX + this.lassoDrag.dx) * width, (bounds.minY + this.lassoDrag.dy) * height,
-        (bounds.maxX - bounds.minX) * width, (bounds.maxY - bounds.minY) * height);
-    }
-    ctx.restore();
+    if (!this.canvas || !this.ctx) return;
+    this.resizeOverlay(this.canvas, this.ctx, SELECTION_OVERLAY_BUDGET);
   }
 
   // ------------------------------------------------------------- rendering
