@@ -1,5 +1,5 @@
 import { InkNotebook, InkStroke, mergeNotebooks, normalizeNotebook } from "./model";
-import { drawInkStroke, penOutline } from "./rendering";
+import { drawInkStroke, penOutlineRings } from "./rendering";
 import {
   InkWorkerRequest,
   InkWorkerResponse,
@@ -394,12 +394,18 @@ function drawWorkerStroke(ctx: CanvasRenderingContext2D, stroke: InkStroke, widt
   let cached = cache.get(stroke.id);
   let outline = cached?.signature === signature ? cached.points : undefined;
   if (!outline) {
-    const points = penOutline(stroke, width, height);
-    outline = new Float32Array(points.length * 2);
-    for (let index = 0; index < points.length; index++) {
-      outline[index * 2] = points[index][0];
-      outline[index * 2 + 1] = points[index][1];
-    }
+    // NaN separators between the stamped rings (discs + trapezoids, all
+    // wound the same direction): one nonzero fill ADDS the overlaps instead
+    // of cancelling them, so retraces and hooks stay solid with no seams.
+    const generated = penOutlineRings(stroke, width, height);
+    const separators = Math.max(0, generated.length - 1);
+    const buffer = new Float32Array((generated.reduce((total, ring) => total + ring.length, 0) + separators) * 2);
+    let cursor = 0;
+    generated.forEach((ring, ringIndex) => {
+      if (ringIndex > 0) { buffer[cursor] = Number.NaN; buffer[cursor + 1] = Number.NaN; cursor += 2; }
+      for (const [x, y] of ring) { buffer[cursor] = x; buffer[cursor + 1] = y; cursor += 2; }
+    });
+    outline = buffer;
     cache.delete(stroke.id);
     cache.set(stroke.id, { signature, points: outline });
     while (cache.size > OUTLINE_CACHE_LIMIT) cache.delete(cache.keys().next().value as string);
@@ -412,24 +418,16 @@ function drawWorkerStroke(ctx: CanvasRenderingContext2D, stroke: InkStroke, widt
   ctx.fillStyle = stroke.color;
   ctx.globalCompositeOperation = "source-over";
   if (outline.length >= 2) {
-    // The outline is the final ink shape; render it as plain polygons so
-    // sparse fast-written corners land exactly where the pen turned. NaN
-    // separators split retraced runs, which fill separately so a retraced
-    // band keeps its ink instead of cancelling its neighbour's winding.
+    ctx.beginPath();
     let tracing = false;
     for (let index = 0; index < outline.length; index += 2) {
       const x = outline[index];
       const y = outline[index + 1];
-      if (!Number.isFinite(x) || !Number.isFinite(y)) {
-        if (tracing) { ctx.closePath(); ctx.fill(); }
-        ctx.beginPath();
-        tracing = false;
-        continue;
-      }
-      if (!tracing) { ctx.beginPath(); tracing = true; ctx.moveTo(x, y); continue; }
+      if (!Number.isFinite(x) || !Number.isFinite(y)) { tracing = false; continue; }
+      if (!tracing) { tracing = true; ctx.moveTo(x, y); continue; }
       ctx.lineTo(x, y);
     }
-    if (tracing) { ctx.closePath(); ctx.fill(); }
+    ctx.fill();
   }
   ctx.restore();
 }
@@ -554,12 +552,17 @@ export function applyNotebookOperation(notebook: InkNotebook, operation: Noteboo
   const cached = cache?.get(outlinedStroke.id);
   let outline = cached?.signature === signature ? cached.points : undefined;
   if (!outline) {
-    const generated = penOutline(outlinedStroke, previewWidth, previewHeight);
-    outline = new Float32Array(generated.length * 2);
-    for (let index = 0; index < generated.length; index++) {
-      outline[index * 2] = generated[index][0];
-      outline[index * 2 + 1] = generated[index][1];
-    }
+    // NaN separators between the stamped rings survive the transfer so the
+    // main thread can trace each ring without stitching them together.
+    const generated = penOutlineRings(outlinedStroke, previewWidth, previewHeight);
+    const separators = Math.max(0, generated.length - 1);
+    const buffer = new Float32Array((generated.reduce((total, ring) => total + ring.length, 0) + separators) * 2);
+    let cursor = 0;
+    generated.forEach((ring, ringIndex) => {
+      if (ringIndex > 0) { buffer[cursor] = Number.NaN; buffer[cursor + 1] = Number.NaN; cursor += 2; }
+      for (const [x, y] of ring) { buffer[cursor] = x; buffer[cursor + 1] = y; cursor += 2; }
+    });
+    outline = buffer;
     if (cache) {
       cache.delete(outlinedStroke.id);
       cache.set(outlinedStroke.id, { signature, points: outline });

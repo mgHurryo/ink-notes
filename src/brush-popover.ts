@@ -1,6 +1,6 @@
 import { setIcon } from "obsidian";
 import { InkTool } from "./model";
-import { penOutline } from "./rendering";
+import { penOutlineRings } from "./rendering";
 
 export type BrushTool = "pen" | "highlighter";
 
@@ -433,7 +433,7 @@ export class BrushPopoverController {
         t: index * 8,
       };
     });
-    const outline = penOutline({
+    const outline = penOutlineRings({
       id: "preview", pageId: "preview", tool: "pen", color: settings.color, width: settings.width,
       opacity: settings.opacity, points, createdAt: 0, updatedAt: 0,
       dynamics: {
@@ -444,17 +444,13 @@ export class BrushPopoverController {
     if (outline.length < 2) return;
     ctx.globalAlpha = settings.opacity;
     ctx.fillStyle = settings.color;
-    let tracing = false;
-    for (const [x, y] of outline) {
-      if (!Number.isFinite(x) || !Number.isFinite(y)) {
-        if (tracing) { ctx.closePath(); ctx.fill(); }
-        tracing = false;
-        continue;
-      }
-      if (!tracing) { ctx.beginPath(); tracing = true; ctx.moveTo(x, y); continue; }
-      ctx.lineTo(x, y);
+    ctx.beginPath();
+    for (const ring of outline) {
+      ctx.moveTo(ring[0][0], ring[0][1]);
+      for (let index = 1; index < ring.length; index++) ctx.lineTo(ring[index][0], ring[index][1]);
+      ctx.closePath();
     }
-    if (tracing) { ctx.closePath(); ctx.fill(); }
+    ctx.fill();
     ctx.globalAlpha = 1;
   }
 
