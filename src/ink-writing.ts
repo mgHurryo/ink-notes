@@ -567,6 +567,41 @@ export abstract class InkWritingView extends FileView {
   protected toggleToolSettings(_anchor: HTMLElement): void {}
   /** Re-open the settings popover at the (new) active tool's anchor. */
   protected reopenToolSettings(): void {}
+  /** The tool button the settings popover currently anchors to. */
+  protected activeSettingsAnchor(): HTMLElement | null {
+    return this.toolbarRoot().querySelector<HTMLElement>(`.ink-tool-button[data-tool="${this.state.tool}"]`);
+  }
+
+  /**
+   * ONE popover entry for both editors: same controller, same tools, same
+   * anchor rule (the active tool button) - the views only differ in an
+   * optional extra class. Opens through re-tapping a tool; there is no
+   * separate settings button on the toolbar.
+   */
+  protected mountBrushSettingsPopover(extraClass?: string): void {
+    this.brushPopover = new BrushPopoverController(this.containerEl, {
+      extraClass,
+      tools: this.brushToolConfigs(),
+      getSettings: (tool) => this.brushSettings(tool),
+      activeTool: () => this.state.tool,
+      showPenDynamics: () => this.state.tool === "pen",
+      onControlsChanged: () => this.updateEraserControls(),
+      anchor: () => this.activeSettingsAnchor(),
+    });
+    this.settingsPanel = this.brushPopover.root;
+  }
+
+  /** The writing tools plus history - the shared middle of every toolbar. */
+  protected buildWritingSections(toolbar: HTMLElement): void {
+    const draw = this.addToolbarSection(toolbar, "Draw");
+    this.addToolButton(draw, "pen-line", "Pen", "pen");
+    this.addToolButton(draw, "highlighter", "Highlight", "highlighter");
+    this.addToolButton(draw, "eraser", "Erase", "eraser");
+    this.addToolButton(draw, "lasso-select", "Select", "lasso");
+    const history = this.addToolbarSection(toolbar, "History");
+    this.addIconButton(history, "undo-2", "Undo", () => this.undo(), this.undoStack.length === 0);
+    this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
+  }
   /** Whether the diagnostics panel wants raw point samples retained. */
   protected diagnosticsCaptureRawPoints(): boolean { return false; }
   /** Called at the top of a new pointerdown, after the input locks. */

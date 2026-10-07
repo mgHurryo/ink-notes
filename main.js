@@ -22264,6 +22264,144 @@ function isPaperStyle(value) {
   return value === "blank" || value === "ruled" || value === "grid" || value === "dot";
 }
 
+// src/pdf-export.ts
+var import_pdf_lib = __toESM(require_cjs());
+var PdfExportError = class extends Error {
+  constructor(reason, message) {
+    super(message);
+    this.reason = reason;
+    this.name = "PdfExportError";
+  }
+};
+function looksDigitallySigned(bytes) {
+  const data = new Uint8Array(bytes);
+  const marker = "/ByteRange";
+  const windowSize = 4096;
+  let tail = "";
+  for (let start = 0; start < data.length; start += windowSize - (marker.length - 1)) {
+    const chunk = data.subarray(start, Math.min(start + windowSize, data.length));
+    tail += String.fromCharCode(...chunk);
+    if (tail.includes(marker)) return true;
+    tail = tail.slice(-(marker.length - 1));
+  }
+  return false;
+}
+function inkToSvgPath(stroke, page) {
+  const points = stroke.points.map((point) => displayToPdfPoint(point.x, point.y, page));
+  return points.map((point, index) => `${index === 0 ? "M" : "L"} ${fmt(point.x)} ${fmt(page.height - point.y)}`).join(" ");
+}
+function displayToPdfPoint(nx, ny, page) {
+  const rotated = page.rotation === 90 || page.rotation === 270;
+  const displayWidth = rotated ? page.height : page.width;
+  const displayHeight = rotated ? page.width : page.height;
+  const dx = nx * displayWidth;
+  const dy = ny * displayHeight;
+  switch (page.rotation) {
+    case 90:
+      return { x: dy, y: dx };
+    case 180:
+      return { x: page.width - dx, y: dy };
+    case 270:
+      return { x: page.width - dy, y: page.height - dx };
+    default:
+      return { x: dx, y: page.height - dy };
+  }
+}
+async function exportNotebookPdf(notebook, sourceName) {
+  const output = await import_pdf_lib.PDFDocument.create();
+  output.setTitle(`${sourceName} (handwritten)`);
+  for (const page of notebook.pages) {
+    const geometry = { id: page.id, width: notebook.pageWidth, height: notebook.pageHeight, rotation: 0 };
+    const pdfPage = output.addPage([notebook.pageWidth, notebook.pageHeight]);
+    for (const stroke of page.strokes) drawStroke(pdfPage, stroke, geometry);
+  }
+  return output.save();
+}
+function notebookHasInk(notebook) {
+  return notebook.pages.some((page) => page.strokes.length > 0);
+}
+function sidecarHasInk(sidecar) {
+  return sidecar.notebook.pages.some((page) => page.strokes.length > 0);
+}
+async function exportHandwrittenPdf(sourceBytes, sidecar, sourceName) {
+  var _a, _b;
+  if (looksDigitallySigned(sourceBytes)) {
+    throw new PdfExportError("signed", "This PDF is digitally signed; exporting would invalidate the signature");
+  }
+  let source;
+  try {
+    source = await import_pdf_lib.PDFDocument.load(sourceBytes, { ignoreEncryption: false, updateMetadata: false });
+  } catch (error) {
+    if (/\bencrypted\b/i.test(String(error == null ? void 0 : error.message))) {
+      throw new PdfExportError("encrypted", "Encrypted PDFs cannot be exported with handwriting");
+    }
+    throw new PdfExportError("corrupt", `This PDF could not be read for export: ${(_a = error == null ? void 0 : error.message) != null ? _a : String(error)}`);
+  }
+  const sourcePages = source.getPages();
+  const output = await import_pdf_lib.PDFDocument.create();
+  output.setTitle(`${sourceName} (handwritten)`);
+  const strokesByPage = new Map(sidecar.notebook.pages.map((page) => [page.id, page.strokes]));
+  for (const notePage of sidecar.notePages) {
+    let page;
+    if (notePage.sourceIndex !== void 0) {
+      if (notePage.sourceIndex >= sourcePages.length) continue;
+      const [copied] = await output.copyPages(source, [notePage.sourceIndex]);
+      page = output.addPage(copied);
+    } else {
+      page = output.addPage([notePage.width, notePage.height]);
+      if (notePage.rotation !== 0) page.setRotation((0, import_pdf_lib.degrees)(notePage.rotation));
+    }
+    for (const stroke of (_b = strokesByPage.get(notePage.id)) != null ? _b : []) {
+      drawStroke(page, stroke, notePage);
+    }
+  }
+  return output.save();
+}
+function drawStroke(page, stroke, notePage) {
+  const { red, green, blue } = parseHexColor(stroke.color);
+  const color = (0, import_pdf_lib.rgb)(red, green, blue);
+  if (stroke.points.length === 1) {
+    const center = displayToPdfPoint(stroke.points[0].x, stroke.points[0].y, notePage);
+    page.drawCircle({ x: center.x, y: center.y, size: stroke.width / 2, color, opacity: stroke.opacity });
+    return;
+  }
+  page.drawSvgPath(inkToSvgPath(stroke, notePage), {
+    borderColor: color,
+    borderWidth: stroke.width,
+    borderOpacity: stroke.opacity,
+    borderLineCap: 1,
+    // round caps, matching the on-screen renderer
+    x: 0,
+    y: notePage.height
+  });
+}
+function parseHexColor(value) {
+  var _a, _b;
+  const hex = (_b = (_a = /^#?([0-9a-f]{6})$/i.exec(value.trim())) == null ? void 0 : _a[1]) != null ? _b : "1b1b1b";
+  return {
+    red: parseInt(hex.slice(0, 2), 16) / 255,
+    green: parseInt(hex.slice(2, 4), 16) / 255,
+    blue: parseInt(hex.slice(4, 6), 16) / 255
+  };
+}
+function exportPathFor(pdfPath, exists) {
+  const slash = pdfPath.lastIndexOf("/");
+  const directory = slash >= 0 ? pdfPath.slice(0, slash) : "";
+  const file = slash >= 0 ? pdfPath.slice(slash + 1) : pdfPath;
+  const dot = file.lastIndexOf(".");
+  const stem = dot > 0 ? file.slice(0, dot) : file;
+  let candidate = joinPath(directory, `${stem} (handwritten).pdf`);
+  let count = 2;
+  while (exists(candidate)) candidate = joinPath(directory, `${stem} (handwritten) ${count++}.pdf`);
+  return candidate;
+}
+function joinPath(directory, file) {
+  return directory ? `${directory}/${file}` : file;
+}
+function fmt(value) {
+  return String(Math.round(value * 100) / 100);
+}
+
 // src/ink-input.ts
 function registerDocumentPointerEndEvents(element, register, onEnd) {
   var _a;
@@ -23667,6 +23805,39 @@ var InkWritingView = class extends import_obsidian2.FileView {
   }
   /** Re-open the settings popover at the (new) active tool's anchor. */
   reopenToolSettings() {
+  }
+  /** The tool button the settings popover currently anchors to. */
+  activeSettingsAnchor() {
+    return this.toolbarRoot().querySelector(`.ink-tool-button[data-tool="${this.state.tool}"]`);
+  }
+  /**
+   * ONE popover entry for both editors: same controller, same tools, same
+   * anchor rule (the active tool button) - the views only differ in an
+   * optional extra class. Opens through re-tapping a tool; there is no
+   * separate settings button on the toolbar.
+   */
+  mountBrushSettingsPopover(extraClass) {
+    this.brushPopover = new BrushPopoverController(this.containerEl, {
+      extraClass,
+      tools: this.brushToolConfigs(),
+      getSettings: (tool) => this.brushSettings(tool),
+      activeTool: () => this.state.tool,
+      showPenDynamics: () => this.state.tool === "pen",
+      onControlsChanged: () => this.updateEraserControls(),
+      anchor: () => this.activeSettingsAnchor()
+    });
+    this.settingsPanel = this.brushPopover.root;
+  }
+  /** The writing tools plus history - the shared middle of every toolbar. */
+  buildWritingSections(toolbar) {
+    const draw = this.addToolbarSection(toolbar, "Draw");
+    this.addToolButton(draw, "pen-line", "Pen", "pen");
+    this.addToolButton(draw, "highlighter", "Highlight", "highlighter");
+    this.addToolButton(draw, "eraser", "Erase", "eraser");
+    this.addToolButton(draw, "lasso-select", "Select", "lasso");
+    const history = this.addToolbarSection(toolbar, "History");
+    this.addIconButton(history, "undo-2", "Undo", () => this.undo(), this.undoStack.length === 0);
+    this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
   }
   /** Whether the diagnostics panel wants raw point samples retained. */
   diagnosticsCaptureRawPoints() {
@@ -26338,9 +26509,6 @@ var InkView = class extends InkWritingView {
     /** Reading mode: view-only. Ink tools, the popover and eraser tracking are
      *  disabled and the page restores native panning/scrolling. */
     this.readingMode = false;
-    this.sizePopover = null;
-    this.sizePopoverButton = null;
-    this.sizePopoverOpen = false;
     this.pageNavigationGeneration = 0;
     this.devPanel = null;
     this.swipeStage = null;
@@ -26377,8 +26545,27 @@ var InkView = class extends InkWritingView {
     this.root.setAttribute("aria-label", "Ink Notes");
     this.root.createDiv({ cls: "ink-toolbar", attr: { role: "toolbar", "aria-label": "Ink tools" } });
     this.root.createSpan({ cls: "ink-page-status", attr: { "aria-live": "polite" } });
+    this.mountBrushSettingsPopover();
     this.renderToolbar();
     this.renderCanvas();
+    this.register(() => this.closeEraserPopover());
+    this.registerDomEvent(document, "pointerdown", (event) => {
+      var _a;
+      if (!this.brushPopover.isOpen) return;
+      const target = event.target;
+      if (target && ((_a = target.closest) == null ? void 0 : _a.call(target, ".ink-tool-button"))) return;
+      if (target && this.brushPopover.root.contains(target)) return;
+      this.brushPopover.close();
+    });
+    this.registerDomEvent(document, "keydown", (event) => {
+      var _a;
+      if (event.key === "Escape" && this.brushPopover.isOpen) {
+        this.brushPopover.close();
+        (_a = this.activeToolButton()) == null ? void 0 : _a.focus();
+      }
+    });
+    this.registerDomEvent(window, "resize", () => this.brushPopover.position());
+    this.registerDomEvent(window, "scroll", () => this.brushPopover.position(), true);
     this.viewReady = true;
     this.renderAll();
   }
@@ -26465,10 +26652,7 @@ var InkView = class extends InkWritingView {
   renderToolbar() {
     const toolbar = this.root.querySelector(".ink-toolbar");
     toolbar.empty();
-    const group = toolbar;
-    const settings = this.addToolbarSection(group, "Settings");
-    this.addSizePopover(settings);
-    const navigation = this.addToolbarSection(group, "Pages");
+    const navigation = this.addToolbarSection(toolbar, "Pages");
     const toggle = this.addIconButton(navigation, "panel-left", "Pages", () => {
       const hidden = !this.root.hasClass("ink-rail-hidden");
       this.root.toggleClass("ink-rail-hidden", hidden);
@@ -26476,77 +26660,30 @@ var InkView = class extends InkWritingView {
       this.resizeCanvas();
     });
     toggle.setAttribute("aria-pressed", String(!this.root.hasClass("ink-rail-hidden")));
-    const tools = this.addToolbarSection(group, "Draw");
-    this.addToolButton(tools, "pen-line", "Pen", "pen");
-    this.addToolButton(tools, "highlighter", "Highlight", "highlighter");
-    this.addToolButton(tools, "eraser", "Erase", "eraser");
-    this.addToolButton(tools, "lasso-select", "Select", "lasso");
-    const history = this.addToolbarSection(group, "History");
-    this.addIconButton(history, "undo-2", "Undo", () => this.undo(), this.undoStack.length === 0);
-    this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
-    const pages = this.addToolbarSection(group, "Document");
-    this.addIconButton(pages, "more-horizontal", "Page options", (event) => this.openPageMenu(event));
+    this.buildWritingSections(toolbar);
+    const document_ = this.addToolbarSection(toolbar, "Document");
+    this.addIconButton(document_, "more-horizontal", "Page options", (event) => this.openPageMenu(event));
+    this.addIconButton(document_, "download", "Export as PDF", () => void this.exportNotebookCopy());
     this.updateToolButtons();
   }
-  addSizePopover(parent) {
-    const container = parent.createDiv({ cls: "ink-size-popover-control" });
-    const button = container.createEl("button", {
-      cls: "ink-icon-button",
-      attr: {
-        type: "button",
-        "aria-label": "Brush settings",
-        "aria-haspopup": "dialog"
-      }
-    });
-    (0, import_obsidian3.setIcon)(button.createSpan({ cls: "ink-button-icon" }), "sliders-horizontal");
-    const brushPopover = new BrushPopoverController(container, {
-      tools: this.brushToolConfigs(),
-      getSettings: (tool) => this.brushSettings(tool),
-      activeTool: () => this.state.tool,
-      showPenDynamics: () => this.state.tool === "pen",
-      onControlsChanged: () => this.updateEraserControls(),
-      anchor: () => {
-        var _a;
-        return (_a = this.activeToolButton()) != null ? _a : this.sizePopoverButton;
-      }
-    });
-    this.sizePopover = brushPopover.root;
-    this.settingsPanel = brushPopover.root;
-    this.sizePopoverButton = button;
-    this.brushPopover = brushPopover;
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      this.setSizePopoverOpen(!this.sizePopoverOpen);
-    });
-    this.registerDomEvent(document, "pointerdown", (event) => {
-      var _a;
-      const target = event.target;
-      const switchingSettingsTool = (_a = target == null ? void 0 : target.closest) == null ? void 0 : _a.call(target, ".ink-tool-button[aria-haspopup='dialog']");
-      if (this.sizePopoverOpen && !container.contains(target) && !switchingSettingsTool) this.setSizePopoverOpen(false);
-    });
-    this.registerDomEvent(document, "keydown", (event) => {
-      var _a;
-      if (event.key === "Escape" && this.sizePopoverOpen) {
-        this.setSizePopoverOpen(false);
-        (_a = this.activeToolButton()) == null ? void 0 : _a.focus();
-      }
-    });
-    this.registerDomEvent(window, "resize", () => this.brushPopover.position());
-    this.registerDomEvent(window, "scroll", () => this.brushPopover.position(), true);
-  }
-  setSizePopoverOpen(open) {
-    this.sizePopoverOpen = open;
-    open ? this.brushPopover.open() : this.brushPopover.close();
-    this.root.querySelectorAll(".ink-tool-button[aria-haspopup='dialog']").forEach((button) => {
-      button.setAttribute("aria-expanded", String(open && button.dataset.tool === this.state.tool));
-    });
-    if (open) {
-      window.requestAnimationFrame(() => {
-        var _a, _b;
-        const focusTarget = this.state.tool === "eraser" ? ".ink-eraser-mode" : `.ink-brush-settings[data-brush-tool="${this.state.tool}"] input, .ink-brush-settings[data-brush-tool="${this.state.tool}"] button`;
-        (_b = (_a = this.sizePopover) == null ? void 0 : _a.querySelector(focusTarget)) == null ? void 0 : _b.focus();
-      });
+  /** Vector-exports the whole notebook as a PDF next to the notebook file. */
+  async exportNotebookCopy() {
+    if (!this.file) return;
+    if (!notebookHasInk(this.notebook)) {
+      new import_obsidian3.Notice("This notebook has no handwriting to export yet");
+      return;
     }
+    try {
+      const output = await exportNotebookPdf(this.notebook, this.file.basename);
+      const target = exportPathFor(this.file.path, (candidate) => this.app.vault.getAbstractFileByPath(candidate) !== null);
+      await this.app.vault.createBinary(target, output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength));
+      new import_obsidian3.Notice(`Exported ${target}`);
+    } catch (error) {
+      new import_obsidian3.Notice(`Export failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  addSizePopover() {
+    this.mountBrushSettingsPopover();
   }
   activeToolButton() {
     return this.root.querySelector(`.ink-toolbar [data-tool="${this.state.tool}"]`);
@@ -26871,21 +27008,22 @@ var InkView = class extends InkWritingView {
     this.swipeStage = null;
   }
   settingsOpen() {
-    return this.state.tool === "eraser" ? this.eraserPopover !== null : this.sizePopoverOpen;
+    return this.state.tool === "eraser" ? this.eraserPopover !== null : this.brushPopover.isOpen;
   }
   toggleToolSettings(anchor) {
     if (this.state.tool === "eraser") {
       this.toggleEraserPopover(anchor);
       return;
     }
-    this.setSizePopoverOpen(!this.sizePopoverOpen);
+    if (this.brushPopover.isOpen) this.brushPopover.close();
+    else this.brushPopover.open();
   }
   reopenToolSettings() {
     if (this.state.tool === "eraser") {
       if (!this.eraserPopover) this.toggleEraserPopover(this.activeToolButton());
       return;
     }
-    this.setSizePopoverOpen(true);
+    this.brushPopover.open();
     this.brushPopover.position();
   }
   receiveMergedNotebook(notebook, alreadyMerged = false) {
@@ -27295,57 +27433,6 @@ page: ${this.currentPage().id}
   /** Renders the pressure mapping editor: grid, identity guide, curve and
    *  control points. Skipped while the popover has no layout (it is built
    *  display:none and drawn when opened). */
-  drawPressureCurveEditor(settings) {
-    var _a;
-    const canvas = (_a = this.sizePopover) == null ? void 0 : _a.querySelector(`.ink-brush-settings[data-brush-tool="pen"] .ink-curve-editor-canvas`);
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const w = canvas.clientWidth, h = canvas.clientHeight;
-    if (w < 10 || h < 10) return;
-    const ratio = Math.max(1, window.devicePixelRatio || 1);
-    if (canvas.width !== Math.round(w * ratio)) canvas.width = Math.round(w * ratio);
-    if (canvas.height !== Math.round(h * ratio)) canvas.height = Math.round(h * ratio);
-    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-    ctx.clearRect(0, 0, w, h);
-    ctx.strokeStyle = "#8a8f98";
-    ctx.globalAlpha = 0.35;
-    ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
-    ctx.beginPath();
-    ctx.moveTo(0, h);
-    ctx.lineTo(w, 0);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-    const points = settings.pressureCurve ? settings.pressureCurve.map((point) => [...point]) : [[0, 0], [1, 1]];
-    const sampleY = (x) => {
-      if (x <= points[0][0]) return points[0][1];
-      if (x >= points[points.length - 1][0]) return points[points.length - 1][1];
-      let index = 1;
-      while (points[index][0] < x) index++;
-      const span = points[index][0] - points[index - 1][0];
-      const amount = span > 0 ? (x - points[index - 1][0]) / span : 0;
-      return points[index - 1][1] + (points[index][1] - points[index - 1][1]) * amount;
-    };
-    ctx.strokeStyle = settings.color;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    for (let step = 0; step <= 48; step++) {
-      const x = step / 48;
-      const sx = x * w, sy = (1 - sampleY(x)) * h;
-      if (step === 0) ctx.moveTo(sx, sy);
-      else ctx.lineTo(sx, sy);
-    }
-    ctx.stroke();
-    for (const point of points) {
-      ctx.fillStyle = settings.color;
-      ctx.beginPath();
-      ctx.arc(point[0] * w, (1 - point[1]) * h, 5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    }
-  }
   layoutPage() {
     const style = getComputedStyle(this.pageScroller);
     const paddingLeft = parseFloat(style.paddingLeft) || 0;
@@ -28241,131 +28328,6 @@ function serializeSidecar(sidecar) {
 `;
 }
 
-// src/pdf-export.ts
-var import_pdf_lib = __toESM(require_cjs());
-var PdfExportError = class extends Error {
-  constructor(reason, message) {
-    super(message);
-    this.reason = reason;
-    this.name = "PdfExportError";
-  }
-};
-function looksDigitallySigned(bytes) {
-  const data = new Uint8Array(bytes);
-  const marker = "/ByteRange";
-  const windowSize = 4096;
-  let tail = "";
-  for (let start = 0; start < data.length; start += windowSize - (marker.length - 1)) {
-    const chunk = data.subarray(start, Math.min(start + windowSize, data.length));
-    tail += String.fromCharCode(...chunk);
-    if (tail.includes(marker)) return true;
-    tail = tail.slice(-(marker.length - 1));
-  }
-  return false;
-}
-function inkToSvgPath(stroke, page) {
-  const points = stroke.points.map((point) => displayToPdfPoint(point.x, point.y, page));
-  return points.map((point, index) => `${index === 0 ? "M" : "L"} ${fmt(point.x)} ${fmt(page.height - point.y)}`).join(" ");
-}
-function displayToPdfPoint(nx, ny, page) {
-  const rotated = page.rotation === 90 || page.rotation === 270;
-  const displayWidth = rotated ? page.height : page.width;
-  const displayHeight = rotated ? page.width : page.height;
-  const dx = nx * displayWidth;
-  const dy = ny * displayHeight;
-  switch (page.rotation) {
-    case 90:
-      return { x: dy, y: dx };
-    case 180:
-      return { x: page.width - dx, y: dy };
-    case 270:
-      return { x: page.width - dy, y: page.height - dx };
-    default:
-      return { x: dx, y: page.height - dy };
-  }
-}
-function sidecarHasInk(sidecar) {
-  return sidecar.notebook.pages.some((page) => page.strokes.length > 0);
-}
-async function exportHandwrittenPdf(sourceBytes, sidecar, sourceName) {
-  var _a, _b;
-  if (looksDigitallySigned(sourceBytes)) {
-    throw new PdfExportError("signed", "This PDF is digitally signed; exporting would invalidate the signature");
-  }
-  let source;
-  try {
-    source = await import_pdf_lib.PDFDocument.load(sourceBytes, { ignoreEncryption: false, updateMetadata: false });
-  } catch (error) {
-    if (/\bencrypted\b/i.test(String(error == null ? void 0 : error.message))) {
-      throw new PdfExportError("encrypted", "Encrypted PDFs cannot be exported with handwriting");
-    }
-    throw new PdfExportError("corrupt", `This PDF could not be read for export: ${(_a = error == null ? void 0 : error.message) != null ? _a : String(error)}`);
-  }
-  const sourcePages = source.getPages();
-  const output = await import_pdf_lib.PDFDocument.create();
-  output.setTitle(`${sourceName} (handwritten)`);
-  const strokesByPage = new Map(sidecar.notebook.pages.map((page) => [page.id, page.strokes]));
-  for (const notePage of sidecar.notePages) {
-    let page;
-    if (notePage.sourceIndex !== void 0) {
-      if (notePage.sourceIndex >= sourcePages.length) continue;
-      const [copied] = await output.copyPages(source, [notePage.sourceIndex]);
-      page = output.addPage(copied);
-    } else {
-      page = output.addPage([notePage.width, notePage.height]);
-      if (notePage.rotation !== 0) page.setRotation((0, import_pdf_lib.degrees)(notePage.rotation));
-    }
-    for (const stroke of (_b = strokesByPage.get(notePage.id)) != null ? _b : []) {
-      drawStroke(page, stroke, notePage);
-    }
-  }
-  return output.save();
-}
-function drawStroke(page, stroke, notePage) {
-  const { red, green, blue } = parseHexColor(stroke.color);
-  const color = (0, import_pdf_lib.rgb)(red, green, blue);
-  if (stroke.points.length === 1) {
-    const center = displayToPdfPoint(stroke.points[0].x, stroke.points[0].y, notePage);
-    page.drawCircle({ x: center.x, y: center.y, size: stroke.width / 2, color, opacity: stroke.opacity });
-    return;
-  }
-  page.drawSvgPath(inkToSvgPath(stroke, notePage), {
-    borderColor: color,
-    borderWidth: stroke.width,
-    borderOpacity: stroke.opacity,
-    borderLineCap: 1,
-    // round caps, matching the on-screen renderer
-    x: 0,
-    y: notePage.height
-  });
-}
-function parseHexColor(value) {
-  var _a, _b;
-  const hex = (_b = (_a = /^#?([0-9a-f]{6})$/i.exec(value.trim())) == null ? void 0 : _a[1]) != null ? _b : "1b1b1b";
-  return {
-    red: parseInt(hex.slice(0, 2), 16) / 255,
-    green: parseInt(hex.slice(2, 4), 16) / 255,
-    blue: parseInt(hex.slice(4, 6), 16) / 255
-  };
-}
-function exportPathFor(pdfPath, exists) {
-  const slash = pdfPath.lastIndexOf("/");
-  const directory = slash >= 0 ? pdfPath.slice(0, slash) : "";
-  const file = slash >= 0 ? pdfPath.slice(slash + 1) : pdfPath;
-  const dot = file.lastIndexOf(".");
-  const stem = dot > 0 ? file.slice(0, dot) : file;
-  let candidate = joinPath(directory, `${stem} (handwritten).pdf`);
-  let count = 2;
-  while (exists(candidate)) candidate = joinPath(directory, `${stem} (handwritten) ${count++}.pdf`);
-  return candidate;
-}
-function joinPath(directory, file) {
-  return directory ? `${directory}/${file}` : file;
-}
-function fmt(value) {
-  return String(Math.round(value * 100) / 100);
-}
-
 // src/pdf-view.ts
 var VIEW_TYPE_PDF_INK = "ink-notes-pdf-view";
 var SAVE_CONFLICT_RETRIES2 = 3;
@@ -28457,6 +28419,7 @@ var PdfInkView = class extends InkWritingView {
     this.pageWrap = scroller.createDiv({ cls: "ink-pdf-page-wrap" });
     this.pdfCanvas = this.pageWrap.createEl("canvas", { cls: "ink-pdf-canvas" });
     this.buildInkHost();
+    this.mountBrushSettingsPopover();
     this.viewReady = true;
     this.registerDomEvent(scroller, "scroll", () => this.onViewportMotion(), { passive: true });
     this.registerDomEvent(scroller, "touchstart", (event) => this.onTouchStart(event), { passive: false });
@@ -28775,20 +28738,7 @@ var PdfInkView = class extends InkWritingView {
   // -------------------------------------------------------------- toolbar
   renderToolbar(root) {
     const toolbar = root.createDiv({ cls: "ink-pdf-toolbar" });
-    const settingsGroup = this.addToolbarSection(toolbar, "Settings");
-    this.addBrushPopover(settingsGroup);
-    const toolGroup = this.addToolbarSection(toolbar, "Draw");
-    this.addToolButton(toolGroup, "pen-line", "Pen", "pen");
-    this.addToolButton(toolGroup, "highlighter", "Highlight", "highlighter");
-    this.addToolButton(toolGroup, "eraser", "Erase", "eraser");
-    this.addToolButton(toolGroup, "lasso-select", "Select", "lasso");
-    const historyGroup = this.addToolbarSection(toolbar, "History");
-    this.addTrackedIconButton(historyGroup, "undo", "undo-2", "Undo", () => {
-      if (!this.editingLocked()) this.undo();
-    }, this.undoStack.length === 0);
-    this.addTrackedIconButton(historyGroup, "redo", "redo-2", "Redo", () => {
-      if (!this.editingLocked()) this.redo();
-    }, this.redoStack.length === 0);
+    this.buildWritingSections(toolbar);
     const pagesGroup = this.addToolbarSection(toolbar, "Pages");
     const indicator = pagesGroup.createDiv({ cls: "ink-pdf-page-indicator" });
     indicator.setText("\u2013");
@@ -28808,31 +28758,8 @@ var PdfInkView = class extends InkWritingView {
     const button = this.addIconButton(parent, icon, label, onClick, disabled);
     this.toolbarButtons.set(key, button);
   }
-  addBrushPopover(parent) {
-    const button = parent.createEl("button", {
-      cls: "ink-icon-button",
-      attr: { type: "button", "aria-label": "Brush settings", "aria-haspopup": "dialog" }
-    });
-    (0, import_obsidian7.setIcon)(button.createSpan({ cls: "ink-button-icon" }), "sliders-horizontal");
-    this.toolbarButtons.set("brush", button);
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      this.brushPopover.toggle();
-    });
-    this.registerDomEvent(document, "pointerdown", (event) => {
-      const target = event.target;
-      if (!this.brushPopover.isOpen) return;
-      if (target && (this.brushPopover.root.contains(target) || button.contains(target))) return;
-      this.brushPopover.close();
-    });
-    this.registerDomEvent(document, "keydown", (event) => {
-      if (event.key === "Escape" && this.brushPopover.isOpen) {
-        this.brushPopover.close();
-        button.focus();
-      }
-    });
-    this.registerDomEvent(window, "scroll", () => this.brushPopover.position(), true);
-    this.brushPopover = new BrushPopoverController(this.root, {
+  mountBrushSettingsPopover() {
+    this.brushPopover = new BrushPopoverController(this.containerEl, {
       // Extra class scopes the PDF-surface rules (paper canvases, spacing).
       extraClass: "ink-pdf-brush-popover",
       tools: this.brushToolConfigs(),
@@ -28840,12 +28767,25 @@ var PdfInkView = class extends InkWritingView {
       activeTool: () => this.state.tool,
       showPenDynamics: () => this.state.tool === "pen",
       onControlsChanged: () => this.updateEraserControls(),
-      anchor: () => {
-        var _a;
-        return (_a = this.toolbarButtons.get("brush")) != null ? _a : null;
-      }
+      anchor: () => this.activeSettingsAnchor()
     });
     this.settingsPanel = this.brushPopover.root;
+    this.registerDomEvent(document, "pointerdown", (event) => {
+      var _a;
+      if (!this.brushPopover.isOpen) return;
+      const target = event.target;
+      if (target && ((_a = target.closest) == null ? void 0 : _a.call(target, ".ink-tool-button"))) return;
+      if (target && this.brushPopover.root.contains(target)) return;
+      this.brushPopover.close();
+    });
+    this.registerDomEvent(document, "keydown", (event) => {
+      var _a;
+      if (event.key === "Escape" && this.brushPopover.isOpen) {
+        this.brushPopover.close();
+        (_a = this.activeSettingsAnchor()) == null ? void 0 : _a.focus();
+      }
+    });
+    this.registerDomEvent(window, "scroll", () => this.brushPopover.position(), true);
   }
   updatePageIndicator() {
     const indicator = this.toolbarButtons.get("indicator");
