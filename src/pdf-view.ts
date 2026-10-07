@@ -25,7 +25,9 @@ import { PdfTabTakeover } from "./pdf-takeover";
 export const VIEW_TYPE_PDF_INK = "ink-notes-pdf-view";
 
 const SAVE_CONFLICT_RETRIES = 3;
-const PDF_ZOOM_MIN = 0.5;
+// Zooming out below fit-width just floats the page in empty canvas; the
+// smallest PDF zoom is the fitted size.
+const PDF_ZOOM_MIN = 1;
 const PDF_ZOOM_MAX = 3;
 const PDF_ZOOM_STEP = 1.2;
 const PDF_PAGE_PADDING = 24;
@@ -663,7 +665,7 @@ export class PdfInkView extends InkWritingView {
     this.scheduleSave();
   }
 
-  navigatePages(delta: number): void {
+  async navigatePages(delta: number): Promise<void> {
     const count = this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 1;
     const next = this.noteIndex + delta;
     if (next < 0 || next >= count) return;
@@ -672,7 +674,7 @@ export class PdfInkView extends InkWritingView {
     this.updatePageIndicator();
     this.layoutPage();
     this.renderAll();
-    void this.renderPdfPage();
+    await this.renderPdfPage();
   }
 
   private setZoom(zoom: number, target?: { x: number; y: number }, anchor?: { x: number; y: number }): void {
@@ -926,15 +928,20 @@ export class PdfInkView extends InkWritingView {
       }
       return;
     }
+    // The neighbour page slides all the way INTO the page slot while the
+    // current page slides out; the stage then keeps covering the slot until
+    // the real page has rendered underneath, so the old canvas never flashes.
+    const side = Number(this.swipeStage.dataset.neighbor) - this.noteIndex;
     const width = wrap.offsetWidth;
-    wrap.setCssStyles({ transition: "transform 200ms ease-out", transform: `translateX(${delta === 1 ? -width : width}px)` });
-    this.swipeStage!.setCssStyles({ transition: "transform 200ms ease-out", transform: "translateX(0px)" });
+    wrap.setCssStyles({ transition: "transform 200ms ease-out", transform: `translateX(${-delta * width}px)` });
+    this.swipeStage.setCssStyles({ transition: "transform 200ms ease-out", transform: `translateX(${-side * width}px)` });
     if (this.swipeStageTimer !== undefined) window.clearTimeout(this.swipeStageTimer);
     this.swipeStageTimer = window.setTimeout(() => {
       this.swipeStageTimer = undefined;
-      this.destroySwipeStage();
+      const stage = this.swipeStage;
+      if (stage) stage.setCssStyles({ transition: "none", left: `${wrap.offsetLeft}px`, transform: "none" });
       wrap.setCssStyles({ transition: "none", transform: "none" });
-      this.navigatePages(delta);
+      void this.navigatePages(delta).finally(() => this.destroySwipeStage());
     }, 210);
   }
 
@@ -991,13 +998,15 @@ export class PdfInkView extends InkWritingView {
     const notePage = this.currentNotePage();
     const display = this.rotatedSize(notePage);
     const scale = (window.devicePixelRatio || 1) * this.zoom;
-    canvas.width = Math.max(1, Math.round(display.width * scale));
-    canvas.height = Math.max(1, Math.round(display.height * scale));
+    const targetWidth = Math.max(1, Math.round(display.width * scale));
+    const targetHeight = Math.max(1, Math.round(display.height * scale));
     canvas.setCssStyles({ width: "100%", height: "100%" });
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
     if (!notePage || notePage.sourceIndex === undefined || !this.pdfDoc) {
       // A blank note page: plain paper, ink only.
+      if (canvas.width !== targetWidth) canvas.width = targetWidth;
+      if (canvas.height !== targetHeight) canvas.height = targetHeight;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       return;
@@ -1005,12 +1014,22 @@ export class PdfInkView extends InkWritingView {
     try {
       const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
       if (generation !== this.pdfRenderGeneration) return;
+      // Double-buffer: render offscreen and only swap onto the visible
+      // canvas once the frame is complete. Assigning the visible canvas
+      // dimensions wipes it, which flashed the page blank on every zoom
+      // step and on every pane resize.
       const viewport = page.getViewport({ scale });
-      const task = page.render({ canvasContext: ctx, viewport });
+      const buffer = document.createElement("canvas");
+      buffer.width = targetWidth;
+      buffer.height = targetHeight;
+      const task = page.render({ canvasContext: buffer.getContext("2d")!, viewport });
       this.pdfRenderTask = task;
       await task.promise;
       if (generation !== this.pdfRenderGeneration) return;
       this.pdfRenderTask = null;
+      if (canvas.width !== targetWidth) canvas.width = targetWidth;
+      if (canvas.height !== targetHeight) canvas.height = targetHeight;
+      canvas.getContext("2d")?.drawImage(buffer, 0, 0);
     } catch (error) {
       if (this.pdfjs?.RenderingCancelledException && error instanceof this.pdfjs.RenderingCancelledException) return;
       if (generation === this.pdfRenderGeneration) this.setStatus(`Could not render this page: ${messageOf(error)}`, true);

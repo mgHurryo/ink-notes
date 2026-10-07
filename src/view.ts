@@ -571,18 +571,27 @@ export class InkView extends InkWritingView {
       }
       return;
     }
+    // Same gallery geometry as the PDF view: the neighbour slides into the
+    // page slot and covers it until the real page renders underneath.
+    const side = Number(this.swipeStage.dataset.neighbor) - this.pageIndex;
     const width = extent.offsetWidth;
     extent.style.transition = "transform 200ms ease-out";
-    extent.style.transform = `translateX(${delta === 1 ? -width : width}px)`;
+    extent.style.transform = `translateX(${-delta * width}px)`;
     this.swipeStage.style.transition = "transform 200ms ease-out";
-    this.swipeStage.style.transform = "translateX(0px)";
+    this.swipeStage.style.transform = `translateX(${-side * width}px)`;
     if (this.swipeStageTimer !== undefined) window.clearTimeout(this.swipeStageTimer);
     this.swipeStageTimer = window.setTimeout(() => {
       this.swipeStageTimer = undefined;
-      this.destroySwipeStage();
+      const stage = this.swipeStage;
+      if (stage) {
+        stage.style.transition = "none";
+        stage.style.left = `${extent.offsetLeft}px`;
+        stage.style.transform = "none";
+      }
       extent.style.transition = "none";
       extent.style.transform = "none";
       this.changePage(delta);
+      this.swipeStageTimer = window.setTimeout(() => { this.swipeStageTimer = undefined; this.destroySwipeStage(); }, 450);
     }, 210);
   }
 

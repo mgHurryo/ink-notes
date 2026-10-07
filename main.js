@@ -24237,7 +24237,9 @@ var InkWritingView = class extends import_obsidian2.FileView {
   }
   // ---------------------------------------------------------------- touch
   onTouchStart(event) {
+    var _a;
     if (this.inputLocked()) return;
+    (_a = event.stopPropagation) == null ? void 0 : _a.call(event);
     if (this.onStylusTouch(event)) return;
     if (event.cancelable && event.touches.length < 2) event.preventDefault();
     this.settlePageFlip(event);
@@ -24289,6 +24291,8 @@ var InkWritingView = class extends import_obsidian2.FileView {
     if (Date.now() - this.lastPointerActivityAt > 2500) this.finishPointerInput(false);
   }
   onTouchMove(event) {
+    var _a;
+    (_a = event.stopPropagation) == null ? void 0 : _a.call(event);
     if (this.inputLocked()) return;
     if (this.onStylusTouch(event)) return;
     if (this.activePointerId !== null) {
@@ -26769,18 +26773,28 @@ var InkView = class extends InkWritingView {
       }
       return;
     }
+    const side = Number(this.swipeStage.dataset.neighbor) - this.pageIndex;
     const width = extent.offsetWidth;
     extent.style.transition = "transform 200ms ease-out";
-    extent.style.transform = `translateX(${delta === 1 ? -width : width}px)`;
+    extent.style.transform = `translateX(${-delta * width}px)`;
     this.swipeStage.style.transition = "transform 200ms ease-out";
-    this.swipeStage.style.transform = "translateX(0px)";
+    this.swipeStage.style.transform = `translateX(${-side * width}px)`;
     if (this.swipeStageTimer !== void 0) window.clearTimeout(this.swipeStageTimer);
     this.swipeStageTimer = window.setTimeout(() => {
       this.swipeStageTimer = void 0;
-      this.destroySwipeStage();
+      const stage = this.swipeStage;
+      if (stage) {
+        stage.style.transition = "none";
+        stage.style.left = `${extent.offsetLeft}px`;
+        stage.style.transform = "none";
+      }
       extent.style.transition = "none";
       extent.style.transform = "none";
       this.changePage(delta);
+      this.swipeStageTimer = window.setTimeout(() => {
+        this.swipeStageTimer = void 0;
+        this.destroySwipeStage();
+      }, 450);
     }, 210);
   }
   destroySwipeStage() {
@@ -28281,7 +28295,7 @@ function fmt(value) {
 // src/pdf-view.ts
 var VIEW_TYPE_PDF_INK = "ink-notes-pdf-view";
 var SAVE_CONFLICT_RETRIES2 = 3;
-var PDF_ZOOM_MIN = 0.5;
+var PDF_ZOOM_MIN = 1;
 var PDF_ZOOM_MAX = 3;
 var PDF_ZOOM_STEP = 1.2;
 var PDF_PAGE_PADDING = 24;
@@ -28812,7 +28826,7 @@ var PdfInkView = class extends InkWritingView {
     this.dirty = true;
     this.scheduleSave();
   }
-  navigatePages(delta) {
+  async navigatePages(delta) {
     var _a, _b, _c, _d;
     const count = (_d = (_c = (_a = this.sidecar) == null ? void 0 : _a.notePages.length) != null ? _c : (_b = this.pdfDoc) == null ? void 0 : _b.numPages) != null ? _d : 1;
     const next = this.noteIndex + delta;
@@ -28822,7 +28836,7 @@ var PdfInkView = class extends InkWritingView {
     this.updatePageIndicator();
     this.layoutPage();
     this.renderAll();
-    void this.renderPdfPage();
+    await this.renderPdfPage();
   }
   setZoom(zoom, target, anchor) {
     const clamped = Math.max(PDF_ZOOM_MIN, Math.min(PDF_ZOOM_MAX, zoom));
@@ -29055,15 +29069,17 @@ var PdfInkView = class extends InkWritingView {
       }
       return;
     }
+    const side = Number(this.swipeStage.dataset.neighbor) - this.noteIndex;
     const width = wrap.offsetWidth;
-    wrap.setCssStyles({ transition: "transform 200ms ease-out", transform: `translateX(${delta === 1 ? -width : width}px)` });
-    this.swipeStage.setCssStyles({ transition: "transform 200ms ease-out", transform: "translateX(0px)" });
+    wrap.setCssStyles({ transition: "transform 200ms ease-out", transform: `translateX(${-delta * width}px)` });
+    this.swipeStage.setCssStyles({ transition: "transform 200ms ease-out", transform: `translateX(${-side * width}px)` });
     if (this.swipeStageTimer !== void 0) window.clearTimeout(this.swipeStageTimer);
     this.swipeStageTimer = window.setTimeout(() => {
       this.swipeStageTimer = void 0;
-      this.destroySwipeStage();
+      const stage = this.swipeStage;
+      if (stage) stage.setCssStyles({ transition: "none", left: `${wrap.offsetLeft}px`, transform: "none" });
       wrap.setCssStyles({ transition: "none", transform: "none" });
-      this.navigatePages(delta);
+      void this.navigatePages(delta).finally(() => this.destroySwipeStage());
     }, 210);
   }
   destroySwipeStage() {
@@ -29113,7 +29129,7 @@ var PdfInkView = class extends InkWritingView {
     this.pdfRenderTask = null;
   }
   async renderPdfPage() {
-    var _a;
+    var _a, _b;
     const canvas = this.pdfCanvas;
     if (!canvas) return;
     const generation = ++this.pdfRenderGeneration;
@@ -29121,12 +29137,14 @@ var PdfInkView = class extends InkWritingView {
     const notePage = this.currentNotePage();
     const display = this.rotatedSize(notePage);
     const scale = (window.devicePixelRatio || 1) * this.zoom;
-    canvas.width = Math.max(1, Math.round(display.width * scale));
-    canvas.height = Math.max(1, Math.round(display.height * scale));
+    const targetWidth = Math.max(1, Math.round(display.width * scale));
+    const targetHeight = Math.max(1, Math.round(display.height * scale));
     canvas.setCssStyles({ width: "100%", height: "100%" });
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
     if (!notePage || notePage.sourceIndex === void 0 || !this.pdfDoc) {
+      if (canvas.width !== targetWidth) canvas.width = targetWidth;
+      if (canvas.height !== targetHeight) canvas.height = targetHeight;
+      const ctx = canvas.getContext("2d");
+      if (!ctx) return;
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       return;
@@ -29135,13 +29153,19 @@ var PdfInkView = class extends InkWritingView {
       const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
       if (generation !== this.pdfRenderGeneration) return;
       const viewport = page.getViewport({ scale });
-      const task = page.render({ canvasContext: ctx, viewport });
+      const buffer = document.createElement("canvas");
+      buffer.width = targetWidth;
+      buffer.height = targetHeight;
+      const task = page.render({ canvasContext: buffer.getContext("2d"), viewport });
       this.pdfRenderTask = task;
       await task.promise;
       if (generation !== this.pdfRenderGeneration) return;
       this.pdfRenderTask = null;
+      if (canvas.width !== targetWidth) canvas.width = targetWidth;
+      if (canvas.height !== targetHeight) canvas.height = targetHeight;
+      (_a = canvas.getContext("2d")) == null ? void 0 : _a.drawImage(buffer, 0, 0);
     } catch (error) {
-      if (((_a = this.pdfjs) == null ? void 0 : _a.RenderingCancelledException) && error instanceof this.pdfjs.RenderingCancelledException) return;
+      if (((_b = this.pdfjs) == null ? void 0 : _b.RenderingCancelledException) && error instanceof this.pdfjs.RenderingCancelledException) return;
       if (generation === this.pdfRenderGeneration) this.setStatus(`Could not render this page: ${messageOf(error)}`, true);
       return;
     }
