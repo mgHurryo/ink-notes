@@ -424,8 +424,6 @@
 
 .ink-range-header { margin-bottom: 3px; font-size: 12px; font-weight: 500; }
 
-.ink-eraser-settings { display: none; }
-.ink-size-popover.is-eraser-tool .ink-eraser-settings { display: block; }
 .ink-size-popover.is-stroke-eraser .ink-range-eraser-size { display: none; }
 
 .ink-stroke-eraser-hint {
@@ -439,7 +437,6 @@
   line-height: 1.45;
 }
 
-.ink-size-popover.is-stroke-eraser .ink-stroke-eraser-hint { display: block; }
 
 .ink-eraser-modes {
   display: grid;
@@ -661,7 +658,18 @@
 }
 
 @container ink-editor (max-width: 760px) {
-  .ink-toolbar { gap: 0; padding-inline: 4px; }
+  .ink-toolbar {
+    gap: 0;
+    padding-inline: 2px;
+    /* Nine 44px buttons cannot fit one 360px row: the toolbar wraps to a
+       second row instead of shrinking sections and clipping buttons. */
+    flex-wrap: wrap;
+    flex-basis: auto;
+    height: auto;
+    overflow: visible;
+  }
+  .ink-toolbar .ink-toolbar-section { flex-shrink: 0; }
+  .ink-toolbar .ink-toolbar-section-document { margin-left: 0; }
   .ink-toolbar-section,
   .ink-toolbar-section + .ink-toolbar-section { margin: 0; padding: 0; border-left: 0; }
   .ink-toolbar-section-controls { gap: 0; }
@@ -976,7 +984,6 @@
   padding-right: 10px;
 }
 
-.ink-pdf-brush-popover.is-open { display: block; }
 .ink-pdf-popover-title { font-size: var(--font-ui-smaller); color: var(--text-muted); margin-bottom: 6px; }
 .ink-pdf-color-row { display: flex; gap: 6px; margin: 6px 0; flex-wrap: wrap; }
 
@@ -1000,3 +1007,24 @@
 
 .ink-pdf-range-row label { flex: 0 0 76px; font-size: var(--font-ui-smaller); color: var(--text-muted); }
 .ink-pdf-range-row input[type="range"] { flex: 1 1 auto; }
+
+/* Eraser mini popover: size + mode only, anchored to the eraser button. */
+.ink-eraser-popover {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  width: 220px;
+  padding: 12px;
+  border: 1px solid var(--ink-border);
+  border-radius: 12px;
+  background: var(--ink-panel-raised);
+  box-shadow: var(--ink-shadow-paper);
+  overscroll-behavior: contain;
+}
+
+.ink-eraser-popover input[type="range"] { width: 100%; touch-action: none; }
+
+/* The page-options section rides at the far end of the toolbar. */
+.ink-toolbar .ink-toolbar-section-document { margin-left: auto; }

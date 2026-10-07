@@ -252,6 +252,12 @@ export class BrushPopoverController {
       },
     });
     setIcon(curveToggle.createSpan({ cls: "ink-button-icon" }), this.curveOpen ? "chevron-up" : "chevron-down");
+    curveToggle.addEventListener("click", () => {
+      this.curveOpen = !this.curveOpen;
+      this.update();
+      // The canvas has no layout until the expanded body is laid out.
+      requestAnimationFrame(() => this.drawPressureCurve(settings));
+    });
     const curveBody = body.createDiv({ cls: "ink-curve-body" });
     if (!this.curveOpen) curveBody.style.display = "none";
     const resetRow = curveBody.createDiv({ cls: "ink-curve-actions" });
