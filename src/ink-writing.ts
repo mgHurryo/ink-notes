@@ -1683,19 +1683,17 @@ export abstract class InkWritingView extends FileView {
       // fast-written corners exactly where the pen turned. NaN separators
       // split retraced runs, which fill separately so a retraced band keeps
       // its ink instead of cancelling its neighbour's winding to holes.
+      ctx.beginPath();
       let tracing = false;
       for (let index = 0; index < points.length; index += 2) {
         const x = points[index] * scaleX;
         const y = points[index + 1] * scaleY;
-        if (!Number.isFinite(x) || !Number.isFinite(y)) {
-          if (tracing) { ctx.closePath(); ctx.fill(); }
-          tracing = false;
-          continue;
-        }
-        if (!tracing) { ctx.beginPath(); tracing = true; ctx.moveTo(x, y); continue; }
+        if (!Number.isFinite(x) || !Number.isFinite(y)) { tracing = false; continue; }
+        if (!tracing) { tracing = true; ctx.moveTo(x, y); continue; }
         ctx.lineTo(x, y);
       }
-      if (tracing) { ctx.closePath(); ctx.fill(); }
+      if (tracing) ctx.closePath();
+      ctx.fill();
     }
     ctx.restore();
   }

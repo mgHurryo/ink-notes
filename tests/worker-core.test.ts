@@ -2,7 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { createNotebook, createPage } from "../src/model";
 import { InkWorkerCore } from "../src/worker-core";
 import type { InkWorkerRequest, InkWorkerResponse } from "../src/worker-protocol";
-import { penOutline } from "../src/rendering";
+import { penOutlineRings } from "../src/rendering";
 
 type RequestInput = InkWorkerRequest extends infer Request
   ? Request extends InkWorkerRequest ? Omit<Request, "requestId" | "sessionId" | "generation" | "notebookRevision"> : never
@@ -138,9 +138,14 @@ describe("InkWorkerCore persistence mirror", () => {
       pageUpdatedAt: 2, notebookUpdatedAt: 2,
     } }, 2));
     if (applied.type !== "operation-applied" || !applied.outline) throw new Error("outline was not returned");
-    const expected = penOutline(stroke, 400, 600).flatMap(([x, y]) => [x / 400, y / 600]);
+    const expected = penOutlineRings(stroke, 400, 600)
+      .flatMap((ring, ringIndex) => (ringIndex ? [[Number.NaN, Number.NaN], ...ring] : ring))
+      .flatMap(([x, y]) => [x / 400, y / 600]);
     expect(applied.outline).toHaveLength(expected.length);
-    expected.forEach((value, index) => expect(applied.outline![index]).toBeCloseTo(value, 6));
+    expected.forEach((value, index) => {
+      if (!Number.isFinite(value)) return;
+      expect(applied.outline![index]).toBeCloseTo(value, 6);
+    });
   });
 
   it("applies translation as one operation and persists the moved geometry", async () => {
