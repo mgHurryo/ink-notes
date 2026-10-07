@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.0-beta.21 - 2026-10-08
+
+- Ink rendering rebuilt from polygon ribbons to stamped primitives: every sample point contributes a disc and every segment a connecting trapezoid, all wound the same direction and filled as one path. Same-direction overlaps add their winding instead of cancelling, so sharp turns, retraces and Chinese-style hooks can no longer produce holes, notches or hairline seams - at any brush width - while the single fill still keeps translucent strokes from double-darkening. Committed tiles, retained previews, live confirmed outlines and the brush-panel sample all share the new geometry.
+
 ## 0.8.0-beta.20 - 2026-10-08
 
 - Fix the hairline white seams at sharp turns: the split ribbon runs from beta.19 abutted each other exactly, and the antialiased edges of the abutting caps left a thin unfilled sliver at every joint. Run A now keeps one segment past the turn so the bands overlap in area (along the real stroke path), closing the seams.
