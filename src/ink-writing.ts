@@ -1188,6 +1188,10 @@ export abstract class InkWritingView extends FileView {
 
   protected onTouchStart(event: TouchEvent): void {
     if (this.inputLocked()) return;
+    // Handwriting owns the whole surface: stop the touch from reaching the
+    // app chrome entirely, so Obsidian's sidebar edge-swipe can never fire
+    // mid-write, whatever the entry point.
+    event.stopPropagation?.();
     if (this.onStylusTouch(event)) return;
     // Cancel native tap recognition before the guards, including Pencil
     // contact and final touchend events with no remaining contacts.
@@ -1239,6 +1243,7 @@ export abstract class InkWritingView extends FileView {
   }
 
   protected onTouchMove(event: TouchEvent): void {
+    event.stopPropagation?.();
     if (this.inputLocked()) return;
     if (this.onStylusTouch(event)) return;
     if (this.activePointerId !== null) {
