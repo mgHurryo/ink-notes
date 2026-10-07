@@ -162,6 +162,6 @@ describe("reference-style editor", () => {
     expect(button("Zoom in")).toBeNull();
     expect(button("Zoom out")).toBeNull();
     expect(button("Reset zoom")).toBeNull();
-    expect(document.querySelector(".ink-toolbar .ink-size-popover")).not.toBeNull();
+    expect(document.querySelector(".ink-size-popover")).not.toBeNull();
   });
 });
