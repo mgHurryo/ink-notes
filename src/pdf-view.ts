@@ -31,7 +31,6 @@ const PDF_ZOOM_STEP = 1.2;
 const PDF_PAGE_PADDING = 24;
 const SELECTION_OVERLAY_BUDGET = 4_000_000;
 
-export type PdfViewMode = "reading" | "editing";
 export type SaveOutcome = { status: "saved" } | { status: "conflict"; message: string } | { status: "failed"; message: string };
 
 /** Only one view may edit a given PDF at a time; others stay read-only. */
@@ -69,15 +68,8 @@ interface PdfJsDocument {
   destroy(): Promise<void>;
 }
 
-interface PdfJsTextLayerTask {
-  promise: Promise<void>;
-  cancel?(): void;
-}
-
 interface PdfJsLib {
   getDocument(options: { data: ArrayBuffer }): { promise: Promise<PdfJsDocument> };
-  TextLayer?: new (options: { textContentSource?: unknown; container: HTMLElement; viewport: PdfJsViewport }) => { render(): Promise<PdfJsTextLayerTask> };
-  renderTextLayer?: (options: { textContentSource?: unknown; container: HTMLElement; viewport: PdfJsViewport }) => PdfJsTextLayerTask;
   RenderingCancelledException?: new (...args: unknown[]) => Error;
 }
 
@@ -105,12 +97,10 @@ export class PdfInkView extends InkWritingView {
   private takeover!: PdfTabTakeover;
   private arbiter!: PdfWriterArbiter;
 
-  private mode: PdfViewMode = "reading";
   private root: HTMLElement | null = null;
   private scroller: HTMLElement | null = null;
   private pageWrap: HTMLElement | null = null;
   private pdfCanvas: HTMLCanvasElement | null = null;
-  private textLayer: HTMLElement | null = null;
   private inkHost: HTMLElement | null = null;
   private statusEl: HTMLElement | null = null;
   private toolbarButtons = new Map<string, HTMLElement>();
@@ -119,8 +109,8 @@ export class PdfInkView extends InkWritingView {
   private pdfDoc: PdfJsDocument | null = null;
   private pdfRenderTask: PdfJsRenderTask | null = null;
   private pdfRenderGeneration = 0;
-  private textLayerTask: PdfJsTextLayerTask | null = null;
   private loadGeneration = 0;
+  private resizeRenderTimer: number | undefined;
 
   private sidecar: PdfSidecar | null = null;
   private sidecarRaw = "";
@@ -166,7 +156,7 @@ export class PdfInkView extends InkWritingView {
   async onOpen(): Promise<void> {
     const root = this.contentEl;
     root.empty();
-    root.addClass("ink-pdf-view", "ink-pdf-reading");
+    root.addClass("ink-pdf-view", "ink-pdf-editing");
     this.root = root;
     this.renderToolbar(root);
     this.statusEl = root.createDiv({ cls: "ink-pdf-status" });
@@ -174,7 +164,6 @@ export class PdfInkView extends InkWritingView {
     this.scroller = scroller;
     this.pageWrap = scroller.createDiv({ cls: "ink-pdf-page-wrap" });
     this.pdfCanvas = this.pageWrap.createEl("canvas", { cls: "ink-pdf-canvas" });
-    this.textLayer = this.pageWrap.createDiv({ cls: "ink-pdf-text-layer" });
     this.buildInkHost();
     this.viewReady = true;
     this.registerDomEvent(scroller, "scroll", () => this.onViewportMotion(), { passive: true });
@@ -185,20 +174,25 @@ export class PdfInkView extends InkWritingView {
       this.onStylusTouch(event);
       this.touchGesture = null;
     }, { passive: false });
-    this.registerDomEvent(window, "resize", () => {
+    // Pane operations (splits, drags, sidebar toggles) resize this view
+    // without a window resize; stale page geometry there overflowed the pane
+    // and mis-mapped strokes for views opened before the split.
+    const observer = new ResizeObserver(() => {
       this.brushPopover?.position();
-      this.requestRender(true);
+      this.layoutPage();
+      if (this.resizeRenderTimer !== undefined) window.clearTimeout(this.resizeRenderTimer);
+      this.resizeRenderTimer = window.setTimeout(() => void this.renderPdfPage(), 100);
     });
+    observer.observe(scroller);
+    this.register(() => observer.disconnect());
   }
 
   async onClose(): Promise<void> {
-    if (this.mode === "editing") {
-      const outcome = await this.flushSaveNow();
-      if (outcome.status !== "saved") {
-        new Notice(`Ink Notes kept notes for ${this.file?.basename ?? "this PDF"} in a conflict copy: ${outcome.message}`);
-      }
-      this.exitEditState();
+    const outcome = await this.flushSaveNow();
+    if (outcome.status !== "saved") {
+      new Notice(`Ink Notes kept notes for ${this.file?.basename ?? "this PDF"} in a conflict copy: ${outcome.message}`);
     }
+    this.releaseWriter();
     this.loadGeneration += 1;
     this.cancelPdfRender();
     this.finishPointerInput(false);
@@ -301,11 +295,7 @@ export class PdfInkView extends InkWritingView {
     }
   }
 
-  // ------------------------------------------------------------------ mode
-
-  get viewMode(): PdfViewMode {
-    return this.mode;
-  }
+  // ------------------------------------------------------------------ locks
 
   /** Exposed for tests and diagnostics: why handwriting is read-only, if so. */
   get writeBlocked(): string | null {
@@ -316,57 +306,15 @@ export class PdfInkView extends InkWritingView {
     return this.sidecar !== null && this.writeBlockedReason === null && this.file !== null;
   }
 
-  async setMode(mode: PdfViewMode): Promise<void> {
-    if (mode === this.mode) return;
-    if (mode === "editing") {
-      if (!this.canEdit()) {
-        new Notice(this.writeBlockedReason ?? "Handwriting is not available for this PDF");
-        return;
-      }
-      if (!this.arbiter.acquire(this.file!.path, this.viewId)) {
-        new Notice("This PDF is already being edited in another Ink Notes tab; it stays read-only here");
-        return;
-      }
-      this.writerHeld = true;
-      this.mode = "editing";
-      this.root?.removeClass("ink-pdf-reading");
-      this.root?.addClass("ink-pdf-editing");
-      this.textLayer?.setAttribute("aria-hidden", "true");
-      this.updateToolButtons();
-      this.updateHistoryButtons();
-      void this.flushSaveNow().then((outcome) => {
-        if (outcome.status === "failed") new Notice(`Ink Notes could not save pending changes: ${outcome.message}`);
-      });
-      return;
-    }
-    // Leaving edit mode waits for the save; failures keep editing available.
-    const outcome = await this.flushSaveNow();
-    if (outcome.status === "failed") {
-      new Notice(`Save failed, still in edit mode: ${outcome.message}`);
-      return;
-    }
-    if (outcome.status === "conflict") {
-      new Notice(`Saved a conflict copy instead of overwriting: ${outcome.message}`);
-    }
-    this.exitEditState();
-  }
-
-  private exitEditState(): void {
-    this.finishPointerInput(false);
-    this.discardPendingInkPreview();
-    this.mode = "reading";
-    this.clearSelection();
-    this.releaseWriter();
-    this.root?.removeClass("ink-pdf-editing");
-    this.root?.addClass("ink-pdf-reading");
-    this.textLayer?.removeAttribute("aria-hidden");
-    this.eraserHoverPoint = null;
-    this.eraserPointerInside = false;
-    this.refreshEraserCursor();
-    this.updateToolButtons();
-    this.updateHistoryButtons();
-    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
-    this.setStatus(this.writeBlockedReason ?? "");
+  /**
+   * The view is always in editing shape; read-only behaviour is a lock state,
+   * not a mode: blocked sidecars (fingerprint mismatch, corrupt notes file)
+   * and the single-writer arbiter gate input via editingLocked().
+   */
+  private acquireWriter(): void {
+    if (this.writerHeld || !this.canEdit()) return;
+    if (this.file && !this.arbiter.acquire(this.file.path, this.viewId)) return;
+    this.writerHeld = true;
   }
 
   private releaseWriter(): void {
@@ -376,13 +324,10 @@ export class PdfInkView extends InkWritingView {
 
   /** Hand the tab back to the built-in (possibly PDF++-enhanced) viewer. */
   async restoreBuiltinViewer(): Promise<void> {
-    if (this.mode === "editing") {
-      const outcome = await this.flushSaveNow();
-      if (outcome.status === "failed") {
-        new Notice(`Save failed, staying in the handwriting view: ${outcome.message}`);
-        return;
-      }
-      this.exitEditState();
+    const outcome = await this.flushSaveNow();
+    if (outcome.status === "failed") {
+      new Notice(`Save failed, staying in the handwriting view: ${outcome.message}`);
+      return;
     }
     if (!this.file) return;
     this.takeover.suppressLeaf(this.leaf);
@@ -514,10 +459,8 @@ export class PdfInkView extends InkWritingView {
     this.disposeWorkerSession();
     this.initializeWorkerSession();
     this.maybeOfferRecoveryChoice();
-    // Editable PDFs open straight into editing mode. onOpen cannot decide
-    // this - it runs before the sidecar loads, so canEdit() was always false
-    // there and every fresh open silently stayed in reading mode.
-    if (this.mode === "reading" && this.canEdit()) void this.setMode("editing");
+    // Editable PDFs hold the writer from the moment their sidecar resolves.
+    this.acquireWriter();
   }
 
   private async writeSidecar(file: TFile, expectedRaw: string, sidecar: PdfSidecar): Promise<void> {
@@ -556,27 +499,16 @@ export class PdfInkView extends InkWritingView {
   private renderToolbar(root: HTMLElement): void {
     const toolbar = root.createDiv({ cls: "ink-pdf-toolbar" });
 
-    const modeGroup = this.addToolbarSection(toolbar, "Mode");
-    this.addTrackedIconButton(modeGroup, "mode", "eye", "Toggle handwriting editing", () => void this.setMode(this.mode === "editing" ? "reading" : "editing"));
-
-    const navGroup = this.addToolbarSection(toolbar, "Pages");
-    this.addTrackedIconButton(navGroup, "prev", "arrow-left", "Previous page", () => this.navigatePages(-1));
-    const indicator = navGroup.createDiv({ cls: "ink-pdf-page-indicator" });
-    indicator.setText("–");
-    this.toolbarButtons.set("indicator", indicator);
-    this.addTrackedIconButton(navGroup, "next", "arrow-right", "Next page", () => this.navigatePages(1));
-
-    const zoomGroup = this.addToolbarSection(toolbar, "Zoom");
-    this.addTrackedIconButton(zoomGroup, "zoom-out", "minus", "Zoom out", () => this.setZoom(this.zoom / PDF_ZOOM_STEP));
-    this.addTrackedIconButton(zoomGroup, "zoom-reset", "scan", "Reset zoom", () => this.setZoom(1));
-    this.addTrackedIconButton(zoomGroup, "zoom-in", "plus", "Zoom in", () => this.setZoom(this.zoom * PDF_ZOOM_STEP));
+    // Far-left settings entry for both editors (the popover carries the
+    // sample-stroke preview); tools no longer sit next to it.
+    const settingsGroup = this.addToolbarSection(toolbar, "Settings");
+    this.addBrushPopover(settingsGroup);
 
     const toolGroup = this.addToolbarSection(toolbar, "Draw");
     this.addToolButton(toolGroup, "pen-line", "Pen", "pen");
     this.addToolButton(toolGroup, "highlighter", "Highlight", "highlighter");
     this.addToolButton(toolGroup, "eraser", "Erase", "eraser");
     this.addToolButton(toolGroup, "lasso-select", "Select", "lasso");
-    this.addBrushPopover(toolGroup);
 
     const historyGroup = this.addToolbarSection(toolbar, "History");
     this.addTrackedIconButton(historyGroup, "undo", "undo-2", "Undo", () => {
@@ -593,6 +525,11 @@ export class PdfInkView extends InkWritingView {
     this.addTrackedIconButton(docGroup, "export", "download", "Export PDF with handwriting", () => {
       if (!this.editingLocked()) void this.exportHandwrittenCopy();
     });
+
+    const pagesGroup = this.addToolbarSection(toolbar, "Pages");
+    const indicator = pagesGroup.createDiv({ cls: "ink-pdf-page-indicator" });
+    indicator.setText("–");
+    this.toolbarButtons.set("indicator", indicator);
 
     this.updateToolButtons();
     this.updateHistoryButtons();
@@ -647,11 +584,6 @@ export class PdfInkView extends InkWritingView {
       anchor: () => this.toolbarButtons.get("brush") ?? null,
     });
     this.settingsPanel = this.brushPopover.root;
-  }
-
-  protected updateToolButtons(): void {
-    super.updateToolButtons();
-    this.toolbarButtons.get("mode")?.toggleClass("is-active", this.mode === "editing");
   }
 
   private updatePageIndicator(): void {
@@ -896,7 +828,7 @@ export class PdfInkView extends InkWritingView {
   }
 
   private editingLocked(): boolean {
-    return this.mode !== "editing" || !this.canEdit() || !this.writerHeld;
+    return !this.canEdit() || !this.writerHeld;
   }
 
   protected pagePixelSize(): { width: number; height: number } {
@@ -918,9 +850,9 @@ export class PdfInkView extends InkWritingView {
   protected applyGestureZoom(value: number, focus: { x: number; y: number }, anchor: { x: number; y: number }): void {
     this.setZoom(value, focus, anchor);
   }
-  protected onToolSelected(_tool: InkTool): void {
-    // Selecting a tool from reading mode enters editing (PDF-specific affordance).
-    if (this.mode !== "editing") void this.setMode("editing");
+
+  protected swipeNavigate(delta: number): void {
+    this.navigatePages(delta);
   }
   protected settingsOpen(): boolean { return this.brushPopover?.isOpen ?? false; }
   protected toggleToolSettings(): void {
@@ -960,8 +892,6 @@ export class PdfInkView extends InkWritingView {
   private cancelPdfRender(): void {
     this.pdfRenderTask?.cancel();
     this.pdfRenderTask = null;
-    this.textLayerTask?.cancel?.();
-    this.textLayerTask = null;
   }
 
   private async renderPdfPage(): Promise<void> {
@@ -981,7 +911,6 @@ export class PdfInkView extends InkWritingView {
       // A blank note page: plain paper, ink only.
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-      this.textLayer?.empty();
       return;
     }
     try {
@@ -997,33 +926,6 @@ export class PdfInkView extends InkWritingView {
       if (this.pdfjs?.RenderingCancelledException && error instanceof this.pdfjs.RenderingCancelledException) return;
       if (generation === this.pdfRenderGeneration) this.setStatus(`Could not render this page: ${messageOf(error)}`, true);
       return;
-    }
-    if (this.mode === "reading") await this.renderTextLayer(notePage, generation);
-  }
-
-  private async renderTextLayer(notePage: PdfSidecarNotePage, generation: number): Promise<void> {
-    const container = this.textLayer;
-    const pdfjs = this.pdfjs;
-    if (!container || !pdfjs || !this.pdfDoc || notePage.sourceIndex === undefined) return;
-    container.empty();
-    try {
-      const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
-      if (generation !== this.pdfRenderGeneration) return;
-      const viewport = page.getViewport({ scale: this.zoom });
-      const textContent = await page.getTextContent?.();
-      if (!textContent || generation !== this.pdfRenderGeneration) return;
-      let task: PdfJsTextLayerTask | null = null;
-      if (pdfjs.TextLayer) {
-        task = await new pdfjs.TextLayer({ textContentSource: textContent, container, viewport }).render();
-      } else if (pdfjs.renderTextLayer) {
-        task = pdfjs.renderTextLayer({ textContentSource: textContent, container, viewport });
-      }
-      if (!task) return;
-      this.textLayerTask = task;
-      await task.promise;
-      if (generation === this.pdfRenderGeneration) this.textLayerTask = null;
-    } catch {
-      // Text selection is progressive enhancement; rendering errors stay silent.
     }
   }
 
@@ -1049,7 +951,6 @@ export class PdfInkView extends InkWritingView {
     this.cancelPdfRender();
     this.finishPointerInput(false);
     this.discardPendingInkPreview();
-    this.mode = "reading";
     this.releaseWriter();
     this.pdfDoc = null;
     this.sourcePages = [];
@@ -1061,8 +962,6 @@ export class PdfInkView extends InkWritingView {
     this.redoStack = [];
     this.dirty = false;
     this.clearSaveTimers();
-    this.root?.removeClass("ink-pdf-editing");
-    this.root?.addClass("ink-pdf-reading");
     this.setStatus("Loading PDF…");
   }
 

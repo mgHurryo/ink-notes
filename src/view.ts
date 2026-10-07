@@ -112,7 +112,6 @@ export class InkView extends InkWritingView {
     this.root.addClass("ink-rail-hidden");
     this.root.setAttribute("aria-label", "Ink Notes");
     this.root.createDiv({ cls: "ink-toolbar", attr: { role: "toolbar", "aria-label": "Ink tools" } });
-    this.root.createDiv({ cls: "ink-tool-popover-host" });
     this.root.createSpan({ cls: "ink-page-status", attr: { "aria-live": "polite" } });
     this.renderToolbar();
     this.renderCanvas();
@@ -203,6 +202,10 @@ export class InkView extends InkWritingView {
     const toolbar = this.root.querySelector<HTMLElement>(".ink-toolbar")!;
     toolbar.empty();
     const group = toolbar;
+    // Far-left settings entry for both editors (the popover carries the
+    // sample-stroke preview); tools no longer sit next to it.
+    const settings = this.addToolbarSection(group, "Settings");
+    this.addSizePopover(settings);
     const navigation = this.addToolbarSection(group, "Pages");
     const toggle = this.addIconButton(navigation, "panel-left", "Pages", () => {
       const hidden = !this.root.hasClass("ink-rail-hidden");
@@ -223,14 +226,7 @@ export class InkView extends InkWritingView {
     this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
     const pages = this.addToolbarSection(group, "Document");
     this.addIconButton(pages, "more-horizontal", "Page options", (event) => this.openPageMenu(event));
-    this.renderToolPopover();
     this.updateToolButtons();
-  }
-
-  private renderToolPopover(): void {
-    const host = this.root.querySelector<HTMLElement>(".ink-tool-popover-host")!;
-    host.empty();
-    this.addSizePopover(host);
   }
 
   private addSizePopover(parent: HTMLElement): void {
@@ -505,6 +501,10 @@ export class InkView extends InkWritingView {
   protected inputScroller(): HTMLElement { return this.pageScroller; }
   protected applyGestureZoom(value: number, focus: { x: number; y: number }, anchor: { x: number; y: number }): void {
     this.setZoom(value, focus, anchor);
+  }
+
+  protected swipeNavigate(delta: number): void {
+    this.changePage(delta);
   }
   protected settingsOpen(): boolean { return this.sizePopoverOpen; }
   protected toggleToolSettings(): void {
