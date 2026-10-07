@@ -741,11 +741,29 @@ export class PdfInkView extends InkWritingView {
     void this.renderPdfPage();
   }
 
-  private setZoom(zoom: number): void {
+  private setZoom(zoom: number, target?: { x: number; y: number }, anchor?: { x: number; y: number }): void {
     const clamped = Math.max(PDF_ZOOM_MIN, Math.min(PDF_ZOOM_MAX, zoom));
     if (clamped === this.zoom) return;
+    const scroller = this.scroller;
+    const page = this.pageWrap;
+    if (!scroller || !page) {
+      this.zoom = clamped;
+      this.layoutPage();
+      void this.renderPdfPage();
+      return;
+    }
+    // Notebook anchor semantics: keep the content under the target point
+    // stable across the scale change. Buttons and reset aim at the viewport
+    // centre, the wheel at the cursor, a pinch at the gesture midpoint.
+    const viewport = scroller.getBoundingClientRect();
+    target ??= { x: viewport.left + scroller.clientWidth / 2, y: viewport.top + scroller.clientHeight / 2 };
+    const before = page.getBoundingClientRect();
+    anchor ??= { x: (target.x - before.left) / before.width, y: (target.y - before.top) / before.height };
     this.zoom = clamped;
     this.layoutPage();
+    const after = page.getBoundingClientRect();
+    scroller.scrollLeft += after.left + anchor.x * after.width - target.x;
+    scroller.scrollTop += after.top + anchor.y * after.height - target.y;
     void this.renderPdfPage();
   }
 
@@ -852,7 +870,7 @@ export class PdfInkView extends InkWritingView {
   private onWheel(event: WheelEvent): void {
     if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
-    this.setZoom(this.zoom * (event.deltaY < 0 ? PDF_ZOOM_STEP : 1 / PDF_ZOOM_STEP));
+    this.setZoom(this.zoom * (event.deltaY < 0 ? PDF_ZOOM_STEP : 1 / PDF_ZOOM_STEP), { x: event.clientX, y: event.clientY });
   }
 
   // ------------------------------------------------------ writing-layer seams
@@ -897,8 +915,8 @@ export class PdfInkView extends InkWritingView {
 
   protected toolbarRoot(): HTMLElement { return this.root!; }
   protected inputScroller(): HTMLElement { return this.scroller!; }
-  protected applyGestureZoom(value: number, _focus: { x: number; y: number }, _anchor: { x: number; y: number }): void {
-    this.setZoom(value);
+  protected applyGestureZoom(value: number, focus: { x: number; y: number }, anchor: { x: number; y: number }): void {
+    this.setZoom(value, focus, anchor);
   }
   protected onToolSelected(_tool: InkTool): void {
     // Selecting a tool from reading mode enters editing (PDF-specific affordance).

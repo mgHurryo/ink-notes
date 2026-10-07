@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.0-beta.11 - 2026-10-07
+
+- Zoom in the PDF editor is now anchored like the notebook editor: the toolbar zoom buttons and reset keep the viewport centre stable, Ctrl/⌘-wheel keeps the cursor position stable, and a two-finger pinch keeps the gesture midpoint stable. Previously every PDF zoom scaled around the page top, so the content you were looking at drifted up and away.
+
 ## 0.8.0-beta.10 - 2026-10-07
 
 - Continue the unification at the UI layer, everything on the notebook editor's standard: the shared writing layer now also owns the toolbar components (icon button, tool button with its click contract, sections, active/disabled states), the interaction render pass (frame routing, selection, lasso preview with the lifted-stroke drag, eraser cell preview), the touch gesture handlers (Scribble stylus-touch ownership and two-finger pinch/pan) and the brush settings popover's eraser block and tool presets.

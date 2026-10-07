@@ -28713,11 +28713,26 @@ var PdfInkView = class extends InkWritingView {
     this.renderAll();
     void this.renderPdfPage();
   }
-  setZoom(zoom) {
+  setZoom(zoom, target, anchor) {
     const clamped = Math.max(PDF_ZOOM_MIN, Math.min(PDF_ZOOM_MAX, zoom));
     if (clamped === this.zoom) return;
+    const scroller = this.scroller;
+    const page = this.pageWrap;
+    if (!scroller || !page) {
+      this.zoom = clamped;
+      this.layoutPage();
+      void this.renderPdfPage();
+      return;
+    }
+    const viewport = scroller.getBoundingClientRect();
+    target != null ? target : target = { x: viewport.left + scroller.clientWidth / 2, y: viewport.top + scroller.clientHeight / 2 };
+    const before = page.getBoundingClientRect();
+    anchor != null ? anchor : anchor = { x: (target.x - before.left) / before.width, y: (target.y - before.top) / before.height };
     this.zoom = clamped;
     this.layoutPage();
+    const after = page.getBoundingClientRect();
+    scroller.scrollLeft += after.left + anchor.x * after.width - target.x;
+    scroller.scrollTop += after.top + anchor.y * after.height - target.y;
     void this.renderPdfPage();
   }
   // -------------------------------------------------------------- geometry
@@ -28812,7 +28827,7 @@ var PdfInkView = class extends InkWritingView {
   onWheel(event) {
     if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
-    this.setZoom(this.zoom * (event.deltaY < 0 ? PDF_ZOOM_STEP : 1 / PDF_ZOOM_STEP));
+    this.setZoom(this.zoom * (event.deltaY < 0 ? PDF_ZOOM_STEP : 1 / PDF_ZOOM_STEP), { x: event.clientX, y: event.clientY });
   }
   // ------------------------------------------------------ writing-layer seams
   currentNotebook() {
@@ -28853,8 +28868,8 @@ var PdfInkView = class extends InkWritingView {
   inputScroller() {
     return this.scroller;
   }
-  applyGestureZoom(value, _focus, _anchor) {
-    this.setZoom(value);
+  applyGestureZoom(value, focus, anchor) {
+    this.setZoom(value, focus, anchor);
   }
   onToolSelected(_tool) {
     if (this.mode !== "editing") void this.setMode("editing");
