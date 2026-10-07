@@ -23584,6 +23584,9 @@ var InkWritingView = class extends import_obsidian2.FileView {
     this.lastPoint = null;
     this.stylusTouchInput = false;
     this.touchGesture = null;
+    /** Last input the active pointer produced; drives stale-interaction
+     *  healing when the platform loses the final pointerup. */
+    this.lastPointerActivityAt = 0;
     // --- pen modeling
     this.penModeler = null;
     /** Active while pointerrawupdate delivers pen samples; tracks the newest
@@ -23637,6 +23640,9 @@ var InkWritingView = class extends import_obsidian2.FileView {
   /** View hook before a tool button selects a tool (PDF: enter editing). */
   onToolSelected(_tool) {
   }
+  /** View hook for the horizontal page-flip gesture (Photos-style). */
+  swipeNavigate(_delta) {
+  }
   settingsOpen() {
     return false;
   }
@@ -23682,6 +23688,7 @@ var InkWritingView = class extends import_obsidian2.FileView {
       this.saveTimer = void 0;
     }
     this.activePointerId = event.pointerId;
+    this.lastPointerActivityAt = Date.now();
     this.interaction = {
       generation: ++this.interactionGeneration,
       pointerId: event.pointerId,
@@ -23887,6 +23894,7 @@ var InkWritingView = class extends import_obsidian2.FileView {
       }
     }
     this.updatePredictedTip(event, rect, phase);
+    this.lastPointerActivityAt = Date.now();
     if (changed) {
       if (this.activeStroke) this.activeStroke.updatedAt = Date.now();
       this.requestRender();
@@ -24213,9 +24221,10 @@ var InkWritingView = class extends import_obsidian2.FileView {
     if (this.onStylusTouch(event)) return;
     if (event.cancelable && event.touches.length < 2) event.preventDefault();
     this.touchGesture = null;
+    this.healStaleInteraction(Array.from(event.touches));
     const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus");
-    if (this.activePointerId !== null || touches.length < 1 || touches.length > 2) return;
-    event.preventDefault();
+    if (touches.length < 1 || touches.length > 2) return;
+    if (this.activePointerId !== null) return;
     const [a, b] = touches;
     if (!a) return;
     const x = b ? (a.clientX + b.clientX) / 2 : a.clientX;
@@ -24227,9 +24236,33 @@ var InkWritingView = class extends import_obsidian2.FileView {
       zoom: this.zoom,
       x,
       y,
+      startX: x,
+      startY: y,
+      axis: null,
+      swipeDone: 0,
       pageX: (x - rect.left) / rect.width,
       pageY: (y - rect.top) / rect.height
     };
+  }
+  /**
+   * Finalizes interactions whose pointer the platform lost. iPadOS split-view
+   * transitions can swallow the final pointerup/touchend of an in-flight
+   * stroke; the interaction then stays "active" forever, which blocks every
+   * two-finger gesture (and, for stylus-touch sources, the document-level
+   * pointerup fallback deliberately does not fire). Two heal signals: a
+   * stylus-touch interaction whose identifier is no longer on screen, and a
+   * pointer interaction with no input for >2.5 s (an active stroke emits
+   * samples at frame rate, so silence means the pointer is gone).
+   */
+  healStaleInteraction(touches) {
+    const interaction = this.interaction;
+    if (!interaction || this.activePointerId === null) return;
+    if (interaction.source === "stylus-touch") {
+      const alive = touches.some((touch) => touch.identifier === interaction.pointerId);
+      if (!alive) this.finishPointerInput(false);
+      return;
+    }
+    if (Date.now() - this.lastPointerActivityAt > 2500) this.finishPointerInput(false);
   }
   onTouchMove(event) {
     if (this.inputLocked()) return;
@@ -24249,8 +24282,22 @@ var InkWritingView = class extends import_obsidian2.FileView {
     }
     event.preventDefault();
     if (!b) {
-      this.inputScroller().scrollLeft += gesture.x - a.clientX;
-      this.inputScroller().scrollTop += gesture.y - a.clientY;
+      const scroller = this.inputScroller();
+      const totalX = a.clientX - gesture.startX;
+      const totalY = a.clientY - gesture.startY;
+      if (gesture.axis === null && Math.max(Math.abs(totalX), Math.abs(totalY)) > 10) {
+        const scrollableX = scroller.scrollWidth > scroller.clientWidth + 4;
+        gesture.axis = !scrollableX && Math.abs(totalX) > Math.abs(totalY) * 1.5 ? "x" : "y";
+      }
+      if (gesture.axis === "x") {
+        if (Math.abs(totalX - gesture.swipeDone) > 64) {
+          this.swipeNavigate(totalX > gesture.swipeDone ? -1 : 1);
+          gesture.swipeDone = totalX;
+        }
+        return;
+      }
+      scroller.scrollLeft += gesture.x - a.clientX;
+      scroller.scrollTop += gesture.y - a.clientY;
       gesture.x = a.clientX;
       gesture.y = a.clientY;
       return;
@@ -26233,7 +26280,6 @@ var InkView = class extends InkWritingView {
     this.root.addClass("ink-rail-hidden");
     this.root.setAttribute("aria-label", "Ink Notes");
     this.root.createDiv({ cls: "ink-toolbar", attr: { role: "toolbar", "aria-label": "Ink tools" } });
-    this.root.createDiv({ cls: "ink-tool-popover-host" });
     this.root.createSpan({ cls: "ink-page-status", attr: { "aria-live": "polite" } });
     this.renderToolbar();
     this.renderCanvas();
@@ -26323,6 +26369,8 @@ var InkView = class extends InkWritingView {
     const toolbar = this.root.querySelector(".ink-toolbar");
     toolbar.empty();
     const group = toolbar;
+    const settings = this.addToolbarSection(group, "Settings");
+    this.addSizePopover(settings);
     const navigation = this.addToolbarSection(group, "Pages");
     const toggle = this.addIconButton(navigation, "panel-left", "Pages", () => {
       const hidden = !this.root.hasClass("ink-rail-hidden");
@@ -26341,13 +26389,7 @@ var InkView = class extends InkWritingView {
     this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
     const pages = this.addToolbarSection(group, "Document");
     this.addIconButton(pages, "more-horizontal", "Page options", (event) => this.openPageMenu(event));
-    this.renderToolPopover();
     this.updateToolButtons();
-  }
-  renderToolPopover() {
-    const host = this.root.querySelector(".ink-tool-popover-host");
-    host.empty();
-    this.addSizePopover(host);
   }
   addSizePopover(parent) {
     const container = parent.createDiv({ cls: "ink-size-popover-control" });
@@ -26621,6 +26663,9 @@ var InkView = class extends InkWritingView {
   }
   applyGestureZoom(value, focus, anchor) {
     this.setZoom(value, focus, anchor);
+  }
+  swipeNavigate(delta) {
+    this.changePage(delta);
   }
   settingsOpen() {
     return this.sizePopoverOpen;
@@ -28136,12 +28181,10 @@ var PdfInkView = class extends InkWritingView {
   constructor(leaf) {
     super(leaf);
     this.viewId = `pdf-view-${nextViewId++}`;
-    this.mode = "reading";
     this.root = null;
     this.scroller = null;
     this.pageWrap = null;
     this.pdfCanvas = null;
-    this.textLayer = null;
     this.inkHost = null;
     this.statusEl = null;
     this.toolbarButtons = /* @__PURE__ */ new Map();
@@ -28149,7 +28192,6 @@ var PdfInkView = class extends InkWritingView {
     this.pdfDoc = null;
     this.pdfRenderTask = null;
     this.pdfRenderGeneration = 0;
-    this.textLayerTask = null;
     this.loadGeneration = 0;
     this.sidecar = null;
     this.sidecarRaw = "";
@@ -28185,7 +28227,7 @@ var PdfInkView = class extends InkWritingView {
   async onOpen() {
     const root = this.contentEl;
     root.empty();
-    root.addClass("ink-pdf-view", "ink-pdf-reading");
+    root.addClass("ink-pdf-view", "ink-pdf-editing");
     this.root = root;
     this.renderToolbar(root);
     this.statusEl = root.createDiv({ cls: "ink-pdf-status" });
@@ -28193,7 +28235,6 @@ var PdfInkView = class extends InkWritingView {
     this.scroller = scroller;
     this.pageWrap = scroller.createDiv({ cls: "ink-pdf-page-wrap" });
     this.pdfCanvas = this.pageWrap.createEl("canvas", { cls: "ink-pdf-canvas" });
-    this.textLayer = this.pageWrap.createDiv({ cls: "ink-pdf-text-layer" });
     this.buildInkHost();
     this.viewReady = true;
     this.registerDomEvent(scroller, "scroll", () => this.onViewportMotion(), { passive: true });
@@ -28204,21 +28245,23 @@ var PdfInkView = class extends InkWritingView {
       this.onStylusTouch(event);
       this.touchGesture = null;
     }, { passive: false });
-    this.registerDomEvent(window, "resize", () => {
+    const observer = new ResizeObserver(() => {
       var _a;
       (_a = this.brushPopover) == null ? void 0 : _a.position();
-      this.requestRender(true);
+      this.layoutPage();
+      if (this.resizeRenderTimer !== void 0) window.clearTimeout(this.resizeRenderTimer);
+      this.resizeRenderTimer = window.setTimeout(() => void this.renderPdfPage(), 100);
     });
+    observer.observe(scroller);
+    this.register(() => observer.disconnect());
   }
   async onClose() {
     var _a, _b, _c, _d, _e;
-    if (this.mode === "editing") {
-      const outcome = await this.flushSaveNow();
-      if (outcome.status !== "saved") {
-        new import_obsidian7.Notice(`Ink Notes kept notes for ${(_b = (_a = this.file) == null ? void 0 : _a.basename) != null ? _b : "this PDF"} in a conflict copy: ${outcome.message}`);
-      }
-      this.exitEditState();
+    const outcome = await this.flushSaveNow();
+    if (outcome.status !== "saved") {
+      new import_obsidian7.Notice(`Ink Notes kept notes for ${(_b = (_a = this.file) == null ? void 0 : _a.basename) != null ? _b : "this PDF"} in a conflict copy: ${outcome.message}`);
     }
+    this.releaseWriter();
     this.loadGeneration += 1;
     this.cancelPdfRender();
     this.finishPointerInput(false);
@@ -28315,10 +28358,7 @@ var PdfInkView = class extends InkWritingView {
     } catch (e) {
     }
   }
-  // ------------------------------------------------------------------ mode
-  get viewMode() {
-    return this.mode;
-  }
+  // ------------------------------------------------------------------ locks
   /** Exposed for tests and diagnostics: why handwriting is read-only, if so. */
   get writeBlocked() {
     return this.writeBlockedReason;
@@ -28326,57 +28366,15 @@ var PdfInkView = class extends InkWritingView {
   canEdit() {
     return this.sidecar !== null && this.writeBlockedReason === null && this.file !== null;
   }
-  async setMode(mode) {
-    var _a, _b, _c, _d;
-    if (mode === this.mode) return;
-    if (mode === "editing") {
-      if (!this.canEdit()) {
-        new import_obsidian7.Notice((_a = this.writeBlockedReason) != null ? _a : "Handwriting is not available for this PDF");
-        return;
-      }
-      if (!this.arbiter.acquire(this.file.path, this.viewId)) {
-        new import_obsidian7.Notice("This PDF is already being edited in another Ink Notes tab; it stays read-only here");
-        return;
-      }
-      this.writerHeld = true;
-      this.mode = "editing";
-      (_b = this.root) == null ? void 0 : _b.removeClass("ink-pdf-reading");
-      (_c = this.root) == null ? void 0 : _c.addClass("ink-pdf-editing");
-      (_d = this.textLayer) == null ? void 0 : _d.setAttribute("aria-hidden", "true");
-      this.updateToolButtons();
-      this.updateHistoryButtons();
-      void this.flushSaveNow().then((outcome2) => {
-        if (outcome2.status === "failed") new import_obsidian7.Notice(`Ink Notes could not save pending changes: ${outcome2.message}`);
-      });
-      return;
-    }
-    const outcome = await this.flushSaveNow();
-    if (outcome.status === "failed") {
-      new import_obsidian7.Notice(`Save failed, still in edit mode: ${outcome.message}`);
-      return;
-    }
-    if (outcome.status === "conflict") {
-      new import_obsidian7.Notice(`Saved a conflict copy instead of overwriting: ${outcome.message}`);
-    }
-    this.exitEditState();
-  }
-  exitEditState() {
-    var _a, _b, _c, _d;
-    this.finishPointerInput(false);
-    this.discardPendingInkPreview();
-    this.mode = "reading";
-    this.clearSelection();
-    this.releaseWriter();
-    (_a = this.root) == null ? void 0 : _a.removeClass("ink-pdf-editing");
-    (_b = this.root) == null ? void 0 : _b.addClass("ink-pdf-reading");
-    (_c = this.textLayer) == null ? void 0 : _c.removeAttribute("aria-hidden");
-    this.eraserHoverPoint = null;
-    this.eraserPointerInside = false;
-    this.refreshEraserCursor();
-    this.updateToolButtons();
-    this.updateHistoryButtons();
-    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
-    this.setStatus((_d = this.writeBlockedReason) != null ? _d : "");
+  /**
+   * The view is always in editing shape; read-only behaviour is a lock state,
+   * not a mode: blocked sidecars (fingerprint mismatch, corrupt notes file)
+   * and the single-writer arbiter gate input via editingLocked().
+   */
+  acquireWriter() {
+    if (this.writerHeld || !this.canEdit()) return;
+    if (this.file && !this.arbiter.acquire(this.file.path, this.viewId)) return;
+    this.writerHeld = true;
   }
   releaseWriter() {
     if (this.writerHeld && this.file) this.arbiter.release(this.file.path, this.viewId);
@@ -28384,13 +28382,10 @@ var PdfInkView = class extends InkWritingView {
   }
   /** Hand the tab back to the built-in (possibly PDF++-enhanced) viewer. */
   async restoreBuiltinViewer() {
-    if (this.mode === "editing") {
-      const outcome = await this.flushSaveNow();
-      if (outcome.status === "failed") {
-        new import_obsidian7.Notice(`Save failed, staying in the handwriting view: ${outcome.message}`);
-        return;
-      }
-      this.exitEditState();
+    const outcome = await this.flushSaveNow();
+    if (outcome.status === "failed") {
+      new import_obsidian7.Notice(`Save failed, staying in the handwriting view: ${outcome.message}`);
+      return;
     }
     if (!this.file) return;
     this.takeover.suppressLeaf(this.leaf);
@@ -28518,7 +28513,7 @@ var PdfInkView = class extends InkWritingView {
     this.disposeWorkerSession();
     this.initializeWorkerSession();
     this.maybeOfferRecoveryChoice();
-    if (this.mode === "reading" && this.canEdit()) void this.setMode("editing");
+    this.acquireWriter();
   }
   async writeSidecar(file, expectedRaw, sidecar) {
     try {
@@ -28552,24 +28547,13 @@ var PdfInkView = class extends InkWritingView {
   // -------------------------------------------------------------- toolbar
   renderToolbar(root) {
     const toolbar = root.createDiv({ cls: "ink-pdf-toolbar" });
-    const modeGroup = this.addToolbarSection(toolbar, "Mode");
-    this.addTrackedIconButton(modeGroup, "mode", "eye", "Toggle handwriting editing", () => void this.setMode(this.mode === "editing" ? "reading" : "editing"));
-    const navGroup = this.addToolbarSection(toolbar, "Pages");
-    this.addTrackedIconButton(navGroup, "prev", "arrow-left", "Previous page", () => this.navigatePages(-1));
-    const indicator = navGroup.createDiv({ cls: "ink-pdf-page-indicator" });
-    indicator.setText("\u2013");
-    this.toolbarButtons.set("indicator", indicator);
-    this.addTrackedIconButton(navGroup, "next", "arrow-right", "Next page", () => this.navigatePages(1));
-    const zoomGroup = this.addToolbarSection(toolbar, "Zoom");
-    this.addTrackedIconButton(zoomGroup, "zoom-out", "minus", "Zoom out", () => this.setZoom(this.zoom / PDF_ZOOM_STEP));
-    this.addTrackedIconButton(zoomGroup, "zoom-reset", "scan", "Reset zoom", () => this.setZoom(1));
-    this.addTrackedIconButton(zoomGroup, "zoom-in", "plus", "Zoom in", () => this.setZoom(this.zoom * PDF_ZOOM_STEP));
+    const settingsGroup = this.addToolbarSection(toolbar, "Settings");
+    this.addBrushPopover(settingsGroup);
     const toolGroup = this.addToolbarSection(toolbar, "Draw");
     this.addToolButton(toolGroup, "pen-line", "Pen", "pen");
     this.addToolButton(toolGroup, "highlighter", "Highlight", "highlighter");
     this.addToolButton(toolGroup, "eraser", "Erase", "eraser");
     this.addToolButton(toolGroup, "lasso-select", "Select", "lasso");
-    this.addBrushPopover(toolGroup);
     const historyGroup = this.addToolbarSection(toolbar, "History");
     this.addTrackedIconButton(historyGroup, "undo", "undo-2", "Undo", () => {
       if (!this.editingLocked()) this.undo();
@@ -28584,6 +28568,10 @@ var PdfInkView = class extends InkWritingView {
     this.addTrackedIconButton(docGroup, "export", "download", "Export PDF with handwriting", () => {
       if (!this.editingLocked()) void this.exportHandwrittenCopy();
     });
+    const pagesGroup = this.addToolbarSection(toolbar, "Pages");
+    const indicator = pagesGroup.createDiv({ cls: "ink-pdf-page-indicator" });
+    indicator.setText("\u2013");
+    this.toolbarButtons.set("indicator", indicator);
     this.updateToolButtons();
     this.updateHistoryButtons();
     this.updatePageIndicator();
@@ -28631,11 +28619,6 @@ var PdfInkView = class extends InkWritingView {
       }
     });
     this.settingsPanel = this.brushPopover.root;
-  }
-  updateToolButtons() {
-    var _a;
-    super.updateToolButtons();
-    (_a = this.toolbarButtons.get("mode")) == null ? void 0 : _a.toggleClass("is-active", this.mode === "editing");
   }
   updatePageIndicator() {
     const indicator = this.toolbarButtons.get("indicator");
@@ -28713,11 +28696,26 @@ var PdfInkView = class extends InkWritingView {
     this.renderAll();
     void this.renderPdfPage();
   }
-  setZoom(zoom) {
+  setZoom(zoom, target, anchor) {
     const clamped = Math.max(PDF_ZOOM_MIN, Math.min(PDF_ZOOM_MAX, zoom));
     if (clamped === this.zoom) return;
+    const scroller = this.scroller;
+    const page = this.pageWrap;
+    if (!scroller || !page) {
+      this.zoom = clamped;
+      this.layoutPage();
+      void this.renderPdfPage();
+      return;
+    }
+    const viewport = scroller.getBoundingClientRect();
+    target != null ? target : target = { x: viewport.left + scroller.clientWidth / 2, y: viewport.top + scroller.clientHeight / 2 };
+    const before = page.getBoundingClientRect();
+    anchor != null ? anchor : anchor = { x: (target.x - before.left) / before.width, y: (target.y - before.top) / before.height };
     this.zoom = clamped;
     this.layoutPage();
+    const after = page.getBoundingClientRect();
+    scroller.scrollLeft += after.left + anchor.x * after.width - target.x;
+    scroller.scrollTop += after.top + anchor.y * after.height - target.y;
     void this.renderPdfPage();
   }
   // -------------------------------------------------------------- geometry
@@ -28812,7 +28810,7 @@ var PdfInkView = class extends InkWritingView {
   onWheel(event) {
     if (!event.ctrlKey && !event.metaKey) return;
     event.preventDefault();
-    this.setZoom(this.zoom * (event.deltaY < 0 ? PDF_ZOOM_STEP : 1 / PDF_ZOOM_STEP));
+    this.setZoom(this.zoom * (event.deltaY < 0 ? PDF_ZOOM_STEP : 1 / PDF_ZOOM_STEP), { x: event.clientX, y: event.clientY });
   }
   // ------------------------------------------------------ writing-layer seams
   currentNotebook() {
@@ -28834,7 +28832,7 @@ var PdfInkView = class extends InkWritingView {
     return this.editingLocked();
   }
   editingLocked() {
-    return this.mode !== "editing" || !this.canEdit() || !this.writerHeld;
+    return !this.canEdit() || !this.writerHeld;
   }
   pagePixelSize() {
     return { width: this.canvasLogicalWidth, height: this.canvasLogicalHeight };
@@ -28853,11 +28851,11 @@ var PdfInkView = class extends InkWritingView {
   inputScroller() {
     return this.scroller;
   }
-  applyGestureZoom(value, _focus, _anchor) {
-    this.setZoom(value);
+  applyGestureZoom(value, focus, anchor) {
+    this.setZoom(value, focus, anchor);
   }
-  onToolSelected(_tool) {
-    if (this.mode !== "editing") void this.setMode("editing");
+  swipeNavigate(delta) {
+    this.navigatePages(delta);
   }
   settingsOpen() {
     var _a, _b;
@@ -28892,14 +28890,12 @@ var PdfInkView = class extends InkWritingView {
   }
   // ------------------------------------------------------------- rendering
   cancelPdfRender() {
-    var _a, _b, _c;
+    var _a;
     (_a = this.pdfRenderTask) == null ? void 0 : _a.cancel();
     this.pdfRenderTask = null;
-    (_c = (_b = this.textLayerTask) == null ? void 0 : _b.cancel) == null ? void 0 : _c.call(_b);
-    this.textLayerTask = null;
   }
   async renderPdfPage() {
-    var _a, _b;
+    var _a;
     const canvas = this.pdfCanvas;
     if (!canvas) return;
     const generation = ++this.pdfRenderGeneration;
@@ -28915,7 +28911,6 @@ var PdfInkView = class extends InkWritingView {
     if (!notePage || notePage.sourceIndex === void 0 || !this.pdfDoc) {
       ctx.fillStyle = "#ffffff";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
-      (_a = this.textLayer) == null ? void 0 : _a.empty();
       return;
     }
     try {
@@ -28928,35 +28923,9 @@ var PdfInkView = class extends InkWritingView {
       if (generation !== this.pdfRenderGeneration) return;
       this.pdfRenderTask = null;
     } catch (error) {
-      if (((_b = this.pdfjs) == null ? void 0 : _b.RenderingCancelledException) && error instanceof this.pdfjs.RenderingCancelledException) return;
+      if (((_a = this.pdfjs) == null ? void 0 : _a.RenderingCancelledException) && error instanceof this.pdfjs.RenderingCancelledException) return;
       if (generation === this.pdfRenderGeneration) this.setStatus(`Could not render this page: ${messageOf(error)}`, true);
       return;
-    }
-    if (this.mode === "reading") await this.renderTextLayer(notePage, generation);
-  }
-  async renderTextLayer(notePage, generation) {
-    var _a;
-    const container = this.textLayer;
-    const pdfjs = this.pdfjs;
-    if (!container || !pdfjs || !this.pdfDoc || notePage.sourceIndex === void 0) return;
-    container.empty();
-    try {
-      const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
-      if (generation !== this.pdfRenderGeneration) return;
-      const viewport = page.getViewport({ scale: this.zoom });
-      const textContent = await ((_a = page.getTextContent) == null ? void 0 : _a.call(page));
-      if (!textContent || generation !== this.pdfRenderGeneration) return;
-      let task = null;
-      if (pdfjs.TextLayer) {
-        task = await new pdfjs.TextLayer({ textContentSource: textContent, container, viewport }).render();
-      } else if (pdfjs.renderTextLayer) {
-        task = pdfjs.renderTextLayer({ textContentSource: textContent, container, viewport });
-      }
-      if (!task) return;
-      this.textLayerTask = task;
-      await task.promise;
-      if (generation === this.pdfRenderGeneration) this.textLayerTask = null;
-    } catch (e) {
     }
   }
   renderAll() {
@@ -28978,11 +28947,9 @@ var PdfInkView = class extends InkWritingView {
     this.noteIndex = Math.max(0, Math.min(this.noteIndex, count - 1));
   }
   resetViewState() {
-    var _a, _b;
     this.cancelPdfRender();
     this.finishPointerInput(false);
     this.discardPendingInkPreview();
-    this.mode = "reading";
     this.releaseWriter();
     this.pdfDoc = null;
     this.sourcePages = [];
@@ -28994,8 +28961,6 @@ var PdfInkView = class extends InkWritingView {
     this.redoStack = [];
     this.dirty = false;
     this.clearSaveTimers();
-    (_a = this.root) == null ? void 0 : _a.removeClass("ink-pdf-editing");
-    (_b = this.root) == null ? void 0 : _b.addClass("ink-pdf-reading");
     this.setStatus("Loading PDF\u2026");
   }
   setStatus(message, isError = false) {

@@ -25,6 +25,8 @@ interface PdfViewInternals {
   dirty: boolean;
   writeBlockedReason: string | null;
   writerHeld: boolean;
+  acquireWriter(): void;
+  releaseWriter(): void;
   noteIndex: number;
   canvasLogicalWidth: number;
   canvasLogicalHeight: number;
@@ -32,7 +34,8 @@ interface PdfViewInternals {
   predictedTip: InkPoint[] | null;
   activeStroke: InkStroke | null;
   attachSidecar(sidecar: PdfSidecar, raw: string, file: TFile | null): void;
-  setMode(mode: "reading" | "editing"): Promise<void>;
+  acquireWriter(): void;
+  releaseWriter(): void;
   flushSaveNow(): Promise<{ status: string; message?: string }>;
   markSidecarChanged(): void;
   withPageUndo(change: () => boolean, label: string): void;
@@ -159,50 +162,28 @@ describe("writer arbitration", () => {
   });
 });
 
-describe("mode gating", () => {
+describe("writer lock", () => {
   beforeEach(() => {
     vi.useFakeTimers();
     vi.stubGlobal("window", globalThis);
   });
 
-  it("ignores pen input in reading mode", async () => {
+  it("opens writable PDFs with the writer held from sidecar attach", () => {
+    const { internal } = setup();
+    // The view is always in editing shape; writability is the lock state.
+    expect(internal.writerHeld).toBe(true);
+  });
+
+  it("ignores pen input while the writer is not held", () => {
     const { internal, sidecar } = setup();
-    // attachSidecar now auto-enters editing for writable PDFs; force reading
-    // to exercise the gate itself.
-    await internal.setMode("reading");
-    expect(internal.mode).toBe("reading");
+    internal.writeBlockedReason = "fingerprint mismatch";
+    internal.releaseWriter();
+    internal.acquireWriter();
+    // In the real load path the block exists before the sidecar attaches,
+    // so re-acquiring must refuse.
+    expect(internal.writerHeld).toBe(false);
     internal.onPointerDown(pointer(100, 100));
     expect(sidecar.notebook.pages[0].strokes).toHaveLength(0);
-  });
-
-  it("opens writable PDFs straight into editing with the writer held", async () => {
-    const { internal } = setup();
-    // The auto-entry must happen when the sidecar attaches, not in onOpen:
-    // onOpen runs before the sidecar loads, so canEdit() was always false
-    // there and every fresh open silently stayed in reading mode.
-    expect(internal.mode).toBe("editing");
-    expect(internal.writerHeld).toBe(true);
-  });
-
-  it("refuses editing when the sidecar is write-blocked", async () => {
-    const { internal } = setup();
-    // In the real load path the block exists before the sidecar attaches;
-    // simulate that ordering by returning to reading before re-entering.
-    internal.writeBlockedReason = "fingerprint mismatch";
-    await internal.setMode("reading");
-    await internal.setMode("editing");
-    expect(internal.mode).toBe("reading");
-    expect(internal.writerHeld).toBe(false);
-  });
-
-  it("enters editing with the writer held and returns to reading cleanly", async () => {
-    const { internal } = setup();
-    await internal.setMode("editing");
-    expect(internal.mode).toBe("editing");
-    expect(internal.writerHeld).toBe(true);
-    await internal.setMode("reading");
-    expect(internal.mode).toBe("reading");
-    expect(internal.writerHeld).toBe(false);
   });
 
   it("enforces one writer per PDF across two views", async () => {
@@ -223,7 +204,6 @@ describe("pen pipeline", () => {
 
   it("records a stroke in the embedded notebook and queues worker operations", async () => {
     const { internal, sidecar, appliedOps } = setup();
-    await internal.setMode("editing");
     internal.onPointerDown(pointer(60, 60));
     internal.onPointerMove(pointer(120, 90));
     internal.onPointerMove(pointer(180, 120));
@@ -239,7 +219,6 @@ describe("pen pipeline", () => {
 
   it("keeps completed strokes out of the tile exclusion only after commit", async () => {
     const { internal } = setup();
-    await internal.setMode("editing");
     internal.onPointerDown(pointer(60, 60));
     internal.onPointerUp(pointer(200, 140));
     expect(internal.sidecar.notebook.pages[0].strokes).toHaveLength(1);
@@ -247,7 +226,6 @@ describe("pen pipeline", () => {
 
   it("supports undo and redo of a stroke via patch operations", async () => {
     const { internal, sidecar, appliedOps } = setup();
-    await internal.setMode("editing");
     internal.onPointerDown(pointer(60, 60));
     internal.onPointerUp(pointer(200, 140));
     internal.undo();
@@ -302,14 +280,11 @@ describe("save gating", () => {
     expect(["conflict", "failed"]).toContain(outcome.status);
   });
 
-  it("leaving edit mode waits for the save outcome", async () => {
+  it("flushing waits for and reports the save outcome", async () => {
     const { internal } = setup();
-    await internal.setMode("editing");
     internal.markSidecarChanged();
     const outcome = await internal.flushSaveNow();
     expect(outcome.status).toBe("saved");
-    await internal.setMode("reading");
-    expect(internal.mode).toBe("reading");
   });
 });
 
@@ -321,7 +296,6 @@ describe("blank note pages in the view", () => {
 
   it("inserts a blank page with neighbor geometry and undoes it via snapshot", async () => {
     const { internal, sidecar, appliedOps } = setup();
-    await internal.setMode("editing");
     internal.withPageUndo(() => insertBlankNotePage(internal.sidecar, sourcePageId(0)) !== null, "insert a blank page");
     expect(internal.sidecar.notePages).toHaveLength(2);
     expect(internal.sidecar.notePages[1].sourceIndex).toBeUndefined();
@@ -342,7 +316,6 @@ describe("predicted ghost tip", () => {
 
   it("tracks the pen tail and anchors the ghost at the stroke tail, not the start", async () => {
     const { view, internal } = setup();
-    await internal.setMode("editing");
     internal.onPointerDown(pointer(100, 420));
     internal.onPointerMove(pointer(300, 420));
     // Unified writing layer: lastPoint is the live stroke tail (modeled output).

@@ -429,9 +429,20 @@ export abstract class InkWritingView extends FileView {
     zoom: number;
     x: number;
     y: number;
+    startX: number;
+    startY: number;
+    /** Locked drag axis; "x" on a horizontally-dominant drag that cannot
+     *  scroll (the page-flip gesture), "y" for panning. */
+    axis: "x" | "y" | null;
+    /** Horizontal drag offset already consumed by page flips. */
+    swipeDone: number;
+    /** Gesture-start midpoint, normalized page space (pinch anchor). */
     pageX: number;
     pageY: number;
   } | null = null;
+  /** Last input the active pointer produced; drives stale-interaction
+   *  healing when the platform loses the final pointerup. */
+  protected lastPointerActivityAt = 0;
 
   // --- pen modeling
   protected penModeler: PenCapture | null = null;
@@ -524,6 +535,8 @@ export abstract class InkWritingView extends FileView {
 
   /** View hook before a tool button selects a tool (PDF: enter editing). */
   protected onToolSelected(_tool: InkTool): void {}
+  /** View hook for the horizontal page-flip gesture (Photos-style). */
+  protected swipeNavigate(_delta: number): void {}
   protected settingsOpen(): boolean { return false; }
   protected toggleToolSettings(): void {}
   /** Re-open the settings popover at the (new) active tool's anchor. */
@@ -564,6 +577,7 @@ export abstract class InkWritingView extends FileView {
       this.saveTimer = undefined;
     }
     this.activePointerId = event.pointerId;
+    this.lastPointerActivityAt = Date.now();
     this.interaction = {
       generation: ++this.interactionGeneration,
       pointerId: event.pointerId,
@@ -779,6 +793,7 @@ export abstract class InkWritingView extends FileView {
       }
     }
     this.updatePredictedTip(event, rect, phase);
+    this.lastPointerActivityAt = Date.now();
     if (changed) {
       if (this.activeStroke) this.activeStroke.updatedAt = Date.now();
       this.requestRender();
@@ -1155,9 +1170,10 @@ export abstract class InkWritingView extends FileView {
     // contact and final touchend events with no remaining contacts.
     if (event.cancelable && event.touches.length < 2) event.preventDefault();
     this.touchGesture = null;
+    this.healStaleInteraction(Array.from(event.touches));
     const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus");
-    if (this.activePointerId !== null || touches.length < 1 || touches.length > 2) return;
-    event.preventDefault();
+    if (touches.length < 1 || touches.length > 2) return;
+    if (this.activePointerId !== null) return;
     const [a, b] = touches;
     if (!a) return;
     const x = b ? (a.clientX + b.clientX) / 2 : a.clientX;
@@ -1166,10 +1182,32 @@ export abstract class InkWritingView extends FileView {
     this.touchGesture = {
       ids: b ? [a.identifier, b.identifier] : [a.identifier],
       distance: b ? Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) : 0,
-      zoom: this.zoom, x, y,
+      zoom: this.zoom, x, y, startX: x, startY: y,
+      axis: null, swipeDone: 0,
       pageX: (x - rect.left) / rect.width,
       pageY: (y - rect.top) / rect.height,
     };
+  }
+
+  /**
+   * Finalizes interactions whose pointer the platform lost. iPadOS split-view
+   * transitions can swallow the final pointerup/touchend of an in-flight
+   * stroke; the interaction then stays "active" forever, which blocks every
+   * two-finger gesture (and, for stylus-touch sources, the document-level
+   * pointerup fallback deliberately does not fire). Two heal signals: a
+   * stylus-touch interaction whose identifier is no longer on screen, and a
+   * pointer interaction with no input for >2.5 s (an active stroke emits
+   * samples at frame rate, so silence means the pointer is gone).
+   */
+  private healStaleInteraction(touches: Touch[]): void {
+    const interaction = this.interaction;
+    if (!interaction || this.activePointerId === null) return;
+    if (interaction.source === "stylus-touch") {
+      const alive = touches.some((touch) => touch.identifier === interaction.pointerId);
+      if (!alive) this.finishPointerInput(false);
+      return;
+    }
+    if (Date.now() - this.lastPointerActivityAt > 2500) this.finishPointerInput(false);
   }
 
   protected onTouchMove(event: TouchEvent): void {
@@ -1190,8 +1228,24 @@ export abstract class InkWritingView extends FileView {
     }
     event.preventDefault();
     if (!b) {
-      this.inputScroller().scrollLeft += gesture.x - a.clientX;
-      this.inputScroller().scrollTop += gesture.y - a.clientY;
+      const scroller = this.inputScroller();
+      const totalX = a.clientX - gesture.startX;
+      const totalY = a.clientY - gesture.startY;
+      if (gesture.axis === null && Math.max(Math.abs(totalX), Math.abs(totalY)) > 10) {
+        const scrollableX = scroller.scrollWidth > scroller.clientWidth + 4;
+        gesture.axis = !scrollableX && Math.abs(totalX) > Math.abs(totalY) * 1.5 ? "x" : "y";
+      }
+      if (gesture.axis === "x") {
+        // Photos-style page flip: a horizontally dominant drag when the
+        // document cannot scroll sideways flips pages instead of panning.
+        if (Math.abs(totalX - gesture.swipeDone) > 64) {
+          this.swipeNavigate(totalX > gesture.swipeDone ? -1 : 1);
+          gesture.swipeDone = totalX;
+        }
+        return;
+      }
+      scroller.scrollLeft += gesture.x - a.clientX;
+      scroller.scrollTop += gesture.y - a.clientY;
       gesture.x = a.clientX;
       gesture.y = a.clientY;
       return;

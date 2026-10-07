@@ -27,6 +27,8 @@ function setup(viewportWidth = 800) {
   view.pageScroller = {
     clientWidth: viewportWidth,
     clientHeight: viewportHeight,
+    get scrollWidth() { return width * view.zoom + horizontalGutter * 2; },
+    get scrollHeight() { return height * view.zoom + 48; },
     getBoundingClientRect: () => ({ left: 90, top: 120 }),
     get scrollLeft() { return left; },
     set scrollLeft(value: number) {
