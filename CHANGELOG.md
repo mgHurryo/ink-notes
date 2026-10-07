@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.8.0-beta.12 - 2026-10-07
+
+- True centre zoom anchoring in both editors: the page now sits dead-centre in its scroller while it fits (auto margins collapse to zero once it overflows, so panning and the anchor math keep working). Previously the page hung from the top edge, so zooming pivoted around the top-centre.
+- Split-view fixes: the PDF editor re-layouts (and re-renders, debounced) when its pane resizes - a view opened before a split previously kept its stale geometry, overflowing the pane and mis-mapping strokes; and both editors now heal interactions whose pointer the platform lost (iPadOS split-view transitions can swallow the final pointerup/touchend - the stuck interaction then blocked every two-finger gesture until the next pen stroke).
+- Photos-style page flipping: a horizontally dominant single-finger drag flips to the previous/next page in both editors (when the document cannot scroll sideways). The PDF toolbar's previous/next and zoom buttons are gone - pages flip by swipe, zoom lives on pinch and Ctrl/⌘-wheel.
+- The PDF reading mode is removed: the view is always in editing shape, read-only behaviour remains purely as a lock state (fingerprint-mismatched or corrupt sidecars stay protected, and the single-writer arbiter still holds). The eye toggle, text layer and mode plumbing are gone.
+- The brush-settings button moves to the far left of the toolbar in both editors (it carries the sample-stroke preview); it no longer sits between the tools.
+
+## 0.8.0-beta.11 - 2026-10-07
+
+- Zoom in the PDF editor is now anchored like the notebook editor: the toolbar zoom buttons and reset keep the viewport centre stable, Ctrl/⌘-wheel keeps the cursor position stable, and a two-finger pinch keeps the gesture midpoint stable. Previously every PDF zoom scaled around the page top, so the content you were looking at drifted up and away.
+
 ## 0.8.0-beta.10 - 2026-10-07
 
 - Continue the unification at the UI layer, everything on the notebook editor's standard: the shared writing layer now also owns the toolbar components (icon button, tool button with its click contract, sections, active/disabled states), the interaction render pass (frame routing, selection, lasso preview with the lifted-stroke drag, eraser cell preview), the touch gesture handlers (Scribble stylus-touch ownership and two-finger pinch/pan) and the brush settings popover's eraser block and tool presets.
