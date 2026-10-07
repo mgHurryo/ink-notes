@@ -14,7 +14,7 @@
  * notebook semantics.
  */
 
-import { FileView, Notice } from "obsidian";
+import { FileView, Notice, setIcon } from "obsidian";
 import {
   MAX_RAW_POINT_SAMPLES,
   ModelerEngageReason,
@@ -30,12 +30,12 @@ import {
   InkTool,
   newId,
 } from "./model";
-import { BrushSettings, BrushTool, isBrushTool } from "./brush-popover";
+import { BrushPopoverController, BrushSettings, BrushTool, isBrushTool } from "./brush-popover";
 import { Rect, TileRenderer } from "./tiles";
 import { StrokeModeler, StrokeModelInput, StrokeModelResult, StrokeModelParams, DEFAULT_STROKE_MODEL_PARAMS, strokeModelParamsForSmoothStrength } from "./stroke-modeler";
 import type { InkWorkerResponse, NotebookOperation } from "./worker-protocol";
 import { InkWorkerService, InkWorkerSession } from "./worker-service";
-import { clampPercent, drawInkStroke, normalizePressureCurve, samplePressureCurve } from "./rendering";
+import { canvasResolution, clampPercent, drawInkStroke, normalizePressureCurve, samplePressureCurve } from "./rendering";
 
 export interface ToolState {
   tool: InkTool;
@@ -388,11 +388,26 @@ export abstract class InkWritingView extends FileView {
   protected canvasLogicalWidth = 1;
   protected canvasLogicalHeight = 1;
   protected viewReady = false;
+  /** Selection/interaction overlay: lasso path, selection bounds, eraser and
+   *  lasso interaction frames. Assigned by the view's canvas build. */
+  protected canvas!: HTMLCanvasElement;
+  protected ctx!: CanvasRenderingContext2D;
+  protected lassoCanvas: HTMLCanvasElement | null = null;
+  protected lassoCtx: CanvasRenderingContext2D | null = null;
+  protected previewCanvas: HTMLCanvasElement | null = null;
+  protected previewCtx: CanvasRenderingContext2D | null = null;
+  protected confirmedPreviewCanvas: HTMLCanvasElement | null = null;
+  protected confirmedPreviewCtx: CanvasRenderingContext2D | null = null;
   protected eraserCursor!: HTMLElement;
   protected eraserHoverPoint: InkPoint | null = null;
   protected eraserPointerInside = false;
   protected renderFrame: number | null = null;
   protected resizeRequested = false;
+
+  // --- shared brush settings popover + toolbar
+  protected brushPopover!: BrushPopoverController;
+  /** Popover root; reflects the eraser mode state (is-stroke-eraser). */
+  protected settingsPanel: HTMLElement | null = null;
 
   // --- worker pipeline
   protected workers: InkWorkerService | undefined;
@@ -434,10 +449,6 @@ export abstract class InkWritingView extends FileView {
 
   // --- ink preview / commit
   protected confirmedStrokeOutlines = new Map<string, ConfirmedStrokeOutline>();
-  protected previewCanvas: HTMLCanvasElement | null = null;
-  protected previewCtx: CanvasRenderingContext2D | null = null;
-  protected confirmedPreviewCanvas: HTMLCanvasElement | null = null;
-  protected confirmedPreviewCtx: CanvasRenderingContext2D | null = null;
   protected pendingInkStrokes: InkStroke[] = [];
   protected committingInkStrokes: InkStroke[] | null = null;
   protected pendingInkPageId: string | null = null;
@@ -501,16 +512,22 @@ export abstract class InkWritingView extends FileView {
   protected abstract onModelMutated(): void;
   /** Resize pass before a render frame that was requested with resize. */
   protected abstract onRenderResize(): void;
-  /** Per-frame content render (interaction previews, selection). */
-  protected abstract renderInteractionFrame(): void;
-  /** Redraw the committed-stroke layer (tiles or selection fallback). */
-  protected abstract drawStrokes(strokes: InkStroke[]): void;
-  protected abstract drawInteractiveStrokes(strokes: InkStroke[], refine?: boolean): void;
-  protected abstract drawSelection(width: number, height: number): void;
   protected abstract resizeOverlay(canvas: HTMLCanvasElement, ctx: CanvasRenderingContext2D, maxPixels: number): boolean;
-  protected abstract beginLassoPreview(page: InkPage): void;
-  protected abstract commitLassoPreview(page: InkPage): void;
-  protected abstract hideLassoPreview(): void;
+  /** Element the toolbar buttons/sections are queried against. */
+  protected abstract toolbarRoot(): HTMLElement;
+  /** Scrollable container the touch pan gesture moves. */
+  protected abstract inputScroller(): HTMLElement;
+  /** Zoom applied for a two-finger pinch (value already computed). */
+  protected abstract applyGestureZoom(value: number, focus: { x: number; y: number }, anchor: { x: number; y: number }): void;
+
+  // ------------------------------------------------------- tool switching
+
+  /** View hook before a tool button selects a tool (PDF: enter editing). */
+  protected onToolSelected(_tool: InkTool): void {}
+  protected settingsOpen(): boolean { return false; }
+  protected toggleToolSettings(): void {}
+  /** Re-open the settings popover at the (new) active tool's anchor. */
+  protected reopenToolSettings(): void {}
   /** Whether the diagnostics panel wants raw point samples retained. */
   protected diagnosticsCaptureRawPoints(): boolean { return false; }
   /** Called at the top of a new pointerdown, after the input locks. */
@@ -1129,6 +1146,66 @@ export abstract class InkWritingView extends FileView {
   /** The element pointer capture is taken on (the writing surface). */
   protected abstract inputHost(): HTMLElement | undefined;
 
+  // ---------------------------------------------------------------- touch
+
+  protected onTouchStart(event: TouchEvent): void {
+    if (this.inputLocked()) return;
+    if (this.onStylusTouch(event)) return;
+    // Cancel native tap recognition before the guards, including Pencil
+    // contact and final touchend events with no remaining contacts.
+    if (event.cancelable && event.touches.length < 2) event.preventDefault();
+    this.touchGesture = null;
+    const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus");
+    if (this.activePointerId !== null || touches.length < 1 || touches.length > 2) return;
+    event.preventDefault();
+    const [a, b] = touches;
+    if (!a) return;
+    const x = b ? (a.clientX + b.clientX) / 2 : a.clientX;
+    const y = b ? (a.clientY + b.clientY) / 2 : a.clientY;
+    const rect = this.inputRect();
+    this.touchGesture = {
+      ids: b ? [a.identifier, b.identifier] : [a.identifier],
+      distance: b ? Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) : 0,
+      zoom: this.zoom, x, y,
+      pageX: (x - rect.left) / rect.width,
+      pageY: (y - rect.top) / rect.height,
+    };
+  }
+
+  protected onTouchMove(event: TouchEvent): void {
+    if (this.inputLocked()) return;
+    if (this.onStylusTouch(event)) return;
+    if (this.activePointerId !== null) {
+      this.touchGesture = null;
+      return;
+    }
+    const gesture = this.touchGesture;
+    if (!gesture) return;
+    const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus");
+    const a = touches.find((touch) => touch.identifier === gesture.ids[0]);
+    const b = touches.find((touch) => touch.identifier === gesture.ids[1]);
+    if (touches.length !== gesture.ids.length || !a || (gesture.ids.length === 2 && !b)) {
+      this.onTouchStart(event);
+      return;
+    }
+    event.preventDefault();
+    if (!b) {
+      this.inputScroller().scrollLeft += gesture.x - a.clientX;
+      this.inputScroller().scrollTop += gesture.y - a.clientY;
+      gesture.x = a.clientX;
+      gesture.y = a.clientY;
+      return;
+    }
+    if (gesture.distance < 1) {
+      this.onTouchStart(event);
+      return;
+    }
+    const distanceNow = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    this.applyGestureZoom(gesture.zoom * distanceNow / gesture.distance,
+      { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 },
+      { x: gesture.pageX, y: gesture.pageY });
+  }
+
   // --------------------------------------------------------------- eraser
 
   protected eraseAt(point: InkPoint, page: InkPage, mode: EraserMode = this.state.eraserMode, size = this.state.eraserSize): boolean {
@@ -1222,9 +1299,6 @@ export abstract class InkWritingView extends FileView {
     this.lassoPath.push(point);
     return true;
   }
-
-  /** View hook: a selection drag moved by (dx, dy) in page space. */
-  protected onLassoDragMoved(_dx: number, _dy: number): void {}
 
   protected flushPendingLassoPoint(): void {
     const point = this.pendingLassoPoint;
@@ -1518,6 +1592,125 @@ export abstract class InkWritingView extends FileView {
     ctx.restore();
   }
 
+  /** Per-frame content render (interaction previews, selection). */
+  protected renderInteractionFrame(): void {
+    if (this.lassoDrag) this.drawLassoInteraction();
+    else if (this.interaction?.tool === "eraser") this.drawEraserInteraction();
+    else if (this.hasInkPreview()) this.drawPreview();
+    else this.drawStrokes(this.currentPage().strokes);
+  }
+
+  protected drawStrokes(strokes: InkStroke[]): void {
+    if (!this.ctx) return;
+    this.tiles?.sync(strokes, this.tileExclusion());
+    this.tiles?.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
+    this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
+    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+    this.drawPreview();
+  }
+
+  protected drawInteractiveStrokes(strokes: InkStroke[], refine = false): void {
+    if (!this.ctx) return;
+    this.tiles?.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine);
+    this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
+    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+  }
+
+  protected drawEraserInteraction(): void {
+    if (!this.ctx) return;
+    const cells = [...this.eraserPreviewCells];
+    this.eraserPreviewCells.clear();
+    this.tiles?.previewInteractiveCells(cells, this.viewport, (window.devicePixelRatio || 1) * this.zoom);
+    this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
+    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+  }
+
+  protected drawSelection(width: number, height: number): void {
+    const ctx = this.ctx;
+    if (!ctx) return;
+    ctx.save();
+    ctx.strokeStyle = "#2f80ed";
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 4]);
+    if (this.lassoPath.length > 1) {
+      ctx.beginPath();
+      ctx.moveTo(this.lassoPath[0].x * width, this.lassoPath[0].y * height);
+      for (const point of this.lassoPath.slice(1)) ctx.lineTo(point.x * width, point.y * height);
+      ctx.closePath();
+      ctx.stroke();
+    }
+    const bounds = selectionBounds(this.selectedStrokes());
+    if (bounds) ctx.strokeRect(bounds.minX * width, bounds.minY * height, (bounds.maxX - bounds.minX) * width, (bounds.maxY - bounds.minY) * height);
+    ctx.restore();
+  }
+
+  private beginLassoPreview(page: InkPage): void {
+    const drag = this.lassoDrag;
+    if (!drag || !this.lassoCanvas || !this.lassoCtx) return;
+    const selected = new Set(drag.strokes.map((stroke) => stroke.id));
+    this.tiles?.patchStrokes([], [...selected], page.strokes);
+    this.tiles?.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, false);
+    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight,
+      window.devicePixelRatio || 1, this.zoom, 4_000_000);
+    this.lassoCanvas.width = resolution.width;
+    this.lassoCanvas.height = resolution.height;
+    this.lassoCanvas.style.left = "0";
+    this.lassoCanvas.style.top = "0";
+    this.lassoCanvas.style.width = `${this.canvasLogicalWidth * this.zoom}px`;
+    this.lassoCanvas.style.height = `${this.canvasLogicalHeight * this.zoom}px`;
+    this.lassoCtx.setTransform(resolution.width / this.canvasLogicalWidth, 0, 0,
+      resolution.height / this.canvasLogicalHeight, 0, 0);
+    this.lassoCtx.clearRect(0, 0, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    for (const stroke of drag.strokes) drawInkStroke(this.lassoCtx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    this.lassoCanvas.style.transform = "translate(0px, 0px)";
+    this.lassoCanvas.style.display = "block";
+  }
+
+  protected onLassoDragMoved(dx: number, dy: number): void {
+    if (!this.lassoCanvas) return;
+    this.lassoCanvas.style.transform = `translate(${dx * this.canvasLogicalWidth * this.zoom}px, ${dy * this.canvasLogicalHeight * this.zoom}px)`;
+  }
+
+  private drawLassoInteraction(): void {
+    const drag = this.lassoDrag;
+    if (!drag || !this.ctx) return;
+    this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
+    const bounds = drag.bounds;
+    if (!bounds) return;
+    this.ctx.save();
+    this.ctx.strokeStyle = "#2f80ed";
+    this.ctx.lineWidth = 1.5;
+    this.ctx.setLineDash([6, 4]);
+    this.ctx.strokeRect(
+      (bounds.minX + drag.dx) * this.canvasLogicalWidth,
+      (bounds.minY + drag.dy) * this.canvasLogicalHeight,
+      (bounds.maxX - bounds.minX) * this.canvasLogicalWidth,
+      (bounds.maxY - bounds.minY) * this.canvasLogicalHeight,
+    );
+    this.ctx.restore();
+  }
+
+  private commitLassoPreview(page: InkPage): void {
+    this.tiles?.patchStrokes(this.selectedStrokes(), [], page.strokes);
+    // Keep the transformed vector preview visible until the replacement tiles
+    // are complete, then swap the affected frame atomically.
+    this.tiles?.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true, () => {
+      this.hideLassoPreview();
+      if (this.viewReady && page === this.currentPage()) {
+        this.ctx?.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
+        this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+        this.drawPreview();
+      }
+    });
+  }
+
+  private hideLassoPreview(): void {
+    if (!this.lassoCanvas) return;
+    this.lassoCanvas.style.display = "none";
+    this.lassoCanvas.style.transform = "none";
+    this.lassoCanvas.width = this.lassoCanvas.height = 1;
+  }
+
   protected flushWorkerStrokePoints(): void {
     const stroke = this.activeStroke;
     const interaction = this.interaction;
@@ -1670,7 +1863,13 @@ export abstract class InkWritingView extends FileView {
     this.scheduleSave();
   }
 
-  protected abstract updateHistoryButtons(): void;
+  protected updateHistoryButtons(): void {
+    const undo = this.toolbarRoot().querySelector<HTMLButtonElement>("[aria-label='Undo']");
+    const redo = this.toolbarRoot().querySelector<HTMLButtonElement>("[aria-label='Redo']");
+    if (undo) undo.disabled = this.undoStack.length === 0;
+    if (redo) redo.disabled = this.redoStack.length === 0;
+  }
+
   protected abstract renderAll(): void;
 
   private addedStrokeCommand(pageId: string, original: InkStroke): EditCommand {
@@ -1815,5 +2014,100 @@ export abstract class InkWritingView extends FileView {
 
   protected brushSettings(tool: BrushTool): BrushSettings {
     return this.state[tool];
+  }
+
+  // -------------------------------------------------------------- toolbar
+
+  protected addToolbarSection(parent: HTMLElement, label: string): HTMLElement {
+    const section = parent.createDiv({ cls: "ink-toolbar-section" });
+    section.addClass(`ink-toolbar-section-${label.toLowerCase()}`);
+    section.setAttribute("role", "group");
+    section.setAttribute("aria-label", label);
+    return section.createDiv({ cls: "ink-toolbar-section-controls" });
+  }
+
+  protected addIconButton(parent: HTMLElement, icon: string, label: string, callback: (event: MouseEvent) => void, disabled = false): HTMLButtonElement {
+    const button = parent.createEl("button", { cls: "ink-icon-button", attr: { type: "button", title: label, "aria-label": label } });
+    button.disabled = disabled;
+    // Icon inside a .ink-button-icon span: iPadOS sizes a bare svg inside the
+    // button unreliably (icons collapsed to dots), while this wrapped
+    // structure renders correctly.
+    const iconHolder = button.createSpan({ cls: "ink-button-icon" });
+    setIcon(iconHolder, icon);
+    button.addEventListener("click", callback);
+    return button;
+  }
+
+  protected addToolButton(parent: HTMLElement, icon: string, label: string, tool: InkTool): void {
+    const hasSettings = tool === "pen" || tool === "highlighter" || tool === "eraser";
+    const button = parent.createEl("button", { cls: "ink-tool-button", attr: {
+      type: "button", title: label, "aria-label": label, "aria-pressed": String(this.state.tool === tool), "data-tool": tool,
+      ...(hasSettings ? { "aria-haspopup": "dialog", "aria-expanded": "false" } : {}),
+    } });
+    const iconHolder = button.createSpan({ cls: "ink-button-icon" });
+    setIcon(iconHolder, icon);
+    button.addEventListener("click", () => {
+      this.finishPointerInput(false);
+      if (this.state.tool === tool && hasSettings) {
+        this.toggleToolSettings();
+        return;
+      }
+      this.onToolSelected(tool);
+      this.state.tool = tool;
+      if (tool !== "lasso") this.clearSelection();
+      this.brushPopover.update();
+      this.updateToolButtons();
+      this.refreshEraserCursor();
+      if (this.settingsOpen()) this.reopenToolSettings();
+    });
+  }
+
+  protected updateToolButtons(): void {
+    this.toolbarRoot().querySelectorAll<HTMLElement>(".ink-tool-button").forEach((el) => {
+      const active = el.getAttribute("data-tool") === this.state.tool;
+      el.toggleClass("is-active", active);
+      el.setAttribute("aria-pressed", String(active));
+    });
+  }
+
+  /** Eraser settings block for the shared brush popover (ink markup: icon
+   *  mode radios, stroke-eraser hint, size slider). */
+  protected buildEraserSettings(body: HTMLElement,
+    addRange: (parent: HTMLElement, name: string, min: number, max: number, step: number, value: number, onChange: (value: number) => void) => void): void {
+    const eraser = body.createDiv({ cls: "ink-eraser-settings" });
+    eraser.createDiv({ cls: "ink-size-popover-title", text: "Eraser" });
+    eraser.createDiv({ cls: "ink-settings-label", text: "Mode" });
+    const modes = eraser.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
+    for (const [mode, label, shortLabel, iconName] of [["stroke", "Stroke eraser", "Stroke", "eraser"], ["circle", "Circle eraser", "Circle", "circle"], ["square", "Square eraser", "Square", "square"]] as const) {
+      const modeButton = modes.createEl("button", { cls: "ink-eraser-mode", attr: { type: "button", role: "radio", title: label, "aria-label": label, "aria-checked": String(this.state.eraserMode === mode), "data-eraser-mode": mode } });
+      setIcon(modeButton.createSpan({ cls: "ink-button-icon" }), iconName);
+      modeButton.createSpan({ cls: "ink-eraser-mode-label", text: shortLabel });
+      modeButton.addEventListener("click", () => {
+        this.state.eraserMode = mode;
+        this.updateEraserControls();
+      });
+    }
+    eraser.createDiv({ cls: "ink-stroke-eraser-hint", text: "Erases the entire touched stroke. Size is fixed." });
+    addRange(eraser, "Eraser size", 8, 160, 2, this.state.eraserSize, (value: number) => {
+      this.state.eraserSize = value;
+      this.refreshEraserCursor();
+    });
+  }
+
+  /** Per-tool brush presets; the ink standard applies to both editors. */
+  protected brushToolConfigs(): { tool: "pen" | "highlighter"; label: string; presets: number[]; maximum: number }[] {
+    return [
+      { tool: "pen", label: "Pen", presets: [2, 4, 8], maximum: 24 },
+      { tool: "highlighter", label: "Highlighter", presets: [8, 16, 24], maximum: 48 },
+    ];
+  }
+
+  protected updateEraserControls(): void {
+    if (!this.settingsPanel) return;
+    this.settingsPanel.toggleClass("is-stroke-eraser", this.state.eraserMode === "stroke");
+    this.settingsPanel.querySelectorAll<HTMLElement>(".ink-eraser-mode").forEach((button) => {
+      button.setAttribute("aria-checked", String(button.dataset.eraserMode === this.state.eraserMode));
+    });
+    this.refreshEraserCursor();
   }
 }
