@@ -23643,6 +23643,10 @@ var InkWritingView = class extends import_obsidian2.FileView {
   /** View hook for the horizontal page-flip gesture (Photos-style). */
   swipeNavigate(_delta) {
   }
+  /** View hook: the page-flip drag moved by `offset` px (page follows the
+   *  finger); null ends the drag and plays the settle animation. */
+  swipeDrag(_offset) {
+  }
   settingsOpen() {
     return false;
   }
@@ -24217,9 +24221,11 @@ var InkWritingView = class extends import_obsidian2.FileView {
   }
   // ---------------------------------------------------------------- touch
   onTouchStart(event) {
+    var _a;
     if (this.inputLocked()) return;
     if (this.onStylusTouch(event)) return;
     if (event.cancelable && event.touches.length < 2) event.preventDefault();
+    if (((_a = this.touchGesture) == null ? void 0 : _a.axis) === "x") this.swipeDrag(null);
     this.touchGesture = null;
     this.healStaleInteraction(Array.from(event.touches));
     const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus");
@@ -24290,10 +24296,15 @@ var InkWritingView = class extends import_obsidian2.FileView {
         gesture.axis = !scrollableX && Math.abs(totalX) > Math.abs(totalY) * 1.5 ? "x" : "y";
       }
       if (gesture.axis === "x") {
-        if (Math.abs(totalX - gesture.swipeDone) > 64) {
-          this.swipeNavigate(totalX > gesture.swipeDone ? -1 : 1);
+        const dragOffset = totalX - gesture.swipeDone;
+        const flipThreshold = Math.max(96, this.inputScroller().clientWidth * 0.2);
+        if (Math.abs(dragOffset) > flipThreshold) {
+          this.swipeNavigate(dragOffset > 0 ? -1 : 1);
           gesture.swipeDone = totalX;
+          this.swipeDrag(totalX - gesture.swipeDone);
+          return;
         }
+        this.swipeDrag(dragOffset);
         return;
       }
       scroller.scrollLeft += gesture.x - a.clientX;
@@ -26505,7 +26516,9 @@ var InkView = class extends InkWritingView {
     this.registerDomEvent(this.pageScroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchcancel", (event) => {
+      var _a;
       this.onStylusTouch(event);
+      if (((_a = this.touchGesture) == null ? void 0 : _a.axis) === "x") this.swipeDrag(null);
       this.touchGesture = null;
     }, { passive: false });
     const observer = new ResizeObserver(() => this.resizeCanvas());
@@ -26666,6 +26679,18 @@ var InkView = class extends InkWritingView {
   }
   swipeNavigate(delta) {
     this.changePage(delta);
+  }
+  swipeDrag(offset) {
+    const extent = this.pageExtent;
+    if (!extent) return;
+    if (offset === null) {
+      extent.style.transition = "transform 180ms ease-out";
+      extent.style.transform = "translateX(0px)";
+      return;
+    }
+    extent.style.transition = "none";
+    const clamped = Math.max(-140, Math.min(140, offset));
+    extent.style.transform = `translateX(${clamped}px)`;
   }
   settingsOpen() {
     return this.sizePopoverOpen;
@@ -28242,7 +28267,9 @@ var PdfInkView = class extends InkWritingView {
     this.registerDomEvent(scroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
     this.registerDomEvent(scroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(scroller, "touchcancel", (event) => {
+      var _a;
       this.onStylusTouch(event);
+      if (((_a = this.touchGesture) == null ? void 0 : _a.axis) === "x") this.swipeDrag(null);
       this.touchGesture = null;
     }, { passive: false });
     const observer = new ResizeObserver(() => {
@@ -28856,6 +28883,16 @@ var PdfInkView = class extends InkWritingView {
   }
   swipeNavigate(delta) {
     this.navigatePages(delta);
+  }
+  swipeDrag(offset) {
+    const wrap = this.pageWrap;
+    if (!wrap) return;
+    if (offset === null) {
+      wrap.setCssStyles({ transition: "transform 180ms ease-out", transform: "translateX(0px)" });
+      return;
+    }
+    const clamped = Math.max(-140, Math.min(140, offset));
+    wrap.setCssStyles({ transition: "none", transform: `translateX(${clamped}px)` });
   }
   settingsOpen() {
     var _a, _b;

@@ -139,6 +139,29 @@ describe("page touch navigation", () => {
     expect(view.pageScroller.scrollLeft).toBe(0);
   });
 
+  it("flips pages only after a deliberate horizontal swipe and follows the finger", () => {
+    const { view } = setup();
+    // A document that cannot scroll sideways enables the flip gesture.
+    Object.defineProperty(view.pageScroller, "scrollWidth", { get: () => view.pageScroller.clientWidth });
+    const flips: number[] = [];
+    (view as unknown as { swipeNavigate: (delta: number) => void }).swipeNavigate = (delta) => flips.push(delta);
+    const drags: (number | null)[] = [];
+    (view as unknown as { swipeDrag: (offset: number | null) => void }).swipeDrag = (offset) => drags.push(offset);
+
+    view.onTouchStart(touchEvent([[1, 500, 400]]));
+    view.onTouchMove(touchEvent([[1, 560, 400]]));   // 60px: below the threshold, follows only
+    expect(flips).toEqual([]);
+    expect(drags.at(-1)).toBeGreaterThan(0);
+    view.onTouchMove(touchEvent([[1, 700, 400]]));   // 200px: deliberate flip to the previous page
+    expect(flips).toEqual([-1]);
+    view.onTouchMove(touchEvent([[1, 760, 400]]));   // small bounce after the flip: no double flip
+    expect(flips).toEqual([-1]);
+    view.onTouchMove(touchEvent([[1, 920, 400]]));   // another deliberate drag: next flip
+    expect(flips).toEqual([-1, -1]);
+    view.onTouchStart(touchEvent([[1, 920, 400]]));  // finger lift settles the drag
+    expect(drags.at(-1)).toBeNull();
+  });
+
   it("preserves cursor-centered wheel zoom and ignores ordinary scrolling", () => {
     const { view, point } = setup();
     const anchor = point(320, 430);
