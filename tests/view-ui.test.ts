@@ -8,6 +8,15 @@ import type { NotebookStore } from "../src/storage";
 import type { WorkspaceLeaf } from "obsidian";
 
 const button = (label: string) => document.querySelector<HTMLButtonElement>('button[aria-label="' + label + '"]')!;
+// An opened popover keeps a requestAnimationFrame in flight; jsdom runs it
+// on a timer that can fire after afterEach's restoreAllMocks(), hitting
+// jsdom's unimplemented HTMLCanvasElement.getContext and printing
+// "Error: Not implemented" noise into the test output. This module-level
+// stub is assigned before any spy and never restored, so late callbacks
+// find a harmless all-stub context; the per-test spyOn below still takes
+// precedence inside each test and restores back to this stub.
+const stubCtx = new Proxy({}, { get: () => vi.fn(), set: () => true });
+HTMLCanvasElement.prototype.getContext = (() => stubCtx) as unknown as typeof HTMLCanvasElement.prototype.getContext;
 let view: InkView;
 beforeEach(async () => {
   document.body.innerHTML = '<div id="host"><div></div><main></main></div>';
