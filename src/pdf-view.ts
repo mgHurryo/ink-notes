@@ -2,6 +2,7 @@ import { App, FileView, Menu, Notice, Scope, SuggestModal, TFile, WorkspaceLeaf,
 import { InkPage, InkPoint, InkStroke, InkTool, newId } from "./model";
 import { canvasResolution, clampPercent, drawInkStroke, normalizePressureCurve, samplePressureCurve } from "./rendering";
 import { BrushPopoverController } from "./brush-popover";
+import { registerDocumentPointerEndEvents } from "./ink-input";
 import { StrokeModelInput, StrokeModeler, StrokeModelResult, strokeModelParamsForSmoothStrength } from "./stroke-modeler";
 import { TileRenderer } from "./tiles";
 import { InkWorkerService, InkWorkerSession } from "./worker-service";
@@ -701,7 +702,10 @@ export class PdfInkView extends FileView {
 
   private addIconButton(parent: HTMLElement, key: string, icon: string, label: string, onClick: (event: MouseEvent) => void): void {
     const button = parent.createEl("button", { cls: "ink-pdf-icon-button ink-icon-button", attr: { type: "button", "aria-label": label } });
-    setIcon(button, icon);
+    // Icon inside a .ink-button-icon span, exactly like the notebook toolbar:
+    // iPadOS sizes a bare svg inside the button unreliably (icons collapsed
+    // to dots), while the notebook's wrapped structure renders correctly.
+    setIcon(button.createSpan({ cls: "ink-button-icon" }), icon);
     button.addEventListener("click", (event) => onClick(event));
     this.toolbarButtons.set(key, button);
   }
@@ -711,7 +715,7 @@ export class PdfInkView extends FileView {
       cls: "ink-pdf-icon-button ink-icon-button ink-tool-button",
       attr: { type: "button", "data-tool": tool, "aria-label": label },
     });
-    setIcon(button, icon);
+    setIcon(button.createSpan({ cls: "ink-button-icon" }), icon);
     button.addEventListener("click", () => {
       if (this.mode !== "editing") {
         void this.setMode("editing");
@@ -733,7 +737,7 @@ export class PdfInkView extends FileView {
       cls: "ink-pdf-icon-button ink-icon-button",
       attr: { type: "button", "aria-label": "Brush settings" },
     });
-    setIcon(button, "settings-2");
+    setIcon(button.createSpan({ cls: "ink-button-icon" }), "settings-2");
     this.toolbarButtons.set("brush", button);
     button.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -969,6 +973,11 @@ export class PdfInkView extends FileView {
     host.addEventListener("pointercancel", (event) => this.onPointerEndHost(event as PointerEvent, true));
     host.addEventListener("pointerleave", () => this.hideEraserCursor());
     host.addEventListener("wheel", (event) => this.onWheel(event as WheelEvent), { passive: false });
+    // Shared with the notebook editor: catches the stroke end when iPadOS
+    // interrupts a Pencil (system gesture, haptic tick) or the pen lifts
+    // outside an uncaptured host - otherwise the stroke stays preview-only
+    // and the next render wipes it ("write a stroke, lose a stroke").
+    registerDocumentPointerEndEvents(host, (cleanup) => this.register(cleanup), (event, cancelled) => this.onPointerEndHost(event, cancelled));
   }
 
   private onWheel(event: WheelEvent): void {

@@ -18,6 +18,7 @@ import {
   newId,
 } from "./model";
 import { NotebookStore } from "./storage";
+import { registerDocumentPointerEndEvents } from "./ink-input";
 import { canvasResolution, clampPercent, drawInkStroke, normalizePressureCurve, samplePressureCurve } from "./rendering";
 import { BrushPopoverController, BrushSettings, BrushTool, isBrushTool } from "./brush-popover";
 export { BrushSettings, BrushTool, INK_COLORS, isBrushTool } from "./brush-popover";
@@ -564,7 +565,7 @@ export class InkView extends FileView {
     this.registerDomEvent(this.pageElement, "pointerup", (event) => this.onPointerUp(event));
     this.registerDomEvent(this.pageElement, "pointercancel", (event) => this.onPointerCancel(event));
     this.registerDomEvent(this.pageElement, "lostpointercapture", (event) => this.onLostPointerCapture(event));
-    this.registerPointerEndEvents();
+    registerDocumentPointerEndEvents(this.pageElement, (cleanup) => this.register(cleanup), (event) => this.onDocumentPointerEnd(event));
     this.registerDomEvent(this.pageElement, "wheel", (event) => this.onWheel(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "scroll", () => this.onViewportMotion(), { passive: true });
     this.registerDomEvent(this.pageScroller, "touchstart", (event) => this.onTouchStart(event), { passive: false });
@@ -1702,30 +1703,6 @@ export class InkView extends FileView {
     // pageElement handles ordinary endings first. This catches an uncaptured
     // Pencil released elsewhere in the document after capture was unavailable.
     if (this.interaction?.source !== "stylus-touch" && this.activePointerId === event.pointerId) this.finishPointerInput(false);
-  }
-
-  private registerPointerEndEvents(): void {
-    let owner = this.pageElement.ownerDocument;
-    const end = (event: PointerEvent) => this.onDocumentPointerEnd(event);
-    const bind = () => {
-      owner.addEventListener("pointerup", end);
-      owner.addEventListener("pointercancel", end);
-    };
-    const unbind = () => {
-      owner.removeEventListener("pointerup", end);
-      owner.removeEventListener("pointercancel", end);
-    };
-    bind();
-    const stopMigration = this.pageElement.onWindowMigrated?.(() => {
-      if (owner === this.pageElement.ownerDocument) return;
-      unbind();
-      owner = this.pageElement.ownerDocument;
-      bind();
-    });
-    this.register(() => {
-      stopMigration?.();
-      unbind();
-    });
   }
 
   private capturePointer(pointerId: number): void {
