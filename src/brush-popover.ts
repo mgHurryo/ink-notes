@@ -161,8 +161,11 @@ export class BrushPopoverController {
     if (spec.tool !== "pen") return;
     // 0 keeps ink direct (raw samples, no modeling); 1..100 is the stroke
     // modeler strength. Sparse low-rate devices also auto-engage at 0.
+    // No update() here: smooth has no visual control state, but the change
+    // must still reach the view (persisted settings).
     this.addRange(body, "Smooth", 0, 100, 1, settings.smooth ?? 0, (value) => {
       settings.smooth = value;
+      this.options.onControlsChanged?.();
     });
     // Dynamics sliders re-render the sample-stroke preview on change.
     this.addRange(body, "Taper", 0, 100, 1, settings.taper ?? 0, (value) => {
@@ -195,17 +198,23 @@ export class BrushPopoverController {
     const swatches = control.createDiv({ cls: "ink-color-swatches" });
     for (const color of INK_COLORS) {
       const swatch = swatches.createEl("button", { cls: "ink-color-swatch", attr: {
-        type: "button", title: color.label, "aria-label": `${spec.label} ${color.label.toLowerCase()}`,
+        type: "button", title: `${color.label} — double-click to set as default`, "aria-label": `${spec.label} ${color.label.toLowerCase()}`,
         "aria-pressed": String(settings.color.toLowerCase() === color.value), "data-color": color.value,
         "data-brush-tool": spec.tool,
       } });
       swatch.style.backgroundColor = color.value;
       if (settings.color.toLowerCase() === color.value) swatch.addClass("is-active");
-      swatch.addEventListener("click", () => {
+      const selectColor = (): void => {
         settings.color = color.value;
         this.updateColorSwatches(spec.tool, settings.color);
         this.update();
-      });
+      };
+      swatch.addEventListener("click", selectColor);
+      // Double-click promotes the color to the tool's default: the selection
+      // reaches the view's persisted settings through update() →
+      // onControlsChanged, so the saved configuration carries it into the
+      // next session. A single click keeps its plain "use now" meaning.
+      swatch.addEventListener("dblclick", selectColor);
     }
     const custom = control.createEl("label", { cls: "ink-custom-color", attr: { title: "Custom color" } });
     setIcon(custom.createSpan({ cls: "ink-button-icon" }), "plus");

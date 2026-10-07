@@ -22780,7 +22780,9 @@ var BrushPopoverController = class {
     });
     if (spec.tool !== "pen") return;
     this.addRange(body, "Smooth", 0, 100, 1, (_a = settings.smooth) != null ? _a : 0, (value) => {
+      var _a2, _b2;
       settings.smooth = value;
+      (_b2 = (_a2 = this.options).onControlsChanged) == null ? void 0 : _b2.call(_a2);
     });
     this.addRange(body, "Taper", 0, 100, 1, (_b = settings.taper) != null ? _b : 0, (value) => {
       settings.taper = value;
@@ -22811,7 +22813,7 @@ var BrushPopoverController = class {
     for (const color of INK_COLORS) {
       const swatch = swatches.createEl("button", { cls: "ink-color-swatch", attr: {
         type: "button",
-        title: color.label,
+        title: `${color.label} \u2014 double-click to set as default`,
         "aria-label": `${spec.label} ${color.label.toLowerCase()}`,
         "aria-pressed": String(settings.color.toLowerCase() === color.value),
         "data-color": color.value,
@@ -22819,11 +22821,13 @@ var BrushPopoverController = class {
       } });
       swatch.style.backgroundColor = color.value;
       if (settings.color.toLowerCase() === color.value) swatch.addClass("is-active");
-      swatch.addEventListener("click", () => {
+      const selectColor = () => {
         settings.color = color.value;
         this.updateColorSwatches(spec.tool, settings.color);
         this.update();
-      });
+      };
+      swatch.addEventListener("click", selectColor);
+      swatch.addEventListener("dblclick", selectColor);
     }
     const custom = control.createEl("label", { cls: "ink-custom-color", attr: { title: "Custom color" } });
     (0, import_obsidian.setIcon)(custom.createSpan({ cls: "ink-button-icon" }), "plus");
@@ -23475,6 +23479,116 @@ function sameInput(left, right) {
   return left.eventType === right.eventType && left.time === right.time && left.position.x === right.position.x && left.position.y === right.position.y && left.pressure === right.pressure && left.tiltX === right.tiltX && left.tiltY === right.tiltY;
 }
 
+// src/tool-state.ts
+function defaultToolState() {
+  return {
+    tool: "pen",
+    pen: { color: "#1b1b1b", width: 3, opacity: 1, smooth: 0, taper: 0, pressureGain: 100, speedGain: 0, pressureCurve: void 0 },
+    highlighter: { color: "#f2c94c", width: 18, opacity: 0.4 },
+    eraserMode: "stroke",
+    eraserSize: 32
+  };
+}
+var PEN_WIDTH_RANGE = [1, 24];
+var HIGHLIGHTER_WIDTH_RANGE = [1, 48];
+var OPACITY_RANGE = [0.1, 1];
+var PERCENT_RANGE = [0, 100];
+var ERASER_SIZE_RANGE = [8, 160];
+var CSS_HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
+function sanitizeToolState(raw) {
+  const defaults = defaultToolState();
+  const source = isRecord(raw) ? raw : {};
+  return {
+    tool: defaults.tool,
+    pen: sanitizeBrush(source.pen, defaults.pen, PEN_WIDTH_RANGE, true),
+    highlighter: sanitizeBrush(source.highlighter, defaults.highlighter, HIGHLIGHTER_WIDTH_RANGE, false),
+    eraserMode: isEraserMode(source.eraserMode) ? source.eraserMode : defaults.eraserMode,
+    eraserSize: sanitizeNumber(source.eraserSize, defaults.eraserSize, ERASER_SIZE_RANGE)
+  };
+}
+function storedToolState(state) {
+  return {
+    pen: storedBrush(state.pen),
+    highlighter: storedBrush(state.highlighter),
+    eraserMode: state.eraserMode,
+    eraserSize: state.eraserSize
+  };
+}
+var TOOL_STATE_SAVE_DEBOUNCE_MS = 500;
+var ToolStateSaver = class {
+  constructor(save, delay = TOOL_STATE_SAVE_DEBOUNCE_MS) {
+    this.save = save;
+    this.delay = delay;
+    this.latest = null;
+  }
+  schedule(state) {
+    this.latest = state;
+    if (this.timer !== void 0) window.clearTimeout(this.timer);
+    this.timer = window.setTimeout(() => {
+      this.timer = void 0;
+      this.flush();
+    }, this.delay);
+  }
+  /** Saves the pending settings now (unload safety net); no-op when idle. */
+  flush() {
+    if (this.timer !== void 0) {
+      window.clearTimeout(this.timer);
+      this.timer = void 0;
+    }
+    const state = this.latest;
+    if (!state) return;
+    this.latest = null;
+    void this.save(storedToolState(state));
+  }
+};
+function sanitizeBrush(raw, fallback, widthRange, withDynamics) {
+  var _a, _b, _c, _d;
+  const source = isRecord(raw) ? raw : {};
+  const settings = {
+    color: typeof source.color === "string" && CSS_HEX_COLOR.test(source.color) ? source.color : fallback.color,
+    width: sanitizeNumber(source.width, fallback.width, widthRange),
+    opacity: sanitizeNumber(source.opacity, fallback.opacity, OPACITY_RANGE)
+  };
+  if (!withDynamics) return settings;
+  settings.smooth = sanitizeNumber(source.smooth, (_a = fallback.smooth) != null ? _a : 0, PERCENT_RANGE);
+  settings.taper = sanitizeNumber(source.taper, (_b = fallback.taper) != null ? _b : 0, PERCENT_RANGE);
+  settings.pressureGain = sanitizeNumber(source.pressureGain, (_c = fallback.pressureGain) != null ? _c : 100, PERCENT_RANGE);
+  settings.speedGain = sanitizeNumber(source.speedGain, (_d = fallback.speedGain) != null ? _d : 0, PERCENT_RANGE);
+  settings.pressureCurve = sanitizePressureCurve(source.pressureCurve);
+  return settings;
+}
+function sanitizePressureCurve(raw) {
+  if (!Array.isArray(raw) || raw.length < 2 || raw.length > 32) return void 0;
+  const points = [];
+  let previousX = -Infinity;
+  for (const point of raw) {
+    if (!Array.isArray(point) || point.length < 2) return void 0;
+    const [x, y] = point;
+    if (typeof x !== "number" || typeof y !== "number" || !Number.isFinite(x) || !Number.isFinite(y)) return void 0;
+    const clampedX = Math.min(1, Math.max(0, x));
+    if (clampedX < previousX) return void 0;
+    previousX = clampedX;
+    points.push([clampedX, Math.min(1, Math.max(0, y))]);
+  }
+  return points;
+}
+function sanitizeNumber(raw, fallback, [min, max]) {
+  return typeof raw === "number" && Number.isFinite(raw) ? Math.min(max, Math.max(min, raw)) : fallback;
+}
+function isEraserMode(value) {
+  return value === "stroke" || value === "circle" || value === "square";
+}
+function isRecord(value) {
+  return typeof value === "object" && value !== null;
+}
+function storedBrush(settings) {
+  return {
+    ...settings,
+    // Deep-copy the curve: the editor mutates control-point arrays in place.
+    ...settings.pressureCurve ? { pressureCurve: settings.pressureCurve.map((point) => [...point]) } : {}
+  };
+}
+
 // src/ink-writing.ts
 var STROKE_ERASER_HIT_RADIUS = 10;
 var OVERLAY_PIXEL_BUDGET = 12e6;
@@ -23681,13 +23795,9 @@ function isPointerCaptureError(error) {
 var InkWritingView = class extends import_obsidian2.FileView {
   constructor() {
     super(...arguments);
-    this.state = {
-      tool: "pen",
-      pen: { color: "#1b1b1b", width: 3, opacity: 1, smooth: 0, taper: 0, pressureGain: 100, speedGain: 0, pressureCurve: void 0 },
-      highlighter: { color: "#f2c94c", width: 18, opacity: 0.4 },
-      eraserMode: "stroke",
-      eraserSize: 32
-    };
+    /** Defaults come from the persistence module so saved settings restore
+     *  against the exact same shape the editors start from. */
+    this.state = defaultToolState();
     // --- view-provided geometry / render state
     this.tiles = null;
     this.viewport = { x: 0, y: 0, width: 1, height: 1 };
@@ -23710,6 +23820,8 @@ var InkWritingView = class extends import_obsidian2.FileView {
     /** The eraser's own mini popover (mode + size only). */
     this.eraserPopover = null;
     this.eraserPopoverClose = null;
+    // --- shared persisted tool settings (wired by the plugin assembly)
+    this.sharedToolSettings = null;
     this.workerSession = null;
     this.workerRevision = 0;
     this.workerFallbackReported = false;
@@ -23835,10 +23947,35 @@ var InkWritingView = class extends import_obsidian2.FileView {
       getSettings: (tool) => this.brushSettings(tool),
       activeTool: () => this.state.tool,
       showPenDynamics: () => this.state.tool === "pen",
-      onControlsChanged: () => this.updateEraserControls(),
+      onControlsChanged: () => {
+        this.updateEraserControls();
+        this.scheduleToolStateSave();
+      },
       anchor: () => this.activeSettingsAnchor()
     });
     this.settingsPanel = this.brushPopover.root;
+  }
+  /**
+   * Adopts the plugin's shared persisted settings: pen and highlighter brush
+   * settings are aliased (both editors and the saved data then see one
+   * source of truth) while the active tool and the eraser values stay per
+   * editor - sharing the active tool would desync the other editor's
+   * toolbar from what its strokes actually use.
+   */
+  useSharedToolState(shared) {
+    this.sharedToolSettings = shared;
+    this.state = {
+      tool: this.state.tool,
+      pen: shared.config.pen,
+      highlighter: shared.config.highlighter,
+      eraserMode: shared.config.eraserMode,
+      eraserSize: shared.config.eraserSize
+    };
+  }
+  /** Persists tool settings (debounced); safe to call on every input event. */
+  scheduleToolStateSave() {
+    var _a;
+    (_a = this.sharedToolSettings) == null ? void 0 : _a.scheduleSave(this.state);
   }
   /** The writing tools plus history - the shared middle of every toolbar. */
   buildWritingSections(toolbar) {
@@ -25334,6 +25471,7 @@ var InkWritingView = class extends import_obsidian2.FileView {
           candidate.setAttribute("aria-checked", String(candidate.dataset.eraserMode === mode));
         });
         this.refreshEraserCursor();
+        this.scheduleToolStateSave();
       });
     }
     pop.createDiv({ cls: "ink-settings-label", text: "Size" });
@@ -25345,6 +25483,7 @@ var InkWritingView = class extends import_obsidian2.FileView {
     range.addEventListener("input", () => {
       this.state.eraserSize = Number(range.value);
       this.refreshEraserCursor();
+      this.scheduleToolStateSave();
     });
     this.eraserPopover = pop;
     const place = () => {
@@ -26504,7 +26643,7 @@ var SaveConflictError = class extends Error {
   }
 };
 var InkView = class extends InkWritingView {
-  constructor(leaf, store, workers) {
+  constructor(leaf, store, workers, toolState) {
     super(leaf);
     this.notebook = createNotebook();
     this.pageIndex = 0;
@@ -26526,6 +26665,7 @@ var InkView = class extends InkWritingView {
     this.swipeStage = null;
     this.store = store;
     this.workers = workers;
+    if (toolState) this.useSharedToolState(toolState);
     this.scope = new import_obsidian3.Scope(this.app.scope);
     this.scope.register(["Mod"], "z", () => {
       this.undo();
@@ -28420,6 +28560,7 @@ var PdfInkView = class extends InkWritingView {
     this.workers = deps.workers;
     this.takeover = deps.takeover;
     this.arbiter = deps.arbiter;
+    if (deps.toolState) this.useSharedToolState(deps.toolState);
   }
   getDisplayText() {
     return this.file ? `${this.file.basename} (handwriting)` : "PDF handwriting";
@@ -28789,7 +28930,10 @@ var PdfInkView = class extends InkWritingView {
       getSettings: (tool) => this.brushSettings(tool),
       activeTool: () => this.state.tool,
       showPenDynamics: () => this.state.tool === "pen",
-      onControlsChanged: () => this.updateEraserControls(),
+      onControlsChanged: () => {
+        this.updateEraserControls();
+        this.scheduleToolStateSave();
+      },
       anchor: () => this.activeSettingsAnchor()
     });
     this.settingsPanel = this.brushPopover.root;
@@ -29581,12 +29725,24 @@ var InkNotesPlugin = class extends import_obsidian9.Plugin {
   constructor() {
     super(...arguments);
     this.config = { ...DEFAULT_SETTINGS };
+    /** Tool settings shared by both editors; loaded sanitized in onload and
+     *  kept current by the debounced saver. */
+    this.toolState = sanitizeToolState(void 0);
     this.refreshTimers = /* @__PURE__ */ new Map();
     this.refreshing = /* @__PURE__ */ new Set();
     this.pendingRefresh = /* @__PURE__ */ new Set();
   }
   async onload() {
-    this.config = { ...DEFAULT_SETTINGS, ...await this.loadData(), ...DEFAULT_SETTINGS };
+    const saved = await this.loadData();
+    this.config = {
+      takeOverPdfTabs: typeof (saved == null ? void 0 : saved.takeOverPdfTabs) === "boolean" ? saved.takeOverPdfTabs : DEFAULT_SETTINGS.takeOverPdfTabs
+    };
+    this.toolState = sanitizeToolState(saved == null ? void 0 : saved.toolState);
+    this.toolStateSaver = new ToolStateSaver((stored) => this.persistToolState(stored));
+    this.toolStateBinding = {
+      config: this.toolState,
+      scheduleSave: (state) => this.toolStateSaver.schedule(state)
+    };
     this.store = new NotebookStore(this.app);
     this.workers = new InkWorkerService((message) => new import_obsidian9.Notice(message));
     this.register(() => this.workers.dispose());
@@ -29653,10 +29809,11 @@ var InkNotesPlugin = class extends import_obsidian9.Plugin {
   }
   onunload() {
     var _a;
+    this.toolStateSaver.flush();
     (_a = this.takeover) == null ? void 0 : _a.uninstall();
   }
   createView(leaf) {
-    return new InkView(leaf, this.store, this.workers);
+    return new InkView(leaf, this.store, this.workers, this.toolStateBinding);
   }
   /**
    * PDF handwriting support: a custom view for PDF tabs, installed by
@@ -29682,7 +29839,7 @@ var InkNotesPlugin = class extends import_obsidian9.Plugin {
     }), VIEW_TYPE_PDF_INK);
     this.registerView(VIEW_TYPE_PDF_INK, (leaf) => {
       const view = new PdfInkView(leaf);
-      view.configure({ store: this.pdfStore, workers: this.workers, takeover: this.takeover, arbiter: this.arbiter });
+      view.configure({ store: this.pdfStore, workers: this.workers, takeover: this.takeover, arbiter: this.arbiter, toolState: this.toolStateBinding });
       return view;
     });
     if (this.app.vault) {
@@ -29708,6 +29865,22 @@ var InkNotesPlugin = class extends import_obsidian9.Plugin {
     if (!this.takeover) return;
     this.takeover.uninstall();
     if (this.config.takeOverPdfTabs && this.app.vault) this.takeover.install();
+  }
+  /**
+   * One writer for the data file: the plugin settings and the shared tool
+   * settings live in the same document, so saving either must carry both or
+   * the later write would clobber the earlier one's half.
+   */
+  persistToolState(stored) {
+    this.toolState.eraserMode = stored.eraserMode;
+    this.toolState.eraserSize = stored.eraserSize;
+    return this.saveData({ takeOverPdfTabs: this.config.takeOverPdfTabs, toolState: stored }).catch((error) => {
+      new import_obsidian9.Notice(`Ink Notes could not save tool settings: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
+  /** Persists the plugin settings together with the latest tool settings. */
+  async persistSettings() {
+    await this.saveData({ takeOverPdfTabs: this.config.takeOverPdfTabs, toolState: storedToolState(this.toolState) });
   }
   /** Open a PDF tab in the handwriting view on explicit request. */
   async openPdfHandwriting(file) {
@@ -29784,7 +29957,7 @@ var InkSettingTab = class extends import_obsidian9.PluginSettingTab {
     toggle.createSpan({ text: " Take over PDF tabs automatically" });
     checkbox.addEventListener("change", () => {
       this.plugin.config.takeOverPdfTabs = checkbox.checked;
-      void this.plugin.saveData(this.plugin.config);
+      void this.plugin.persistSettings();
       this.plugin.refreshPdfTakeover();
     });
     const diagnostics = containerEl.createDiv();
