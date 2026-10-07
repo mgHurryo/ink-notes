@@ -560,14 +560,14 @@ export class InkView extends InkWritingView {
     const extent = this.pageExtent;
     if (!extent) { this.destroySwipeStage(); return; }
     if (!delta || !this.swipeStage) {
-      extent.style.transition = "transform 200ms ease-out";
+      extent.style.transition = "transform 160ms ease-out";
       extent.style.transform = "translateX(0px)";
       if (this.swipeStage) {
-        this.swipeStage.style.transition = "transform 200ms ease-out";
+        this.swipeStage.style.transition = "transform 160ms ease-out";
         this.swipeStage.style.transform = "translateX(0px)";
       }
       if (this.swipeStageTimer === undefined) {
-        this.swipeStageTimer = window.setTimeout(() => { this.swipeStageTimer = undefined; this.destroySwipeStage(); }, 230);
+        this.swipeStageTimer = window.setTimeout(() => { this.swipeStageTimer = undefined; this.destroySwipeStage(); }, 200);
       }
       return;
     }
@@ -575,24 +575,30 @@ export class InkView extends InkWritingView {
     // page slot and covers it until the real page renders underneath.
     const side = Number(this.swipeStage.dataset.neighbor) - this.pageIndex;
     const width = extent.offsetWidth;
-    extent.style.transition = "transform 200ms ease-out";
+    extent.style.transition = "transform 160ms ease-out";
     extent.style.transform = `translateX(${-delta * width}px)`;
-    this.swipeStage.style.transition = "transform 200ms ease-out";
+    this.swipeStage.style.transition = "transform 160ms ease-out";
     this.swipeStage.style.transform = `translateX(${-side * width}px)`;
     if (this.swipeStageTimer !== undefined) window.clearTimeout(this.swipeStageTimer);
     this.swipeStageTimer = window.setTimeout(() => {
       this.swipeStageTimer = undefined;
+      // The stage keeps covering the page slot until the real page rendered
+      // underneath; re-sync it to the live geometry so a transient relayout
+      // after changePage can never show it (or the page) squashed.
       const stage = this.swipeStage;
       if (stage) {
         stage.style.transition = "none";
         stage.style.left = `${extent.offsetLeft}px`;
+        stage.style.top = `${extent.offsetTop}px`;
+        stage.style.width = `${extent.offsetWidth}px`;
+        stage.style.height = `${extent.offsetHeight}px`;
         stage.style.transform = "none";
       }
       extent.style.transition = "none";
       extent.style.transform = "none";
       this.changePage(delta);
-      this.swipeStageTimer = window.setTimeout(() => { this.swipeStageTimer = undefined; this.destroySwipeStage(); }, 450);
-    }, 210);
+      this.swipeStageTimer = window.setTimeout(() => { this.swipeStageTimer = undefined; this.destroySwipeStage(); }, 650);
+    }, 170);
   }
 
   private destroySwipeStage(): void {
