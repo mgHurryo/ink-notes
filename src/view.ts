@@ -352,6 +352,7 @@ export class InkView extends InkWritingView {
     this.registerDomEvent(this.pageScroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchcancel", (event) => {
       this.onStylusTouch(event);
+      if (this.touchGesture?.axis === "x") this.swipeDrag(null);
       this.touchGesture = null;
     }, { passive: false });
     const observer = new ResizeObserver(() => this.resizeCanvas());
@@ -505,6 +506,19 @@ export class InkView extends InkWritingView {
 
   protected swipeNavigate(delta: number): void {
     this.changePage(delta);
+  }
+
+  protected swipeDrag(offset: number | null): void {
+    const extent = this.pageExtent;
+    if (!extent) return;
+    if (offset === null) {
+      extent.style.transition = "transform 180ms ease-out";
+      extent.style.transform = "translateX(0px)";
+      return;
+    }
+    extent.style.transition = "none";
+    const clamped = Math.max(-140, Math.min(140, offset));
+    extent.style.transform = `translateX(${clamped}px)`;
   }
   protected settingsOpen(): boolean { return this.sizePopoverOpen; }
   protected toggleToolSettings(): void {

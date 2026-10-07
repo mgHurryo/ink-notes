@@ -496,6 +496,10 @@
 .ink-page-extent {
   position: relative;
   margin: auto;
+  /* The scroller is a flex column for centring; without this the flex
+     layout SQUEEZES the page's height once the zoomed page exceeds the
+     pane, flattening the rendered page and mis-mapping every stroke. */
+  flex: none;
 }
 
 .ink-page {
@@ -889,6 +893,8 @@
 .ink-pdf-page-wrap {
   position: relative;
   margin: auto;
+  /* See .ink-page-extent: never let the flex scroller squash the page. */
+  flex: none;
   overflow: hidden;
   border-radius: 2px;
   background: #fff;
