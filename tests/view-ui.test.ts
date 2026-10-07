@@ -114,6 +114,13 @@ describe("reference-style editor", () => {
     expect(highlighterSize.value).toBe("24");
     expect(button("Highlighter green").getAttribute("aria-pressed")).toBe("true");
   });
+  it("moves focus to the active tool's size slider when the popover opens", async () => {
+    button("Highlight").click();   // first tap selects the highlighter
+    button("Highlight").click();   // re-tap opens the brush popover
+    await new Promise((resolve) => setTimeout(resolve, 30)); // open()'s rAF
+    expect(document.activeElement).toBe(
+      document.querySelector<HTMLInputElement>('input[aria-label="Highlighter size"]'));
+  });
   it("hints and applies double-click set-as-default on a swatch", () => {
     button("Pen").click();
     const blue = button("Pen blue");
