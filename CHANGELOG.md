@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0-beta.17 - 2026-10-07
+
+- The smart fit is now contain-fit: the whole page is always visible with the tighter axis flush - a tall Word page fits the height completely (no scrolling needed to see the bottom), a landscape page fills the width edge to edge. The previous build scaled landscape pages to the height instead, which forced horizontal scrolling before a flip.
+- Page-flip settle is snappier: the slide animation shortened to 160ms and the page commits at 170ms.
+- The notebook page flip no longer shows a transient squash: the sliding page snapshot is re-synced to the live page geometry when it takes over the slot and keeps covering until the real page has rendered.
+
 ## 0.8.0-beta.16 - 2026-10-07
 
 - Smart fit zoom: a PDF page opens filling its width (portrait pages) or its height when width-fill would leave it floating with vertical slack (landscape pages) - one axis is always flush with the pane. Manual zoom overrides it and never goes below the fitted size.

@@ -26759,25 +26759,25 @@ var InkView = class extends InkWritingView {
       return;
     }
     if (!delta || !this.swipeStage) {
-      extent.style.transition = "transform 200ms ease-out";
+      extent.style.transition = "transform 160ms ease-out";
       extent.style.transform = "translateX(0px)";
       if (this.swipeStage) {
-        this.swipeStage.style.transition = "transform 200ms ease-out";
+        this.swipeStage.style.transition = "transform 160ms ease-out";
         this.swipeStage.style.transform = "translateX(0px)";
       }
       if (this.swipeStageTimer === void 0) {
         this.swipeStageTimer = window.setTimeout(() => {
           this.swipeStageTimer = void 0;
           this.destroySwipeStage();
-        }, 230);
+        }, 200);
       }
       return;
     }
     const side = Number(this.swipeStage.dataset.neighbor) - this.pageIndex;
     const width = extent.offsetWidth;
-    extent.style.transition = "transform 200ms ease-out";
+    extent.style.transition = "transform 160ms ease-out";
     extent.style.transform = `translateX(${-delta * width}px)`;
-    this.swipeStage.style.transition = "transform 200ms ease-out";
+    this.swipeStage.style.transition = "transform 160ms ease-out";
     this.swipeStage.style.transform = `translateX(${-side * width}px)`;
     if (this.swipeStageTimer !== void 0) window.clearTimeout(this.swipeStageTimer);
     this.swipeStageTimer = window.setTimeout(() => {
@@ -26786,6 +26786,9 @@ var InkView = class extends InkWritingView {
       if (stage) {
         stage.style.transition = "none";
         stage.style.left = `${extent.offsetLeft}px`;
+        stage.style.top = `${extent.offsetTop}px`;
+        stage.style.width = `${extent.offsetWidth}px`;
+        stage.style.height = `${extent.offsetHeight}px`;
         stage.style.transform = "none";
       }
       extent.style.transition = "none";
@@ -26794,8 +26797,8 @@ var InkView = class extends InkWritingView {
       this.swipeStageTimer = window.setTimeout(() => {
         this.swipeStageTimer = void 0;
         this.destroySwipeStage();
-      }, 450);
-    }, 210);
+      }, 650);
+    }, 170);
   }
   destroySwipeStage() {
     var _a;
@@ -28899,7 +28902,7 @@ var PdfInkView = class extends InkWritingView {
     this.pageBaseWidth = Math.min(980, Math.max(200, this.scroller.clientWidth - PDF_PAGE_PADDING * 2)) || 700;
     this.pageBaseHeight = this.pageBaseWidth * display.height / display.width;
     const contentHeight = Math.max(1, this.scroller.clientHeight - PDF_PAGE_PADDING * 2);
-    this.fitZoom = Math.max(1, contentHeight / this.pageBaseHeight);
+    this.fitZoom = Math.min(1, contentHeight / this.pageBaseHeight);
     if (!this.zoomTouched) this.zoom = this.fitZoom;
     this.pageWrap.setCssStyles({
       width: `${this.pageBaseWidth * this.zoom}px`,
@@ -29126,20 +29129,20 @@ var PdfInkView = class extends InkWritingView {
       return;
     }
     if (!delta || !this.swipeStage) {
-      wrap.setCssStyles({ transition: "transform 200ms ease-out", transform: "translateX(0px)" });
-      if (this.swipeStage) this.swipeStage.setCssStyles({ transition: "transform 200ms ease-out", transform: "translateX(0px)" });
+      wrap.setCssStyles({ transition: "transform 160ms ease-out", transform: "translateX(0px)" });
+      if (this.swipeStage) this.swipeStage.setCssStyles({ transition: "transform 160ms ease-out", transform: "translateX(0px)" });
       if (this.swipeStageTimer === void 0) {
         this.swipeStageTimer = window.setTimeout(() => {
           this.swipeStageTimer = void 0;
           this.destroySwipeStage();
-        }, 230);
+        }, 200);
       }
       return;
     }
     const side = Number(this.swipeStage.dataset.neighbor) - this.noteIndex;
     const width = wrap.offsetWidth;
-    wrap.setCssStyles({ transition: "transform 200ms ease-out", transform: `translateX(${-delta * width}px)` });
-    this.swipeStage.setCssStyles({ transition: "transform 200ms ease-out", transform: `translateX(${-side * width}px)` });
+    wrap.setCssStyles({ transition: "transform 160ms ease-out", transform: `translateX(${-delta * width}px)` });
+    this.swipeStage.setCssStyles({ transition: "transform 160ms ease-out", transform: `translateX(${-side * width}px)` });
     if (this.swipeStageTimer !== void 0) window.clearTimeout(this.swipeStageTimer);
     this.swipeStageTimer = window.setTimeout(() => {
       this.swipeStageTimer = void 0;
@@ -29147,7 +29150,7 @@ var PdfInkView = class extends InkWritingView {
       if (stage) stage.setCssStyles({ transition: "none", left: `${wrap.offsetLeft}px`, transform: "none" });
       wrap.setCssStyles({ transition: "none", transform: "none" });
       void this.navigatePages(delta).finally(() => this.destroySwipeStage());
-    }, 210);
+    }, 170);
   }
   destroySwipeStage() {
     var _a;

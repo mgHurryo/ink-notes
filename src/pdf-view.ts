@@ -744,10 +744,11 @@ export class PdfInkView extends InkWritingView {
     const display = this.rotatedSize(this.currentNotePage());
     this.pageBaseWidth = Math.min(980, Math.max(200, this.scroller.clientWidth - PDF_PAGE_PADDING * 2)) || 700;
     this.pageBaseHeight = this.pageBaseWidth * display.height / display.width;
-    // Smart fit: fill the width (priority) unless that leaves vertical slack -
-    // then fill the height instead, so one axis is always flush.
+    // Smart fit (contain): the whole page is always visible and the tighter
+    // axis sits flush - portrait pages fill the height (no vertical scroll
+    // for a tall Word page), landscape pages fill the width edge to edge.
     const contentHeight = Math.max(1, this.scroller.clientHeight - PDF_PAGE_PADDING * 2);
-    this.fitZoom = Math.max(1, contentHeight / this.pageBaseHeight);
+    this.fitZoom = Math.min(1, contentHeight / this.pageBaseHeight);
     if (!this.zoomTouched) this.zoom = this.fitZoom;
     this.pageWrap.setCssStyles({
       width: `${this.pageBaseWidth * this.zoom}px`,
@@ -996,10 +997,10 @@ export class PdfInkView extends InkWritingView {
     const wrap = this.pageWrap;
     if (!wrap) { this.destroySwipeStage(); return; }
     if (!delta || !this.swipeStage) {
-      wrap.setCssStyles({ transition: "transform 200ms ease-out", transform: "translateX(0px)" });
-      if (this.swipeStage) this.swipeStage.setCssStyles({ transition: "transform 200ms ease-out", transform: "translateX(0px)" });
+      wrap.setCssStyles({ transition: "transform 160ms ease-out", transform: "translateX(0px)" });
+      if (this.swipeStage) this.swipeStage.setCssStyles({ transition: "transform 160ms ease-out", transform: "translateX(0px)" });
       if (this.swipeStageTimer === undefined) {
-        this.swipeStageTimer = window.setTimeout(() => { this.swipeStageTimer = undefined; this.destroySwipeStage(); }, 230);
+        this.swipeStageTimer = window.setTimeout(() => { this.swipeStageTimer = undefined; this.destroySwipeStage(); }, 200);
       }
       return;
     }
@@ -1008,8 +1009,8 @@ export class PdfInkView extends InkWritingView {
     // the real page has rendered underneath, so the old canvas never flashes.
     const side = Number(this.swipeStage.dataset.neighbor) - this.noteIndex;
     const width = wrap.offsetWidth;
-    wrap.setCssStyles({ transition: "transform 200ms ease-out", transform: `translateX(${-delta * width}px)` });
-    this.swipeStage.setCssStyles({ transition: "transform 200ms ease-out", transform: `translateX(${-side * width}px)` });
+    wrap.setCssStyles({ transition: "transform 160ms ease-out", transform: `translateX(${-delta * width}px)` });
+    this.swipeStage.setCssStyles({ transition: "transform 160ms ease-out", transform: `translateX(${-side * width}px)` });
     if (this.swipeStageTimer !== undefined) window.clearTimeout(this.swipeStageTimer);
     this.swipeStageTimer = window.setTimeout(() => {
       this.swipeStageTimer = undefined;
@@ -1017,7 +1018,7 @@ export class PdfInkView extends InkWritingView {
       if (stage) stage.setCssStyles({ transition: "none", left: `${wrap.offsetLeft}px`, transform: "none" });
       wrap.setCssStyles({ transition: "none", transform: "none" });
       void this.navigatePages(delta).finally(() => this.destroySwipeStage());
-    }, 210);
+    }, 170);
   }
 
   private destroySwipeStage(): void {
