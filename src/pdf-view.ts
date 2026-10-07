@@ -174,6 +174,7 @@ export class PdfInkView extends InkWritingView {
     this.pageWrap = scroller.createDiv({ cls: "ink-pdf-page-wrap" });
     this.pdfCanvas = this.pageWrap.createEl("canvas", { cls: "ink-pdf-canvas" });
     this.buildInkHost();
+    this.mountBrushSettingsPopover();
     this.viewReady = true;
     this.registerDomEvent(scroller, "scroll", () => this.onViewportMotion(), { passive: true });
     this.registerDomEvent(scroller, "touchstart", (event) => this.onTouchStart(event), { passive: false });
@@ -512,24 +513,7 @@ export class PdfInkView extends InkWritingView {
   private renderToolbar(root: HTMLElement): void {
     const toolbar = root.createDiv({ cls: "ink-pdf-toolbar" });
 
-    // Far-left settings entry for both editors (the popover carries the
-    // sample-stroke preview); tools no longer sit next to it.
-    const settingsGroup = this.addToolbarSection(toolbar, "Settings");
-    this.addBrushPopover(settingsGroup);
-
-    const toolGroup = this.addToolbarSection(toolbar, "Draw");
-    this.addToolButton(toolGroup, "pen-line", "Pen", "pen");
-    this.addToolButton(toolGroup, "highlighter", "Highlight", "highlighter");
-    this.addToolButton(toolGroup, "eraser", "Erase", "eraser");
-    this.addToolButton(toolGroup, "lasso-select", "Select", "lasso");
-
-    const historyGroup = this.addToolbarSection(toolbar, "History");
-    this.addTrackedIconButton(historyGroup, "undo", "undo-2", "Undo", () => {
-      if (!this.editingLocked()) this.undo();
-    }, this.undoStack.length === 0);
-    this.addTrackedIconButton(historyGroup, "redo", "redo-2", "Redo", () => {
-      if (!this.editingLocked()) this.redo();
-    }, this.redoStack.length === 0);
+    this.buildWritingSections(toolbar);
 
     const pagesGroup = this.addToolbarSection(toolbar, "Pages");
     const indicator = pagesGroup.createDiv({ cls: "ink-pdf-page-indicator" });
@@ -553,39 +537,8 @@ export class PdfInkView extends InkWritingView {
     const button = this.addIconButton(parent, icon, label, onClick, disabled);
     this.toolbarButtons.set(key, button);
   }
-
-  private addBrushPopover(parent: HTMLElement): void {
-    const button = parent.createEl("button", {
-      cls: "ink-icon-button",
-      attr: { type: "button", "aria-label": "Brush settings", "aria-haspopup": "dialog" },
-    });
-    setIcon(button.createSpan({ cls: "ink-button-icon" }), "sliders-horizontal");
-    this.toolbarButtons.set("brush", button);
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      this.brushPopover.toggle();
-    });
-    // Tap-outside closes — anywhere outside the popover itself, including the
-    // paper: a fullscreen PDF pane has no "outside the view" to tap, and the
-    // popover must close when the user starts writing again. The popover's own
-    // controls and the toggle button are exempt (the button's click toggles).
-    this.registerDomEvent(document, "pointerdown", (event) => {
-      const target = event.target as HTMLElement | null;
-      if (!this.brushPopover.isOpen) return;
-      if (target && (this.brushPopover.root.contains(target) || button.contains(target))) return;
-      this.brushPopover.close();
-    });
-    this.registerDomEvent(document, "keydown", (event) => {
-      if (event.key === "Escape" && this.brushPopover.isOpen) {
-        this.brushPopover.close();
-        button.focus();
-      }
-    });
-    this.registerDomEvent(window, "scroll", () => this.brushPopover.position(), true);
-    // Mounted at the view root with fixed positioning (mainline parity):
-    // nesting it inside the toolbar group exposed it to toolbar layout and
-    // produced the mangled arc layout on iPad.
-    this.brushPopover = new BrushPopoverController(this.root!, {
+  protected mountBrushSettingsPopover(): void {
+    this.brushPopover = new BrushPopoverController(this.containerEl, {
       // Extra class scopes the PDF-surface rules (paper canvases, spacing).
       extraClass: "ink-pdf-brush-popover",
       tools: this.brushToolConfigs(),
@@ -593,9 +546,30 @@ export class PdfInkView extends InkWritingView {
       activeTool: () => this.state.tool,
       showPenDynamics: () => this.state.tool === "pen",
       onControlsChanged: () => this.updateEraserControls(),
-      anchor: () => this.toolbarButtons.get("brush") ?? null,
+      anchor: () => this.activeSettingsAnchor(),
     });
     this.settingsPanel = this.brushPopover.root;
+    // Tap-outside closes - anywhere outside the popover itself, including
+    // the paper: a fullscreen PDF pane has no "outside the view" to tap,
+    // and the popover must close when the user starts writing again. The
+    // popover's own controls and the active tool button are exempt (the
+    // tool's tap toggles it).
+    this.registerDomEvent(document, "pointerdown", (event) => {
+      if (!this.brushPopover.isOpen) return;
+      const target = event.target as HTMLElement | null;
+      // Tool buttons decide their own open/close on click; a tap on another
+      // tool must not close the popover first (it rebuilds for that tool).
+      if (target && target.closest?.(".ink-tool-button")) return;
+      if (target && this.brushPopover.root.contains(target)) return;
+      this.brushPopover.close();
+    });
+    this.registerDomEvent(document, "keydown", (event) => {
+      if (event.key === "Escape" && this.brushPopover.isOpen) {
+        this.brushPopover.close();
+        this.activeSettingsAnchor()?.focus();
+      }
+    });
+    this.registerDomEvent(window, "scroll", () => this.brushPopover.position(), true);
   }
 
   private updatePageIndicator(): void {

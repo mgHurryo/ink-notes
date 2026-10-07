@@ -1,5 +1,5 @@
 import { PDFDocument, PDFPage, degrees, rgb } from "pdf-lib";
-import { InkStroke } from "./model";
+import { InkNotebook, InkStroke } from "./model";
 import { PdfSidecar, PdfSidecarNotePage } from "./pdf-sidecar";
 
 /**
@@ -67,6 +67,27 @@ export function displayToPdfPoint(nx: number, ny: number, page: PdfSidecarNotePa
     case 270: return { x: page.width - dy, y: page.height - dx };
     default: return { x: dx, y: page.height - dy };
   }
+}
+
+/**
+ * Export a whole notebook as a new PDF: one page per notebook page at the
+ * notebook's own dimensions, handwriting drawn as vector paths. Shares the
+ * stroke drawing with the PDF sidecar exporter.
+ */
+export async function exportNotebookPdf(notebook: InkNotebook, sourceName: string): Promise<Uint8Array> {
+  const output = await PDFDocument.create();
+  output.setTitle(`${sourceName} (handwritten)`);
+  for (const page of notebook.pages) {
+    const geometry = { id: page.id, width: notebook.pageWidth, height: notebook.pageHeight, rotation: 0 as const };
+    const pdfPage = output.addPage([notebook.pageWidth, notebook.pageHeight]);
+    for (const stroke of page.strokes) drawStroke(pdfPage, stroke, geometry);
+  }
+  return output.save();
+}
+
+/** True when the notebook contains at least one stroke to export. */
+export function notebookHasInk(notebook: InkNotebook): boolean {
+  return notebook.pages.some((page) => page.strokes.length > 0);
 }
 
 /** True when the note sequence contains at least one stroke to export. */

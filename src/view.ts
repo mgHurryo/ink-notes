@@ -10,6 +10,7 @@ import {
   newId,
 } from "./model";
 import { NotebookStore } from "./storage";
+import { exportNotebookPdf, exportPathFor, notebookHasInk } from "./pdf-export";
 import { registerDocumentPointerEndEvents } from "./ink-input";
 import { InkWritingView, InkPointerSample, cloneStroke, SPARSE_SAMPLE_INTERVAL_MS } from "./ink-writing";
 export { BrushSettings, BrushTool, INK_COLORS, isBrushTool } from "./brush-popover";
@@ -80,9 +81,6 @@ export class InkView extends InkWritingView {
   /** Reading mode: view-only. Ink tools, the popover and eraser tracking are
    *  disabled and the page restores native panning/scrolling. */
   private readingMode = false;
-  private sizePopover: HTMLElement | null = null;
-  private sizePopoverButton: HTMLButtonElement | null = null;
-  private sizePopoverOpen = false;
   private zoomRenderTimer: number | undefined;
   private pageNavigationGeneration = 0;
   private devPanel: HTMLElement | null = null;
@@ -113,8 +111,27 @@ export class InkView extends InkWritingView {
     this.root.setAttribute("aria-label", "Ink Notes");
     this.root.createDiv({ cls: "ink-toolbar", attr: { role: "toolbar", "aria-label": "Ink tools" } });
     this.root.createSpan({ cls: "ink-page-status", attr: { "aria-live": "polite" } });
+    this.mountBrushSettingsPopover();
     this.renderToolbar();
     this.renderCanvas();
+    this.register(() => this.closeEraserPopover());
+    this.registerDomEvent(document, "pointerdown", (event) => {
+      if (!this.brushPopover.isOpen) return;
+      const target = event.target as HTMLElement | null;
+      // Tool buttons decide their own open/close on click; a tap on another
+      // tool must not close the popover first (it rebuilds for that tool).
+      if (target && target.closest?.(".ink-tool-button")) return;
+      if (target && this.brushPopover.root.contains(target)) return;
+      this.brushPopover.close();
+    });
+    this.registerDomEvent(document, "keydown", (event) => {
+      if (event.key === "Escape" && this.brushPopover.isOpen) {
+        this.brushPopover.close();
+        this.activeToolButton()?.focus();
+      }
+    });
+    this.registerDomEvent(window, "resize", () => this.brushPopover.position());
+    this.registerDomEvent(window, "scroll", () => this.brushPopover.position(), true);
     this.viewReady = true;
     this.renderAll();
   }
@@ -202,12 +219,7 @@ export class InkView extends InkWritingView {
   private renderToolbar(): void {
     const toolbar = this.root.querySelector<HTMLElement>(".ink-toolbar")!;
     toolbar.empty();
-    const group = toolbar;
-    // Far-left settings entry for both editors (the popover carries the
-    // sample-stroke preview); tools no longer sit next to it.
-    const settings = this.addToolbarSection(group, "Settings");
-    this.addSizePopover(settings);
-    const navigation = this.addToolbarSection(group, "Pages");
+    const navigation = this.addToolbarSection(toolbar, "Pages");
     const toggle = this.addIconButton(navigation, "panel-left", "Pages", () => {
       const hidden = !this.root.hasClass("ink-rail-hidden");
       this.root.toggleClass("ink-rail-hidden", hidden);
@@ -215,83 +227,35 @@ export class InkView extends InkWritingView {
       this.resizeCanvas();
     });
     toggle.setAttribute("aria-pressed", String(!this.root.hasClass("ink-rail-hidden")));
-
-    const tools = this.addToolbarSection(group, "Draw");
-    this.addToolButton(tools, "pen-line", "Pen", "pen");
-    this.addToolButton(tools, "highlighter", "Highlight", "highlighter");
-    this.addToolButton(tools, "eraser", "Erase", "eraser");
-    this.addToolButton(tools, "lasso-select", "Select", "lasso");
-
-    const history = this.addToolbarSection(group, "History");
-    this.addIconButton(history, "undo-2", "Undo", () => this.undo(), this.undoStack.length === 0);
-    this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
-    const pages = this.addToolbarSection(group, "Document");
-    this.addIconButton(pages, "more-horizontal", "Page options", (event) => this.openPageMenu(event));
+    this.buildWritingSections(toolbar);
+    const document_ = this.addToolbarSection(toolbar, "Document");
+    this.addIconButton(document_, "more-horizontal", "Page options", (event) => this.openPageMenu(event));
+    this.addIconButton(document_, "download", "Export as PDF", () => void this.exportNotebookCopy());
     this.updateToolButtons();
   }
 
-  private addSizePopover(parent: HTMLElement): void {
-    const container = parent.createDiv({ cls: "ink-size-popover-control" });
-    const button = container.createEl("button", {
-      cls: "ink-icon-button",
-      attr: {
-        type: "button",
-        "aria-label": "Brush settings",
-        "aria-haspopup": "dialog",
-      },
-    });
-    setIcon(button.createSpan({ cls: "ink-button-icon" }), "sliders-horizontal");
-
-    // Shared brush settings popover (same controller as the PDF view): pinned
-    // preview header, vertical-only scroll body, gesture shield included.
-    const brushPopover = new BrushPopoverController(container, {
-      tools: this.brushToolConfigs(),
-      getSettings: (tool) => this.brushSettings(tool),
-      activeTool: () => this.state.tool,
-      showPenDynamics: () => this.state.tool === "pen",
-      onControlsChanged: () => this.updateEraserControls(),
-      anchor: () => this.activeToolButton() ?? this.sizePopoverButton,
-    });
-    this.sizePopover = brushPopover.root;
-    this.settingsPanel = brushPopover.root;
-    this.sizePopoverButton = button;
-    this.brushPopover = brushPopover;
-
-    button.addEventListener("click", (event) => {
-      event.stopPropagation();
-      this.setSizePopoverOpen(!this.sizePopoverOpen);
-    });
-    this.registerDomEvent(document, "pointerdown", (event) => {
-      const target = event.target as HTMLElement | null;
-      const switchingSettingsTool = target?.closest?.(".ink-tool-button[aria-haspopup='dialog']");
-      if (this.sizePopoverOpen && !container.contains(target) && !switchingSettingsTool) this.setSizePopoverOpen(false);
-    });
-    this.registerDomEvent(document, "keydown", (event) => {
-      if (event.key === "Escape" && this.sizePopoverOpen) {
-        this.setSizePopoverOpen(false);
-        this.activeToolButton()?.focus();
-      }
-    });
-    this.registerDomEvent(window, "resize", () => this.brushPopover.position());
-    this.registerDomEvent(window, "scroll", () => this.brushPopover.position(), true);
-  }
-
-  private setSizePopoverOpen(open: boolean): void {
-    this.sizePopoverOpen = open;
-    open ? this.brushPopover.open() : this.brushPopover.close();
-    this.root.querySelectorAll<HTMLElement>(".ink-tool-button[aria-haspopup='dialog']").forEach((button) => {
-      button.setAttribute("aria-expanded", String(open && button.dataset.tool === this.state.tool));
-    });
-    if (open) {
-      window.requestAnimationFrame(() => {
-        const focusTarget = this.state.tool === "eraser"
-          ? ".ink-eraser-mode"
-          : `.ink-brush-settings[data-brush-tool="${this.state.tool}"] input, .ink-brush-settings[data-brush-tool="${this.state.tool}"] button`;
-        this.sizePopover?.querySelector<HTMLElement>(focusTarget)?.focus();
-      });
+  /** Vector-exports the whole notebook as a PDF next to the notebook file. */
+  private async exportNotebookCopy(): Promise<void> {
+    if (!this.file) return;
+    if (!notebookHasInk(this.notebook)) {
+      new Notice("This notebook has no handwriting to export yet");
+      return;
+    }
+    try {
+      const output = await exportNotebookPdf(this.notebook, this.file.basename);
+      const target = exportPathFor(this.file.path, (candidate) => this.app.vault.getAbstractFileByPath(candidate) !== null);
+      await this.app.vault.createBinary(target, output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength) as ArrayBuffer);
+      new Notice(`Exported ${target}`);
+    } catch (error) {
+      new Notice(`Export failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 
+  private addSizePopover(): void {
+    this.mountBrushSettingsPopover();
+  }
+
+  
   private activeToolButton(): HTMLButtonElement | null {
     return this.root.querySelector<HTMLButtonElement>(`.ink-toolbar [data-tool="${this.state.tool}"]`);
   }
@@ -615,18 +579,19 @@ export class InkView extends InkWritingView {
     this.swipeStage = null;
   }
   protected settingsOpen(): boolean {
-    return this.state.tool === "eraser" ? this.eraserPopover !== null : this.sizePopoverOpen;
+    return this.state.tool === "eraser" ? this.eraserPopover !== null : this.brushPopover.isOpen;
   }
   protected toggleToolSettings(anchor: HTMLElement): void {
     if (this.state.tool === "eraser") { this.toggleEraserPopover(anchor); return; }
-    this.setSizePopoverOpen(!this.sizePopoverOpen);
+    if (this.brushPopover.isOpen) this.brushPopover.close();
+    else this.brushPopover.open();
   }
   protected reopenToolSettings(): void {
     if (this.state.tool === "eraser") {
       if (!this.eraserPopover) this.toggleEraserPopover(this.activeToolButton());
       return;
     }
-    this.setSizePopoverOpen(true);
+    this.brushPopover.open();
     this.brushPopover.position();
   }
 
@@ -1018,55 +983,6 @@ export class InkView extends InkWritingView {
   /** Renders the pressure mapping editor: grid, identity guide, curve and
    *  control points. Skipped while the popover has no layout (it is built
    *  display:none and drawn when opened). */
-  private drawPressureCurveEditor(settings: BrushSettings): void {
-    const canvas = this.sizePopover?.querySelector<HTMLCanvasElement>(`.ink-brush-settings[data-brush-tool="pen"] .ink-curve-editor-canvas`);
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const w = canvas.clientWidth, h = canvas.clientHeight;
-    if (w < 10 || h < 10) return;
-    const ratio = Math.max(1, window.devicePixelRatio || 1);
-    if (canvas.width !== Math.round(w * ratio)) canvas.width = Math.round(w * ratio);
-    if (canvas.height !== Math.round(h * ratio)) canvas.height = Math.round(h * ratio);
-    ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
-    ctx.clearRect(0, 0, w, h);
-    ctx.strokeStyle = "#8a8f98";
-    ctx.globalAlpha = 0.35;
-    ctx.strokeRect(0.5, 0.5, w - 1, h - 1);
-    ctx.beginPath();
-    ctx.moveTo(0, h);
-    ctx.lineTo(w, 0);
-    ctx.stroke();
-    ctx.globalAlpha = 1;
-    const points = settings.pressureCurve ? settings.pressureCurve.map((point) => [...point]) : [[0, 0], [1, 1]];
-    const sampleY = (x: number): number => {
-      if (x <= points[0][0]) return points[0][1];
-      if (x >= points[points.length - 1][0]) return points[points.length - 1][1];
-      let index = 1;
-      while (points[index][0] < x) index++;
-      const span = points[index][0] - points[index - 1][0];
-      const amount = span > 0 ? (x - points[index - 1][0]) / span : 0;
-      return points[index - 1][1] + (points[index][1] - points[index - 1][1]) * amount;
-    };
-    ctx.strokeStyle = settings.color;
-    ctx.lineWidth = 2;
-    ctx.beginPath();
-    for (let step = 0; step <= 48; step++) {
-      const x = step / 48;
-      const sx = x * w, sy = (1 - sampleY(x)) * h;
-      if (step === 0) ctx.moveTo(sx, sy); else ctx.lineTo(sx, sy);
-    }
-    ctx.stroke();
-    for (const point of points) {
-      ctx.fillStyle = settings.color;
-      ctx.beginPath();
-      ctx.arc(point[0] * w, (1 - point[1]) * h, 5, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = "#ffffff";
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    }
-  }
 
   private layoutPage(): void {
     const style = getComputedStyle(this.pageScroller);
