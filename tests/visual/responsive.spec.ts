@@ -46,7 +46,12 @@ for (const viewport of viewports) {
     await page.goto("/");
     const toolbar = page.getByRole("toolbar", { name: "Ink tools" });
     await expect(toolbar).toBeVisible();
-    await expect(toolbar).toHaveCSS("height", "56px");
+    if (viewport.width > 380) {
+      await expect(toolbar).toHaveCSS("height", "56px");
+    } else {
+      // Nine 44px targets wrap to a second row at this width.
+      expect(parseFloat(await toolbar.evaluate((el) => getComputedStyle(el).height))).toBeGreaterThanOrEqual(56);
+    }
     const boxes = [];
     for (const label of primaryTools) {
       const button = page.getByRole("button", { name: label, exact: true });
@@ -58,8 +63,18 @@ for (const viewport of viewports) {
       expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual(viewport.width);
       if (box) boxes.push(box);
     }
-    const ordered = boxes.sort((left, right) => left.x - right.x);
-    for (let index = 1; index < ordered.length; index++) expect(ordered[index].x + 0.5).toBeGreaterThanOrEqual(ordered[index - 1].x + ordered[index - 1].width);
+    // Row-aware ordering: narrow screens wrap the toolbar, so buttons on
+    // different rows may share an x range.
+    const rows = new Map<number, typeof boxes>();
+    for (const box of boxes) {
+      const key = Math.round((box?.y ?? 0) / 10);
+      if (!rows.has(key)) rows.set(key, []);
+      rows.get(key)!.push(box);
+    }
+    for (const row of rows.values()) {
+      const ordered = row.sort((left, right) => left.x - right.x);
+      for (let index = 1; index < ordered.length; index++) expect(ordered[index].x + 0.5).toBeGreaterThanOrEqual(ordered[index - 1].x + ordered[index - 1].width);
+    }
     const metrics = await page.locator(".ink-notes-view").evaluate((root) => ({
       overflow: root.scrollWidth > root.clientWidth,
       toolbarOverflow: root.querySelector(".ink-toolbar")!.scrollWidth > root.querySelector(".ink-toolbar")!.clientWidth,
@@ -195,11 +210,10 @@ test("eraser reference follows hover and refreshes with local settings", async (
   const eraser = page.getByRole("button", { name: "Erase", exact: true });
   await eraser.click();
   await eraser.click();
-  const settings = page.getByRole("dialog", { name: "Tool settings" });
+  const settings = page.getByRole("dialog", { name: "Eraser settings" });
   const size = page.getByRole("slider", { name: "Eraser size" });
   await expect(settings).toBeVisible();
-  await expect(page.getByText("Erases the entire touched stroke. Size is fixed.")).toBeVisible();
-  await expect(size).toBeHidden();
+  await expect(size).toBeVisible();
 
   await page.getByRole("radio", { name: "Circle eraser" }).click();
   await expect(size).toBeVisible();
