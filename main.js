@@ -28295,7 +28295,6 @@ function fmt(value) {
 // src/pdf-view.ts
 var VIEW_TYPE_PDF_INK = "ink-notes-pdf-view";
 var SAVE_CONFLICT_RETRIES2 = 3;
-var PDF_ZOOM_MIN = 1;
 var PDF_ZOOM_MAX = 3;
 var PDF_ZOOM_STEP = 1.2;
 var PDF_PAGE_PADDING = 24;
@@ -28342,6 +28341,14 @@ var PdfInkView = class extends InkWritingView {
     this.noteIndex = 0;
     this.pageBaseWidth = 700;
     this.pageBaseHeight = 990;
+    /** The "smart fit" zoom: width-fill for portrait pages, height-fill when
+     *  width-fill would leave the page floating with vertical slack. */
+    this.fitZoom = 1;
+    /** Set once the user zooms manually; until then every layout re-fits. */
+    this.zoomTouched = false;
+    /** Offscreen renders of the neighbouring pages for instant flips. */
+    this.neighbourCache = /* @__PURE__ */ new Map();
+    this.prewarmToken = 0;
     this.dirty = false;
     this.activeSave = null;
     this.saveRequested = false;
@@ -28405,6 +28412,11 @@ var PdfInkView = class extends InkWritingView {
     this.releaseWriter();
     this.loadGeneration += 1;
     this.cancelPdfRender();
+    if (this.pdfRenderTimer !== void 0) {
+      window.clearTimeout(this.pdfRenderTimer);
+      this.pdfRenderTimer = void 0;
+    }
+    this.neighbourCache.clear();
     this.destroySwipeStage();
     this.finishPointerInput(false);
     this.discardPendingInkPreview();
@@ -28839,8 +28851,10 @@ var PdfInkView = class extends InkWritingView {
     await this.renderPdfPage();
   }
   setZoom(zoom, target, anchor) {
-    const clamped = Math.max(PDF_ZOOM_MIN, Math.min(PDF_ZOOM_MAX, zoom));
+    const clamped = Math.max(this.fitZoom, Math.min(PDF_ZOOM_MAX, zoom));
     if (clamped === this.zoom) return;
+    this.zoomTouched = true;
+    this.neighbourCache.clear();
     const scroller = this.scroller;
     const page = this.pageWrap;
     if (!scroller || !page) {
@@ -28858,7 +28872,15 @@ var PdfInkView = class extends InkWritingView {
     const after = page.getBoundingClientRect();
     scroller.scrollLeft += after.left + anchor.x * after.width - target.x;
     scroller.scrollTop += after.top + anchor.y * after.height - target.y;
-    void this.renderPdfPage();
+    this.schedulePdfRender();
+  }
+  /** Coalesces bitmap re-renders: at most one per 160ms of settled zoom. */
+  schedulePdfRender() {
+    if (this.pdfRenderTimer !== void 0) window.clearTimeout(this.pdfRenderTimer);
+    this.pdfRenderTimer = window.setTimeout(() => {
+      this.pdfRenderTimer = void 0;
+      void this.renderPdfPage();
+    }, 160);
   }
   // -------------------------------------------------------------- geometry
   currentNotePage() {
@@ -28876,6 +28898,9 @@ var PdfInkView = class extends InkWritingView {
     const display = this.rotatedSize(this.currentNotePage());
     this.pageBaseWidth = Math.min(980, Math.max(200, this.scroller.clientWidth - PDF_PAGE_PADDING * 2)) || 700;
     this.pageBaseHeight = this.pageBaseWidth * display.height / display.width;
+    const contentHeight = Math.max(1, this.scroller.clientHeight - PDF_PAGE_PADDING * 2);
+    this.fitZoom = Math.max(1, contentHeight / this.pageBaseHeight);
+    if (!this.zoomTouched) this.zoom = this.fitZoom;
     this.pageWrap.setCssStyles({
       width: `${this.pageBaseWidth * this.zoom}px`,
       height: `${this.pageBaseHeight * this.zoom}px`
@@ -29017,6 +29042,7 @@ var PdfInkView = class extends InkWritingView {
     }
     const count = (_d = (_c = (_a = this.sidecar) == null ? void 0 : _a.notePages.length) != null ? _c : (_b = this.pdfDoc) == null ? void 0 : _b.numPages) != null ? _d : 0;
     if (neighborIndex < 0 || neighborIndex >= count) return;
+    const gap = Math.max(12, Math.round(wrap.offsetLeft));
     const stage = scroller.createDiv({ cls: "ink-swipe-stage" });
     stage.dataset.neighbor = String(neighborIndex);
     stage.setCssStyles({
@@ -29026,7 +29052,7 @@ var PdfInkView = class extends InkWritingView {
       background: "#fff",
       borderRadius: "2px",
       boxShadow: "var(--ink-shadow-paper)",
-      left: `${wrap.offsetLeft + side * wrap.offsetWidth}px`,
+      left: `${wrap.offsetLeft + side * (wrap.offsetWidth + gap)}px`,
       top: `${wrap.offsetTop}px`,
       width: `${wrap.offsetWidth}px`,
       height: `${wrap.offsetHeight}px`,
@@ -29036,11 +29062,18 @@ var PdfInkView = class extends InkWritingView {
     void this.renderSwipeStagePage(stage, neighborIndex);
   }
   async renderSwipeStagePage(stage, index) {
-    var _a;
+    var _a, _b;
     const notePage = (_a = this.sidecar) == null ? void 0 : _a.notePages[index];
     const canvas = stage.createEl("canvas");
     canvas.setCssStyles({ width: "100%", height: "100%" });
     if (!notePage || notePage.sourceIndex === void 0 || !this.pdfDoc) return;
+    const cached = this.neighbourCache.get(index);
+    if (cached) {
+      canvas.width = cached.width;
+      canvas.height = cached.height;
+      (_b = canvas.getContext("2d")) == null ? void 0 : _b.drawImage(cached, 0, 0);
+      return;
+    }
     try {
       const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
       if (!stage.isConnected) return;
@@ -29049,6 +29082,40 @@ var PdfInkView = class extends InkWritingView {
       canvas.height = Math.max(1, Math.round(this.rotatedSize(notePage).height * scale));
       const viewport = page.getViewport({ scale });
       await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+      if (stage.isConnected && canvas.width > 0) this.neighbourCache.set(index, canvas);
+    } catch (e) {
+    }
+  }
+  /** Renders the neighbouring pages offscreen so flips never wait. */
+  prewarmNeighbours() {
+    var _a, _b, _c, _d;
+    this.prewarmToken += 1;
+    const token = this.prewarmToken;
+    const count = (_d = (_c = (_a = this.sidecar) == null ? void 0 : _a.notePages.length) != null ? _c : (_b = this.pdfDoc) == null ? void 0 : _b.numPages) != null ? _d : 0;
+    for (const delta of [-1, 1]) {
+      const index = this.noteIndex + delta;
+      if (index < 0 || index >= count || this.neighbourCache.has(index)) continue;
+      void this.prewarmNeighbour(index, token);
+    }
+    for (const key of [...this.neighbourCache.keys()]) {
+      if (Math.abs(key - this.noteIndex) > 1) this.neighbourCache.delete(key);
+    }
+  }
+  async prewarmNeighbour(index, token) {
+    var _a;
+    const notePage = (_a = this.sidecar) == null ? void 0 : _a.notePages[index];
+    if (!notePage || notePage.sourceIndex === void 0 || !this.pdfDoc) return;
+    try {
+      const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
+      if (token !== this.prewarmToken || this.neighbourCache.has(index)) return;
+      const scale = (window.devicePixelRatio || 1) * this.zoom;
+      const buffer = document.createElement("canvas");
+      buffer.width = Math.max(1, Math.round(this.rotatedSize(notePage).width * scale));
+      buffer.height = Math.max(1, Math.round(this.rotatedSize(notePage).height * scale));
+      const viewport = page.getViewport({ scale });
+      await page.render({ canvasContext: buffer.getContext("2d"), viewport }).promise;
+      if (token !== this.prewarmToken) return;
+      this.neighbourCache.set(index, buffer);
     } catch (e) {
     }
   }
@@ -29164,6 +29231,7 @@ var PdfInkView = class extends InkWritingView {
       if (canvas.width !== targetWidth) canvas.width = targetWidth;
       if (canvas.height !== targetHeight) canvas.height = targetHeight;
       (_a = canvas.getContext("2d")) == null ? void 0 : _a.drawImage(buffer, 0, 0);
+      if (!this.touchGesture) this.prewarmNeighbours();
     } catch (error) {
       if (((_b = this.pdfjs) == null ? void 0 : _b.RenderingCancelledException) && error instanceof this.pdfjs.RenderingCancelledException) return;
       if (generation === this.pdfRenderGeneration) this.setStatus(`Could not render this page: ${messageOf(error)}`, true);
@@ -29202,6 +29270,8 @@ var PdfInkView = class extends InkWritingView {
     this.undoStack = [];
     this.redoStack = [];
     this.dirty = false;
+    this.zoomTouched = false;
+    this.neighbourCache.clear();
     this.clearSaveTimers();
     this.setStatus("Loading PDF\u2026");
   }
