@@ -31,6 +31,11 @@ const PDF_ZOOM_MAX = 3;
 const PDF_ZOOM_STEP = 1.2;
 const PDF_PAGE_PADDING = 24;
 const SELECTION_OVERLAY_BUDGET = 4_000_000;
+/** Thumbnail bitmap width in CSS pixels; on a portrait A4 page the pdf.js
+ *  render scale for this lands around 0.2. */
+const RAIL_THUMB_WIDTH = 120;
+/** Coalesces thumbnail repaints while the rail scrolls. */
+const RAIL_SWEEP_THROTTLE_MS = 120;
 
 export type SaveOutcome = { status: "saved" } | { status: "conflict"; message: string } | { status: "failed"; message: string };
 
@@ -134,6 +139,23 @@ export class PdfInkView extends InkWritingView {
   private prewarmToken = 0;
   private pdfRenderTimer: number | undefined;
 
+  // Page preview rail (behaviour parity with the notebook editor's rail).
+  private pageRail: HTMLElement | null = null;
+  private railThumbs: HTMLElement | null = null;
+  private railCount: HTMLElement | null = null;
+  private thumbButtons = new Map<number, HTMLButtonElement>();
+  /** Rendered thumbnail bitmaps by note-page index. Deliberately tiny:
+   *  entries further than one page from the current page are evicted
+   *  (same policy as the neighbour cache), so a hundred-page document
+   *  never hoards a hundred thumbnail canvases. */
+  private thumbCache = new Map<number, HTMLCanvasElement>();
+  private thumbPaintTokens = new Map<number, number>();
+  private pendingThumbRenders = new Set<number>();
+  /** Note-page id sequence the rail buttons were built for; a mismatch
+   *  (page insert/delete/move, new document) triggers a rebuild. */
+  private railBuiltIds = "";
+  private railSweepTimer: number | undefined;
+
   private dirty = false;
   private activeSave: Promise<SaveOutcome> | null = null;
   private saveRequested = false;
@@ -171,7 +193,11 @@ export class PdfInkView extends InkWritingView {
     this.root = root;
     this.renderToolbar(root);
     this.statusEl = root.createDiv({ cls: "ink-pdf-status" });
-    const scroller = root.createDiv({ cls: "ink-pdf-scroller" });
+    // The page rail rides left of the page scroller for the whole life of
+    // the view (no toggle button - same as the notebook editor's rail).
+    const body = root.createDiv({ cls: "ink-pdf-body" });
+    this.buildPageRail(body);
+    const scroller = body.createDiv({ cls: "ink-pdf-scroller" });
     this.scroller = scroller;
     this.pageWrap = scroller.createDiv({ cls: "ink-pdf-page-wrap" });
     this.pdfCanvas = this.pageWrap.createEl("canvas", { cls: "ink-pdf-canvas" });
@@ -209,6 +235,7 @@ export class PdfInkView extends InkWritingView {
     this.cancelPdfRender();
     if (this.pdfRenderTimer !== undefined) { window.clearTimeout(this.pdfRenderTimer); this.pdfRenderTimer = undefined; }
     this.neighbourCache.clear();
+    this.clearRailState();
     this.destroySwipeStage();
     this.finishPointerInput(false);
     this.discardPendingInkPreview();
@@ -585,6 +612,211 @@ export class PdfInkView extends InkWritingView {
     indicator.setText(this.sidecar
       ? `${this.noteIndex + 1} / ${this.sidecar.notePages.length}`
       : this.pdfDoc ? `${this.noteIndex + 1} / ?` : "–");
+  }
+
+  // ---------------------------------------------------------- page preview rail
+
+  /**
+   * The always-on page rail: one thumbnail per note page, the current page
+   * highlighted, click to jump (behaviour parity with the notebook editor's
+   * page rail). Thumbnails render the underlying pdf.js page at thumbnail
+   * scale on demand - the visible range first - so opening a fifty-page
+   * document does not render fifty pages.
+   */
+  private buildPageRail(body: HTMLElement): void {
+    const rail = body.createDiv({ cls: "ink-page-rail", attr: { "aria-label": "PDF pages" } });
+    this.pageRail = rail;
+    const header = rail.createDiv({ cls: "ink-rail-header" });
+    header.createDiv({ cls: "ink-rail-heading", text: "Pages" });
+    this.railCount = header.createSpan({ cls: "ink-rail-count" });
+    this.railThumbs = rail.createDiv({ cls: "ink-rail-thumbs" });
+    // Scrolling long documents brings new thumbnails into view; repaint the
+    // fresh range (throttled) instead of pre-rendering every page.
+    this.registerDomEvent(rail, "scroll", () => this.scheduleRailSweep(), { passive: true });
+  }
+
+  /** Re-syncs the rail with the model: rebuilds the buttons when the page
+   *  sequence changed, moves the highlight, and repaints what is on screen. */
+  private refreshPageRail(): void {
+    const thumbs = this.railThumbs;
+    if (!thumbs) return;
+    const pages = this.sidecar?.notePages;
+    const count = pages?.length ?? this.pdfDoc?.numPages ?? 0;
+    if (count <= 0) {
+      thumbs.empty();
+      this.thumbButtons.clear();
+      this.railBuiltIds = "";
+      if (this.railCount) this.railCount.textContent = "–";
+      return;
+    }
+    // Page ids are stable across reorders, so an id-sequence mismatch catches
+    // exactly the changes that shift thumbnails between indexes.
+    const ids = pages
+      ? pages.map((page) => page.id).join(",")
+      : Array.from({ length: count }, (_, index) => `src${index}`).join(",");
+    if (ids !== this.railBuiltIds) {
+      this.rebuildRailButtons(count);
+      this.railBuiltIds = ids;
+    }
+    this.thumbButtons.forEach((button, index) => {
+      const active = index === this.noteIndex;
+      button.toggleClass("is-active", active);
+      button.setAttribute("aria-current", String(active));
+    });
+    if (this.railCount) this.railCount.textContent = `${this.noteIndex + 1} / ${count}`;
+    this.thumbButtons.get(this.noteIndex)?.scrollIntoView?.({ block: "nearest" });
+    this.evictDistantThumbnails();
+    this.paintVisibleThumbnails();
+  }
+
+  private rebuildRailButtons(count: number): void {
+    const thumbs = this.railThumbs;
+    if (!thumbs) return;
+    thumbs.empty();
+    this.thumbButtons.clear();
+    // Indexes shift with the rebuild, so cached bitmaps keyed by index die too.
+    this.invalidateThumbnails();
+    const pages = this.sidecar?.notePages;
+    for (let index = 0; index < count; index++) {
+      const display = this.rotatedSize(pages?.[index] ?? null);
+      const button = thumbs.createEl("button", {
+        cls: "ink-page-thumb",
+        attr: { type: "button", "aria-label": `Page ${index + 1}` },
+      });
+      button.style.aspectRatio = `${Math.max(1, display.width)} / ${Math.max(1, display.height)}`;
+      button.createEl("canvas", { cls: "ink-page-thumb-canvas", attr: { "aria-hidden": "true" } });
+      button.createSpan({ text: String(index + 1), cls: "ink-page-thumb-number" });
+      button.addEventListener("click", () => void this.navigatePages(index - this.noteIndex));
+      this.thumbButtons.set(index, button);
+    }
+  }
+
+  private invalidateThumbnails(): void {
+    this.thumbCache.clear();
+    this.thumbPaintTokens.clear();
+    this.pendingThumbRenders.clear();
+    this.railBuiltIds = "";
+  }
+
+  private clearRailState(): void {
+    if (this.railSweepTimer !== undefined) { window.clearTimeout(this.railSweepTimer); this.railSweepTimer = undefined; }
+    this.invalidateThumbnails();
+    this.thumbButtons.clear();
+    this.pageRail = null;
+    this.railThumbs = null;
+    this.railCount = null;
+  }
+
+  /** Thumbnail bitmaps only stay for the current page and its direct
+   *  neighbours - the same eviction policy as the neighbour prewarm cache. */
+  private evictDistantThumbnails(): void {
+    for (const key of [...this.thumbCache.keys()]) {
+      if (Math.abs(key - this.noteIndex) > 1) this.thumbCache.delete(key);
+    }
+  }
+
+  private scheduleRailSweep(): void {
+    if (this.railSweepTimer !== undefined) window.clearTimeout(this.railSweepTimer);
+    this.railSweepTimer = window.setTimeout(() => {
+      this.railSweepTimer = undefined;
+      this.paintVisibleThumbnails();
+    }, RAIL_SWEEP_THROTTLE_MS);
+  }
+
+  /** Note-page indexes whose thumbnail intersects the rail viewport, the
+   *  current page first. Without layout yet (just opened, collapsed pane,
+   *  tests) the current page and its neighbours stand in for the range. */
+  private visibleThumbIndexes(): number[] {
+    const count = this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 0;
+    const nearby = Array.from({ length: count }, (_, index) => index)
+      .filter((index) => Math.abs(index - this.noteIndex) <= 1);
+    const railRect = this.pageRail?.getBoundingClientRect();
+    if (!railRect || this.pageRail!.clientHeight <= 0) return nearby;
+    const visible: number[] = [];
+    for (const [index, button] of this.thumbButtons) {
+      const rect = button.getBoundingClientRect();
+      if (rect.bottom > railRect.top && rect.top < railRect.bottom) visible.push(index);
+    }
+    return (visible.length > 0 ? visible : nearby)
+      .sort((left, right) => Math.abs(left - this.noteIndex) - Math.abs(right - this.noteIndex));
+  }
+
+  private paintVisibleThumbnails(): void {
+    for (const index of this.visibleThumbIndexes()) this.paintThumbnail(index);
+  }
+
+  /**
+   * Paints one thumbnail: from the thumbnail cache, else downscaled from the
+   * neighbour prewarm raster (a free first frame next to the current page),
+   * else a fresh small pdf.js render. Best-effort end to end - a failed
+   * thumbnail keeps its blank paper and can never touch the main canvas.
+   */
+  private paintThumbnail(index: number): void {
+    const button = this.thumbButtons.get(index);
+    const canvas = button?.querySelector<HTMLCanvasElement>("canvas");
+    if (!button || !canvas) return;
+    const cached = this.thumbCache.get(index);
+    if (cached) { this.paintThumbBitmap(canvas, cached); return; }
+    if (this.pendingThumbRenders.has(index)) return;
+    const notePage = this.sidecar?.notePages[index];
+    const display = this.rotatedSize(notePage ?? null);
+    const neighbour = this.neighbourCache.get(index);
+    if (neighbour) {
+      const thumb = document.createElement("canvas");
+      thumb.width = this.thumbPixelWidth();
+      thumb.height = Math.max(1, Math.round(thumb.width * display.height / display.width));
+      thumb.getContext("2d")?.drawImage(neighbour, 0, 0, thumb.width, thumb.height);
+      this.thumbCache.set(index, thumb);
+      this.paintThumbBitmap(canvas, thumb);
+      return;
+    }
+    if (!notePage || notePage.sourceIndex === undefined || !this.pdfDoc) {
+      // A blank note page: plain paper, ink only - no pdf.js involved.
+      const blank = document.createElement("canvas");
+      blank.width = this.thumbPixelWidth();
+      blank.height = Math.max(1, Math.round(blank.width * display.height / display.width));
+      const ctx = blank.getContext("2d");
+      if (ctx) { ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, blank.width, blank.height); }
+      this.thumbCache.set(index, blank);
+      this.paintThumbBitmap(canvas, blank);
+      return;
+    }
+    const token = (this.thumbPaintTokens.get(index) ?? 0) + 1;
+    this.thumbPaintTokens.set(index, token);
+    this.pendingThumbRenders.add(index);
+    void this.renderThumbnail(canvas, index, notePage, display, token)
+      .finally(() => this.pendingThumbRenders.delete(index));
+  }
+
+  private thumbPixelWidth(): number {
+    return Math.max(1, Math.round(RAIL_THUMB_WIDTH * (window.devicePixelRatio || 1)));
+  }
+
+  private async renderThumbnail(canvas: HTMLCanvasElement, index: number,
+    notePage: PdfSidecarNotePage, display: { width: number; height: number }, token: number): Promise<void> {
+    const generation = this.loadGeneration;
+    try {
+      const page = await this.pdfDoc!.getPage(notePage.sourceIndex! + 1);
+      if (token !== this.thumbPaintTokens.get(index) || generation !== this.loadGeneration) return;
+      const scale = this.thumbPixelWidth() / display.width;
+      const viewport = page.getViewport({ scale });
+      const thumb = document.createElement("canvas");
+      thumb.width = Math.max(1, Math.round(display.width * scale));
+      thumb.height = Math.max(1, Math.round(display.height * scale));
+      await page.render({ canvasContext: thumb.getContext("2d")!, viewport }).promise;
+      if (token !== this.thumbPaintTokens.get(index) || generation !== this.loadGeneration) return;
+      this.thumbCache.set(index, thumb);
+      if (canvas.isConnected) this.paintThumbBitmap(canvas, thumb);
+    } catch (error) {
+      if (this.pdfjs?.RenderingCancelledException && error instanceof this.pdfjs.RenderingCancelledException) return;
+      // Thumbnail renders are best-effort; the button stays on blank paper.
+    }
+  }
+
+  private paintThumbBitmap(canvas: HTMLCanvasElement, bitmap: HTMLCanvasElement): void {
+    if (canvas.width !== bitmap.width) canvas.width = bitmap.width;
+    if (canvas.height !== bitmap.height) canvas.height = bitmap.height;
+    canvas.getContext("2d")?.drawImage(bitmap, 0, 0);
   }
 
   private openPageMenu(event: MouseEvent): void {
@@ -1117,6 +1349,7 @@ export class PdfInkView extends InkWritingView {
   protected renderAll(): void {
     this.clampNoteIndex();
     this.updatePageIndicator();
+    this.refreshPageRail();
     this.updateToolButtons();
     this.updateHistoryButtons();
     const page = this.sidecar?.notebook.pages[this.noteIndex];
@@ -1148,6 +1381,8 @@ export class PdfInkView extends InkWritingView {
     this.dirty = false;
     this.zoomTouched = false;
     this.neighbourCache.clear();
+    // Thumbnail bitmaps and rail buttons belong to the previous document.
+    this.invalidateThumbnails();
     this.clearSaveTimers();
     this.setStatus("Loading PDF…");
   }
