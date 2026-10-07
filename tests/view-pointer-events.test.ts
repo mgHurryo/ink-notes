@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { InkView } from "../src/view";
+import { registerDocumentPointerEndEvents } from "../src/ink-input";
 
 interface PointerView {
+  onDocumentPointerEnd(event: PointerEvent): void;
   pageElement: HTMLElement;
   activePointerId: number | null;
   register(callback: () => void): void;
-  registerPointerEndEvents(): void;
   finishPointerInput(includeFinalSample: boolean): void;
   capturePointer(pointerId: number): void;
   releasePointer(pointerId: number): void;
@@ -57,8 +58,8 @@ afterEach(() => {
 describe("pointer completion event registration", () => {
   it.each(["pointerup", "pointercancel"])("finishes uncaptured input outside the page in its owner document on %s", (type) => {
     const owner = frameDocument();
-    const { view } = setup(owner);
-    view.registerPointerEndEvents();
+    const { view, page, cleanups } = setup(owner);
+    registerDocumentPointerEndEvents(page, (cleanup) => cleanups.push(cleanup), (event) => view.onDocumentPointerEnd(event));
 
     endPointer(document.body, type);
     expect(view.activePointerId).toBe(7);
@@ -69,7 +70,7 @@ describe("pointer completion event registration", () => {
 
   it("moves document listeners with the view and removes them on unload", () => {
     const { view, page, cleanups, migrate, stopMigration } = setup();
-    view.registerPointerEndEvents();
+    registerDocumentPointerEndEvents(page, (cleanup) => cleanups.push(cleanup), (event) => view.onDocumentPointerEnd(event));
     const destination = frameDocument();
     destination.body.append(destination.adoptNode(page));
     migrate();
@@ -89,17 +90,17 @@ describe("pointer completion event registration", () => {
   });
 
   it("does not finalize a page ending again when it bubbles to the document", () => {
-    const { view, page } = setup();
+    const { view, page, cleanups } = setup();
     page.addEventListener("pointerup", () => view.finishPointerInput(true));
-    view.registerPointerEndEvents();
+    registerDocumentPointerEndEvents(page, (cleanup) => cleanups.push(cleanup), (event) => view.onDocumentPointerEnd(event));
 
     endPointer(page);
     expect(view.finishPointerInput).toHaveBeenCalledExactlyOnceWith(true);
   });
 
   it("ignores document endings for another pointer", () => {
-    const { view } = setup();
-    view.registerPointerEndEvents();
+    const { view, page, cleanups } = setup();
+    registerDocumentPointerEndEvents(page, (cleanup) => cleanups.push(cleanup), (event) => view.onDocumentPointerEnd(event));
     endPointer(document.body, "pointercancel", 8);
     expect(view.finishPointerInput).not.toHaveBeenCalled();
     expect(view.activePointerId).toBe(7);

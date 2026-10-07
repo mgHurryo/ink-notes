@@ -22264,6 +22264,32 @@ function isPaperStyle(value) {
   return value === "blank" || value === "ruled" || value === "grid" || value === "dot";
 }
 
+// src/ink-input.ts
+function registerDocumentPointerEndEvents(element, register, onEnd) {
+  var _a;
+  let owner = element.ownerDocument;
+  const end = (event) => onEnd(event, event.type === "pointercancel");
+  const bind = () => {
+    owner.addEventListener("pointerup", end);
+    owner.addEventListener("pointercancel", end);
+  };
+  const unbind = () => {
+    owner.removeEventListener("pointerup", end);
+    owner.removeEventListener("pointercancel", end);
+  };
+  bind();
+  const stopMigration = (_a = element.onWindowMigrated) == null ? void 0 : _a.call(element, () => {
+    if (owner === element.ownerDocument) return;
+    unbind();
+    owner = element.ownerDocument;
+    bind();
+  });
+  register(() => {
+    stopMigration == null ? void 0 : stopMigration();
+    unbind();
+  });
+}
+
 // src/rendering.ts
 var paths = /* @__PURE__ */ new WeakMap();
 function canvasResolution(width, height, dpr, zoom, maxPixels = 16e6) {
@@ -24759,7 +24785,7 @@ var InkView = class extends import_obsidian2.FileView {
     this.registerDomEvent(this.pageElement, "pointerup", (event) => this.onPointerUp(event));
     this.registerDomEvent(this.pageElement, "pointercancel", (event) => this.onPointerCancel(event));
     this.registerDomEvent(this.pageElement, "lostpointercapture", (event) => this.onLostPointerCapture(event));
-    this.registerPointerEndEvents();
+    registerDocumentPointerEndEvents(this.pageElement, (cleanup) => this.register(cleanup), (event) => this.onDocumentPointerEnd(event));
     this.registerDomEvent(this.pageElement, "wheel", (event) => this.onWheel(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "scroll", () => this.onViewportMotion(), { passive: true });
     this.registerDomEvent(this.pageScroller, "touchstart", (event) => this.onTouchStart(event), { passive: false });
@@ -25831,30 +25857,6 @@ var InkView = class extends import_obsidian2.FileView {
   onDocumentPointerEnd(event) {
     var _a;
     if (((_a = this.interaction) == null ? void 0 : _a.source) !== "stylus-touch" && this.activePointerId === event.pointerId) this.finishPointerInput(false);
-  }
-  registerPointerEndEvents() {
-    var _a, _b;
-    let owner = this.pageElement.ownerDocument;
-    const end = (event) => this.onDocumentPointerEnd(event);
-    const bind = () => {
-      owner.addEventListener("pointerup", end);
-      owner.addEventListener("pointercancel", end);
-    };
-    const unbind = () => {
-      owner.removeEventListener("pointerup", end);
-      owner.removeEventListener("pointercancel", end);
-    };
-    bind();
-    const stopMigration = (_b = (_a = this.pageElement).onWindowMigrated) == null ? void 0 : _b.call(_a, () => {
-      if (owner === this.pageElement.ownerDocument) return;
-      unbind();
-      owner = this.pageElement.ownerDocument;
-      bind();
-    });
-    this.register(() => {
-      stopMigration == null ? void 0 : stopMigration();
-      unbind();
-    });
   }
   capturePointer(pointerId) {
     if (this.pageElement.hasPointerCapture(pointerId)) return;
@@ -28469,7 +28471,7 @@ var PdfInkView = class extends import_obsidian6.FileView {
   }
   addIconButton(parent, key, icon, label, onClick) {
     const button = parent.createEl("button", { cls: "ink-pdf-icon-button ink-icon-button", attr: { type: "button", "aria-label": label } });
-    (0, import_obsidian6.setIcon)(button, icon);
+    (0, import_obsidian6.setIcon)(button.createSpan({ cls: "ink-button-icon" }), icon);
     button.addEventListener("click", (event) => onClick(event));
     this.toolbarButtons.set(key, button);
   }
@@ -28478,7 +28480,7 @@ var PdfInkView = class extends import_obsidian6.FileView {
       cls: "ink-pdf-icon-button ink-icon-button ink-tool-button",
       attr: { type: "button", "data-tool": tool, "aria-label": label }
     });
-    (0, import_obsidian6.setIcon)(button, icon);
+    (0, import_obsidian6.setIcon)(button.createSpan({ cls: "ink-button-icon" }), icon);
     button.addEventListener("click", () => {
       if (this.mode !== "editing") {
         void this.setMode("editing");
@@ -28499,7 +28501,7 @@ var PdfInkView = class extends import_obsidian6.FileView {
       cls: "ink-pdf-icon-button ink-icon-button",
       attr: { type: "button", "aria-label": "Brush settings" }
     });
-    (0, import_obsidian6.setIcon)(button, "settings-2");
+    (0, import_obsidian6.setIcon)(button.createSpan({ cls: "ink-button-icon" }), "settings-2");
     this.toolbarButtons.set("brush", button);
     button.addEventListener("click", (event) => {
       event.stopPropagation();
@@ -28721,6 +28723,7 @@ var PdfInkView = class extends import_obsidian6.FileView {
     host.addEventListener("pointercancel", (event) => this.onPointerEndHost(event, true));
     host.addEventListener("pointerleave", () => this.hideEraserCursor());
     host.addEventListener("wheel", (event) => this.onWheel(event), { passive: false });
+    registerDocumentPointerEndEvents(host, (cleanup) => this.register(cleanup), (event, cancelled) => this.onPointerEndHost(event, cancelled));
   }
   onWheel(event) {
     if (!event.ctrlKey && !event.metaKey) return;
