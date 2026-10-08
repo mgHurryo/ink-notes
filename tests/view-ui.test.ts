@@ -316,13 +316,31 @@ describe("page rail thumbnails and resizing", () => {
       expect(canvases[0].width).toBe(Math.round(152 * dpr));
       expect(canvases[1].height).toBe(Math.round(208 * dpr));
       const drawn = vi.mocked(drawInkStroke).mock.calls;
-      expect(drawn.some((call) => call[1] === internal.notebook.pages[0].strokes[0] && call[2] === 152 && call[3] === 208)).toBe(true);
-      expect(drawn.some((call) => call[1] === internal.notebook.pages[1].strokes[0] && call[2] === 152 && call[3] === 208)).toBe(true);
+      // Thumbs draw scaled CLONES of the strokes (nib width relative to the
+      // page), so match on id, then assert the miniature scaling itself.
+      expect(drawn.some((call) => (call[1] as InkStroke).id === "s1" && call[2] === 152 && call[3] === 208)).toBe(true);
+      expect(drawn.some((call) => (call[1] as InkStroke).id === "s2" && call[2] === 152 && call[3] === 208)).toBe(true);
+      const scale = 152 / (internal as unknown as { pageBaseWidth: number }).pageBaseWidth;
+      const drawnStroke = drawn.find((call) => (call[1] as InkStroke).id === "s1")![1] as InkStroke;
+      expect(drawnStroke.width).toBeCloseTo(3 * scale, 6);
+      // The paper ruling follows the page's real line count (cells scaled to
+      // the thumbnail), not a sparse re-flow.
+      const paper = canvases[0].closest(".ink-page-thumb")?.querySelector<HTMLElement>(".ink-page-thumb-paper");
+      expect(paper?.style.getPropertyValue("--ink-page-scale")).toBe(String(scale));
     } finally {
       vi.useRealTimers();
     }
   });
 
+  it("scales the paper ruling with zoom instead of re-flowing the line count", () => {
+    const internal = view as unknown as { zoom: number; layoutPage(): void };
+    internal.zoom = 2;
+    internal.layoutPage();
+    const page = document.querySelector<HTMLElement>(".ink-page")!;
+    // Cell size = exactly 32 page px * zoom: zooming reads like zooming an
+    // image, never like re-ruled paper.
+    expect(page.style.getPropertyValue("--ink-page-scale")).toBe("2");
+  });
   it("refreshes only the current page's thumbnail after its ink changes", () => {
     const internal = view as unknown as {
       notebook: ReturnType<typeof createNotebook>;
@@ -340,7 +358,8 @@ describe("page rail thumbnails and resizing", () => {
     internal.refreshCurrentPageThumbnail();
     const drawn = vi.mocked(drawInkStroke).mock.calls;
     expect(drawn.length).toBeGreaterThan(0);
-    for (const call of drawn) expect(call[1]).toBe(internal.notebook.pages[1].strokes[0]);
+    // Scaled clones again: match the refreshed page's stroke by id.
+    for (const call of drawn) expect((call[1] as InkStroke).id).toBe("s2");
   });
 
   it("keeps a failing thumbnail render contained to that thumbnail", () => {

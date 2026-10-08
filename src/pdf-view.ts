@@ -1,6 +1,6 @@
 import { App, Menu, Notice, Scope, SuggestModal, TFile, WorkspaceLeaf, loadPdfJs, setIcon } from "obsidian";
 import { InkNotebook, InkPage, InkTool, createNotebook } from "./model";
-import { canvasResolution, drawInkStroke } from "./rendering";
+import { canvasResolution, drawInkStroke, scaledStroke } from "./rendering";
 import { registerDocumentPointerEndEvents } from "./ink-input";
 import { InkWritingView } from "./ink-writing";
 import type { SharedToolState } from "./tool-state";
@@ -820,7 +820,7 @@ export class PdfInkView extends InkWritingView {
     ctx.save();
     ctx.setTransform(scale, 0, 0, scale, 0, 0);
     for (const stroke of page.strokes) {
-      drawInkStroke(ctx, { ...stroke, width: stroke.width * scale }, this.canvasLogicalWidth, this.canvasLogicalHeight);
+      drawInkStroke(ctx, scaledStroke(stroke, scale), this.canvasLogicalWidth, this.canvasLogicalHeight);
     }
     ctx.restore();
   }
