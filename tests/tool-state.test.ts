@@ -81,6 +81,36 @@ describe("tool state persistence", () => {
     });
   });
 
+  describe("palette", () => {
+    it("defaults to the stock palette", () => {
+      const state = sanitizeToolState(undefined);
+      expect(state.palette).toEqual(["#1b1b1b", "#195bff", "#f23c42", "#42c449", "#f2c94c"]);
+    });
+
+    it("drops invalid entries and duplicates, clamps to ten", () => {
+      const palette = [
+        "red", "#12", "#abc", "#ABC", "#195bff", "#f23c42",
+        ...Array.from({ length: 12 }, (_, index) => `#aa${String(index).padStart(4, "0")}`),
+      ];
+      const state = sanitizeToolState({ palette });
+      expect(state.palette).toEqual(["#abc", "#195bff", "#f23c42",
+        "#aa0000", "#aa0001", "#aa0002", "#aa0003", "#aa0004", "#aa0005", "#aa0006"]);
+    });
+
+    it("falls back to the stock palette when nothing valid remains", () => {
+      expect(sanitizeToolState({ palette: ["nope", "#123"] }).palette).toEqual(["#123"]);
+      expect(sanitizeToolState({ palette: ["nope"] }).palette).toEqual(defaultToolState().palette);
+      expect(sanitizeToolState({ palette: [] }).palette).toEqual(defaultToolState().palette);
+    });
+
+    it("survives a store roundtrip", () => {
+      const state = defaultToolState();
+      state.palette = ["#123456", "#fedcba"];
+      expect(storedToolState(state).palette).toEqual(["#123456", "#fedcba"]);
+      expect(sanitizeToolState(JSON.parse(JSON.stringify(storedToolState(state)))).palette).toEqual(["#123456", "#fedcba"]);
+    });
+  });
+
   describe("storedToolState", () => {
     it("strips the session tool and deep-copies the curve", () => {
       const source = defaultToolState();

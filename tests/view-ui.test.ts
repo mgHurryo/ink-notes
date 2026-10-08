@@ -110,7 +110,10 @@ describe("reference-style editor", () => {
     const color = document.querySelector<HTMLInputElement>('input[aria-label="Pen custom color"]')!;
     color.value = "#abcdef";
     color.dispatchEvent(new Event("input"));
-    expect(document.querySelector('.ink-color-swatch[data-brush-tool="pen"][aria-pressed="true"]')).toBeNull();
+    // A picked custom color becomes a preset swatch (via the plus) and is
+    // selected immediately.
+    const added = document.querySelector<HTMLElement>('.ink-color-swatch[data-brush-tool="pen"][data-color="#abcdef"]');
+    expect(added?.getAttribute("aria-pressed")).toBe("true");
   });
   it("keeps pen and highlighter settings independent", () => {
     button("Pen").click();
@@ -140,12 +143,43 @@ describe("reference-style editor", () => {
     expect(document.activeElement).toBe(
       document.querySelector<HTMLInputElement>('input[aria-label="Highlighter size"]'));
   });
-  it("hints and applies double-click set-as-default on a swatch", () => {
+  it("hints and applies double-click editing on a preset swatch", async () => {
     button("Pen").click();
     const blue = button("Pen blue");
-    expect(blue.getAttribute("title")).toContain("double-click to set as default");
+    expect(blue.getAttribute("title")).toContain("double-click to edit");
+    blue.click(); // select it first
     blue.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
-    expect(blue.getAttribute("aria-pressed")).toBe("true");
+    await new Promise((resolve) => setTimeout(resolve, 30)); // editor open's rAF
+    const editor = document.querySelector<HTMLElement>(".ink-preset-editor.is-open")!;
+    expect(editor).not.toBeNull();
+    const value = editor.querySelector<HTMLInputElement>('input[aria-label="Preset color value"]')!;
+    expect(value.value.toLowerCase()).toBe("#195bff");
+    // Editing the selected preset follows the tool's color along.
+    value.value = "#123456";
+    value.dispatchEvent(new Event("input"));
+    const edited = document.querySelector<HTMLElement>('.ink-color-swatch[data-brush-tool="pen"][data-color="#123456"]');
+    expect(edited?.getAttribute("aria-pressed")).toBe("true");
+    const remove = editor.querySelector<HTMLButtonElement>('button[aria-label="Remove preset color"]')!;
+    expect(remove.disabled).toBe(false);
+    remove.click();
+    expect(document.querySelector('.ink-color-swatch[data-brush-tool="pen"][data-color="#123456"]')).toBeNull();
+    expect(document.querySelectorAll('.ink-color-swatch[data-brush-tool="pen"]').length).toBe(4);
+  });
+  it("never removes the last preset swatch", async () => {
+    button("Pen").click();
+    for (let removed = 0; removed < 4; removed++) {
+      const swatch = document.querySelectorAll<HTMLElement>('.ink-color-swatch[data-brush-tool="pen"]')[0];
+      swatch.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 30)); // editor open's rAF
+      const editor = document.querySelector<HTMLElement>(".ink-preset-editor.is-open")!;
+      (editor.querySelector('button[aria-label="Remove preset color"]') as HTMLButtonElement).click();
+    }
+    expect(document.querySelectorAll('.ink-color-swatch[data-brush-tool="pen"]').length).toBe(1);
+    const last = document.querySelector<HTMLElement>('.ink-color-swatch[data-brush-tool="pen"]')!;
+    last.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    await new Promise((resolve) => setTimeout(resolve, 30)); // editor open's rAF
+    const remove = document.querySelector<HTMLButtonElement>('.ink-preset-editor.is-open button[aria-label="Remove preset color"]')!;
+    expect(remove.disabled).toBe(true);
   });
   it("schedules a shared-settings save when popover and eraser controls change", () => {
     const scheduleSave = vi.fn();
@@ -183,6 +217,27 @@ describe("reference-style editor", () => {
     button("Square eraser").click();
     expect(cursor.classList.contains("is-square")).toBe(true);
     expect(button("Square eraser").getAttribute("aria-checked")).toBe("true");
+  });
+  it("toggles the eraser mini popover on re-tap without the reopen race", async () => {
+    button("Erase").click();   // select the eraser
+    button("Erase").click();   // re-tap opens the mini popover
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(document.querySelector(".ink-eraser-popover.is-open")).not.toBeNull();
+    // The pointerdown of a tool-button tap must not close it first - that
+    // race made the popover reopen on every tap (flash, never closes).
+    button("Pen").dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    expect(document.querySelector(".ink-eraser-popover.is-open")).not.toBeNull();
+    // The click itself switches tools and closes the eraser popover.
+    button("Pen").click();
+    expect(document.querySelector(".ink-eraser-popover.is-open")).toBeNull();
+    expect((view as unknown as { eraserPopover: unknown }).eraserPopover).toBeNull();
+  });
+  it("mounts the eraser mini popover inside the themed view root", () => {
+    button("Erase").click();
+    button("Erase").click();
+    // Outside the view root the --ink-* tokens never resolve: the popover
+    // rendered fully transparent.
+    expect(document.querySelector(".ink-notes-view > .ink-eraser-popover")).not.toBeNull();
   });
   it("shows the eraser reference on hover and refreshes it without pressing", () => {
     button("Erase").click();
@@ -261,13 +316,31 @@ describe("page rail thumbnails and resizing", () => {
       expect(canvases[0].width).toBe(Math.round(152 * dpr));
       expect(canvases[1].height).toBe(Math.round(208 * dpr));
       const drawn = vi.mocked(drawInkStroke).mock.calls;
-      expect(drawn.some((call) => call[1] === internal.notebook.pages[0].strokes[0] && call[2] === 152 && call[3] === 208)).toBe(true);
-      expect(drawn.some((call) => call[1] === internal.notebook.pages[1].strokes[0] && call[2] === 152 && call[3] === 208)).toBe(true);
+      // Thumbs draw scaled CLONES of the strokes (nib width relative to the
+      // page), so match on id, then assert the miniature scaling itself.
+      expect(drawn.some((call) => (call[1] as InkStroke).id === "s1" && call[2] === 152 && call[3] === 208)).toBe(true);
+      expect(drawn.some((call) => (call[1] as InkStroke).id === "s2" && call[2] === 152 && call[3] === 208)).toBe(true);
+      const scale = 152 / (internal as unknown as { pageBaseWidth: number }).pageBaseWidth;
+      const drawnStroke = drawn.find((call) => (call[1] as InkStroke).id === "s1")![1] as InkStroke;
+      expect(drawnStroke.width).toBeCloseTo(3 * scale, 6);
+      // The paper ruling follows the page's real line count (cells scaled to
+      // the thumbnail), not a sparse re-flow.
+      const paper = canvases[0].closest(".ink-page-thumb")?.querySelector<HTMLElement>(".ink-page-thumb-paper");
+      expect(paper?.style.getPropertyValue("--ink-page-scale")).toBe(String(scale));
     } finally {
       vi.useRealTimers();
     }
   });
 
+  it("scales the paper ruling with zoom instead of re-flowing the line count", () => {
+    const internal = view as unknown as { zoom: number; layoutPage(): void };
+    internal.zoom = 2;
+    internal.layoutPage();
+    const page = document.querySelector<HTMLElement>(".ink-page")!;
+    // Cell size = exactly 32 page px * zoom: zooming reads like zooming an
+    // image, never like re-ruled paper.
+    expect(page.style.getPropertyValue("--ink-page-scale")).toBe("2");
+  });
   it("refreshes only the current page's thumbnail after its ink changes", () => {
     const internal = view as unknown as {
       notebook: ReturnType<typeof createNotebook>;
@@ -285,7 +358,8 @@ describe("page rail thumbnails and resizing", () => {
     internal.refreshCurrentPageThumbnail();
     const drawn = vi.mocked(drawInkStroke).mock.calls;
     expect(drawn.length).toBeGreaterThan(0);
-    for (const call of drawn) expect(call[1]).toBe(internal.notebook.pages[1].strokes[0]);
+    // Scaled clones again: match the refreshed page's stroke by id.
+    for (const call of drawn) expect((call[1] as InkStroke).id).toBe("s2");
   });
 
   it("keeps a failing thumbnail render contained to that thumbnail", () => {

@@ -1,7 +1,6 @@
 import { App, Menu, Notice, Scope, SuggestModal, TFile, WorkspaceLeaf, loadPdfJs, setIcon } from "obsidian";
 import { InkNotebook, InkPage, InkTool, createNotebook } from "./model";
-import { canvasResolution } from "./rendering";
-import { BrushPopoverController } from "./brush-popover";
+import { canvasResolution, drawInkStroke, scaledStroke } from "./rendering";
 import { registerDocumentPointerEndEvents } from "./ink-input";
 import { InkWritingView } from "./ink-writing";
 import type { SharedToolState } from "./tool-state";
@@ -36,6 +35,9 @@ const SELECTION_OVERLAY_BUDGET = 4_000_000;
 const RAIL_THUMB_WIDTH = 120;
 /** Coalesces thumbnail repaints while the rail scrolls. */
 const RAIL_SWEEP_THROTTLE_MS = 120;
+/** After the rail's expand transition (200ms), repaint the visible range at
+ *  full resolution; thumbnails skip painting while collapsed. */
+const RAIL_REVEAL_DELAY_MS = 230;
 
 export type SaveOutcome = { status: "saved" } | { status: "conflict"; message: string } | { status: "failed"; message: string };
 
@@ -189,7 +191,9 @@ export class PdfInkView extends InkWritingView {
   async onOpen(): Promise<void> {
     const root = this.contentEl;
     root.empty();
-    root.addClass("ink-pdf-view", "ink-pdf-editing");
+    // The page rail starts collapsed (like the notebook editor's); the
+    // toolbar's Pages toggle reveals it.
+    root.addClass("ink-pdf-view", "ink-pdf-editing", "ink-rail-hidden");
     this.root = root;
     this.renderToolbar(root);
     this.statusEl = root.createDiv({ cls: "ink-pdf-status" });
@@ -355,7 +359,12 @@ export class PdfInkView extends InkWritingView {
    */
   private acquireWriter(): void {
     if (this.writerHeld || !this.canEdit()) return;
-    if (this.file && !this.arbiter.acquire(this.file.path, this.viewId)) return;
+    if (this.file && !this.arbiter.acquire(this.file.path, this.viewId)) {
+      // A silent lock reads as broken buttons and dead gestures; say why
+      // the view is read-only instead.
+      this.setStatus("Another open tab is already writing notes for this PDF; this view is read-only", true);
+      return;
+    }
     this.writerHeld = true;
   }
 
@@ -541,20 +550,28 @@ export class PdfInkView extends InkWritingView {
   private renderToolbar(root: HTMLElement): void {
     const toolbar = root.createDiv({ cls: "ink-pdf-toolbar" });
 
-    this.buildWritingSections(toolbar);
-
     const pagesGroup = this.addToolbarSection(toolbar, "Pages");
+    const toggle = this.addIconButton(pagesGroup, "panel-left", "Pages", () => {
+      const hidden = !this.root?.hasClass("ink-rail-hidden");
+      this.root?.toggleClass("ink-rail-hidden", hidden);
+      toggle.setAttribute("aria-pressed", String(!hidden));
+      // Thumbnails skip painting while the rail is collapsed; repaint the
+      // visible range once the expand transition has revealed them.
+      if (!hidden) window.setTimeout(() => this.paintVisibleThumbnails(), RAIL_REVEAL_DELAY_MS);
+    });
+    toggle.setAttribute("aria-pressed", String(!this.root?.hasClass("ink-rail-hidden")));
     const indicator = pagesGroup.createDiv({ cls: "ink-pdf-page-indicator" });
     indicator.setText("–");
     this.toolbarButtons.set("indicator", indicator);
 
+    this.buildWritingSections(toolbar);
+
     const docGroup = this.addToolbarSection(toolbar, "Document");
-    this.addTrackedIconButton(docGroup, "pages", "more-horizontal", "Page options", (event) => {
-      if (!this.editingLocked()) this.openPageMenu(event);
-    });
-    this.addTrackedIconButton(docGroup, "export", "download", "Export PDF with handwriting", () => {
-      if (!this.editingLocked()) void this.exportHandwrittenCopy();
-    });
+    // Menu and export respond regardless of the writer lock: the menu's
+    // mutating items fail with a notice when read-only, and export only
+    // reads. A silently dead button is indistinguishable from a broken one.
+    this.addTrackedIconButton(docGroup, "pages", "more-horizontal", "Page options", (event) => this.openPageMenu(event));
+    this.addTrackedIconButton(docGroup, "export", "download", "Export PDF with handwriting", () => void this.exportHandwrittenCopy());
 
     this.updateToolButtons();
     this.updateHistoryButtons();
@@ -565,45 +582,9 @@ export class PdfInkView extends InkWritingView {
     const button = this.addIconButton(parent, icon, label, onClick, disabled);
     this.toolbarButtons.set(key, button);
   }
-  protected ensureBrushSettingsPopover(): void {
-    if (this.brushPopover) return;
-    const parent = (this.contentEl ?? this.containerEl) as HTMLElement | undefined;
-    if (!parent?.createDiv) return;
-    this.brushPopover = new BrushPopoverController(parent, {
-      // Extra class scopes the PDF-surface rules (paper canvases, spacing).
-      extraClass: "ink-pdf-brush-popover",
-      tools: this.brushToolConfigs(),
-      getSettings: (tool) => this.brushSettings(tool),
-      activeTool: () => this.state.tool,
-      showPenDynamics: () => this.state.tool === "pen",
-      onControlsChanged: () => {
-        this.updateEraserControls();
-        this.scheduleToolStateSave();
-      },
-      anchor: () => this.activeSettingsAnchor(),
-    });
-    this.settingsPanel = this.brushPopover.root;
-    // Tap-outside closes - anywhere outside the popover itself, including
-    // the paper: a fullscreen PDF pane has no "outside the view" to tap,
-    // and the popover must close when the user starts writing again. The
-    // popover's own controls and the active tool button are exempt (the
-    // tool's tap toggles it).
-    this.registerDomEvent(document, "pointerdown", (event) => {
-      if (!this.brushPopover?.isOpen) return;
-      const target = event.target as HTMLElement | null;
-      // Tool buttons decide their own open/close on click; a tap on another
-      // tool must not close the popover first (it rebuilds for that tool).
-      if (target && target.closest?.(".ink-tool-button")) return;
-      if (target && this.brushPopover.root.contains(target)) return;
-      this.brushPopover.close();
-    });
-    this.registerDomEvent(document, "keydown", (event) => {
-      if (event.key === "Escape" && this.brushPopover?.isOpen) {
-        this.brushPopover.close();
-        this.activeSettingsAnchor()?.focus();
-      }
-    });
-    this.registerDomEvent(window, "scroll", () => this.brushPopover.position(), true);
+  /** Scopes the PDF-surface popover rules (paper canvases, spacing). */
+  protected brushPopoverExtraClass(): string {
+    return "ink-pdf-brush-popover";
   }
 
   private updatePageIndicator(): void {
@@ -742,6 +723,9 @@ export class PdfInkView extends InkWritingView {
   }
 
   private paintVisibleThumbnails(): void {
+    // Collapsed rail: nothing visible to paint; the expand toggle schedules
+    // the repaint for when the transition has revealed the thumbnails.
+    if (this.root?.hasClass("ink-rail-hidden")) return;
     for (const index of this.visibleThumbIndexes()) this.paintThumbnail(index);
   }
 
@@ -756,7 +740,7 @@ export class PdfInkView extends InkWritingView {
     const canvas = button?.querySelector<HTMLCanvasElement>("canvas");
     if (!button || !canvas) return;
     const cached = this.thumbCache.get(index);
-    if (cached) { this.paintThumbBitmap(canvas, cached); return; }
+    if (cached) { this.paintThumbBitmap(canvas, cached, index); return; }
     if (this.pendingThumbRenders.has(index)) return;
     const notePage = this.sidecar?.notePages[index];
     const display = this.rotatedSize(notePage ?? null);
@@ -767,7 +751,7 @@ export class PdfInkView extends InkWritingView {
       thumb.height = Math.max(1, Math.round(thumb.width * display.height / display.width));
       thumb.getContext("2d")?.drawImage(neighbour, 0, 0, thumb.width, thumb.height);
       this.thumbCache.set(index, thumb);
-      this.paintThumbBitmap(canvas, thumb);
+      this.paintThumbBitmap(canvas, thumb, index);
       return;
     }
     if (!notePage || notePage.sourceIndex === undefined || !this.pdfDoc) {
@@ -778,7 +762,7 @@ export class PdfInkView extends InkWritingView {
       const ctx = blank.getContext("2d");
       if (ctx) { ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, blank.width, blank.height); }
       this.thumbCache.set(index, blank);
-      this.paintThumbBitmap(canvas, blank);
+      this.paintThumbBitmap(canvas, blank, index);
       return;
     }
     const token = (this.thumbPaintTokens.get(index) ?? 0) + 1;
@@ -806,17 +790,39 @@ export class PdfInkView extends InkWritingView {
       await page.render({ canvasContext: thumb.getContext("2d")!, viewport }).promise;
       if (token !== this.thumbPaintTokens.get(index) || generation !== this.loadGeneration) return;
       this.thumbCache.set(index, thumb);
-      if (canvas.isConnected) this.paintThumbBitmap(canvas, thumb);
+      if (canvas.isConnected) this.paintThumbBitmap(canvas, thumb, index);
     } catch (error) {
       if (this.pdfjs?.RenderingCancelledException && error instanceof this.pdfjs.RenderingCancelledException) return;
       // Thumbnail renders are best-effort; the button stays on blank paper.
     }
   }
 
-  private paintThumbBitmap(canvas: HTMLCanvasElement, bitmap: HTMLCanvasElement): void {
+  private paintThumbBitmap(canvas: HTMLCanvasElement, bitmap: HTMLCanvasElement, index: number): void {
     if (canvas.width !== bitmap.width) canvas.width = bitmap.width;
     if (canvas.height !== bitmap.height) canvas.height = bitmap.height;
-    canvas.getContext("2d")?.drawImage(bitmap, 0, 0);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0);
+    this.overlayThumbInk(ctx, canvas, index);
+  }
+
+  /**
+   * Draws the note page's handwriting over the rendered thumbnail, strokes
+   * scaled to the thumbnail exactly like the notebook editor's snapshots -
+   * the rail reads as a miniature of the annotated page, not of the bare
+   * PDF underneath.
+   */
+  private overlayThumbInk(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, index: number): void {
+    const page = this.sidecar?.notebook.pages[index];
+    if (!page || page.strokes.length === 0) return;
+    const scale = canvas.width / Math.max(1, this.canvasLogicalWidth);
+    ctx.save();
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    for (const stroke of page.strokes) {
+      drawInkStroke(ctx, scaledStroke(stroke, scale), this.canvasLogicalWidth, this.canvasLogicalHeight);
+    }
+    ctx.restore();
   }
 
   private openPageMenu(event: MouseEvent): void {
@@ -1090,6 +1096,14 @@ export class PdfInkView extends InkWritingView {
     if (!this.sidecar) return;
     this.sidecar.updatedAt = Date.now();
     this.dirty = true;
+  }
+
+  protected afterInputFullySettled(): void {
+    // Parity with the notebook editor: the current page's rail thumbnail
+    // tracks committed ink (pointerup and post-commit). Skipped while the
+    // rail is collapsed - the reveal toggle repaints the range instead.
+    if (this.root?.hasClass("ink-rail-hidden")) return;
+    this.paintThumbnail(this.noteIndex);
   }
 
   protected onRenderResize(): void {

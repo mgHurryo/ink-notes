@@ -22435,6 +22435,16 @@ var import_obsidian2 = require("obsidian");
 var import_obsidian = require("obsidian");
 
 // src/rendering.ts
+var scaledStrokes = /* @__PURE__ */ new WeakMap();
+function scaledStroke(stroke, scale) {
+  const cached = scaledStrokes.get(stroke);
+  if (cached && cached.scale === scale && cached.clone.points === stroke.points && cached.clone.updatedAt === stroke.updatedAt) {
+    return cached.clone;
+  }
+  const clone = { ...stroke, width: stroke.width * scale };
+  scaledStrokes.set(stroke, { scale, clone });
+  return clone;
+}
 var paths = /* @__PURE__ */ new WeakMap();
 function canvasResolution(width, height, dpr, zoom, maxPixels = 16e6) {
   const scale = Math.min(dpr * zoom, 8192 / width, 8192 / height, Math.sqrt(maxPixels / (width * height)));
@@ -22696,6 +22706,33 @@ var INK_COLORS = [
   { value: "#42c449", label: "Green" },
   { value: "#f2c94c", label: "Yellow" }
 ];
+var PRESET_PALETTE_MIN = 1;
+var PRESET_PALETTE_MAX = 10;
+var POPOVER_TRANSITION_MS = 150;
+function placePopover(pop, anchor, margin = 12) {
+  const anchorRect = anchor.getBoundingClientRect();
+  const rect = pop.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return;
+  const left = Math.max(margin, Math.min(window.innerWidth - rect.width - margin, anchorRect.left + anchorRect.width / 2 - rect.width / 2));
+  const below = anchorRect.bottom + 10;
+  const top = below + rect.height <= window.innerHeight - margin ? below : Math.max(margin, anchorRect.top - rect.height - 10);
+  pop.style.left = `${left}px`;
+  pop.style.top = `${top}px`;
+  const originX = Math.max(12, Math.min(rect.width - 12, anchorRect.left + anchorRect.width / 2 - left));
+  const originY = Math.max(0, Math.min(rect.height, top === below ? 0 : anchorRect.top - top));
+  pop.style.setProperty("--ink-popover-origin-x", `${Math.round(originX)}px`);
+  pop.style.setProperty("--ink-popover-origin-y", `${Math.round(originY)}px`);
+}
+function closeAnchoredPopover(pop, hide) {
+  if (pop.hasClass("is-closing")) return;
+  pop.removeClass("is-open");
+  pop.addClass("is-closing");
+  pop.setAttribute("aria-hidden", "true");
+  window.setTimeout(() => {
+    pop.removeClass("is-closing");
+    hide();
+  }, POPOVER_TRANSITION_MS);
+}
 function isBrushTool(tool) {
   return tool === "pen" || tool === "highlighter";
 }
@@ -22709,7 +22746,11 @@ function formatControlValue(name, value) {
 }
 var BrushPopoverController = class {
   constructor(parent, options) {
+    this.parent = parent;
     this.toolButtons = /* @__PURE__ */ new Map();
+    /** Per-swatch palette editor (double-click); at most one at a time. */
+    this.presetEditor = null;
+    this.presetEditorClose = null;
     this.openState = false;
     this.curveOpen = false;
     this.dragIndex = -1;
@@ -22810,26 +22851,8 @@ var BrushPopoverController = class {
     parent.createDiv({ cls: "ink-settings-label", text: "Color" });
     const control = parent.createDiv({ cls: "ink-color-control", attr: { "data-brush-tool": spec.tool } });
     const swatches = control.createDiv({ cls: "ink-color-swatches" });
-    for (const color of INK_COLORS) {
-      const swatch = swatches.createEl("button", { cls: "ink-color-swatch", attr: {
-        type: "button",
-        title: `${color.label} \u2014 double-click to set as default`,
-        "aria-label": `${spec.label} ${color.label.toLowerCase()}`,
-        "aria-pressed": String(settings.color.toLowerCase() === color.value),
-        "data-color": color.value,
-        "data-brush-tool": spec.tool
-      } });
-      swatch.style.backgroundColor = color.value;
-      if (settings.color.toLowerCase() === color.value) swatch.addClass("is-active");
-      const selectColor = () => {
-        settings.color = color.value;
-        this.updateColorSwatches(spec.tool, settings.color);
-        this.update();
-      };
-      swatch.addEventListener("click", selectColor);
-      swatch.addEventListener("dblclick", selectColor);
-    }
-    const custom = control.createEl("label", { cls: "ink-custom-color", attr: { title: "Custom color" } });
+    this.buildSwatches(swatches, spec);
+    const custom = control.createEl("label", { cls: "ink-custom-color", attr: { title: "Add a preset color" } });
     (0, import_obsidian.setIcon)(custom.createSpan({ cls: "ink-button-icon" }), "plus");
     const input = custom.createEl("input", { attr: {
       type: "color",
@@ -22838,10 +22861,125 @@ var BrushPopoverController = class {
       "data-brush-tool": spec.tool
     } });
     input.addEventListener("input", () => {
+      var _a, _b;
       settings.color = input.value;
-      this.updateColorSwatches(spec.tool, settings.color);
+      const palette = (_b = (_a = this.options).palette) == null ? void 0 : _b.call(_a);
+      if (palette && !palette.some((entry) => entry.toLowerCase() === input.value.toLowerCase()) && palette.length < PRESET_PALETTE_MAX) {
+        palette.push(input.value);
+        this.buildSwatchesInto(spec);
+        custom.title = palette.length >= PRESET_PALETTE_MAX ? "Custom color (palette is full)" : "Add a preset color";
+      }
+      this.updateColorSwatches(spec.tool, input.value);
       this.update();
     });
+  }
+  /** Rebuilds the swatch row from the live palette (after add/edit/remove). */
+  buildSwatchesInto(spec) {
+    const swatches = this.root.querySelector(`.ink-color-control[data-brush-tool="${spec.tool}"] .ink-color-swatches`);
+    if (!swatches) return;
+    swatches.empty();
+    this.buildSwatches(swatches, spec);
+  }
+  buildSwatches(swatches, spec) {
+    var _a, _b, _c, _d, _e;
+    const settings = this.options.getSettings(spec.tool);
+    const palette = (_c = (_b = (_a = this.options).palette) == null ? void 0 : _b.call(_a)) != null ? _c : INK_COLORS.map((color) => color.value);
+    for (const value of palette) {
+      const label = (_e = (_d = INK_COLORS.find((color) => color.value.toLowerCase() === value.toLowerCase())) == null ? void 0 : _d.label) != null ? _e : "Custom";
+      const swatch = swatches.createEl("button", { cls: "ink-color-swatch", attr: {
+        type: "button",
+        title: `${label} \u2014 double-click to edit this preset`,
+        "aria-label": `${spec.label} ${label.toLowerCase()}`,
+        "aria-pressed": String(settings.color.toLowerCase() === value.toLowerCase()),
+        "data-color": value,
+        "data-brush-tool": spec.tool
+      } });
+      swatch.style.backgroundColor = value;
+      swatch.addEventListener("click", () => {
+        settings.color = value;
+        this.updateColorSwatches(spec.tool, value);
+        this.update();
+      });
+      swatch.addEventListener("dblclick", () => this.openPresetEditor(spec, value, swatch));
+    }
+  }
+  findSwatch(spec, value) {
+    let found = null;
+    this.root.querySelectorAll(`.ink-color-swatch[data-brush-tool="${spec.tool}"]`).forEach((candidate) => {
+      var _a;
+      if (!found && ((_a = candidate.dataset.color) == null ? void 0 : _a.toLowerCase()) === value.toLowerCase()) found = candidate;
+    });
+    return found;
+  }
+  /**
+   * Double-click a preset swatch to edit that palette entry: a mini popover
+   * at the swatch with a color input and Remove (disabled at the one-swatch
+   * minimum). Edits mutate the shared palette array; update() carries them to
+   * the view's persistence.
+   */
+  openPresetEditor(spec, value, anchor) {
+    var _a, _b;
+    const palette = (_b = (_a = this.options).palette) == null ? void 0 : _b.call(_a);
+    if (!palette) return;
+    const index = palette.findIndex((entry) => entry.toLowerCase() === value.toLowerCase());
+    if (index < 0) return;
+    this.closePresetEditor();
+    const pop = this.parent.createDiv({ cls: "ink-preset-editor", attr: { role: "dialog", "aria-label": "Preset color" } });
+    const header = pop.createDiv({ cls: "ink-range-header" });
+    header.createSpan({ cls: "ink-size-popover-title", text: "Preset color" });
+    const hex = header.createSpan({ cls: "ink-control-value", text: palette[index] });
+    const input = pop.createEl("input", { attr: { type: "color", value: palette[index], "aria-label": "Preset color value" } });
+    const actions = pop.createDiv({ cls: "ink-curve-actions" });
+    const remove = actions.createEl("button", { text: "Remove", attr: { type: "button", "aria-label": "Remove preset color" } });
+    remove.disabled = palette.length <= PRESET_PALETTE_MIN;
+    const settings = this.options.getSettings(spec.tool);
+    input.addEventListener("input", () => {
+      if (palette[index].toLowerCase() === settings.color.toLowerCase()) settings.color = input.value;
+      palette[index] = input.value;
+      hex.textContent = input.value;
+      this.buildSwatchesInto(spec);
+      this.update();
+    });
+    remove.addEventListener("click", () => {
+      var _a2;
+      const [removed] = palette.splice(index, 1);
+      if (settings.color.toLowerCase() === removed.toLowerCase()) settings.color = (_a2 = palette[0]) != null ? _a2 : removed;
+      this.buildSwatchesInto(spec);
+      this.update();
+      this.closePresetEditor();
+    });
+    this.presetEditor = pop;
+    const onOutside = (event) => {
+      const target = event.target;
+      if (target && pop.contains(target)) return;
+      this.closePresetEditor();
+    };
+    const onKey = (event) => {
+      if (event.key === "Escape") this.closePresetEditor();
+    };
+    document.addEventListener("pointerdown", onOutside, true);
+    document.addEventListener("keydown", onKey, true);
+    this.presetEditorClose = () => {
+      document.removeEventListener("pointerdown", onOutside, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+    pop.style.visibility = "hidden";
+    window.requestAnimationFrame(() => {
+      var _a2;
+      if (this.presetEditor !== pop) return;
+      placePopover(pop, (_a2 = this.findSwatch(spec, palette[index])) != null ? _a2 : anchor, 8);
+      pop.style.visibility = "";
+      pop.addClass("is-open");
+    });
+  }
+  closePresetEditor() {
+    var _a;
+    const pop = this.presetEditor;
+    if (!pop) return;
+    this.presetEditor = null;
+    (_a = this.presetEditorClose) == null ? void 0 : _a.call(this);
+    this.presetEditorClose = null;
+    closeAnchoredPopover(pop, () => pop.remove());
   }
   updateColorSwatches(tool, color) {
     this.root.querySelectorAll(`.ink-color-swatch[data-brush-tool="${tool}"]`).forEach((swatch) => {
@@ -22974,7 +23112,8 @@ var BrushPopoverController = class {
   }
   open() {
     this.openState = true;
-    this.root.toggleClass("is-open", true);
+    this.root.removeClass("is-closing");
+    this.root.addClass("is-open");
     this.root.setAttribute("aria-hidden", "false");
     window.requestAnimationFrame(() => {
       this.position();
@@ -22983,9 +23122,11 @@ var BrushPopoverController = class {
     });
   }
   close() {
+    if (!this.openState) return;
     this.openState = false;
-    this.root.toggleClass("is-open", false);
     this.root.setAttribute("aria-hidden", "true");
+    this.closePresetEditor();
+    closeAnchoredPopover(this.root, () => void 0);
   }
   /**
    * Keyboard entry: opening hands focus to the active tool's size slider so
@@ -23009,14 +23150,7 @@ var BrushPopoverController = class {
     if (!this.isOpen) return;
     const anchor = (_c = (_b = (_a = this.options).anchor) == null ? void 0 : _b.call(_a)) != null ? _c : null;
     if (!anchor) return;
-    const anchorRect = anchor.getBoundingClientRect();
-    const popoverRect = this.root.getBoundingClientRect();
-    const margin = 12;
-    const left = Math.max(margin, Math.min(window.innerWidth - popoverRect.width - margin, anchorRect.left + anchorRect.width / 2 - popoverRect.width / 2));
-    const below = anchorRect.bottom + 10;
-    const top = below + popoverRect.height <= window.innerHeight - margin ? below : Math.max(margin, anchorRect.top - popoverRect.height - 10);
-    this.root.style.left = `${left}px`;
-    this.root.style.top = `${top}px`;
+    placePopover(this.root, anchor);
   }
   /** Re-syncs every control, the title and the canvases from settings. */
   update() {
@@ -23501,7 +23635,8 @@ function defaultToolState() {
     pen: { color: "#1b1b1b", width: 3, opacity: 1, smooth: 0, taper: 0, pressureGain: 100, speedGain: 0, pressureCurve: void 0 },
     highlighter: { color: "#f2c94c", width: 18, opacity: 0.4 },
     eraserMode: "stroke",
-    eraserSize: 32
+    eraserSize: 32,
+    palette: INK_COLORS.map((color) => color.value)
   };
 }
 var PEN_WIDTH_RANGE = [1, 24];
@@ -23518,7 +23653,8 @@ function sanitizeToolState(raw) {
     pen: sanitizeBrush(source.pen, defaults.pen, PEN_WIDTH_RANGE, true),
     highlighter: sanitizeBrush(source.highlighter, defaults.highlighter, HIGHLIGHTER_WIDTH_RANGE, false),
     eraserMode: isEraserMode(source.eraserMode) ? source.eraserMode : defaults.eraserMode,
-    eraserSize: sanitizeNumber(source.eraserSize, defaults.eraserSize, ERASER_SIZE_RANGE)
+    eraserSize: sanitizeNumber(source.eraserSize, defaults.eraserSize, ERASER_SIZE_RANGE),
+    palette: sanitizePalette(source.palette)
   };
 }
 function storedToolState(state) {
@@ -23526,7 +23662,8 @@ function storedToolState(state) {
     pen: storedBrush(state.pen),
     highlighter: storedBrush(state.highlighter),
     eraserMode: state.eraserMode,
-    eraserSize: state.eraserSize
+    eraserSize: state.eraserSize,
+    palette: [...state.palette]
   };
 }
 var TOOL_STATE_SAVE_DEBOUNCE_MS = 500;
@@ -23592,6 +23729,21 @@ function sanitizeNumber(raw, fallback, [min, max]) {
 }
 function isEraserMode(value) {
   return value === "stroke" || value === "circle" || value === "square";
+}
+function sanitizePalette(raw) {
+  const stock = INK_COLORS.map((color) => color.value);
+  if (!Array.isArray(raw)) return stock;
+  const seen = /* @__PURE__ */ new Set();
+  const palette = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string" || !CSS_HEX_COLOR.test(entry)) continue;
+    const key = entry.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    palette.push(entry);
+    if (palette.length >= PRESET_PALETTE_MAX) break;
+  }
+  return palette.length >= PRESET_PALETTE_MIN ? palette : stock;
 }
 function isRecord(value) {
   return typeof value === "object" && value !== null;
@@ -23937,14 +24089,19 @@ var InkWritingView = class extends import_obsidian2.FileView {
   reopenToolSettings() {
   }
   /**
-   * The toolbar the settings popover centers under. Anchoring to the whole
-   * toolbar (not the small tool button) puts the popover mid-screen where
-   * the user expects it, and taps on the toolbar still exempt it from
-   * outside-close.
+   * The toolbar control the settings popover anchors to: the ACTIVE TOOL's
+   * button, so the panel grows out of the control that was actually tapped
+   * and collapses back into it. Falls back to the toolbar when no tool
+   * button exists (tests, unusual hosts).
    */
   activeSettingsAnchor() {
     var _a;
-    return (_a = this.toolbarRoot().querySelector(".ink-toolbar")) != null ? _a : this.toolbarRoot().firstElementChild;
+    const root = this.toolbarRoot();
+    return (_a = root.querySelector(`.ink-tool-button[data-tool="${this.state.tool}"]`)) != null ? _a : root.querySelector(".ink-toolbar");
+  }
+  /** Host-specific popover class (the PDF view scopes its surface rules). */
+  brushPopoverExtraClass() {
+    return void 0;
   }
   /**
    * ONE popover entry for both editors: same controller, same tools, same
@@ -23957,11 +24114,14 @@ var InkWritingView = class extends import_obsidian2.FileView {
     if (this.brushPopover) return;
     const parent = (_a = this.contentEl) != null ? _a : this.containerEl;
     if (!(parent == null ? void 0 : parent.createDiv)) return;
+    const extraClass = this.brushPopoverExtraClass();
     this.brushPopover = new BrushPopoverController(parent, {
+      ...extraClass ? { extraClass } : {},
       tools: this.brushToolConfigs(),
       getSettings: (tool) => this.brushSettings(tool),
       activeTool: () => this.state.tool,
       showPenDynamics: () => this.state.tool === "pen",
+      palette: () => this.state.palette,
       onControlsChanged: () => {
         this.updateEraserControls();
         this.scheduleToolStateSave();
@@ -23969,6 +24129,35 @@ var InkWritingView = class extends import_obsidian2.FileView {
       anchor: () => this.activeSettingsAnchor()
     });
     this.settingsPanel = this.brushPopover.root;
+    this.registerPopoverDismiss();
+  }
+  /**
+   * ONE dismiss/position wiring for the settings popover in both editors:
+   * tap-outside closes (the popover's own controls and every tool button are
+   * exempt - a tool's tap toggles its own panel), Escape closes and hands
+   * focus back to the trigger, and window resizes and captures reposition
+   * the panel. The per-view copies this replaces had drifted: the PDF fork
+   * never repositioned on resize.
+   */
+  registerPopoverDismiss() {
+    const popover = this.brushPopover;
+    this.registerDomEvent(document, "pointerdown", (event) => {
+      var _a;
+      if (!popover.isOpen) return;
+      const target = event.target;
+      if (target && ((_a = target.closest) == null ? void 0 : _a.call(target, ".ink-tool-button"))) return;
+      if (target && popover.root.contains(target)) return;
+      popover.close();
+    });
+    this.registerDomEvent(document, "keydown", (event) => {
+      var _a;
+      if (event.key === "Escape" && popover.isOpen) {
+        popover.close();
+        (_a = this.activeSettingsAnchor()) == null ? void 0 : _a.focus();
+      }
+    });
+    this.registerDomEvent(window, "resize", () => popover.position());
+    this.registerDomEvent(window, "scroll", () => popover.position(), true);
   }
   /**
    * Adopts the plugin's shared persisted settings: pen and highlighter brush
@@ -23984,7 +24173,8 @@ var InkWritingView = class extends import_obsidian2.FileView {
       pen: shared.config.pen,
       highlighter: shared.config.highlighter,
       eraserMode: shared.config.eraserMode,
-      eraserSize: shared.config.eraserSize
+      eraserSize: shared.config.eraserSize,
+      palette: shared.config.palette
     };
   }
   /** Persists tool settings (debounced); safe to call on every input event. */
@@ -24017,11 +24207,20 @@ var InkWritingView = class extends import_obsidian2.FileView {
   afterInputFullySettled() {
   }
   // ------------------------------------------------------------------ input
+  /** An Obsidian native menu (page options) is open. While it is, surface
+   *  input must not swallow the outside tap that dismisses it, and must not
+   *  start ink underneath it. Resolved through the view's own document so
+   *  DOM-less harnesses (gesture unit tests) simply read as "no menu". */
+  nativeMenuOpen() {
+    var _a, _b, _c;
+    return !!((_c = (_b = (_a = this.containerEl) == null ? void 0 : _a.ownerDocument) == null ? void 0 : _b.querySelector) == null ? void 0 : _c.call(_b, ".menu"));
+  }
   onPointerDown(event, source = "pointer") {
     var _a, _b, _c, _d, _e, _f;
     this.devPointerEvents += 1;
     this.devLastPointerType = event.pointerType || this.devLastPointerType;
     if (this.inputLocked()) return;
+    if (this.nativeMenuOpen()) return;
     if (event.pointerType === "touch" || source === "pointer" && event.pointerType === "pen" && this.stylusTouchInput) return;
     this.onInputStarting();
     this.interactionGeneration += 1;
@@ -24570,7 +24769,10 @@ var InkWritingView = class extends import_obsidian2.FileView {
   // ---------------------------------------------------------------- touch
   onTouchStart(event) {
     var _a;
-    if (this.inputLocked()) return;
+    if (this.nativeMenuOpen()) {
+      this.touchGesture = null;
+      return;
+    }
     (_a = event.stopPropagation) == null ? void 0 : _a.call(event);
     if (this.onStylusTouch(event)) return;
     if (event.cancelable && event.touches.length < 2) event.preventDefault();
@@ -24624,8 +24826,11 @@ var InkWritingView = class extends import_obsidian2.FileView {
   }
   onTouchMove(event) {
     var _a;
+    if (this.nativeMenuOpen()) {
+      this.touchGesture = null;
+      return;
+    }
     (_a = event.stopPropagation) == null ? void 0 : _a.call(event);
-    if (this.inputLocked()) return;
     if (this.onStylusTouch(event)) return;
     if (this.activePointerId !== null) {
       this.touchGesture = null;
@@ -25466,14 +25671,19 @@ var InkWritingView = class extends import_obsidian2.FileView {
   /**
    * The eraser needs exactly two controls - mode and size - so it gets its
    * own mini popover anchored to its tool button instead of the full brush
-   * panel. Outside taps, Escape and a second tap close it.
+   * panel. It grows out of the eraser button and closes back into it;
+   * outside taps (tool buttons run their own toggle), Escape and a second
+   * tap close it.
    */
-  toggleEraserPopover(_anchor) {
+  toggleEraserPopover(anchor) {
+    var _a;
     if (this.eraserPopover) {
       this.closeEraserPopover();
       return;
     }
-    const pop = this.containerEl.createDiv({ cls: "ink-eraser-popover", attr: { role: "dialog", "aria-label": "Eraser settings" } });
+    const host = (_a = this.contentEl) != null ? _a : this.containerEl;
+    if (!(host == null ? void 0 : host.createDiv)) return;
+    const pop = host.createDiv({ cls: "ink-eraser-popover", attr: { role: "dialog", "aria-label": "Eraser settings" } });
     pop.createDiv({ cls: "ink-size-popover-title", text: "Eraser" });
     const modes = pop.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
     for (const [mode, label, shortLabel, iconName] of [["stroke", "Stroke eraser", "Stroke", "eraser"], ["circle", "Circle eraser", "Circle", "circle"], ["square", "Square eraser", "Square", "square"]]) {
@@ -25502,21 +25712,29 @@ var InkWritingView = class extends import_obsidian2.FileView {
     });
     this.eraserPopover = pop;
     const place = () => {
-      const rect = pop.getBoundingClientRect();
-      const area = this.inputScroller().getBoundingClientRect();
-      pop.style.top = `${Math.max(8, area.top + 12)}px`;
-      pop.style.left = `${Math.max(8, area.left + (area.width - rect.width) / 2)}px`;
+      const target = anchor != null ? anchor : this.activeSettingsAnchor();
+      if (target) placePopover(pop, target, 8);
     };
-    place();
+    pop.style.visibility = "hidden";
+    window.requestAnimationFrame(() => {
+      if (this.eraserPopover !== pop) return;
+      place();
+      pop.style.visibility = "";
+      pop.addClass("is-open");
+    });
     const onOutside = (event) => {
+      var _a2;
       const target = event.target;
       if (target && pop.contains(target)) return;
+      if (target && ((_a2 = target.closest) == null ? void 0 : _a2.call(target, ".ink-tool-button"))) return;
       this.closeEraserPopover();
     };
     const onKey = (event) => {
       if (event.key === "Escape") this.closeEraserPopover();
     };
-    const onRelayout = () => place();
+    const onRelayout = () => {
+      if (this.eraserPopover === pop) place();
+    };
     document.addEventListener("pointerdown", onOutside, true);
     document.addEventListener("keydown", onKey, true);
     window.addEventListener("resize", onRelayout);
@@ -25530,11 +25748,13 @@ var InkWritingView = class extends import_obsidian2.FileView {
     this.register(() => this.closeEraserPopover());
   }
   closeEraserPopover() {
-    var _a, _b;
+    var _a;
+    const pop = this.eraserPopover;
+    if (!pop) return;
+    this.eraserPopover = null;
     (_a = this.eraserPopoverClose) == null ? void 0 : _a.call(this);
     this.eraserPopoverClose = null;
-    (_b = this.eraserPopover) == null ? void 0 : _b.remove();
-    this.eraserPopover = null;
+    closeAnchoredPopover(pop, () => pop.remove());
   }
   // -------------------------------------------------------------- toolbar
   addToolbarSection(parent, label) {
@@ -25574,6 +25794,7 @@ var InkWritingView = class extends import_obsidian2.FileView {
       this.onToolSelected(tool);
       this.state.tool = tool;
       if (tool !== "lasso") this.clearSelection();
+      this.closeEraserPopover();
       (_a = this.brushPopover) == null ? void 0 : _a.update();
       this.updateToolButtons();
       this.refreshEraserCursor();
@@ -26722,29 +26943,6 @@ var InkView = class extends InkWritingView {
     this.renderToolbar();
     this.renderCanvas();
     this.register(() => this.closeEraserPopover());
-    this.registerDomEvent(document, "pointerdown", (event) => {
-      var _a, _b, _c, _d;
-      if (!((_a = this.brushPopover) == null ? void 0 : _a.isOpen)) return;
-      const target = event.target;
-      if (target && ((_b = target.closest) == null ? void 0 : _b.call(target, ".ink-tool-button"))) return;
-      if (target && ((_c = this.brushPopover) == null ? void 0 : _c.root.contains(target))) return;
-      (_d = this.brushPopover) == null ? void 0 : _d.close();
-    });
-    this.registerDomEvent(document, "keydown", (event) => {
-      var _a, _b;
-      if (event.key === "Escape" && ((_a = this.brushPopover) == null ? void 0 : _a.isOpen)) {
-        this.brushPopover.close();
-        (_b = this.activeToolButton()) == null ? void 0 : _b.focus();
-      }
-    });
-    this.registerDomEvent(window, "resize", () => {
-      var _a;
-      return (_a = this.brushPopover) == null ? void 0 : _a.position();
-    });
-    this.registerDomEvent(window, "scroll", () => {
-      var _a;
-      return (_a = this.brushPopover) == null ? void 0 : _a.position();
-    }, true);
     this.viewReady = true;
     this.renderAll();
   }
@@ -26959,6 +27157,7 @@ var InkView = class extends InkWritingView {
    * redraw scheduled by the expand toggle repaints at the real size.
    */
   drawPageThumbnail(canvas, page) {
+    var _a;
     try {
       const width = canvas.clientWidth;
       if (width <= 0) return;
@@ -26969,7 +27168,10 @@ var InkView = class extends InkWritingView {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       ctx.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
-      for (const stroke of page.strokes) drawInkStroke(ctx, stroke, width, height);
+      const scale = width / Math.max(1, this.pageBaseWidth);
+      const paper = (_a = canvas.closest(".ink-page-thumb")) == null ? void 0 : _a.querySelector(".ink-page-thumb-paper");
+      if (paper) paper.style.setProperty("--ink-page-scale", String(scale));
+      for (const stroke of page.strokes) drawInkStroke(ctx, scaledStroke(stroke, scale), width, height);
     } catch (error) {
       console.warn("Ink Notes could not render a page thumbnail", error);
     }
@@ -27750,9 +27952,7 @@ page: ${this.currentPage().id}
     this.pageElement.style.width = displayWidth + "px";
     this.pageElement.style.height = displayHeight + "px";
     if (typeof this.pageElement.style.setProperty === "function") {
-      const dpr = window.devicePixelRatio || 1;
-      const devicePixels = Math.max(1, Math.round(32 * this.zoom * dpr));
-      this.pageElement.style.setProperty("--ink-page-scale", String(devicePixels / (32 * dpr)));
+      this.pageElement.style.setProperty("--ink-page-scale", String(this.zoom));
     }
     this.pageElement.style.zoom = "";
     this.pageElement.style.transform = "none";
@@ -28638,6 +28838,7 @@ var PDF_PAGE_PADDING = 24;
 var SELECTION_OVERLAY_BUDGET = 4e6;
 var RAIL_THUMB_WIDTH = 120;
 var RAIL_SWEEP_THROTTLE_MS = 120;
+var RAIL_REVEAL_DELAY_MS = 230;
 var PdfWriterArbiter = class {
   constructor() {
     this.holders = /* @__PURE__ */ new Map();
@@ -28729,7 +28930,7 @@ var PdfInkView = class extends InkWritingView {
   async onOpen() {
     const root = this.contentEl;
     root.empty();
-    root.addClass("ink-pdf-view", "ink-pdf-editing");
+    root.addClass("ink-pdf-view", "ink-pdf-editing", "ink-rail-hidden");
     this.root = root;
     this.renderToolbar(root);
     this.statusEl = root.createDiv({ cls: "ink-pdf-status" });
@@ -28885,7 +29086,10 @@ var PdfInkView = class extends InkWritingView {
    */
   acquireWriter() {
     if (this.writerHeld || !this.canEdit()) return;
-    if (this.file && !this.arbiter.acquire(this.file.path, this.viewId)) return;
+    if (this.file && !this.arbiter.acquire(this.file.path, this.viewId)) {
+      this.setStatus("Another open tab is already writing notes for this PDF; this view is read-only", true);
+      return;
+    }
     this.writerHeld = true;
   }
   releaseWriter() {
@@ -29058,19 +29262,24 @@ var PdfInkView = class extends InkWritingView {
   }
   // -------------------------------------------------------------- toolbar
   renderToolbar(root) {
+    var _a;
     const toolbar = root.createDiv({ cls: "ink-pdf-toolbar" });
-    this.buildWritingSections(toolbar);
     const pagesGroup = this.addToolbarSection(toolbar, "Pages");
+    const toggle = this.addIconButton(pagesGroup, "panel-left", "Pages", () => {
+      var _a2, _b;
+      const hidden = !((_a2 = this.root) == null ? void 0 : _a2.hasClass("ink-rail-hidden"));
+      (_b = this.root) == null ? void 0 : _b.toggleClass("ink-rail-hidden", hidden);
+      toggle.setAttribute("aria-pressed", String(!hidden));
+      if (!hidden) window.setTimeout(() => this.paintVisibleThumbnails(), RAIL_REVEAL_DELAY_MS);
+    });
+    toggle.setAttribute("aria-pressed", String(!((_a = this.root) == null ? void 0 : _a.hasClass("ink-rail-hidden"))));
     const indicator = pagesGroup.createDiv({ cls: "ink-pdf-page-indicator" });
     indicator.setText("\u2013");
     this.toolbarButtons.set("indicator", indicator);
+    this.buildWritingSections(toolbar);
     const docGroup = this.addToolbarSection(toolbar, "Document");
-    this.addTrackedIconButton(docGroup, "pages", "more-horizontal", "Page options", (event) => {
-      if (!this.editingLocked()) this.openPageMenu(event);
-    });
-    this.addTrackedIconButton(docGroup, "export", "download", "Export PDF with handwriting", () => {
-      if (!this.editingLocked()) void this.exportHandwrittenCopy();
-    });
+    this.addTrackedIconButton(docGroup, "pages", "more-horizontal", "Page options", (event) => this.openPageMenu(event));
+    this.addTrackedIconButton(docGroup, "export", "download", "Export PDF with handwriting", () => void this.exportHandwrittenCopy());
     this.updateToolButtons();
     this.updateHistoryButtons();
     this.updatePageIndicator();
@@ -29079,41 +29288,9 @@ var PdfInkView = class extends InkWritingView {
     const button = this.addIconButton(parent, icon, label, onClick, disabled);
     this.toolbarButtons.set(key, button);
   }
-  ensureBrushSettingsPopover() {
-    var _a;
-    if (this.brushPopover) return;
-    const parent = (_a = this.contentEl) != null ? _a : this.containerEl;
-    if (!(parent == null ? void 0 : parent.createDiv)) return;
-    this.brushPopover = new BrushPopoverController(parent, {
-      // Extra class scopes the PDF-surface rules (paper canvases, spacing).
-      extraClass: "ink-pdf-brush-popover",
-      tools: this.brushToolConfigs(),
-      getSettings: (tool) => this.brushSettings(tool),
-      activeTool: () => this.state.tool,
-      showPenDynamics: () => this.state.tool === "pen",
-      onControlsChanged: () => {
-        this.updateEraserControls();
-        this.scheduleToolStateSave();
-      },
-      anchor: () => this.activeSettingsAnchor()
-    });
-    this.settingsPanel = this.brushPopover.root;
-    this.registerDomEvent(document, "pointerdown", (event) => {
-      var _a2, _b;
-      if (!((_a2 = this.brushPopover) == null ? void 0 : _a2.isOpen)) return;
-      const target = event.target;
-      if (target && ((_b = target.closest) == null ? void 0 : _b.call(target, ".ink-tool-button"))) return;
-      if (target && this.brushPopover.root.contains(target)) return;
-      this.brushPopover.close();
-    });
-    this.registerDomEvent(document, "keydown", (event) => {
-      var _a2, _b;
-      if (event.key === "Escape" && ((_a2 = this.brushPopover) == null ? void 0 : _a2.isOpen)) {
-        this.brushPopover.close();
-        (_b = this.activeSettingsAnchor()) == null ? void 0 : _b.focus();
-      }
-    });
-    this.registerDomEvent(window, "scroll", () => this.brushPopover.position(), true);
+  /** Scopes the PDF-surface popover rules (paper canvases, spacing). */
+  brushPopoverExtraClass() {
+    return "ink-pdf-brush-popover";
   }
   updatePageIndicator() {
     const indicator = this.toolbarButtons.get("indicator");
@@ -29236,6 +29413,8 @@ var PdfInkView = class extends InkWritingView {
     return (visible.length > 0 ? visible : nearby).sort((left, right) => Math.abs(left - this.noteIndex) - Math.abs(right - this.noteIndex));
   }
   paintVisibleThumbnails() {
+    var _a;
+    if ((_a = this.root) == null ? void 0 : _a.hasClass("ink-rail-hidden")) return;
     for (const index of this.visibleThumbIndexes()) this.paintThumbnail(index);
   }
   /**
@@ -29251,7 +29430,7 @@ var PdfInkView = class extends InkWritingView {
     if (!button || !canvas) return;
     const cached = this.thumbCache.get(index);
     if (cached) {
-      this.paintThumbBitmap(canvas, cached);
+      this.paintThumbBitmap(canvas, cached, index);
       return;
     }
     if (this.pendingThumbRenders.has(index)) return;
@@ -29264,7 +29443,7 @@ var PdfInkView = class extends InkWritingView {
       thumb.height = Math.max(1, Math.round(thumb.width * display.height / display.width));
       (_b = thumb.getContext("2d")) == null ? void 0 : _b.drawImage(neighbour, 0, 0, thumb.width, thumb.height);
       this.thumbCache.set(index, thumb);
-      this.paintThumbBitmap(canvas, thumb);
+      this.paintThumbBitmap(canvas, thumb, index);
       return;
     }
     if (!notePage || notePage.sourceIndex === void 0 || !this.pdfDoc) {
@@ -29277,7 +29456,7 @@ var PdfInkView = class extends InkWritingView {
         ctx.fillRect(0, 0, blank.width, blank.height);
       }
       this.thumbCache.set(index, blank);
-      this.paintThumbBitmap(canvas, blank);
+      this.paintThumbBitmap(canvas, blank, index);
       return;
     }
     const token = ((_c = this.thumbPaintTokens.get(index)) != null ? _c : 0) + 1;
@@ -29302,16 +29481,37 @@ var PdfInkView = class extends InkWritingView {
       await page.render({ canvasContext: thumb.getContext("2d"), viewport }).promise;
       if (token !== this.thumbPaintTokens.get(index) || generation !== this.loadGeneration) return;
       this.thumbCache.set(index, thumb);
-      if (canvas.isConnected) this.paintThumbBitmap(canvas, thumb);
+      if (canvas.isConnected) this.paintThumbBitmap(canvas, thumb, index);
     } catch (error) {
       if (((_a = this.pdfjs) == null ? void 0 : _a.RenderingCancelledException) && error instanceof this.pdfjs.RenderingCancelledException) return;
     }
   }
-  paintThumbBitmap(canvas, bitmap) {
-    var _a;
+  paintThumbBitmap(canvas, bitmap, index) {
     if (canvas.width !== bitmap.width) canvas.width = bitmap.width;
     if (canvas.height !== bitmap.height) canvas.height = bitmap.height;
-    (_a = canvas.getContext("2d")) == null ? void 0 : _a.drawImage(bitmap, 0, 0);
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    ctx.drawImage(bitmap, 0, 0);
+    this.overlayThumbInk(ctx, canvas, index);
+  }
+  /**
+   * Draws the note page's handwriting over the rendered thumbnail, strokes
+   * scaled to the thumbnail exactly like the notebook editor's snapshots -
+   * the rail reads as a miniature of the annotated page, not of the bare
+   * PDF underneath.
+   */
+  overlayThumbInk(ctx, canvas, index) {
+    var _a;
+    const page = (_a = this.sidecar) == null ? void 0 : _a.notebook.pages[index];
+    if (!page || page.strokes.length === 0) return;
+    const scale = canvas.width / Math.max(1, this.canvasLogicalWidth);
+    ctx.save();
+    ctx.setTransform(scale, 0, 0, scale, 0, 0);
+    for (const stroke of page.strokes) {
+      drawInkStroke(ctx, scaledStroke(stroke, scale), this.canvasLogicalWidth, this.canvasLogicalHeight);
+    }
+    ctx.restore();
   }
   openPageMenu(event) {
     if (!this.sidecar) return;
@@ -29542,6 +29742,11 @@ var PdfInkView = class extends InkWritingView {
     if (!this.sidecar) return;
     this.sidecar.updatedAt = Date.now();
     this.dirty = true;
+  }
+  afterInputFullySettled() {
+    var _a;
+    if ((_a = this.root) == null ? void 0 : _a.hasClass("ink-rail-hidden")) return;
+    this.paintThumbnail(this.noteIndex);
   }
   onRenderResize() {
     this.layoutPage();

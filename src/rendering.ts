@@ -1,5 +1,25 @@
 import type { InkPoint, InkStroke } from "./model";
 
+/**
+ * Scaled stroke miniatures for thumbnails, keyed by the original stroke:
+ * drawInkStroke caches its Path2D by stroke object identity, so reusing the
+ * clone keeps that cache warm across redraws. Fresh clones recompute every
+ * stroke's outline on each repaint (measured 2x~285ms main-thread stalls per
+ * input settle on large notebooks). points/updatedAt guards discard a clone
+ * whose stroke has been edited since.
+ */
+const scaledStrokes = new WeakMap<InkStroke, { scale: number; clone: InkStroke }>();
+
+export function scaledStroke(stroke: InkStroke, scale: number): InkStroke {
+  const cached = scaledStrokes.get(stroke);
+  if (cached && cached.scale === scale && cached.clone.points === stroke.points && cached.clone.updatedAt === stroke.updatedAt) {
+    return cached.clone;
+  }
+  const clone = { ...stroke, width: stroke.width * scale };
+  scaledStrokes.set(stroke, { scale, clone });
+  return clone;
+}
+
 interface CachedPath {
   points: InkPoint[];
   count: number;
