@@ -218,6 +218,27 @@ describe("reference-style editor", () => {
     expect(cursor.classList.contains("is-square")).toBe(true);
     expect(button("Square eraser").getAttribute("aria-checked")).toBe("true");
   });
+  it("toggles the eraser mini popover on re-tap without the reopen race", async () => {
+    button("Erase").click();   // select the eraser
+    button("Erase").click();   // re-tap opens the mini popover
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(document.querySelector(".ink-eraser-popover.is-open")).not.toBeNull();
+    // The pointerdown of a tool-button tap must not close it first - that
+    // race made the popover reopen on every tap (flash, never closes).
+    button("Pen").dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    expect(document.querySelector(".ink-eraser-popover.is-open")).not.toBeNull();
+    // The click itself switches tools and closes the eraser popover.
+    button("Pen").click();
+    expect(document.querySelector(".ink-eraser-popover.is-open")).toBeNull();
+    expect((view as unknown as { eraserPopover: unknown }).eraserPopover).toBeNull();
+  });
+  it("mounts the eraser mini popover inside the themed view root", () => {
+    button("Erase").click();
+    button("Erase").click();
+    // Outside the view root the --ink-* tokens never resolve: the popover
+    // rendered fully transparent.
+    expect(document.querySelector(".ink-notes-view > .ink-eraser-popover")).not.toBeNull();
+  });
   it("shows the eraser reference on hover and refreshes it without pressing", () => {
     button("Erase").click();
     const paper = document.querySelector<HTMLElement>(".ink-page")!;

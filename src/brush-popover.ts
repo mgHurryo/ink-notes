@@ -512,7 +512,9 @@ export class BrushPopoverController {
 
   open(): void {
     this.openState = true;
-    this.root.toggleClass("is-open", true);
+    // Cancel a close animation still in flight before replaying the open.
+    this.root.removeClass("is-closing");
+    this.root.addClass("is-open");
     this.root.setAttribute("aria-hidden", "false");
     // The popover is display:none while built, so canvas previews can only
     // be drawn once it becomes visible and has layout.
@@ -524,11 +526,15 @@ export class BrushPopoverController {
   }
 
   close(): void {
+    if (!this.openState) return;
     this.openState = false;
-    this.root.toggleClass("is-open", false);
     this.root.setAttribute("aria-hidden", "true");
     // A floating palette editor must not outlive its panel.
     this.closePresetEditor();
+    // Shrinks back into the anchor button; the base display:none returns
+    // once the .is-closing transition window ends. Reopening mid-animation
+    // cancels it via open()'s class swap.
+    closeAnchoredPopover(this.root, () => undefined);
   }
 
   /**

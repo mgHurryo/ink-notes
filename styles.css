@@ -1199,5 +1199,5 @@
   from { opacity: 0; transform: scale(.92); }
 }
 
-/* The page-options section rides at the far end of the toolbar. */
-.ink-toolbar .ink-toolbar-section-document { margin-left: auto; }
+/* The page-options section sits with the rest of the sections so the whole
+   toolbar reads as one centered group. */

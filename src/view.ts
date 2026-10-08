@@ -131,23 +131,6 @@ export class InkView extends InkWritingView {
     this.renderToolbar();
     this.renderCanvas();
     this.register(() => this.closeEraserPopover());
-    this.registerDomEvent(document, "pointerdown", (event) => {
-      if (!this.brushPopover?.isOpen) return;
-      const target = event.target as HTMLElement | null;
-      // Tool buttons decide their own open/close on click; a tap on another
-      // tool must not close the popover first (it rebuilds for that tool).
-      if (target && target.closest?.(".ink-tool-button")) return;
-      if (target && this.brushPopover?.root.contains(target)) return;
-      this.brushPopover?.close();
-    });
-    this.registerDomEvent(document, "keydown", (event) => {
-      if (event.key === "Escape" && this.brushPopover?.isOpen) {
-        this.brushPopover.close();
-        this.activeToolButton()?.focus();
-      }
-    });
-    this.registerDomEvent(window, "resize", () => this.brushPopover?.position());
-    this.registerDomEvent(window, "scroll", () => this.brushPopover?.position(), true);
     this.viewReady = true;
     this.renderAll();
   }

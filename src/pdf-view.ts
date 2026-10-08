@@ -1,7 +1,6 @@
 import { App, Menu, Notice, Scope, SuggestModal, TFile, WorkspaceLeaf, loadPdfJs, setIcon } from "obsidian";
 import { InkNotebook, InkPage, InkTool, createNotebook } from "./model";
 import { canvasResolution } from "./rendering";
-import { BrushPopoverController } from "./brush-popover";
 import { registerDocumentPointerEndEvents } from "./ink-input";
 import { InkWritingView } from "./ink-writing";
 import type { SharedToolState } from "./tool-state";
@@ -565,46 +564,9 @@ export class PdfInkView extends InkWritingView {
     const button = this.addIconButton(parent, icon, label, onClick, disabled);
     this.toolbarButtons.set(key, button);
   }
-  protected ensureBrushSettingsPopover(): void {
-    if (this.brushPopover) return;
-    const parent = (this.contentEl ?? this.containerEl) as HTMLElement | undefined;
-    if (!parent?.createDiv) return;
-    this.brushPopover = new BrushPopoverController(parent, {
-      // Extra class scopes the PDF-surface rules (paper canvases, spacing).
-      extraClass: "ink-pdf-brush-popover",
-      tools: this.brushToolConfigs(),
-      getSettings: (tool) => this.brushSettings(tool),
-      activeTool: () => this.state.tool,
-      showPenDynamics: () => this.state.tool === "pen",
-      palette: () => this.state.palette,
-      onControlsChanged: () => {
-        this.updateEraserControls();
-        this.scheduleToolStateSave();
-      },
-      anchor: () => this.activeSettingsAnchor(),
-    });
-    this.settingsPanel = this.brushPopover.root;
-    // Tap-outside closes - anywhere outside the popover itself, including
-    // the paper: a fullscreen PDF pane has no "outside the view" to tap,
-    // and the popover must close when the user starts writing again. The
-    // popover's own controls and the active tool button are exempt (the
-    // tool's tap toggles it).
-    this.registerDomEvent(document, "pointerdown", (event) => {
-      if (!this.brushPopover?.isOpen) return;
-      const target = event.target as HTMLElement | null;
-      // Tool buttons decide their own open/close on click; a tap on another
-      // tool must not close the popover first (it rebuilds for that tool).
-      if (target && target.closest?.(".ink-tool-button")) return;
-      if (target && this.brushPopover.root.contains(target)) return;
-      this.brushPopover.close();
-    });
-    this.registerDomEvent(document, "keydown", (event) => {
-      if (event.key === "Escape" && this.brushPopover?.isOpen) {
-        this.brushPopover.close();
-        this.activeSettingsAnchor()?.focus();
-      }
-    });
-    this.registerDomEvent(window, "scroll", () => this.brushPopover.position(), true);
+  /** Scopes the PDF-surface popover rules (paper canvases, spacing). */
+  protected brushPopoverExtraClass(): string {
+    return "ink-pdf-brush-popover";
   }
 
   private updatePageIndicator(): void {

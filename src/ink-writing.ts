@@ -30,7 +30,7 @@ import {
   InkTool,
   newId,
 } from "./model";
-import { BrushPopoverController, BrushSettings, BrushTool, isBrushTool } from "./brush-popover";
+import { BrushPopoverController, BrushSettings, BrushTool, closeAnchoredPopover, isBrushTool, placePopover } from "./brush-popover";
 import { Rect, TileRenderer } from "./tiles";
 import { StrokeModeler, StrokeModelInput, StrokeModelResult, StrokeModelParams, DEFAULT_STROKE_MODEL_PARAMS, strokeModelParamsForSmoothStrength } from "./stroke-modeler";
 import type { InkWorkerResponse, NotebookOperation } from "./worker-protocol";
@@ -571,15 +571,19 @@ export abstract class InkWritingView extends FileView {
   /** Re-open the settings popover at the (new) active tool's anchor. */
   protected reopenToolSettings(): void {}
   /**
-   * The toolbar the settings popover centers under. Anchoring to the whole
-   * toolbar (not the small tool button) puts the popover mid-screen where
-   * the user expects it, and taps on the toolbar still exempt it from
-   * outside-close.
+   * The toolbar control the settings popover anchors to: the ACTIVE TOOL's
+   * button, so the panel grows out of the control that was actually tapped
+   * and collapses back into it. Falls back to the toolbar when no tool
+   * button exists (tests, unusual hosts).
    */
   protected activeSettingsAnchor(): HTMLElement | null {
-    return (this.toolbarRoot().querySelector<HTMLElement>(".ink-toolbar") ??
-      this.toolbarRoot().firstElementChild as HTMLElement | null);
+    const root = this.toolbarRoot();
+    return root.querySelector<HTMLElement>(`.ink-tool-button[data-tool="${this.state.tool}"]`)
+      ?? root.querySelector<HTMLElement>(".ink-toolbar");
   }
+
+  /** Host-specific popover class (the PDF view scopes its surface rules). */
+  protected brushPopoverExtraClass(): string | undefined { return undefined; }
 
   /**
    * ONE popover entry for both editors: same controller, same tools, same
@@ -594,7 +598,9 @@ export abstract class InkWritingView extends FileView {
     // out of scope (transparent background, lost border, broken layout).
     const parent = (this.contentEl ?? this.containerEl) as HTMLElement | undefined;
     if (!parent?.createDiv) return;
+    const extraClass = this.brushPopoverExtraClass();
     this.brushPopover = new BrushPopoverController(parent, {
+      ...(extraClass ? { extraClass } : {}),
       tools: this.brushToolConfigs(),
       getSettings: (tool) => this.brushSettings(tool),
       activeTool: () => this.state.tool,
@@ -607,6 +613,36 @@ export abstract class InkWritingView extends FileView {
       anchor: () => this.activeSettingsAnchor(),
     });
     this.settingsPanel = this.brushPopover.root;
+    this.registerPopoverDismiss();
+  }
+
+  /**
+   * ONE dismiss/position wiring for the settings popover in both editors:
+   * tap-outside closes (the popover's own controls and every tool button are
+   * exempt - a tool's tap toggles its own panel), Escape closes and hands
+   * focus back to the trigger, and window resizes and captures reposition
+   * the panel. The per-view copies this replaces had drifted: the PDF fork
+   * never repositioned on resize.
+   */
+  private registerPopoverDismiss(): void {
+    const popover = this.brushPopover;
+    this.registerDomEvent(document, "pointerdown", (event) => {
+      if (!popover.isOpen) return;
+      const target = event.target as HTMLElement | null;
+      // Tool buttons decide their own open/close on click; a tap on another
+      // tool must not close the popover first (it rebuilds for that tool).
+      if (target && target.closest?.(".ink-tool-button")) return;
+      if (target && popover.root.contains(target)) return;
+      popover.close();
+    });
+    this.registerDomEvent(document, "keydown", (event) => {
+      if (event.key === "Escape" && popover.isOpen) {
+        popover.close();
+        this.activeSettingsAnchor()?.focus();
+      }
+    });
+    this.registerDomEvent(window, "resize", () => popover.position());
+    this.registerDomEvent(window, "scroll", () => popover.position(), true);
   }
 
   /**
@@ -2205,11 +2241,18 @@ export abstract class InkWritingView extends FileView {
   /**
    * The eraser needs exactly two controls - mode and size - so it gets its
    * own mini popover anchored to its tool button instead of the full brush
-   * panel. Outside taps, Escape and a second tap close it.
+   * panel. It grows out of the eraser button and closes back into it;
+   * outside taps (tool buttons run their own toggle), Escape and a second
+   * tap close it.
    */
-  protected toggleEraserPopover(_anchor: HTMLElement | null): void {
+  protected toggleEraserPopover(anchor: HTMLElement | null): void {
     if (this.eraserPopover) { this.closeEraserPopover(); return; }
-    const pop = this.containerEl.createDiv({ cls: "ink-eraser-popover", attr: { role: "dialog", "aria-label": "Eraser settings" } });
+    const host = (this.contentEl ?? this.containerEl) as HTMLElement | undefined;
+    if (!host?.createDiv) return;
+    // Mount inside the view root: the popover is styled with --ink-* tokens,
+    // which only resolve inside the themed view. Hung on the container it
+    // rendered with a fully transparent background and unthemed borders.
+    const pop = host.createDiv({ cls: "ink-eraser-popover", attr: { role: "dialog", "aria-label": "Eraser settings" } });
     pop.createDiv({ cls: "ink-size-popover-title", text: "Eraser" });
     const modes = pop.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
     for (const [mode, label, shortLabel, iconName] of [["stroke", "Stroke eraser", "Stroke", "eraser"], ["circle", "Circle eraser", "Circle", "circle"], ["square", "Square eraser", "Square", "square"]] as const) {
@@ -2238,23 +2281,33 @@ export abstract class InkWritingView extends FileView {
     });
     this.eraserPopover = pop;
     const place = (): void => {
-      // Center over the writing area, just below the toolbar - the user
-      // reads it as part of the editor, not as a button dropdown.
-      const rect = pop.getBoundingClientRect();
-      const area = this.inputScroller().getBoundingClientRect();
-      pop.style.top = `${Math.max(8, area.top + 12)}px`;
-      pop.style.left = `${Math.max(8, area.left + (area.width - rect.width) / 2)}px`;
+      const target = anchor ?? this.activeSettingsAnchor();
+      if (target) placePopover(pop, target, 8);
     };
-    place();
+    // Hidden until placed: a fixed-position element without coordinates
+    // would flash at its static position for a frame.
+    pop.style.visibility = "hidden";
+    window.requestAnimationFrame(() => {
+      if (this.eraserPopover !== pop) return;
+      place();
+      pop.style.visibility = "";
+      pop.addClass("is-open");
+    });
     const onOutside = (event: PointerEvent): void => {
       const target = event.target as Node | null;
       if (target && pop.contains(target)) return;
+      // Tool buttons toggle their own popover on click. Closing on the
+      // pointerdown made the following click event reopen it, which read as
+      // a popover that flashes and can never be re-tapped closed.
+      if (target && (target as HTMLElement).closest?.(".ink-tool-button")) return;
       this.closeEraserPopover();
     };
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === "Escape") this.closeEraserPopover();
     };
-    const onRelayout = (): void => place();
+    const onRelayout = (): void => {
+      if (this.eraserPopover === pop) place();
+    };
     document.addEventListener("pointerdown", onOutside, true);
     document.addEventListener("keydown", onKey, true);
     window.addEventListener("resize", onRelayout);
@@ -2269,10 +2322,12 @@ export abstract class InkWritingView extends FileView {
   }
 
   protected closeEraserPopover(): void {
+    const pop = this.eraserPopover;
+    if (!pop) return;
+    this.eraserPopover = null;
     this.eraserPopoverClose?.();
     this.eraserPopoverClose = null;
-    this.eraserPopover?.remove();
-    this.eraserPopover = null;
+    closeAnchoredPopover(pop, () => pop.remove());
   }
 
   // -------------------------------------------------------------- toolbar
@@ -2314,6 +2369,9 @@ export abstract class InkWritingView extends FileView {
       this.onToolSelected(tool);
       this.state.tool = tool;
       if (tool !== "lasso") this.clearSelection();
+      // The eraser mini popover belongs to the eraser button; leaving it
+      // open after switching tools would strand it beside the wrong panel.
+      this.closeEraserPopover();
       this.brushPopover?.update();
       this.updateToolButtons();
       this.refreshEraserCursor();
