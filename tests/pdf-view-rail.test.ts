@@ -77,6 +77,14 @@ async function setup(sourcePageCount = 3) {
 const thumbs = () => document.querySelectorAll<HTMLButtonElement>(".ink-pdf-view .ink-page-thumb");
 const thumbAt = (index: number) => thumbs()[index]!;
 
+/** Thumbnail tests need the rail expanded: it starts collapsed (parity with
+ *  the notebook editor), and thumbnails skip painting while collapsed. */
+async function setupExpanded(sourcePageCount = 3) {
+  const context = await setup(sourcePageCount);
+  (context.view as unknown as { root: HTMLElement }).root.classList.remove("ink-rail-hidden");
+  return context;
+}
+
 beforeEach(() => {
   document.body.innerHTML = '<div id="host"><div></div><main></main></div>';
   vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
@@ -90,6 +98,21 @@ afterEach(async () => {
 });
 
 describe("pdf page preview rail", () => {
+  it("starts collapsed and toggles from the toolbar Pages button", async () => {
+    const { view } = await setup(3);
+    const root = document.querySelector<HTMLElement>(".ink-pdf-view")!;
+    expect(root.classList.contains("ink-rail-hidden")).toBe(true);
+    const toggle = document.querySelector<HTMLButtonElement>('button[aria-label="Pages"]')!;
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    toggle.click();
+    expect(root.classList.contains("ink-rail-hidden")).toBe(false);
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    toggle.click();
+    expect(root.classList.contains("ink-rail-hidden")).toBe(true);
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    await view.onClose();
+  });
+
   it("is always present with one thumbnail per note page and highlights the current page", async () => {
     const { view, internal } = await setup(3);
     internal.renderAll();
@@ -118,7 +141,7 @@ describe("pdf page preview rail", () => {
   });
 
   it("renders thumbnails on demand for the visible range at thumbnail scale, and serves repaints from the cache", async () => {
-    const { view, internal, fakeDoc } = await setup(8);
+    const { view, internal, fakeDoc } = await setupExpanded(8);
     internal.renderAll();
     // No layout in jsdom: the fallback visible range is the current page and
     // its neighbours (indexes 0 and 1 -> pdf.js pages 1 and 2), nothing else.
@@ -135,7 +158,7 @@ describe("pdf page preview rail", () => {
   });
 
   it("downscales the neighbour prewarm raster instead of asking pdf.js again", async () => {
-    const { view, internal, fakeDoc } = await setup(3);
+    const { view, internal, fakeDoc } = await setupExpanded(3);
     const neighbour = document.createElement("canvas");
     neighbour.width = 595;
     neighbour.height = 842;
@@ -148,7 +171,7 @@ describe("pdf page preview rail", () => {
   });
 
   it("renders blank note pages as plain paper without touching pdf.js", async () => {
-    const { view, internal, sidecar, fakeDoc } = await setup(3);
+    const { view, internal, sidecar, fakeDoc } = await setupExpanded(3);
     insertBlankNotePage(sidecar, sourcePageId(0)); // [src0, blank, src1, src2]
     internal.renderAll();
     await new Promise((resolve) => setTimeout(resolve, 0));
@@ -167,7 +190,7 @@ describe("pdf page preview rail", () => {
   });
 
   it("evicts cached thumbnails further than one page from the current page", async () => {
-    const { view, internal } = await setup(6);
+    const { view, internal } = await setupExpanded(6);
     internal.renderAll();
     await new Promise((resolve) => setTimeout(resolve, 0));
     internal.noteIndex = 4;
@@ -193,13 +216,44 @@ describe("pdf page preview rail", () => {
   });
 
   it("keeps a failing thumbnail render contained", async () => {
-    const { view, internal, fakeDoc } = await setup(3);
+    const { view, internal, fakeDoc } = await setupExpanded(3);
     fakeDoc.getPage.mockRejectedValueOnce(new Error("pdf.js exploded"));
     internal.renderAll();
     await new Promise((resolve) => setTimeout(resolve, 0));
     // The failed thumb simply has no bitmap; the others still rendered.
     expect(internal.thumbCache.has(0)).toBe(false);
     expect(fakeDoc.renderedPages).toEqual([2]);
+    await view.onClose();
+  });
+
+  it("opens the page menu and export regardless of the writer lock", async () => {
+    const { view, internal } = await setup(3);
+    // Read-only state (writer lock) must not turn the buttons dead.
+    (view as unknown as { writerHeld: boolean }).writerHeld = false;
+    const menu = vi.spyOn(internal as never as { openPageMenu(e: MouseEvent): void }, "openPageMenu").mockImplementation(() => undefined);
+    const exportCopy = vi.spyOn(internal as never as { exportHandwrittenCopy(): Promise<void> }, "exportHandwrittenCopy").mockImplementation(async () => undefined);
+    document.querySelector<HTMLButtonElement>('button[aria-label="Page options"]')!.click();
+    document.querySelector<HTMLButtonElement>('button[aria-label="Export PDF with handwriting"]')!.click();
+    expect(menu).toHaveBeenCalledOnce();
+    expect(exportCopy).toHaveBeenCalledOnce();
+    await view.onClose();
+  });
+
+  it("draws the page's handwriting over the rendered thumbnail", async () => {
+    const { view, internal, sidecar } = await setupExpanded(3);
+    const page = sidecar.notebook.pages[0];
+    page.strokes.push({ id: "s1", pageId: page.id, tool: "pen", color: "#111111", width: 4, opacity: 1,
+      points: [{ x: 0.1, y: 0.1, pressure: 0.5, t: 0 }], createdAt: 0, updatedAt: 0 });
+    // A recording ctx: the shared beforeEach stub returns fresh spies per
+    // property access, which cannot be asserted on.
+    const ctx = { clearRect: vi.fn(), drawImage: vi.fn(), save: vi.fn(), restore: vi.fn(), setTransform: vi.fn() };
+    const canvasSpy = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
+    internal.renderAll();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    // The ink overlay mapped stroke space onto the thumbnail (transform set
+    // for the thumbnail scale) on top of the page bitmap.
+    expect(ctx.setTransform).toHaveBeenCalled();
+    canvasSpy.mockRestore();
     await view.onClose();
   });
 });

@@ -34,7 +34,7 @@ export {
   constrainDelta,
   distance,
 } from "./ink-writing";
-import { canvasResolution, drawInkStroke } from "./rendering";
+import { canvasResolution, drawInkStroke, scaledStroke } from "./rendering";
 import { BrushPopoverController, BrushSettings } from "./brush-popover";
 import { TileRenderer } from "./tiles";
 import type { NotebookOperation } from "./worker-protocol";
@@ -131,23 +131,6 @@ export class InkView extends InkWritingView {
     this.renderToolbar();
     this.renderCanvas();
     this.register(() => this.closeEraserPopover());
-    this.registerDomEvent(document, "pointerdown", (event) => {
-      if (!this.brushPopover?.isOpen) return;
-      const target = event.target as HTMLElement | null;
-      // Tool buttons decide their own open/close on click; a tap on another
-      // tool must not close the popover first (it rebuilds for that tool).
-      if (target && target.closest?.(".ink-tool-button")) return;
-      if (target && this.brushPopover?.root.contains(target)) return;
-      this.brushPopover?.close();
-    });
-    this.registerDomEvent(document, "keydown", (event) => {
-      if (event.key === "Escape" && this.brushPopover?.isOpen) {
-        this.brushPopover.close();
-        this.activeToolButton()?.focus();
-      }
-    });
-    this.registerDomEvent(window, "resize", () => this.brushPopover?.position());
-    this.registerDomEvent(window, "scroll", () => this.brushPopover?.position(), true);
     this.viewReady = true;
     this.renderAll();
   }
@@ -386,7 +369,16 @@ export class InkView extends InkWritingView {
       const ctx = canvas.getContext("2d");
       if (!ctx) return;
       ctx.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
-      for (const stroke of page.strokes) drawInkStroke(ctx, stroke, width, height);
+      // Draw as a true miniature of the page: strokes (already normalized to
+      // the page box) keep their size relative to the paper, so a 4 px nib is
+      // 4/980ths of the thumbnail width, not 4 hair-unfriendly pixels.
+      const scale = width / Math.max(1, this.pageBaseWidth);
+      // The paper ruling lives in the same document space; scale the
+      // background cells so the thumbnail shows the page's real line count
+      // instead of a sparse re-flow.
+      const paper = canvas.closest(".ink-page-thumb")?.querySelector<HTMLElement>(".ink-page-thumb-paper");
+      if (paper) paper.style.setProperty("--ink-page-scale", String(scale));
+      for (const stroke of page.strokes) drawInkStroke(ctx, scaledStroke(stroke, scale), width, height);
     } catch (error) {
       console.warn("Ink Notes could not render a page thumbnail", error);
     }
@@ -1153,13 +1145,14 @@ export class InkView extends InkWritingView {
     this.pageElement.style.width = displayWidth + "px";
     this.pageElement.style.height = displayHeight + "px";
     if (typeof this.pageElement.style.setProperty === "function") {
-      // Snap the paper scale so one ruled cell is a whole number of device
-      // pixels: fractional background sizes get re-snapped by the
-      // rasterizer every frame, which flickered the lines and changed their
-      // count while zooming.
-      const dpr = window.devicePixelRatio || 1;
-      const devicePixels = Math.max(1, Math.round(32 * this.zoom * dpr));
-      this.pageElement.style.setProperty("--ink-page-scale", String(devicePixels / (32 * dpr)));
+      // The ruling is part of the page, not of the screen: the cell size is
+      // exactly 32 page px scaled by zoom, so zooming reads like zooming an
+      // image - every line, dot and grid cell grows with the paper and the
+      // line count never changes. (An earlier fix snapped the scale to whole
+      // device pixels to still the lines while zooming; that kept the cells
+      // near-constant on screen while the page box grew, so zooming visibly
+      // re-flowed the ruling to a different line count.)
+      this.pageElement.style.setProperty("--ink-page-scale", String(this.zoom));
     }
     this.pageElement.style.zoom = "";
     this.pageElement.style.transform = "none";
