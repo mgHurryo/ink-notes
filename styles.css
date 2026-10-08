@@ -1128,5 +1128,76 @@
 
 .ink-eraser-popover input[type="range"] { width: 100%; touch-action: none; }
 
+/* Preset color editor (double-click a swatch): one color input plus Remove,
+   anchored to the swatch it edits. */
+.ink-preset-editor {
+  position: fixed;
+  z-index: 1001;
+  display: none;
+  flex-direction: column;
+  gap: 10px;
+  width: 220px;
+  padding: 12px;
+  border: 1px solid var(--ink-border);
+  border-radius: 12px;
+  background: var(--ink-panel-raised);
+  box-shadow: var(--ink-shadow-paper);
+  overscroll-behavior: contain;
+}
+
+.ink-preset-editor input[type="color"] {
+  width: 100%;
+  height: 36px;
+  padding: 2px;
+  border: 1px solid var(--ink-border);
+  border-radius: var(--ink-radius-sm);
+  background: var(--ink-workspace);
+  cursor: pointer;
+}
+
+.ink-preset-editor .ink-curve-actions { margin: 0; }
+
+/* Anchor-true popovers: panels grow out of the control that opened them and
+   shrink back into it on close (origin set per-open via --ink-popover-origin-*).
+   .is-open plays the grow-in; .is-closing holds display while playing the
+   shrink-out, then JS drops the class (display:none returns). */
+.ink-size-popover,
+.ink-eraser-popover,
+.ink-preset-editor {
+  transform-origin: var(--ink-popover-origin-x, 50%) var(--ink-popover-origin-y, 0);
+}
+
+.ink-size-popover.is-open {
+  display: flex;
+  flex-direction: column;
+  animation: ink-pop-in 150ms ease;
+}
+
+.ink-size-popover.is-closing {
+  display: flex;
+  flex-direction: column;
+  opacity: 0;
+  transform: scale(.92);
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+
+.ink-eraser-popover.is-open,
+.ink-preset-editor.is-open {
+  display: flex;
+  animation: ink-pop-in 150ms ease;
+}
+
+.ink-eraser-popover.is-closing,
+.ink-preset-editor.is-closing {
+  display: flex;
+  opacity: 0;
+  transform: scale(.92);
+  transition: opacity 150ms ease, transform 150ms ease;
+}
+
+@keyframes ink-pop-in {
+  from { opacity: 0; transform: scale(.92); }
+}
+
 /* The page-options section rides at the far end of the toolbar. */
 .ink-toolbar .ink-toolbar-section-document { margin-left: auto; }

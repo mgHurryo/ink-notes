@@ -29,6 +29,53 @@ export const INK_COLORS = [
   { value: "#f2c94c", label: "Yellow" },
 ];
 
+/** Bounds of the editable preset swatch palette (the stock five sit in the
+ *  middle of the range). */
+export const PRESET_PALETTE_MIN = 1;
+export const PRESET_PALETTE_MAX = 10;
+
+/** Open/close animation length; keep in sync with the .is-open/.is-closing
+ *  CSS transitions on the popovers. */
+export const POPOVER_TRANSITION_MS = 150;
+
+/**
+ * Places a fixed-position popover centered below (or above, when there is no
+ * room below) its anchor and aims its open/close scale animation at that
+ * anchor: the panel grows out of the button that opened it and shrinks back
+ * into the same spot. Pairs with the .is-open/.is-closing classes.
+ */
+export function placePopover(pop: HTMLElement, anchor: HTMLElement, margin = 12): void {
+  const anchorRect = anchor.getBoundingClientRect();
+  const rect = pop.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return;
+  const left = Math.max(margin, Math.min(window.innerWidth - rect.width - margin, anchorRect.left + anchorRect.width / 2 - rect.width / 2));
+  const below = anchorRect.bottom + 10;
+  const top = below + rect.height <= window.innerHeight - margin ? below : Math.max(margin, anchorRect.top - rect.height - 10);
+  pop.style.left = `${left}px`;
+  pop.style.top = `${top}px`;
+  const originX = Math.max(12, Math.min(rect.width - 12, anchorRect.left + anchorRect.width / 2 - left));
+  const originY = Math.max(0, Math.min(rect.height, top === below ? 0 : anchorRect.top - top));
+  pop.style.setProperty("--ink-popover-origin-x", `${Math.round(originX)}px`);
+  pop.style.setProperty("--ink-popover-origin-y", `${Math.round(originY)}px`);
+}
+
+/**
+ * Anchor-true open/close: .is-open plays a short grow-from-the-anchor
+ * animation; close() plays the reverse (shrink INTO the anchor) via
+ * .is-closing and only then drops back to display:none. `hide` removes the
+ * element for popovers that are destroyed on close instead of reused.
+ */
+export function closeAnchoredPopover(pop: HTMLElement, hide: () => void): void {
+  if (pop.hasClass("is-closing")) return;
+  pop.removeClass("is-open");
+  pop.addClass("is-closing");
+  pop.setAttribute("aria-hidden", "true");
+  window.setTimeout(() => {
+    pop.removeClass("is-closing");
+    hide();
+  }, POPOVER_TRANSITION_MS);
+}
+
 export function isBrushTool(tool: InkTool): tool is BrushTool {
   return tool === "pen" || tool === "highlighter";
 }
@@ -65,6 +112,10 @@ export interface BrushPopoverControllerOptions {
    *  Receives the shared range-slider builder; runs during controller
    *  construction, so it must not touch the controller instance. */
   buildExtras?: (body: HTMLElement, api: { addRange: BrushPopoverController["addRange"] }) => void;
+  /** The editable preset swatch colors (mutated in place by the palette
+   *  editor; follow every mutation with the standard update() so the change
+   *  reaches the view's persistence). Falls back to the stock palette. */
+  palette?: () => string[];
   /** Fired after any control change so the view can refresh dependent UI. */
   onControlsChanged?: () => void;
   /** View teardown hook for document/window listeners. */
@@ -93,11 +144,14 @@ export class BrushPopoverController {
   private readonly preview: HTMLCanvasElement;
   private readonly body: HTMLElement;
   private readonly toolButtons = new Map<BrushTool, HTMLButtonElement>();
+  /** Per-swatch palette editor (double-click); at most one at a time. */
+  private presetEditor: HTMLElement | null = null;
+  private presetEditorClose: (() => void) | null = null;
   private openState = false;
   private curveOpen = false;
   private dragIndex = -1;
 
-  constructor(parent: HTMLElement, options: BrushPopoverControllerOptions) {
+  constructor(private readonly parent: HTMLElement, options: BrushPopoverControllerOptions) {
     this.options = options;
     this.root = parent.createDiv({
       cls: options.extraClass ? `ink-size-popover ${options.extraClass}` : "ink-size-popover",
@@ -196,37 +250,134 @@ export class BrushPopoverController {
     parent.createDiv({ cls: "ink-settings-label", text: "Color" });
     const control = parent.createDiv({ cls: "ink-color-control", attr: { "data-brush-tool": spec.tool } });
     const swatches = control.createDiv({ cls: "ink-color-swatches" });
-    for (const color of INK_COLORS) {
-      const swatch = swatches.createEl("button", { cls: "ink-color-swatch", attr: {
-        type: "button", title: `${color.label} — double-click to set as default`, "aria-label": `${spec.label} ${color.label.toLowerCase()}`,
-        "aria-pressed": String(settings.color.toLowerCase() === color.value), "data-color": color.value,
-        "data-brush-tool": spec.tool,
-      } });
-      swatch.style.backgroundColor = color.value;
-      if (settings.color.toLowerCase() === color.value) swatch.addClass("is-active");
-      const selectColor = (): void => {
-        settings.color = color.value;
-        this.updateColorSwatches(spec.tool, settings.color);
-        this.update();
-      };
-      swatch.addEventListener("click", selectColor);
-      // Double-click promotes the color to the tool's default: the selection
-      // reaches the view's persisted settings through update() →
-      // onControlsChanged, so the saved configuration carries it into the
-      // next session. A single click keeps its plain "use now" meaning.
-      swatch.addEventListener("dblclick", selectColor);
-    }
-    const custom = control.createEl("label", { cls: "ink-custom-color", attr: { title: "Custom color" } });
+    this.buildSwatches(swatches, spec);
+    // The plus keeps its place at the end of the row: it opens the color
+    // picker and stores the picked color as a new preset while the palette
+    // has room (full palette degrades to plain "use now").
+    const custom = control.createEl("label", { cls: "ink-custom-color", attr: { title: "Add a preset color" } });
     setIcon(custom.createSpan({ cls: "ink-button-icon" }), "plus");
     const input = custom.createEl("input", { attr: {
       type: "color", value: settings.color, "aria-label": `${spec.label} custom color`, "data-brush-tool": spec.tool,
     } });
     input.addEventListener("input", () => {
       settings.color = input.value;
-      this.updateColorSwatches(spec.tool, settings.color);
+      const palette = this.options.palette?.();
+      if (palette && !palette.some((entry) => entry.toLowerCase() === input.value.toLowerCase()) && palette.length < PRESET_PALETTE_MAX) {
+        palette.push(input.value);
+        this.buildSwatchesInto(spec);
+        custom.title = palette.length >= PRESET_PALETTE_MAX ? "Custom color (palette is full)" : "Add a preset color";
+      }
+      this.updateColorSwatches(spec.tool, input.value);
       this.update();
     });
   }
+
+  /** Rebuilds the swatch row from the live palette (after add/edit/remove). */
+  private buildSwatchesInto(spec: BrushToolSpec): void {
+    const swatches = this.root.querySelector<HTMLElement>(`.ink-color-control[data-brush-tool="${spec.tool}"] .ink-color-swatches`);
+    if (!swatches) return;
+    swatches.empty();
+    this.buildSwatches(swatches, spec);
+  }
+
+  private buildSwatches(swatches: HTMLElement, spec: BrushToolSpec): void {
+    const settings = this.options.getSettings(spec.tool);
+    const palette = this.options.palette?.() ?? INK_COLORS.map((color) => color.value);
+    for (const value of palette) {
+      const label = INK_COLORS.find((color) => color.value.toLowerCase() === value.toLowerCase())?.label ?? "Custom";
+      const swatch = swatches.createEl("button", { cls: "ink-color-swatch", attr: {
+        type: "button", title: `${label} — double-click to edit this preset`, "aria-label": `${spec.label} ${label.toLowerCase()}`,
+        "aria-pressed": String(settings.color.toLowerCase() === value.toLowerCase()), "data-color": value,
+        "data-brush-tool": spec.tool,
+      } });
+      swatch.style.backgroundColor = value;
+      swatch.addEventListener("click", () => {
+        settings.color = value;
+        this.updateColorSwatches(spec.tool, value);
+        this.update();
+      });
+      swatch.addEventListener("dblclick", () => this.openPresetEditor(spec, value, swatch));
+    }
+  }
+
+  private findSwatch(spec: BrushToolSpec, value: string): HTMLElement | null {
+    let found: HTMLElement | null = null;
+    this.root.querySelectorAll<HTMLElement>(`.ink-color-swatch[data-brush-tool="${spec.tool}"]`).forEach((candidate) => {
+      if (!found && candidate.dataset.color?.toLowerCase() === value.toLowerCase()) found = candidate;
+    });
+    return found;
+  }
+
+  /**
+   * Double-click a preset swatch to edit that palette entry: a mini popover
+   * at the swatch with a color input and Remove (disabled at the one-swatch
+   * minimum). Edits mutate the shared palette array; update() carries them to
+   * the view's persistence.
+   */
+  private openPresetEditor(spec: BrushToolSpec, value: string, anchor: HTMLElement): void {
+    const palette = this.options.palette?.();
+    if (!palette) return;
+    const index = palette.findIndex((entry) => entry.toLowerCase() === value.toLowerCase());
+    if (index < 0) return;
+    this.closePresetEditor();
+    const pop = this.parent.createDiv({ cls: "ink-preset-editor", attr: { role: "dialog", "aria-label": "Preset color" } });
+    const header = pop.createDiv({ cls: "ink-range-header" });
+    header.createSpan({ cls: "ink-size-popover-title", text: "Preset color" });
+    const hex = header.createSpan({ cls: "ink-control-value", text: palette[index] });
+    const input = pop.createEl("input", { attr: { type: "color", value: palette[index], "aria-label": "Preset color value" } });
+    const actions = pop.createDiv({ cls: "ink-curve-actions" });
+    const remove = actions.createEl("button", { text: "Remove", attr: { type: "button", "aria-label": "Remove preset color" } });
+    remove.disabled = palette.length <= PRESET_PALETTE_MIN;
+    const settings = this.options.getSettings(spec.tool);
+    input.addEventListener("input", () => {
+      if (palette[index].toLowerCase() === settings.color.toLowerCase()) settings.color = input.value;
+      palette[index] = input.value;
+      hex.textContent = input.value;
+      this.buildSwatchesInto(spec);
+      this.update();
+    });
+    remove.addEventListener("click", () => {
+      const [removed] = palette.splice(index, 1);
+      if (settings.color.toLowerCase() === removed.toLowerCase()) settings.color = palette[0] ?? removed;
+      this.buildSwatchesInto(spec);
+      this.update();
+      this.closePresetEditor();
+    });
+    this.presetEditor = pop;
+    const onOutside = (event: PointerEvent): void => {
+      const target = event.target as Node | null;
+      if (target && pop.contains(target)) return;
+      this.closePresetEditor();
+    };
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") this.closePresetEditor();
+    };
+    document.addEventListener("pointerdown", onOutside, true);
+    document.addEventListener("keydown", onKey, true);
+    this.presetEditorClose = () => {
+      document.removeEventListener("pointerdown", onOutside, true);
+      document.removeEventListener("keydown", onKey, true);
+    };
+    // Hidden until placed: a fixed-position element without coordinates
+    // would flash at its static position for a frame.
+    pop.style.visibility = "hidden";
+    window.requestAnimationFrame(() => {
+      if (this.presetEditor !== pop) return;
+      placePopover(pop, this.findSwatch(spec, palette[index]) ?? anchor, 8);
+      pop.style.visibility = "";
+      pop.addClass("is-open");
+    });
+  }
+
+  private closePresetEditor(): void {
+    const pop = this.presetEditor;
+    if (!pop) return;
+    this.presetEditor = null;
+    this.presetEditorClose?.();
+    this.presetEditorClose = null;
+    closeAnchoredPopover(pop, () => pop.remove());
+  }
+
 
   private updateColorSwatches(tool: BrushTool, color: string): void {
     this.root.querySelectorAll<HTMLButtonElement>(`.ink-color-swatch[data-brush-tool="${tool}"]`).forEach((swatch) => {
@@ -376,6 +527,8 @@ export class BrushPopoverController {
     this.openState = false;
     this.root.toggleClass("is-open", false);
     this.root.setAttribute("aria-hidden", "true");
+    // A floating palette editor must not outlive its panel.
+    this.closePresetEditor();
   }
 
   /**
@@ -400,16 +553,7 @@ export class BrushPopoverController {
     if (!this.isOpen) return;
     const anchor = this.options.anchor?.() ?? null;
     if (!anchor) return;
-    const anchorRect = anchor.getBoundingClientRect();
-    const popoverRect = this.root.getBoundingClientRect();
-    const margin = 12;
-    const left = Math.max(margin, Math.min(window.innerWidth - popoverRect.width - margin, anchorRect.left + anchorRect.width / 2 - popoverRect.width / 2));
-    const below = anchorRect.bottom + 10;
-    const top = below + popoverRect.height <= window.innerHeight - margin
-      ? below
-      : Math.max(margin, anchorRect.top - popoverRect.height - 10);
-    this.root.style.left = `${left}px`;
-    this.root.style.top = `${top}px`;
+    placePopover(this.root, anchor);
   }
 
   /** Re-syncs every control, the title and the canvases from settings. */

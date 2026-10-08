@@ -8,11 +8,12 @@
  * discarding the rest of the saved settings.
  */
 
+import { INK_COLORS, PRESET_PALETTE_MAX, PRESET_PALETTE_MIN } from "./brush-popover";
 import type { BrushSettings } from "./brush-popover";
 import type { EraserMode, ToolState } from "./ink-writing";
 
 /** The JSON shape persisted under `toolState` in the plugin data file. */
-export type StoredToolState = Pick<ToolState, "pen" | "highlighter" | "eraserMode" | "eraserSize">;
+export type StoredToolState = Pick<ToolState, "pen" | "highlighter" | "eraserMode" | "eraserSize" | "palette">;
 
 /** Single source of the pristine defaults both editors start from. */
 export function defaultToolState(): ToolState {
@@ -22,6 +23,7 @@ export function defaultToolState(): ToolState {
     highlighter: { color: "#f2c94c", width: 18, opacity: 0.4 },
     eraserMode: "stroke",
     eraserSize: 32,
+    palette: INK_COLORS.map((color) => color.value),
   };
 }
 
@@ -51,6 +53,7 @@ export function sanitizeToolState(raw: unknown): ToolState {
     highlighter: sanitizeBrush(source.highlighter, defaults.highlighter, HIGHLIGHTER_WIDTH_RANGE, false),
     eraserMode: isEraserMode(source.eraserMode) ? source.eraserMode : defaults.eraserMode,
     eraserSize: sanitizeNumber(source.eraserSize, defaults.eraserSize, ERASER_SIZE_RANGE),
+    palette: sanitizePalette(source.palette),
   };
 }
 
@@ -61,6 +64,7 @@ export function storedToolState(state: ToolState): StoredToolState {
     highlighter: storedBrush(state.highlighter),
     eraserMode: state.eraserMode,
     eraserSize: state.eraserSize,
+    palette: [...state.palette],
   };
 }
 
@@ -152,6 +156,28 @@ function sanitizeNumber(raw: unknown, fallback: number, [min, max]: readonly [nu
 
 function isEraserMode(value: unknown): value is EraserMode {
   return value === "stroke" || value === "circle" || value === "square";
+}
+
+/**
+ * The preset swatch palette: hex colors only, case-insensitive dedupe,
+ * clamped to the palette editor's range. Anything invalid shrinks the list;
+ * fewer than the minimum (or nothing valid) restores the stock palette
+ * instead of leaving the editor without a swatch.
+ */
+function sanitizePalette(raw: unknown): string[] {
+  const stock = INK_COLORS.map((color) => color.value);
+  if (!Array.isArray(raw)) return stock;
+  const seen = new Set<string>();
+  const palette: string[] = [];
+  for (const entry of raw) {
+    if (typeof entry !== "string" || !CSS_HEX_COLOR.test(entry)) continue;
+    const key = entry.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    palette.push(entry);
+    if (palette.length >= PRESET_PALETTE_MAX) break;
+  }
+  return palette.length >= PRESET_PALETTE_MIN ? palette : stock;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

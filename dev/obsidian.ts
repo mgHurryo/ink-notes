@@ -15,6 +15,7 @@ Object.assign(HTMLElement.prototype, {
   createSpan(this: HTMLElement, options: any) { return createEl.call(this, "span", options); },
   empty(this: HTMLElement) { this.replaceChildren(); },
   addClass(this: HTMLElement, name: string) { this.classList.add(name); },
+  removeClass(this: HTMLElement, name: string) { this.classList.remove(name); },
   hasClass(this: HTMLElement, name: string) { return this.classList.contains(name); },
   toggleClass(this: HTMLElement, name: string, value: boolean) { this.classList.toggle(name, value); },
   setText(this: HTMLElement, text: string) { this.textContent = text; return this; },

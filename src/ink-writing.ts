@@ -44,6 +44,9 @@ export interface ToolState {
   highlighter: BrushSettings;
   eraserMode: EraserMode;
   eraserSize: number;
+  /** Editable preset swatch colors, shared by both editors and persisted
+   *  with the rest of the tool settings (1..10 entries). */
+  palette: string[];
 }
 
 export type EraserMode = "stroke" | "circle" | "square";
@@ -596,6 +599,7 @@ export abstract class InkWritingView extends FileView {
       getSettings: (tool) => this.brushSettings(tool),
       activeTool: () => this.state.tool,
       showPenDynamics: () => this.state.tool === "pen",
+      palette: () => this.state.palette,
       onControlsChanged: () => {
         this.updateEraserControls();
         this.scheduleToolStateSave();
@@ -620,6 +624,7 @@ export abstract class InkWritingView extends FileView {
       highlighter: shared.config.highlighter,
       eraserMode: shared.config.eraserMode,
       eraserSize: shared.config.eraserSize,
+      palette: shared.config.palette,
     };
   }
 

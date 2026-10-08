@@ -576,6 +576,7 @@ export class PdfInkView extends InkWritingView {
       getSettings: (tool) => this.brushSettings(tool),
       activeTool: () => this.state.tool,
       showPenDynamics: () => this.state.tool === "pen",
+      palette: () => this.state.palette,
       onControlsChanged: () => {
         this.updateEraserControls();
         this.scheduleToolStateSave();
