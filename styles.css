@@ -152,7 +152,7 @@
 }
 
 :is(.ink-toolbar, .ink-pdf-toolbar) .ink-tool-button.is-active:hover { background: var(--ink-accent); }
-.ink-toolbar .ink-icon-button[aria-pressed="true"] { border-color: var(--ink-border); background: var(--ink-hover); }
+:is(.ink-toolbar, .ink-pdf-toolbar) .ink-icon-button[aria-pressed="true"] { border-color: var(--ink-border); background: var(--ink-hover); }
 
 .ink-tool-popover-host {
   position: absolute;
@@ -592,10 +592,10 @@
 }
 
 /* Collapsed: the same box at zero size. !important-free overrides win on
-   specificity (.ink-notes-view.ink-rail-hidden .ink-page-rail) over the base
-   and container-query rules; the inline --ink-rail-width custom property is
-   irrelevant here because neither declaration references it. */
-.ink-notes-view.ink-rail-hidden .ink-page-rail {
+   specificity over the base and container-query rules; the inline
+   --ink-rail-width custom property is irrelevant here because neither
+   declaration references it. Both editors share the toggle behaviour. */
+:is(.ink-notes-view, .ink-pdf-view).ink-rail-hidden .ink-page-rail {
   flex-basis: 0;
   width: 0;
   padding-left: 0;

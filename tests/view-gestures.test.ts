@@ -269,4 +269,21 @@ describe("page touch navigation", () => {
     expect(gesture.preventDefault).not.toHaveBeenCalled();
     expect(view.touchGesture).toBeNull();
   });
+
+  it("keeps pinch-zoom working while editing input is locked", () => {
+    const { view } = setup();
+    view.readingMode = true; // inputLocked()
+    view.onTouchStart(touchEvent([[1, 210, 420], [2, 290, 420]]));
+    view.onTouchMove(touchEvent([[1, 160, 390], [2, 320, 390]]));
+    expect(view.zoom).toBeGreaterThan(1);
+  });
+
+  it("lets a native menu dismissal see surface touches", () => {
+    const { view } = setup();
+    view.containerEl = { ownerDocument: { querySelector: (selector: string) => (selector === ".menu" ? { id: "menu" } : null) } };
+    const event = touchEvent([[1, 210, 420]]);
+    view.onTouchStart(event);
+    expect(view.touchGesture).toBeNull();
+    expect(event.preventDefault).not.toHaveBeenCalled();
+  });
 });

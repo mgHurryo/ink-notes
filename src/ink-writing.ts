@@ -691,10 +691,19 @@ export abstract class InkWritingView extends FileView {
 
   // ------------------------------------------------------------------ input
 
+  /** An Obsidian native menu (page options) is open. While it is, surface
+   *  input must not swallow the outside tap that dismisses it, and must not
+   *  start ink underneath it. Resolved through the view's own document so
+   *  DOM-less harnesses (gesture unit tests) simply read as "no menu". */
+  protected nativeMenuOpen(): boolean {
+    return !!this.containerEl?.ownerDocument?.querySelector?.(".menu");
+  }
+
   protected onPointerDown(event: InkPointerSample, source: InteractionContext["source"] = "pointer"): void {
     this.devPointerEvents += 1;
     this.devLastPointerType = event.pointerType || this.devLastPointerType;
     if (this.inputLocked()) return;
+    if (this.nativeMenuOpen()) return;
     if (event.pointerType === "touch" || (source === "pointer" && event.pointerType === "pen" && this.stylusTouchInput)) return;
     this.onInputStarting();
     this.interactionGeneration += 1;
@@ -1303,10 +1312,16 @@ export abstract class InkWritingView extends FileView {
   // ---------------------------------------------------------------- touch
 
   protected onTouchStart(event: TouchEvent): void {
-    if (this.inputLocked()) return;
+    // A native menu owns the surface until dismissed: let its outside-tap
+    // dismissal see this event instead of swallowing it (the menu otherwise
+    // stayed open until one of its own items was picked).
+    if (this.nativeMenuOpen()) { this.touchGesture = null; return; }
     // Handwriting owns the whole surface: stop the touch from reaching the
     // app chrome entirely, so Obsidian's sidebar edge-swipe can never fire
-    // mid-write, whatever the entry point.
+    // mid-write, whatever the entry point. Navigation gestures (pan,
+    // pinch-zoom, page flip) deliberately stay available while editing is
+    // locked (reading mode, PDF writer arbitration) - only ink input is
+    // gated, and that happens in onPointerDown.
     event.stopPropagation?.();
     if (this.onStylusTouch(event)) return;
     // Cancel native tap recognition before the guards, including Pencil
@@ -1359,8 +1374,8 @@ export abstract class InkWritingView extends FileView {
   }
 
   protected onTouchMove(event: TouchEvent): void {
+    if (this.nativeMenuOpen()) { this.touchGesture = null; return; }
     event.stopPropagation?.();
-    if (this.inputLocked()) return;
     if (this.onStylusTouch(event)) return;
     if (this.activePointerId !== null) {
       this.touchGesture = null;
