@@ -24041,6 +24041,10 @@ var InkWritingView = class extends import_obsidian2.FileView {
     this.tiles = null;
     this.viewport = { x: 0, y: 0, width: 1, height: 1 };
     this.zoom = 1;
+    this.zoomLocked = false;
+    this.zoomHud = null;
+    this.zoomHudValue = null;
+    this.zoomLockButton = null;
     this.canvasLogicalWidth = 1;
     this.canvasLogicalHeight = 1;
     this.viewReady = false;
@@ -24130,6 +24134,82 @@ var InkWritingView = class extends import_obsidian2.FileView {
   /** True while gestures must not start new input (reading mode, locks). */
   inputLocked() {
     return false;
+  }
+  zoomLevel() {
+    return this.zoom;
+  }
+  onZoomLockChanged() {
+  }
+  buildZoomHud(parent) {
+    this.disposeZoomHud();
+    const hud = parent.createDiv({ cls: "ink-zoom-hud", attr: { "aria-label": "Zoom", "aria-hidden": "true" } });
+    this.zoomHud = hud;
+    this.zoomHudValue = hud.createSpan({ cls: "ink-zoom-hud-value" });
+    this.zoomLockButton = hud.createEl("button", { cls: "ink-zoom-lock", attr: { type: "button", tabindex: "-1" } });
+    this.zoomLockButton.addEventListener("click", () => this.toggleZoomLock());
+    for (const type of ["pointerdown", "pointerup", "touchstart", "touchmove", "touchend", "touchcancel"]) {
+      hud.addEventListener(type, (event) => event.stopPropagation());
+    }
+    this.updateZoomHud();
+  }
+  updateZoomHud() {
+    const value = `${Math.round(this.zoomLevel() * 100)}%`;
+    if (this.zoomHudValue && this.zoomHudValue.textContent !== value) this.zoomHudValue.textContent = value;
+    const button = this.zoomLockButton;
+    if (!button) return;
+    const label = this.zoomLocked ? "Unlock zoom" : "Lock zoom";
+    if (button.getAttribute("aria-label") !== label) {
+      button.setAttribute("aria-label", label);
+      button.setAttribute("title", label);
+      button.setAttribute("aria-pressed", String(this.zoomLocked));
+      button.replaceChildren();
+      (0, import_obsidian2.setIcon)(button, this.zoomLocked ? "lock-keyhole" : "lock-keyhole-open");
+    }
+  }
+  showZoomHud() {
+    var _a;
+    if (!this.zoomHud) return;
+    if (this.zoomHudTimer !== void 0) window.clearTimeout(this.zoomHudTimer);
+    this.zoomHudTimer = void 0;
+    this.updateZoomHud();
+    if (this.zoomHud.classList.contains("is-visible")) return;
+    this.zoomHud.classList.add("is-visible");
+    this.zoomHud.setAttribute("aria-hidden", "false");
+    (_a = this.zoomLockButton) == null ? void 0 : _a.removeAttribute("tabindex");
+  }
+  scheduleZoomHudHide() {
+    if (!this.zoomHud) return;
+    if (this.zoomHudTimer !== void 0) window.clearTimeout(this.zoomHudTimer);
+    this.zoomHudTimer = window.setTimeout(() => {
+      var _a, _b, _c, _d, _e;
+      this.zoomHudTimer = void 0;
+      if (((_a = this.touchGesture) == null ? void 0 : _a.ids.length) === 2) return;
+      if (document.activeElement === this.zoomLockButton) (_b = this.zoomLockButton) == null ? void 0 : _b.blur();
+      (_c = this.zoomHud) == null ? void 0 : _c.classList.remove("is-visible");
+      (_d = this.zoomHud) == null ? void 0 : _d.setAttribute("aria-hidden", "true");
+      (_e = this.zoomLockButton) == null ? void 0 : _e.setAttribute("tabindex", "-1");
+    }, 850);
+  }
+  toggleZoomLock() {
+    this.zoomLocked = !this.zoomLocked;
+    this.onZoomLockChanged();
+    const gesture = this.touchGesture;
+    if ((gesture == null ? void 0 : gesture.ids.length) === 2) {
+      const rect = this.inputRect();
+      gesture.zoom = this.zoom;
+      gesture.distance = gesture.currentDistance;
+      gesture.pageX = (gesture.x - rect.left) / rect.width;
+      gesture.pageY = (gesture.y - rect.top) / rect.height;
+    }
+    this.showZoomHud();
+    if ((gesture == null ? void 0 : gesture.ids.length) !== 2) this.scheduleZoomHudHide();
+  }
+  disposeZoomHud() {
+    var _a;
+    if (this.zoomHudTimer !== void 0) window.clearTimeout(this.zoomHudTimer);
+    this.zoomHudTimer = void 0;
+    (_a = this.zoomHud) == null ? void 0 : _a.remove();
+    this.zoomHud = this.zoomHudValue = this.zoomLockButton = null;
   }
   // ------------------------------------------------------- tool switching
   /** View hook before a tool button selects a tool (PDF: enter editing). */
@@ -24965,15 +25045,16 @@ var InkWritingView = class extends import_obsidian2.FileView {
   }
   // ---------------------------------------------------------------- touch
   onTouchStart(event) {
-    var _a, _b;
+    var _a, _b, _c;
+    if (((_a = this.touchGesture) == null ? void 0 : _a.ids.length) === 2) this.scheduleZoomHudHide();
     if (this.nativeMenuOpen()) {
       this.touchGesture = null;
       return;
     }
-    (_a = event.stopPropagation) == null ? void 0 : _a.call(event);
+    (_b = event.stopPropagation) == null ? void 0 : _b.call(event);
     if (this.onStylusTouch(event)) return;
     if (event.cancelable && event.touches.length < 2) event.preventDefault();
-    if (((_b = this.touchGesture) == null ? void 0 : _b.axis) === "x" && event.touches.length > 1) {
+    if (((_c = this.touchGesture) == null ? void 0 : _c.axis) === "x" && event.touches.length > 1) {
       this.cancelPageFlip();
       this.touchGesture = null;
       return;
@@ -24981,7 +25062,10 @@ var InkWritingView = class extends import_obsidian2.FileView {
     this.settlePageFlip(event);
     this.touchGesture = null;
     this.healStaleInteraction(Array.from(event.touches));
-    const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus");
+    const touches = Array.from(event.touches).filter((touch) => {
+      var _a2;
+      return touch.touchType !== "stylus" && !((_a2 = this.zoomHud) == null ? void 0 : _a2.contains(touch.target));
+    });
     if (touches.length < 1 || touches.length > 2) return;
     if (this.flipSettling && touches.length === 2) return;
     if (this.activePointerId !== null) return;
@@ -24993,6 +25077,7 @@ var InkWritingView = class extends import_obsidian2.FileView {
     this.touchGesture = {
       ids: b ? [a.identifier, b.identifier] : [a.identifier],
       distance: b ? Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) : 0,
+      currentDistance: b ? Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) : 0,
       zoom: this.zoom,
       x,
       y,
@@ -25006,6 +25091,7 @@ var InkWritingView = class extends import_obsidian2.FileView {
       pageX: (x - rect.left) / rect.width,
       pageY: (y - rect.top) / rect.height
     };
+    if (b) this.showZoomHud();
   }
   /**
    * Finalizes interactions whose pointer the platform lost. iPadOS split-view
@@ -25041,7 +25127,10 @@ var InkWritingView = class extends import_obsidian2.FileView {
     }
     const gesture = this.touchGesture;
     if (!gesture) return;
-    const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus");
+    const touches = Array.from(event.touches).filter((touch) => {
+      var _a2;
+      return touch.touchType !== "stylus" && !((_a2 = this.zoomHud) == null ? void 0 : _a2.contains(touch.target));
+    });
     const a = touches.find((touch) => touch.identifier === gesture.ids[0]);
     const b = touches.find((touch) => touch.identifier === gesture.ids[1]);
     if (touches.length !== gesture.ids.length || !a || gesture.ids.length === 2 && !b) {
@@ -25091,11 +25180,22 @@ var InkWritingView = class extends import_obsidian2.FileView {
       return;
     }
     const distanceNow = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-    this.applyGestureZoom(
-      gesture.zoom * distanceNow / gesture.distance,
-      { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 },
-      { x: gesture.pageX, y: gesture.pageY }
-    );
+    const x = (a.clientX + b.clientX) / 2, y = (a.clientY + b.clientY) / 2;
+    if (this.zoomLocked) {
+      const scroller = this.inputScroller();
+      scroller.scrollLeft += gesture.x - x;
+      scroller.scrollTop += gesture.y - y;
+    } else {
+      this.applyGestureZoom(
+        gesture.zoom * distanceNow / gesture.distance,
+        { x, y },
+        { x: gesture.pageX, y: gesture.pageY }
+      );
+    }
+    gesture.x = x;
+    gesture.y = y;
+    gesture.currentDistance = distanceNow;
+    this.showZoomHud();
   }
   // --------------------------------------------------------------- eraser
   eraseAt(point, page, mode = this.state.eraserMode, size = this.state.eraserSize) {
@@ -27167,12 +27267,14 @@ var InkView = class extends InkWritingView {
     this.root.createSpan({ cls: "ink-page-status", attr: { "aria-live": "polite" } });
     this.renderToolbar();
     this.renderCanvas();
+    this.buildZoomHud(this.root.querySelector(".ink-workspace"));
     this.register(() => this.closeEraserPopover());
     this.viewReady = true;
     this.renderAll();
   }
   async onClose() {
     var _a, _b, _c, _d;
+    this.disposeZoomHud();
     this.closePageOptionsMenu();
     this.pageNavigationGeneration += 1;
     this.closeDevPanel();
@@ -27341,6 +27443,7 @@ var InkView = class extends InkWritingView {
     this.registerDomEvent(this.pageScroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchcancel", (event) => {
+      this.scheduleZoomHudHide();
       this.finishPinchRender();
       this.onStylusTouch(event);
       this.cancelPageFlip();
@@ -27618,6 +27721,10 @@ var InkView = class extends InkWritingView {
   inputScroller() {
     return this.pageScroller;
   }
+  onZoomLockChanged() {
+    this.finishPinchRender();
+    this.updateZoomControls();
+  }
   onTouchStart(event) {
     this.finishPinchRender();
     super.onTouchStart(event);
@@ -27629,6 +27736,7 @@ var InkView = class extends InkWritingView {
   }
   applyGestureZoom(value, focus, anchor) {
     var _a, _b;
+    if (this.zoomLocked) return;
     if (Number.isFinite(value) && value !== this.zoom && this.pinchRenderZoom === void 0) {
       this.pinchRenderZoom = this.zoom;
       if (this.zoomRenderTimer !== void 0) window.clearTimeout(this.zoomRenderTimer);
@@ -27676,6 +27784,7 @@ var InkView = class extends InkWritingView {
       bottom: "auto"
     });
     const stage = this.swipeLayer.createDiv({ cls: `ink-page ink-paper-${neighbor.paper} ink-swipe-stage` });
+    const previewZoom = this.zoomLocked ? this.zoom : 1;
     stage.dataset.neighbor = String(neighborIndex);
     stage.setCssStyles({
       position: "absolute",
@@ -27683,14 +27792,14 @@ var InkView = class extends InkWritingView {
       overflow: "hidden",
       left: `${extent.offsetLeft + page.offsetLeft - this.pageScroller.scrollLeft + side * pitch}px`,
       top: `${extent.offsetTop + page.offsetTop - this.pageScroller.scrollTop}px`,
-      width: `${this.pageBaseWidth}px`,
-      height: `${this.pageBaseHeight}px`,
+      width: `${this.pageBaseWidth * previewZoom}px`,
+      height: `${this.pageBaseHeight * previewZoom}px`,
       transform: "translateX(0px)"
     });
-    stage.style.setProperty("--ink-page-scale", "1");
+    stage.style.setProperty("--ink-page-scale", String(previewZoom));
     const canvas = stage.createEl("canvas");
     canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%";
-    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, window.devicePixelRatio || 1, 1, OVERLAY_RESIZE_BUDGET);
+    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, window.devicePixelRatio || 1, previewZoom, OVERLAY_RESIZE_BUDGET);
     canvas.width = resolution.width;
     canvas.height = resolution.height;
     const ctx = canvas.getContext("2d");
@@ -27994,9 +28103,9 @@ var InkView = class extends InkWritingView {
     menu.addItem((item) => item.setTitle("Delete page").setDisabled(this.notebook.pages.length <= 1).onClick(() => this.deleteCurrentPage()));
     menu.addSeparator();
     menu.addItem((item) => item.setTitle("Copy page embed syntax").onClick(() => void this.copyCurrentPageEmbed()));
-    menu.addItem((item) => item.setTitle("Zoom out").setDisabled(this.zoom <= 0.5).onClick(() => this.setZoom(this.zoom - 0.1)));
-    menu.addItem((item) => item.setTitle("Reset zoom").setDisabled(this.zoom === 1).onClick(() => this.setZoom(1)));
-    menu.addItem((item) => item.setTitle("Zoom in").setDisabled(this.zoom >= 3).onClick(() => this.setZoom(this.zoom + 0.1)));
+    menu.addItem((item) => item.setTitle("Zoom out").setDisabled(this.zoomLocked || this.zoom <= 0.5).onClick(() => this.setZoom(this.zoom - 0.1)));
+    menu.addItem((item) => item.setTitle("Reset zoom").setDisabled(this.zoomLocked || this.zoom === 1).onClick(() => this.setZoom(1)));
+    menu.addItem((item) => item.setTitle("Zoom in").setDisabled(this.zoomLocked || this.zoom >= 3).onClick(() => this.setZoom(this.zoom + 0.1)));
     menu.showAtMouseEvent(event);
   }
   renamePage() {
@@ -28219,16 +28328,17 @@ page: ${this.currentPage().id}
   }
   updateZoomControls() {
     var _a, _b, _c;
+    this.updateZoomHud();
     const readout = (_a = this.root) == null ? void 0 : _a.querySelector(".ink-zoom-value");
     if (readout) readout.textContent = Math.round(this.zoom * 100) + "%";
     const zoomOut = (_b = this.root) == null ? void 0 : _b.querySelector("[aria-label='Zoom out']");
     const zoomIn = (_c = this.root) == null ? void 0 : _c.querySelector("[aria-label='Zoom in']");
-    if (zoomOut) zoomOut.disabled = this.zoom <= 0.5;
-    if (zoomIn) zoomIn.disabled = this.zoom >= 3;
+    if (zoomOut) zoomOut.disabled = this.zoomLocked || this.zoom <= 0.5;
+    if (zoomIn) zoomIn.disabled = this.zoomLocked || this.zoom >= 3;
   }
   resetPageView() {
     this.pinchRenderZoom = void 0;
-    this.zoom = 1;
+    if (!this.zoomLocked) this.zoom = 1;
     if (this.pageScroller) {
       this.pageScroller.scrollLeft = 0;
       this.pageScroller.scrollTop = 0;
@@ -28236,7 +28346,7 @@ page: ${this.currentPage().id}
     this.updateZoomControls();
   }
   setZoom(value, target, anchor) {
-    if (!Number.isFinite(value)) return;
+    if (this.zoomLocked || !Number.isFinite(value)) return;
     const viewport = this.pageScroller.getBoundingClientRect();
     target != null ? target : target = { x: viewport.left + this.pageScroller.clientWidth / 2, y: viewport.top + this.pageScroller.clientHeight / 2 };
     const before = this.pageElement.getBoundingClientRect();
@@ -29212,6 +29322,7 @@ var PdfInkView = class extends InkWritingView {
     this.buildPageRail(body);
     const scroller = body.createDiv({ cls: "ink-pdf-scroller" });
     this.scroller = scroller;
+    this.buildZoomHud(body);
     this.pageWrap = scroller.createDiv({ cls: "ink-pdf-page-wrap" });
     this.pdfCanvas = this.pageWrap.createEl("canvas", { cls: "ink-pdf-canvas" });
     this.buildInkHost();
@@ -29221,6 +29332,7 @@ var PdfInkView = class extends InkWritingView {
     this.registerDomEvent(scroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
     this.registerDomEvent(scroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(scroller, "touchcancel", (event) => {
+      this.scheduleZoomHudHide();
       this.onStylusTouch(event);
       this.cancelPageFlip();
       this.touchGesture = null;
@@ -29239,6 +29351,7 @@ var PdfInkView = class extends InkWritingView {
   }
   async onClose() {
     var _a, _b, _c, _d, _e;
+    this.disposeZoomHud();
     this.closePageOptionsMenu();
     const outcome = await this.flushSaveNow();
     if (outcome.status !== "saved") {
@@ -29821,15 +29934,16 @@ var PdfInkView = class extends InkWritingView {
       menu.addItem((item) => item.setTitle("Delete blank page").setIcon("trash-2").onClick(() => this.withPageUndo(() => deleteBlankNotePage(this.sidecar, current.id), "delete the blank page")));
     }
     menu.addSeparator();
-    menu.addItem((item) => item.setTitle("Zoom out").setDisabled(this.zoom <= this.fitZoom).onClick(() => this.setZoom(this.zoom / PDF_ZOOM_STEP)));
-    menu.addItem((item) => item.setTitle("Reset zoom").setDisabled(!this.zoomTouched).onClick(() => this.resetZoom()));
-    menu.addItem((item) => item.setTitle("Zoom in").setDisabled(this.zoom >= PDF_ZOOM_MAX).onClick(() => this.setZoom(this.zoom * PDF_ZOOM_STEP)));
+    menu.addItem((item) => item.setTitle("Zoom out").setDisabled(this.zoomLocked || this.zoom <= this.fitZoom).onClick(() => this.setZoom(this.zoom / PDF_ZOOM_STEP)));
+    menu.addItem((item) => item.setTitle("Reset zoom").setDisabled(this.zoomLocked || !this.zoomTouched).onClick(() => this.resetZoom()));
+    menu.addItem((item) => item.setTitle("Zoom in").setDisabled(this.zoomLocked || this.zoom >= PDF_ZOOM_MAX).onClick(() => this.setZoom(this.zoom * PDF_ZOOM_STEP)));
     menu.addSeparator();
     menu.addItem((item) => item.setTitle("Open with the built-in viewer").setIcon("book-open").onClick(() => void this.restoreBuiltinViewer()));
     menu.showAtMouseEvent(event);
   }
   /** Back to the fit: clears the manual-zoom latch so layout re-fits. */
   resetZoom() {
+    if (this.zoomLocked) return;
     this.zoomTouched = false;
     this.neighbourCache.clear();
     this.layoutPage();
@@ -29882,7 +29996,7 @@ var PdfInkView = class extends InkWritingView {
     if (next < 0 || next >= count) return;
     this.finishPointerInput(false);
     this.noteIndex = next;
-    this.zoomTouched = false;
+    this.zoomTouched = this.zoomLocked;
     if (this.scroller) {
       this.scroller.scrollLeft = 0;
       this.scroller.scrollTop = 0;
@@ -29898,6 +30012,7 @@ var PdfInkView = class extends InkWritingView {
     );
   }
   setZoom(zoom, target, anchor) {
+    if (this.zoomLocked || !Number.isFinite(zoom)) return;
     const clamped = Math.max(this.fitZoom, Math.min(PDF_ZOOM_MAX, zoom));
     if (clamped === this.zoom) return;
     this.zoomTouched = true;
@@ -29943,12 +30058,15 @@ var PdfInkView = class extends InkWritingView {
   layoutPage() {
     var _a, _b, _c;
     if (!this.scroller || !this.pageWrap) return;
+    const lockedLevel = this.zoomLocked ? this.zoomLevel() : null;
     const display = this.rotatedSize(this.currentNotePage());
     this.pageBaseWidth = Math.max(200, this.scroller.clientWidth - PDF_PAGE_PADDING * 2) || 700;
     this.pageBaseHeight = this.pageBaseWidth * display.height / display.width;
     const contentHeight = Math.max(1, this.scroller.clientHeight - PDF_PAGE_PADDING * 2);
     this.fitZoom = Math.max(0.05, Math.min(1, contentHeight / this.pageBaseHeight));
-    if (!this.zoomTouched) this.zoom = this.fitZoom;
+    if (lockedLevel !== null) this.zoom = this.fitZoom * lockedLevel;
+    else if (!this.zoomTouched) this.zoom = this.fitZoom;
+    this.updateZoomHud();
     this.pageWrap.setCssStyles({
       width: `${this.pageBaseWidth * this.zoom}px`,
       height: `${this.pageBaseHeight * this.zoom}px`
@@ -30071,6 +30189,12 @@ var PdfInkView = class extends InkWritingView {
   inputScroller() {
     return this.scroller;
   }
+  zoomLevel() {
+    return this.zoom / this.fitZoom;
+  }
+  onZoomLockChanged() {
+    this.zoomTouched = true;
+  }
   applyGestureZoom(value, focus, anchor) {
     this.setZoom(value, focus, anchor);
   }
@@ -30089,7 +30213,7 @@ var PdfInkView = class extends InkWritingView {
     const display = this.rotatedSize(notePage);
     const baseWidth = Math.max(200, this.scroller.clientWidth - PDF_PAGE_PADDING * 2);
     const fit = Math.max(0.05, Math.min(1, Math.max(1, this.scroller.clientHeight - PDF_PAGE_PADDING * 2) / (baseWidth * display.height / display.width)));
-    const zoom = fit;
+    const zoom = this.zoomLocked ? fit * this.zoomLevel() : fit;
     const width = baseWidth * zoom;
     return { width, height: width * display.height / display.width, baseWidth, zoom };
   }

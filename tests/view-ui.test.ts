@@ -52,6 +52,69 @@ afterEach(async () => {
 });
 
 describe("reference-style editor", () => {
+  it("shows pinch magnification, keeps it while held, and hides within one second of release", () => {
+    vi.useFakeTimers();
+    try {
+      const host = view as unknown as { onTouchStart(e: TouchEvent): void; onTouchMove(e: TouchEvent): void };
+      const touch = (points: number[][]) => ({ touches: points.map(([identifier, clientX, clientY]) => ({ identifier, clientX, clientY })),
+        cancelable: true, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as TouchEvent);
+      host.onTouchStart(touch([[1, 200, 300], [2, 300, 300]]));
+      host.onTouchMove(touch([[1, 150, 300], [2, 350, 300]]));
+      const hud = document.querySelector<HTMLElement>(".ink-zoom-hud")!;
+      expect(hud.textContent).toContain("200%");
+      expect(hud.getAttribute("aria-hidden")).toBe("false");
+      vi.advanceTimersByTime(1500);
+      expect(hud.classList.contains("is-visible")).toBe(true);
+      host.onTouchStart(touch([]));
+      vi.advanceTimersByTime(849);
+      expect(hud.classList.contains("is-visible")).toBe(true);
+      vi.advanceTimersByTime(1);
+      expect(hud.getAttribute("aria-hidden")).toBe("true");
+      expect(button("Lock zoom").getAttribute("tabindex")).toBe("-1");
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("locks menu and wheel zoom, shows attempted pinches, and unlocks without a distance jump", () => {
+    const host = view as unknown as { zoom: number; zoomLocked: boolean; touchGesture: { zoom: number; distance: number };
+      onTouchStart(e: TouchEvent): void; onTouchMove(e: TouchEvent): void; onWheel(e: WheelEvent): void };
+    const touch = (points: number[][]) => ({ touches: points.map(([identifier, clientX, clientY]) => ({ identifier, clientX, clientY })),
+      cancelable: true, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as TouchEvent);
+    host.onTouchStart(touch([[1, 200, 300], [2, 300, 300]]));
+    host.onTouchMove(touch([[1, 150, 300], [2, 350, 300]]));
+    button("Lock zoom").click();
+    expect(host.zoomLocked).toBe(true);
+    expect(button("Unlock zoom").getAttribute("aria-pressed")).toBe("true");
+    host.onTouchMove(touch([[1, 100, 300], [2, 400, 300]]));
+    expect(host.zoom).toBe(2);
+    host.onWheel({ ctrlKey: true, deltaY: -10, preventDefault: vi.fn() } as unknown as WheelEvent);
+    expect(host.zoom).toBe(2);
+    button("Page options").click();
+    const menuButtons = Array.from(document.querySelectorAll<HTMLButtonElement>(".preview-menu button"));
+    expect(menuButtons.filter((item) => ["Zoom out", "Reset zoom", "Zoom in"].includes(item.textContent!))
+      .every((item) => item.disabled)).toBe(true);
+    button("Page options").click();
+    button("Unlock zoom").click();
+    expect(host.touchGesture.distance).toBe(300);
+    const companion = touch([[1, 100, 300], [2, 400, 300], [3, 300, 100]]);
+    Object.assign(companion.touches[2], { target: button("Lock zoom") });
+    host.onTouchMove(companion);
+    expect(host.touchGesture.distance).toBe(300);
+    host.onTouchMove(touch([[1, 100, 300], [2, 400, 300]]));
+    expect(host.zoom).toBe(2);
+    host.onTouchMove(touch([[1, 85, 300], [2, 415, 300]]));
+    expect(host.zoom).toBeCloseTo(2.2);
+    host.onTouchStart(touch([]));
+  });
+
+  it("cleans up the readout's pending hide on view close", async () => {
+    const host = view as unknown as { onTouchStart(e: TouchEvent): void };
+    host.onTouchStart({ touches: [{ identifier: 1, clientX: 200, clientY: 300 }, { identifier: 2, clientX: 300, clientY: 300 }],
+      preventDefault: vi.fn() } as unknown as TouchEvent);
+    host.onTouchStart({ touches: [], preventDefault: vi.fn() } as unknown as TouchEvent);
+    await view.onClose();
+    expect(document.querySelector(".ink-zoom-hud")).toBeNull();
+  });
+
   it("orders navigation and history on the left, drawing centrally, and export before options", () => {
     const toolbar = document.querySelector<HTMLElement>(".ink-toolbar")!;
     const labels = (selector: string) => Array.from(toolbar.querySelectorAll(selector))

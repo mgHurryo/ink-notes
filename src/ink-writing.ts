@@ -385,6 +385,11 @@ export abstract class InkWritingView extends FileView {
   protected tiles: TileRenderer | null = null;
   protected viewport: Rect = { x: 0, y: 0, width: 1, height: 1 };
   protected zoom = 1;
+  protected zoomLocked = false;
+  private zoomHud: HTMLElement | null = null;
+  private zoomHudValue: HTMLElement | null = null;
+  private zoomLockButton: HTMLButtonElement | null = null;
+  private zoomHudTimer: number | undefined;
   protected canvasLogicalWidth = 1;
   protected canvasLogicalHeight = 1;
   protected viewReady = false;
@@ -431,6 +436,7 @@ export abstract class InkWritingView extends FileView {
   protected touchGesture: {
     ids: number[];
     distance: number;
+    currentDistance: number;
     zoom: number;
     x: number;
     y: number;
@@ -538,6 +544,87 @@ export abstract class InkWritingView extends FileView {
   protected abstract inputScroller(): HTMLElement;
   /** Zoom applied for a two-finger pinch (value already computed). */
   protected abstract applyGestureZoom(value: number, focus: { x: number; y: number }, anchor: { x: number; y: number }): void;
+
+  protected zoomLevel(): number { return this.zoom; }
+  protected onZoomLockChanged(): void {}
+
+  protected buildZoomHud(parent: HTMLElement): void {
+    this.disposeZoomHud();
+    const hud = parent.createDiv({ cls: "ink-zoom-hud", attr: { "aria-label": "Zoom", "aria-hidden": "true" } });
+    this.zoomHud = hud;
+    this.zoomHudValue = hud.createSpan({ cls: "ink-zoom-hud-value" });
+    this.zoomLockButton = hud.createEl("button", { cls: "ink-zoom-lock", attr: { type: "button", tabindex: "-1" } });
+    this.zoomLockButton.addEventListener("click", () => this.toggleZoomLock());
+    // The floating control must never start ink or join the page's gesture.
+    for (const type of ["pointerdown", "pointerup", "touchstart", "touchmove", "touchend", "touchcancel"]) {
+      hud.addEventListener(type, (event) => event.stopPropagation());
+    }
+    this.updateZoomHud();
+  }
+
+  protected updateZoomHud(): void {
+    const value = `${Math.round(this.zoomLevel() * 100)}%`;
+    if (this.zoomHudValue && this.zoomHudValue.textContent !== value) this.zoomHudValue.textContent = value;
+    const button = this.zoomLockButton;
+    if (!button) return;
+    const label = this.zoomLocked ? "Unlock zoom" : "Lock zoom";
+    if (button.getAttribute("aria-label") !== label) {
+      button.setAttribute("aria-label", label);
+      button.setAttribute("title", label);
+      button.setAttribute("aria-pressed", String(this.zoomLocked));
+      button.replaceChildren();
+      setIcon(button, this.zoomLocked ? "lock-keyhole" : "lock-keyhole-open");
+    }
+  }
+
+  private showZoomHud(): void {
+    if (!this.zoomHud) return;
+    if (this.zoomHudTimer !== undefined) window.clearTimeout(this.zoomHudTimer);
+    this.zoomHudTimer = undefined;
+    this.updateZoomHud();
+    if (this.zoomHud.classList.contains("is-visible")) return;
+    this.zoomHud.classList.add("is-visible");
+    this.zoomHud.setAttribute("aria-hidden", "false");
+    this.zoomLockButton?.removeAttribute("tabindex");
+  }
+
+  protected scheduleZoomHudHide(): void {
+    if (!this.zoomHud) return;
+    if (this.zoomHudTimer !== undefined) window.clearTimeout(this.zoomHudTimer);
+    // Exit takes 120ms, so the complete popup disappears within one second.
+    this.zoomHudTimer = window.setTimeout(() => {
+      this.zoomHudTimer = undefined;
+      if (this.touchGesture?.ids.length === 2) return;
+      if (document.activeElement === this.zoomLockButton) this.zoomLockButton?.blur();
+      this.zoomHud?.classList.remove("is-visible");
+      this.zoomHud?.setAttribute("aria-hidden", "true");
+      this.zoomLockButton?.setAttribute("tabindex", "-1");
+    }, 850);
+  }
+
+  private toggleZoomLock(): void {
+    this.zoomLocked = !this.zoomLocked;
+    this.onZoomLockChanged();
+    const gesture = this.touchGesture;
+    if (gesture?.ids.length === 2) {
+      // Rebase against the latest contacts so unlocking cannot jump to the
+      // distance accumulated while zoom was frozen.
+      const rect = this.inputRect();
+      gesture.zoom = this.zoom;
+      gesture.distance = gesture.currentDistance;
+      gesture.pageX = (gesture.x - rect.left) / rect.width;
+      gesture.pageY = (gesture.y - rect.top) / rect.height;
+    }
+    this.showZoomHud();
+    if (gesture?.ids.length !== 2) this.scheduleZoomHudHide();
+  }
+
+  protected disposeZoomHud(): void {
+    if (this.zoomHudTimer !== undefined) window.clearTimeout(this.zoomHudTimer);
+    this.zoomHudTimer = undefined;
+    this.zoomHud?.remove();
+    this.zoomHud = this.zoomHudValue = this.zoomLockButton = null;
+  }
 
   // ------------------------------------------------------- tool switching
 
@@ -1446,6 +1533,7 @@ export abstract class InkWritingView extends FileView {
   // ---------------------------------------------------------------- touch
 
   protected onTouchStart(event: TouchEvent): void {
+    if (this.touchGesture?.ids.length === 2) this.scheduleZoomHudHide();
     // A native menu owns the surface until dismissed: let its outside-tap
     // dismissal see this event instead of swallowing it (the menu otherwise
     // stayed open until one of its own items was picked).
@@ -1471,7 +1559,8 @@ export abstract class InkWritingView extends FileView {
     this.settlePageFlip(event);
     this.touchGesture = null;
     this.healStaleInteraction(Array.from(event.touches));
-    const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus");
+    const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus"
+      && !this.zoomHud?.contains(touch.target as Node));
     if (touches.length < 1 || touches.length > 2) return;
     if (this.flipSettling && touches.length === 2) return;
     if (this.activePointerId !== null) return;
@@ -1483,6 +1572,7 @@ export abstract class InkWritingView extends FileView {
     this.touchGesture = {
       ids: b ? [a.identifier, b.identifier] : [a.identifier],
       distance: b ? Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) : 0,
+      currentDistance: b ? Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY) : 0,
       zoom: this.zoom, x, y, startX: x, startY: y,
       axis: null,
       lastX: x, lastT: typeof event.timeStamp === "number" ? event.timeStamp : 0,
@@ -1490,6 +1580,7 @@ export abstract class InkWritingView extends FileView {
       pageX: (x - rect.left) / rect.width,
       pageY: (y - rect.top) / rect.height,
     };
+    if (b) this.showZoomHud();
   }
 
   /**
@@ -1523,7 +1614,8 @@ export abstract class InkWritingView extends FileView {
     }
     const gesture = this.touchGesture;
     if (!gesture) return;
-    const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus");
+    const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus"
+      && !this.zoomHud?.contains(touch.target as Node));
     const a = touches.find((touch) => touch.identifier === gesture.ids[0]);
     const b = touches.find((touch) => touch.identifier === gesture.ids[1]);
     if (touches.length !== gesture.ids.length || !a || (gesture.ids.length === 2 && !b)) {
@@ -1581,9 +1673,19 @@ export abstract class InkWritingView extends FileView {
       return;
     }
     const distanceNow = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
-    this.applyGestureZoom(gesture.zoom * distanceNow / gesture.distance,
-      { x: (a.clientX + b.clientX) / 2, y: (a.clientY + b.clientY) / 2 },
-      { x: gesture.pageX, y: gesture.pageY });
+    const x = (a.clientX + b.clientX) / 2, y = (a.clientY + b.clientY) / 2;
+    if (this.zoomLocked) {
+      const scroller = this.inputScroller();
+      scroller.scrollLeft += gesture.x - x;
+      scroller.scrollTop += gesture.y - y;
+    } else {
+      this.applyGestureZoom(gesture.zoom * distanceNow / gesture.distance,
+        { x, y }, { x: gesture.pageX, y: gesture.pageY });
+    }
+    gesture.x = x;
+    gesture.y = y;
+    gesture.currentDistance = distanceNow;
+    this.showZoomHud();
   }
 
   // --------------------------------------------------------------- eraser

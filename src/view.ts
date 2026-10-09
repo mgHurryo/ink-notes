@@ -132,12 +132,14 @@ export class InkView extends InkWritingView {
     this.root.createSpan({ cls: "ink-page-status", attr: { "aria-live": "polite" } });
     this.renderToolbar();
     this.renderCanvas();
+    this.buildZoomHud(this.root.querySelector<HTMLElement>(".ink-workspace")!);
     this.register(() => this.closeEraserPopover());
     this.viewReady = true;
     this.renderAll();
   }
 
   async onClose(): Promise<void> {
+    this.disposeZoomHud();
     this.closePageOptionsMenu();
     this.pageNavigationGeneration += 1;
     this.closeDevPanel();
@@ -317,6 +319,7 @@ export class InkView extends InkWritingView {
     this.registerDomEvent(this.pageScroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchcancel", (event) => {
+      this.scheduleZoomHudHide();
       this.finishPinchRender();
       this.onStylusTouch(event);
       this.cancelPageFlip();
@@ -605,6 +608,7 @@ export class InkView extends InkWritingView {
   protected performScheduledSave(): void { void this.save(); }
   protected toolbarRoot(): HTMLElement { return this.root; }
   protected inputScroller(): HTMLElement { return this.pageScroller; }
+  protected onZoomLockChanged(): void { this.finishPinchRender(); this.updateZoomControls(); }
   protected onTouchStart(event: TouchEvent): void {
     // Commit before the base handler captures the next gesture's page anchor.
     this.finishPinchRender();
@@ -618,6 +622,7 @@ export class InkView extends InkWritingView {
   }
 
   protected applyGestureZoom(value: number, focus: { x: number; y: number }, anchor: { x: number; y: number }): void {
+    if (this.zoomLocked) return;
     if (Number.isFinite(value) && value !== this.zoom && this.pinchRenderZoom === undefined) {
       this.pinchRenderZoom = this.zoom;
       if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
@@ -665,19 +670,20 @@ export class InkView extends InkWritingView {
     this.swipeLayer.setCssStyles({ left: `${this.pageScroller.scrollLeft}px`, top: `${this.pageScroller.scrollTop}px`,
       width: `${this.pageScroller.clientWidth}px`, height: `${this.pageScroller.clientHeight}px`, right: "auto", bottom: "auto" });
     const stage = this.swipeLayer.createDiv({ cls: `ink-page ink-paper-${neighbor.paper} ink-swipe-stage` });
+    const previewZoom = this.zoomLocked ? this.zoom : 1;
     stage.dataset.neighbor = String(neighborIndex);
     stage.setCssStyles({
       position: "absolute", margin: "0", overflow: "hidden",
       left: `${extent.offsetLeft + page.offsetLeft - this.pageScroller.scrollLeft + side * pitch}px`,
       top: `${extent.offsetTop + page.offsetTop - this.pageScroller.scrollTop}px`,
-      width: `${this.pageBaseWidth}px`,
-      height: `${this.pageBaseHeight}px`,
+      width: `${this.pageBaseWidth * previewZoom}px`,
+      height: `${this.pageBaseHeight * previewZoom}px`,
       transform: "translateX(0px)",
     });
-    stage.style.setProperty("--ink-page-scale", "1");
+    stage.style.setProperty("--ink-page-scale", String(previewZoom));
     const canvas = stage.createEl("canvas");
     canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%";
-    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, window.devicePixelRatio || 1, 1, OVERLAY_RESIZE_BUDGET);
+    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, window.devicePixelRatio || 1, previewZoom, OVERLAY_RESIZE_BUDGET);
     canvas.width = resolution.width;
     canvas.height = resolution.height;
     const ctx = canvas.getContext("2d");
@@ -979,9 +985,9 @@ export class InkView extends InkWritingView {
     menu.addItem((item) => item.setTitle("Delete page").setDisabled(this.notebook.pages.length <= 1).onClick(() => this.deleteCurrentPage()));
     menu.addSeparator();
     menu.addItem((item) => item.setTitle("Copy page embed syntax").onClick(() => void this.copyCurrentPageEmbed()));
-    menu.addItem((item) => item.setTitle("Zoom out").setDisabled(this.zoom <= 0.5).onClick(() => this.setZoom(this.zoom - 0.1)));
-    menu.addItem((item) => item.setTitle("Reset zoom").setDisabled(this.zoom === 1).onClick(() => this.setZoom(1)));
-    menu.addItem((item) => item.setTitle("Zoom in").setDisabled(this.zoom >= 3).onClick(() => this.setZoom(this.zoom + 0.1)));
+    menu.addItem((item) => item.setTitle("Zoom out").setDisabled(this.zoomLocked || this.zoom <= 0.5).onClick(() => this.setZoom(this.zoom - 0.1)));
+    menu.addItem((item) => item.setTitle("Reset zoom").setDisabled(this.zoomLocked || this.zoom === 1).onClick(() => this.setZoom(1)));
+    menu.addItem((item) => item.setTitle("Zoom in").setDisabled(this.zoomLocked || this.zoom >= 3).onClick(() => this.setZoom(this.zoom + 0.1)));
     menu.showAtMouseEvent(event);
   }
 
@@ -1193,17 +1199,18 @@ export class InkView extends InkWritingView {
   }
 
   private updateZoomControls(): void {
+    this.updateZoomHud();
     const readout = this.root?.querySelector<HTMLElement>(".ink-zoom-value");
     if (readout) readout.textContent = Math.round(this.zoom * 100) + "%";
     const zoomOut = this.root?.querySelector<HTMLButtonElement>("[aria-label='Zoom out']");
     const zoomIn = this.root?.querySelector<HTMLButtonElement>("[aria-label='Zoom in']");
-    if (zoomOut) zoomOut.disabled = this.zoom <= 0.5;
-    if (zoomIn) zoomIn.disabled = this.zoom >= 3;
+    if (zoomOut) zoomOut.disabled = this.zoomLocked || this.zoom <= 0.5;
+    if (zoomIn) zoomIn.disabled = this.zoomLocked || this.zoom >= 3;
   }
 
   private resetPageView(): void {
     this.pinchRenderZoom = undefined;
-    this.zoom = 1;
+    if (!this.zoomLocked) this.zoom = 1;
     if (this.pageScroller) {
       this.pageScroller.scrollLeft = 0;
       this.pageScroller.scrollTop = 0;
@@ -1212,7 +1219,7 @@ export class InkView extends InkWritingView {
   }
 
   private setZoom(value: number, target?: { x: number; y: number }, anchor?: { x: number; y: number }): void {
-    if (!Number.isFinite(value)) return;
+    if (this.zoomLocked || !Number.isFinite(value)) return;
     const viewport = this.pageScroller.getBoundingClientRect();
     target ??= { x: viewport.left + this.pageScroller.clientWidth / 2, y: viewport.top + this.pageScroller.clientHeight / 2 };
     const before = this.pageElement.getBoundingClientRect();

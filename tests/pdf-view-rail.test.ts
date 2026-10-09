@@ -191,6 +191,49 @@ afterEach(async () => {
 });
 
 describe("pdf page preview rail", () => {
+  it("shows a locked PDF pinch again and pans without changing the scale", async () => {
+    const { view, host } = await rasterSetup(800, 700, 1, 1);
+    const gestureHost = host as unknown as { zoom: number; zoomLocked: boolean; onTouchStart(event: TouchEvent): void; onTouchMove(event: TouchEvent): void };
+    gestureHost.zoom = 1.5;
+    gestureHost.zoomLocked = true;
+    const before = host.scroller.scrollTop;
+    gestureHost.onTouchStart(swipeTouch([[1, 300, 300], [2, 400, 300]]));
+    gestureHost.onTouchMove(swipeTouch([[1, 250, 260], [2, 450, 260]]));
+    expect(gestureHost.zoom).toBe(1.5);
+    expect(host.scroller.scrollTop).toBeGreaterThan(before);
+    expect(document.querySelector(".ink-zoom-hud")?.classList.contains("is-visible")).toBe(true);
+    await view.onClose();
+  });
+  it("keeps a locked PDF magnification across mixed page fits and disables menu zoom", async () => {
+    const { view, sidecar, host } = await rasterSetup(800, 700, 2);
+    const oldFit = host.fitZoom;
+    // 200% is relative to each page's default fit, including portrait/landscape.
+    host.zoom = oldFit * 2;
+    const lock = document.querySelector<HTMLButtonElement>('[aria-label="Lock zoom"]')!;
+    lock.click();
+    sidecar.notePages[1].width = 960;
+    sidecar.notePages[1].height = 540;
+    const previewSize = (view as unknown as { swipePageSize(page: unknown): { zoom: number } }).swipePageSize(sidecar.notePages[1]);
+    expect(previewSize.zoom).toBe(2);
+    await view.navigatePages(1);
+    expect(host.fitZoom).toBe(1);
+    expect(host.zoom).toBe(2);
+    expect(document.querySelector(".ink-zoom-hud-value")?.textContent).toBe("200%");
+    document.querySelector<HTMLButtonElement>('[aria-label="Page options"]')!.click();
+    const entries = Array.from(document.querySelectorAll<HTMLButtonElement>(".preview-menu button"))
+      .filter((item) => ["Zoom out", "Reset zoom", "Zoom in"].includes(item.textContent!));
+    expect(entries).toHaveLength(3);
+    expect(entries.every((item) => item.disabled)).toBe(true);
+    (view as unknown as { resetZoom(): void; setZoom(value: number): void }).resetZoom();
+    (view as unknown as { setZoom(value: number): void }).setZoom(3);
+    expect(host.zoom).toBe(2);
+    document.querySelector<HTMLButtonElement>('[aria-label="Page options"]')!.click();
+    document.querySelector<HTMLButtonElement>('[aria-label="Unlock zoom"]')!.click();
+    await view.navigatePages(-1);
+    expect(host.zoom).toBeCloseTo(oldFit);
+    expect(document.querySelector(".ink-zoom-hud-value")?.textContent).toBe("100%");
+  });
+
   it("toggles the PDF three-dot menu instead of reopening after native dismissal", async () => {
     const { view } = await setup();
     try {

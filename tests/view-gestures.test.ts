@@ -153,6 +153,42 @@ describe("page touch navigation", () => {
     expect(view.pageScroller.scrollTop).toBeCloseTo(top + 50);
   });
 
+  it("keeps panning while zoom is locked and ignores pinch distance changes", () => {
+    const { view } = setup();
+    view.setZoom(2);
+    view.zoomLocked = true;
+    const applyZoom = vi.spyOn(view, "applyGestureZoom");
+    const left = view.pageScroller.scrollLeft;
+    const top = view.pageScroller.scrollTop;
+    view.onTouchStart(touchEvent([[1, 300, 400], [2, 400, 400]]));
+    view.onTouchMove(touchEvent([[1, 190, 350], [2, 410, 350]]));
+    expect(view.zoom).toBe(2);
+    expect(view.pageScroller.scrollLeft).toBeCloseTo(left + 50);
+    expect(view.pageScroller.scrollTop).toBeCloseTo(top + 50);
+    expect(applyZoom).not.toHaveBeenCalled();
+  });
+
+  it("preserves a locked zoom level when navigating to another page", async () => {
+    const { view } = setup();
+    Object.assign(view, {
+      notebook: { pages: [{ id: "first" }, { id: "second" }] },
+      pageIndex: 0,
+      pageNavigationGeneration: 0,
+      viewReady: true,
+      file: null,
+      workerSession: null,
+      zoomLocked: true,
+      renderPageRail: vi.fn(),
+      renderPage: vi.fn(),
+      finishPointerInput: vi.fn(),
+      clearSaveTimers: vi.fn(),
+    });
+    view.zoom = 2;
+    const navigate = (view as any).navigateToPage.bind(view) as (id: string) => Promise<void>;
+    await navigate("second");
+    expect(view.zoom).toBe(2);
+  });
+
   it("continues with one finger after a pinch and rebases when a finger is added", () => {
     const { view } = setup();
     view.onTouchStart(touchEvent([[1, 300, 400], [2, 400, 400]]));

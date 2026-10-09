@@ -929,10 +929,60 @@
 /* Page rail + scroller row: the rail is a permanent left column, the page
    scroller takes the remaining width. */
 .ink-pdf-body {
+  position: relative;
   display: flex;
   flex: 1 1 auto;
   min-width: 0;
   min-height: 0;
+}
+
+/* A transient readout outside the scrolling page, shared by both editors. */
+.ink-zoom-hud {
+  position: absolute;
+  z-index: 20;
+  top: 12px;
+  right: 16px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 12px;
+  border: 1px solid var(--ink-border);
+  border-radius: 8px;
+  background: var(--ink-panel-raised);
+  color: var(--ink-text);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 12%);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transform: translateY(-4px) scale(.96);
+  transform-origin: top right;
+  transition: opacity 120ms ease, transform 120ms ease, visibility 0s 120ms;
+}
+.ink-zoom-hud.is-visible {
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transform: translateY(0) scale(1);
+  transition: opacity 140ms ease-out, transform 140ms ease-out, visibility 0s;
+}
+.ink-zoom-hud-value { width: 5ch; text-align: center; font-size: 13px; font-variant-numeric: tabular-nums; }
+:is(.ink-notes-view, .ink-pdf-view) .ink-zoom-lock {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-muted);
+  touch-action: manipulation;
+}
+.ink-zoom-lock svg { width: 19px; height: 19px; }
+:is(.ink-notes-view, .ink-pdf-view) .ink-zoom-lock:hover { background: var(--ink-hover); }
+:is(.ink-notes-view, .ink-pdf-view) .ink-zoom-lock[aria-pressed="true"] { color: var(--ink-accent); background: var(--ink-hover); }
+@media (prefers-reduced-motion: reduce) {
+  .ink-zoom-hud, .ink-zoom-hud.is-visible { transform: none; transition-duration: 0s; transition-delay: 0s; }
 }
 
 /* The PDF rail reuses the notebook rail chrome (.ink-page-rail); it is a bit
