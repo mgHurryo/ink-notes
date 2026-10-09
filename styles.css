@@ -505,6 +505,17 @@
   flex: none;
 }
 
+/* Neighbour previews must not change the document's scroll bounds. */
+.ink-swipe-layer {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.ink-swipe-stage { position: absolute; pointer-events: none; }
+
 .ink-page {
   position: absolute;
   left: 0;

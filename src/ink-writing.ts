@@ -551,13 +551,56 @@ export abstract class InkWritingView extends FileView {
    *  the neighbouring page) or 0 to spring back. */
   protected swipeSettle(_delta: number): void {}
 
+  protected flipSettling = false;
+  private pageSwipeAnimations: Animation[] = [];
+
+  /** Both pages share a distance, clock and easing, so the gutter stays fixed. */
+  protected animatePageSwipe(elements: HTMLElement[], from: number, to: number, done: () => void): void {
+    this.cancelPageSwipeAnimations();
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const duration = Math.min(260, Math.max(140, Math.abs(to - from) * 0.35));
+    const startTime = document.timeline?.currentTime;
+    let remaining = elements.length;
+    const finish = () => { if (--remaining === 0) done(); };
+    for (const element of elements) {
+      element.style.transition = "none";
+      element.style.transform = `translateX(${to}px)`;
+      if (reduced || from === to || typeof element.animate !== "function") {
+        finish();
+        continue;
+      }
+      const animation = element.animate(
+        [{ transform: `translateX(${from}px)` }, { transform: `translateX(${to}px)` }],
+        { duration, easing: "cubic-bezier(0.22, 0.61, 0.36, 1)", fill: "forwards" });
+      this.pageSwipeAnimations.push(animation);
+      if (typeof startTime === "number") animation.startTime = startTime;
+      animation.onfinish = finish;
+      // Cancellation is not a successful flip. Settle back to the current page.
+      animation.oncancel = () => {
+        this.cancelPageSwipeAnimations();
+        this.flipSettling = false;
+        this.swipeSettle(0);
+      };
+    }
+  }
+
+  protected cancelPageSwipeAnimations(): void {
+    for (const animation of this.pageSwipeAnimations) {
+      animation.onfinish = animation.oncancel = null;
+      animation.cancel();
+    }
+    this.pageSwipeAnimations = [];
+  }
+
   private settlePageFlip(event: TouchEvent): void {
     const gesture = this.touchGesture;
     if (!gesture || gesture.axis !== "x") return;
     if (Array.from(event.touches).some((touch) => touch.identifier === gesture.ids[0])) return;
     const width = this.inputScroller().clientWidth;
     const travel = gesture.dragX;
-    const fling = Math.abs(gesture.velocity) > 0.35 && Math.abs(travel) > 24;
+    const releaseTime = typeof event.timeStamp === "number" ? event.timeStamp : gesture.lastT;
+    const fling = releaseTime - gesture.lastT < 100 && gesture.velocity * travel > 0
+      && Math.abs(gesture.velocity) > 0.35 && Math.abs(travel) > 24;
     const crossed = Math.abs(travel) > width * 0.35;
     this.swipeSettle(fling || crossed ? (travel > 0 ? -1 : 1) : 0);
   }
@@ -1318,6 +1361,12 @@ export abstract class InkWritingView extends FileView {
   // ---------------------------------------------------------------- touch
 
   protected onTouchStart(event: TouchEvent): void {
+    if (this.flipSettling) {
+      event.stopPropagation();
+      if (event.cancelable) event.preventDefault();
+      this.touchGesture = null;
+      return;
+    }
     // A native menu owns the surface until dismissed: let its outside-tap
     // dismissal see this event instead of swallowing it (the menu otherwise
     // stayed open until one of its own items was picked).
@@ -1335,6 +1384,11 @@ export abstract class InkWritingView extends FileView {
     if (event.cancelable && event.touches.length < 2) event.preventDefault();
     // Lifting the dragging finger decides the flip once: by travel distance
     // or by fling velocity; anything less springs back with the animation.
+    if (this.touchGesture?.axis === "x" && event.touches.length > 1) {
+      this.cancelPageFlip();
+      this.touchGesture = null;
+      return;
+    }
     this.settlePageFlip(event);
     this.touchGesture = null;
     this.healStaleInteraction(Array.from(event.touches));

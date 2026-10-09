@@ -248,7 +248,7 @@ describe("pdf page preview rail", () => {
     const stub = (el: HTMLElement) => {
       (el as unknown as { animate: unknown }).animate = vi.fn((frames: { transform: string }[]) => {
         calls.push(frames[frames.length - 1].transform);
-        return { onfinish: null, oncancel: null };
+        return { onfinish: null, oncancel: null, cancel: vi.fn() };
       });
     };
     const stage = document.createElement("div");
@@ -280,6 +280,75 @@ describe("pdf page preview rail", () => {
     // for the thumbnail scale) on top of the page bitmap.
     expect(ctx.setTransform).toHaveBeenCalled();
     canvasSpy.mockRestore();
+    await view.onClose();
+  });
+
+  it("preserves a landscape neighbour's ratio and previews its ink", async () => {
+    const { view, sidecar } = await setup(3);
+    const host = view as unknown as { scroller: HTMLElement; pageWrap: HTMLElement; swipeDrag(x: number): void };
+    Object.defineProperties(host.scroller, { clientWidth: { value: 800 }, clientHeight: { value: 700 } });
+    Object.defineProperties(host.pageWrap, { offsetWidth: { value: 400 }, offsetHeight: { value: 600 } });
+    sidecar.notePages[1].width = 800;
+    sidecar.notePages[1].height = 400;
+    host.swipeDrag(-120);
+    const stage = document.querySelector<HTMLElement>(".ink-swipe-stage")!;
+    expect(parseFloat(stage.style.width) / parseFloat(stage.style.height)).toBe(2);
+    expect(stage.parentElement?.className).toBe("ink-swipe-layer");
+    expect(stage.querySelectorAll("canvas")).toHaveLength(2);
+    expect(stage.style.transform).toBe("translateX(-120px)");
+    await view.onClose();
+  });
+
+  it("moves both pages equally and holds the snapshot until navigation finishes", async () => {
+    const { view } = await setup(3);
+    const host = view as unknown as { scroller: HTMLElement; pageWrap: HTMLElement;
+      swipeDrag(x: number): void; swipeSettle(delta: number): void; flipSettling: boolean };
+    Object.defineProperties(host.scroller, { clientWidth: { value: 800 }, clientHeight: { value: 700 } });
+    Object.defineProperty(host.pageWrap, "offsetWidth", { value: 400 });
+    host.swipeDrag(-180);
+    const stage = document.querySelector<HTMLElement>(".ink-swipe-stage")!;
+    const animations: { onfinish: (() => void) | null; oncancel: (() => void) | null; cancel: ReturnType<typeof vi.fn> }[] = [];
+    const targets: string[] = [];
+    for (const el of [host.pageWrap, stage]) {
+      el.animate = vi.fn((frames) => {
+        targets.push((frames as { transform: string }[])[1].transform);
+        const animation = { onfinish: null, oncancel: null, cancel: vi.fn() };
+        animations.push(animation);
+        return animation as unknown as Animation;
+      });
+    }
+    let release!: () => void;
+    const navigation = vi.spyOn(view, "navigatePages").mockImplementation(() => new Promise<void>((resolve) => { release = resolve; }));
+    host.swipeSettle(1);
+    expect(targets).toEqual(["translateX(-816px)", "translateX(-816px)"]);
+    host.swipeSettle(0);
+    expect(animations).toHaveLength(2);
+    animations[0].onfinish!();
+    expect(navigation).not.toHaveBeenCalled();
+    animations[1].onfinish!();
+    expect(navigation).toHaveBeenCalledOnce();
+    expect(host.pageWrap.style.transform).toBe("");
+    expect(stage.isConnected).toBe(true);
+    expect(host.flipSettling).toBe(true);
+    host.swipeDrag(200);
+    expect(document.querySelector(".ink-swipe-stage")).toBe(stage);
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(stage.isConnected).toBe(false);
+    expect(host.pageWrap.style.visibility).toBe("");
+    expect(host.flipSettling).toBe(false);
+    await view.onClose();
+  });
+
+  it("resists an unavailable neighbour and restores the page without navigation", async () => {
+    const { view } = await setup(3);
+    const host = view as unknown as { pageWrap: HTMLElement; swipeDrag(x: number): void; swipeSettle(delta: number): void };
+    const navigation = vi.spyOn(view, "navigatePages");
+    host.swipeDrag(240);
+    expect(host.pageWrap.style.transform).toBe("translateX(60px)");
+    host.swipeSettle(-1);
+    expect(navigation).not.toHaveBeenCalled();
+    expect(host.pageWrap.style.transform).toBe("");
     await view.onClose();
   });
 });
