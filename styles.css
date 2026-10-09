@@ -515,6 +515,11 @@
 }
 
 .ink-swipe-stage { position: absolute; pointer-events: none; }
+:is(.ink-page-scroller, .ink-pdf-scroller).ink-pan-ready,
+:is(.ink-page-scroller, .ink-pdf-scroller).ink-pan-ready .ink-page { cursor: grab; }
+:is(.ink-page-scroller, .ink-pdf-scroller).ink-panning,
+:is(.ink-page-scroller, .ink-pdf-scroller).ink-panning .ink-page { cursor: grabbing; }
+:is(.ink-page-scroller, .ink-pdf-scroller):focus-visible { outline: 2px solid var(--interactive-accent); outline-offset: -2px; }
 .ink-notebook-picker-actions,
 .ink-notebook-result,
 .ink-notebook-name-actions { display: flex; align-items: center; gap: 12px; }

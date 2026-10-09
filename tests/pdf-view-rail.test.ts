@@ -191,6 +191,47 @@ afterEach(async () => {
 });
 
 describe("pdf page preview rail", () => {
+  it("shares PDF desktop navigation and tool shortcuts, without taking text input or read-only history", async () => {
+    const { view, internal } = await setup(3);
+    const scroller = document.querySelector<HTMLElement>(".ink-pdf-scroller")!;
+    const key = (value: string, options = {}) => scroller.dispatchEvent(new KeyboardEvent("keydown",
+      { key: value, bubbles: true, cancelable: true, ...options }));
+    scroller.focus();
+    key("PageDown");
+    expect(internal.noteIndex).toBe(1);
+    key("End");
+    expect(internal.noteIndex).toBe(2);
+    key("Home");
+    expect(internal.noteIndex).toBe(0);
+    key("e");
+    expect(document.querySelector('[aria-label="Erase"]')?.getAttribute("aria-pressed")).toBe("true");
+    const host = view as unknown as { undo(): void; writerHeld: boolean };
+    const undo = vi.spyOn(host, "undo");
+    host.writerHeld = false;
+    key("z", { ctrlKey: true });
+    expect(undo).not.toHaveBeenCalled();
+    key("PageDown");
+    expect(internal.noteIndex).toBe(1);
+  });
+
+  it("allows read-only PDF middle-button panning and clears it when capture is lost", async () => {
+    const { view } = await setup();
+    const host = view as unknown as { writerHeld: boolean; scroller: HTMLElement; desktopPan: unknown;
+      onPointerDown(e: PointerEvent): void; onPointerMove(e: PointerEvent): void; onLostPointerCapture(e: PointerEvent): void;
+      capturePointer(id: number): void; releasePointer(id: number): void };
+    host.writerHeld = false;
+    vi.spyOn(host, "capturePointer").mockImplementation(() => undefined);
+    vi.spyOn(host, "releasePointer").mockImplementation(() => undefined);
+    const event = { pointerType: "mouse", pointerId: 2, button: 1, clientX: 200, clientY: 200, preventDefault: vi.fn() } as unknown as PointerEvent;
+    host.onPointerDown(event);
+    host.onPointerMove({ ...event, clientX: 170, clientY: 160 });
+    expect(host.scroller.scrollLeft).toBe(30);
+    expect(host.scroller.scrollTop).toBe(40);
+    host.onLostPointerCapture(event);
+    expect(host.desktopPan).toBeNull();
+    expect(host.scroller.classList.contains("ink-panning")).toBe(false);
+  });
+
   it.each([
     ["Add page before current", 1], ["Add page after current", 2],
     ["Add page before first", 0], ["Add page after last", 3],

@@ -110,8 +110,6 @@ export class InkView extends InkWritingView {
     this.workers = workers;
     if (toolState) this.useSharedToolState(toolState);
     this.scope = new Scope(this.app.scope);
-    this.scope.register(["Mod"], "z", () => { this.undo(); return false; });
-    this.scope.register(["Mod", "Shift"], "z", () => { this.redo(); return false; });
   }
 
   getViewType(): string { return VIEW_TYPE_INK; }
@@ -132,6 +130,7 @@ export class InkView extends InkWritingView {
     this.root.createSpan({ cls: "ink-page-status", attr: { "aria-live": "polite" } });
     this.renderToolbar();
     this.renderCanvas();
+    this.registerDesktopInput();
     this.buildZoomHud(this.root.querySelector<HTMLElement>(".ink-workspace")!);
     this.register(() => this.closeEraserPopover());
     this.viewReady = true;
@@ -315,7 +314,6 @@ export class InkView extends InkWritingView {
     this.registerDomEvent(this.pageElement, "pointercancel", (event) => this.onPointerCancel(event));
     this.registerDomEvent(this.pageElement, "lostpointercapture", (event) => this.onLostPointerCapture(event));
     registerDocumentPointerEndEvents(this.pageElement, (cleanup) => this.register(cleanup), (event) => this.onDocumentPointerEnd(event));
-    this.registerDomEvent(this.pageElement, "wheel", (event) => this.onWheel(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "scroll", () => this.onViewportMotion(), { passive: true });
     this.registerDomEvent(this.pageScroller, "touchstart", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
@@ -611,6 +609,15 @@ export class InkView extends InkWritingView {
   protected toolbarRoot(): HTMLElement { return this.root; }
   protected inputScroller(): HTMLElement { return this.pageScroller; }
   protected onZoomLockChanged(): void { this.finishPinchRender(); this.updateZoomControls(); }
+
+  protected desktopNavigate(destination: "previous" | "next" | "first" | "last"): void {
+    const index = destination === "first" ? 0 : destination === "last" ? this.notebook.pages.length - 1
+      : this.pageIndex + (destination === "next" ? 1 : -1);
+    const page = this.notebook.pages[index];
+    if (page) void this.navigateToPage(page.id);
+  }
+  protected desktopZoom(factor: number, target?: { x: number; y: number }): void { this.setZoom(this.zoom * factor, target); }
+  protected desktopResetZoom(): void { this.setZoom(1); }
   protected onTouchStart(event: TouchEvent): void {
     // Commit before the base handler captures the next gesture's page anchor.
     this.finishPinchRender();
@@ -1257,11 +1264,6 @@ export class InkView extends InkWritingView {
     this.onViewportMotion();
   }
 
-  private onWheel(event: WheelEvent): void {
-    if (!event.ctrlKey && !event.metaKey) return;
-    event.preventDefault();
-    this.setZoom(this.zoom * (event.deltaY > 0 ? 0.92 : 1.08), { x: event.clientX, y: event.clientY });
-  }
 
 
 

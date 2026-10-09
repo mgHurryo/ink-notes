@@ -80,6 +80,9 @@ export interface InkPointerSample {
   timeStamp?: number;
   getCoalescedEvents?: () => InkPointerSample[];
   getPredictedEvents?: () => InkPointerSample[];
+  button?: number;
+  buttons?: number;
+  preventDefault?: () => void;
 }
 
 interface StylusTouch extends Touch {
@@ -894,6 +897,11 @@ export abstract class InkWritingView extends FileView {
   private pageOptionsMenu: { menu: Menu; trigger: HTMLElement | null } | null = null;
   private pageOptionsTriggerPressed = false;
   private pageOptionsDismissRegistered = false;
+  private desktopPan: { pointerId: number; x: number; y: number } | null = null;
+  private desktopSpaceDown = false;
+  private desktopWheelTravel = 0;
+  private desktopWheelTimer: number | undefined;
+  private desktopWheelFlipped = false;
 
   /** Snapshot the trigger press before the host dismisses its menu on pointerdown. */
   protected beginPageOptionsMenu(event: MouseEvent): Menu | null {
@@ -945,9 +953,151 @@ export abstract class InkWritingView extends FileView {
     return !!this.containerEl?.ownerDocument?.querySelector?.(".menu");
   }
 
+  protected desktopNavigate(_destination: "previous" | "next" | "first" | "last"): void {}
+  protected desktopZoom(_factor: number, _target?: { x: number; y: number }): void {}
+  protected desktopResetZoom(): void {}
+
+  protected registerDesktopInput(): void {
+    const scroller = this.inputScroller();
+    const doc = this.containerEl.ownerDocument;
+    scroller.tabIndex = 0;
+    this.registerDomEvent(scroller, "pointerdown", (event) => {
+      if (event.pointerType !== "mouse" || this.nativeMenuOpen()) return;
+      scroller.focus({ preventScroll: true });
+      if (this.beginDesktopPan(event)) event.stopPropagation();
+    }, true);
+    this.registerDomEvent(this.containerEl, "keydown", (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (event.defaultPrevented || event.isComposing || this.nativeMenuOpen()
+        || target?.closest?.('input, textarea, select, [contenteditable], [role="dialog"]')) return;
+      if (event.code === "Space" || event.key === " ") {
+        if (target?.closest?.("button") || event.ctrlKey || event.metaKey || event.altKey) return;
+        this.desktopSpaceDown = true;
+        scroller.classList.add("ink-pan-ready");
+        event.preventDefault();
+        return;
+      }
+      if (this.onDesktopKeyDown(event)) { event.preventDefault(); event.stopPropagation(); }
+    });
+    this.registerDomEvent(doc, "keyup", (event: KeyboardEvent) => {
+      if (event.code === "Space" || event.key === " ") {
+        this.desktopSpaceDown = false;
+        scroller.classList.remove("ink-pan-ready");
+      }
+    });
+    this.registerDomEvent(doc, "pointermove", (event) => {
+      if (this.desktopPan?.pointerId === event.pointerId) { this.onPointerMove(event); event.stopPropagation(); }
+    }, true);
+    for (const type of ["pointerup", "pointercancel", "lostpointercapture"] as const) {
+      this.registerDomEvent(doc, type, (event) => {
+        if (this.desktopPan?.pointerId === event.pointerId) this.endDesktopPan();
+      }, true);
+    }
+    const reset = () => {
+      this.desktopSpaceDown = false;
+      scroller.classList.remove("ink-pan-ready");
+      this.endDesktopPan();
+      if (this.desktopWheelTimer !== undefined) window.clearTimeout(this.desktopWheelTimer);
+      this.desktopWheelTravel = 0; this.desktopWheelFlipped = false;
+    };
+    if (doc.defaultView) this.registerDomEvent(doc.defaultView, "blur", reset);
+    this.register(reset);
+    this.registerDomEvent(scroller, "wheel", (event) => this.onWheel(event), { passive: false });
+  }
+
+  private onDesktopKeyDown(event: KeyboardEvent): boolean {
+    if (this.activePointerId !== null || this.desktopPan || this.flipSettling) return false;
+    const key = event.key.toLowerCase();
+    if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+      if (key === "+" || key === "=") { this.desktopZoom(1.1); return true; }
+      if (key === "-") { this.desktopZoom(1 / 1.1); return true; }
+      if (key === "0") { this.desktopResetZoom(); return true; }
+      if (this.inputLocked()) return false;
+      if (key === "z") { if (event.shiftKey) this.redo(); else this.undo(); return true; }
+      if (key === "y" && !event.shiftKey) { this.redo(); return true; }
+      return false;
+    }
+    if (event.altKey) {
+      if (key === "arrowleft") { this.desktopNavigate("previous"); return true; }
+      if (key === "arrowright") { this.desktopNavigate("next"); return true; }
+      return false;
+    }
+    const destinations: Record<string, "previous" | "next" | "first" | "last"> = {
+      pageup: "previous", pagedown: "next", home: "first", end: "last",
+    };
+    const destination = destinations[key];
+    if (destination) { this.desktopNavigate(destination); return true; }
+    if (key === "+" || key === "=") { this.desktopZoom(1.1); return true; }
+    if (key === "-") { this.desktopZoom(1 / 1.1); return true; }
+    if (key === "0") { this.desktopResetZoom(); return true; }
+    if (event.shiftKey || this.inputLocked()) return false;
+    const tools: Record<string, InkTool> = { b: "pen", h: "highlighter", e: "eraser", v: "lasso" };
+    const tool = tools[key];
+    if (tool) { this.selectWritingTool(tool); return true; }
+    if (key === "escape") { this.clearSelection(); return true; }
+    return false;
+  }
+
+  private beginDesktopPan(event: InkPointerSample): boolean {
+    if (event.pointerType !== "mouse" || this.flipSettling || this.activePointerId !== null || this.nativeMenuOpen()) return false;
+    const button = event.button ?? 0;
+    if (button !== 1 && !(button === 0 && this.desktopSpaceDown)) return false;
+    this.desktopPan = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+    this.inputScroller().classList.add("ink-panning");
+    this.capturePointer(event.pointerId);
+    event.preventDefault?.();
+    return true;
+  }
+
+  private endDesktopPan(): void {
+    const pan = this.desktopPan;
+    this.desktopPan = null;
+    this.inputScroller()?.classList.remove("ink-panning");
+    if (pan) this.releasePointer(pan.pointerId);
+  }
+
+  protected onWheel(event: WheelEvent): void {
+    if (this.nativeMenuOpen() || this.activePointerId !== null || this.desktopPan || this.flipSettling) return;
+    const scroller = this.inputScroller();
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? scroller.clientHeight : 1;
+    const x = event.deltaX * unit, y = event.deltaY * unit;
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault();
+      this.desktopZoom(Math.exp(-Math.max(-100, Math.min(100, y)) * 0.004), { x: event.clientX, y: event.clientY });
+      this.showZoomHud(); this.scheduleZoomHudHide();
+      return;
+    }
+    if (event.shiftKey && !x && y) {
+      event.preventDefault();
+      scroller.scrollLeft += y;
+      return;
+    }
+    if (event.deltaMode !== 0 || Math.abs(x) < Math.abs(y) * 1.5 || !x) return;
+    // One page per wheel burst: residual trackpad inertia cannot flip again.
+    if (this.desktopWheelTimer !== undefined) window.clearTimeout(this.desktopWheelTimer);
+    this.desktopWheelTimer = window.setTimeout(() => {
+      this.desktopWheelTimer = undefined; this.desktopWheelTravel = 0; this.desktopWheelFlipped = false;
+    }, 180);
+    event.preventDefault();
+    const before = scroller.scrollLeft;
+    scroller.scrollLeft += x;
+    // Compare actual movement: stable/overlay scrollbar gutters can make
+    // scrollWidth - clientWidth disagree with the browser's clamped limit.
+    if (Math.abs(scroller.scrollLeft - before) > 0.5) { this.desktopWheelTravel = 0; return; }
+    if (this.desktopWheelFlipped) return;
+    if (Math.sign(this.desktopWheelTravel) !== Math.sign(x)) this.desktopWheelTravel = 0;
+    this.desktopWheelTravel += x;
+    if (Math.abs(this.desktopWheelTravel) >= 100) {
+      this.desktopWheelFlipped = true;
+      this.desktopNavigate(x > 0 ? "next" : "previous");
+    }
+  }
+
   protected onPointerDown(event: InkPointerSample, source: InteractionContext["source"] = "pointer"): void {
     this.devPointerEvents += 1;
     this.devLastPointerType = event.pointerType || this.devLastPointerType;
+    if (this.beginDesktopPan(event)) return;
+    if (event.pointerType === "mouse" && ((event.button ?? 0) !== 0 || this.desktopPan)) return;
     if (this.inputLocked()) return;
     if (this.nativeMenuOpen()) return;
     if (event.pointerType === "touch") return;
@@ -1066,6 +1216,15 @@ export abstract class InkWritingView extends FileView {
   protected onPointerMove(event: InkPointerSample, source: InteractionContext["source"] = "pointer"): void {
     this.devPointerEvents += 1;
     if (event.pointerType === "touch") return;
+    if (this.desktopPan?.pointerId === event.pointerId) {
+      const scroller = this.inputScroller();
+      scroller.scrollLeft -= event.clientX - this.desktopPan.x;
+      scroller.scrollTop -= event.clientY - this.desktopPan.y;
+      this.desktopPan.x = event.clientX;
+      this.desktopPan.y = event.clientY;
+      event.preventDefault?.();
+      return;
+    }
     if (this.interaction && (this.interaction.source ?? "pointer") !== source) return;
     const rect = this.inputRect();
     const point = this.toPoint(event, rect);
@@ -1108,6 +1267,10 @@ export abstract class InkWritingView extends FileView {
 
   protected onPointerUp(event: InkPointerSample, source: InteractionContext["source"] = "pointer"): void {
     this.devPointerEvents += 1;
+    if (this.desktopPan?.pointerId === event.pointerId) {
+      this.endDesktopPan();
+      return;
+    }
     if (this.activePointerId !== event.pointerId || (this.interaction?.source ?? "pointer") !== source) return;
     const rect = this.inputRect();
     const point = this.toPoint(event, rect);
@@ -1124,6 +1287,10 @@ export abstract class InkWritingView extends FileView {
 
   protected onPointerCancel(event: InkPointerSample, source: InteractionContext["source"] = "pointer"): void {
     this.devPointerEvents += 1;
+    if (this.desktopPan?.pointerId === event.pointerId) {
+      this.endDesktopPan();
+      return;
+    }
     if (this.activePointerId !== event.pointerId || (this.interaction?.source ?? "pointer") !== source) return;
     this.eraserPointerInside = false;
     this.finishPointerInput(false);
@@ -1488,6 +1655,7 @@ export abstract class InkWritingView extends FileView {
   }
 
   protected onLostPointerCapture(event: PointerEvent): void {
+    if (this.desktopPan?.pointerId === event.pointerId) { this.endDesktopPan(); return; }
     if (this.activePointerId !== event.pointerId) return;
     // Capture loss is not contact loss. In particular, WebKit may deliver the
     // previous stroke's event after a reused Pencil pointer has already begun.
@@ -1496,6 +1664,7 @@ export abstract class InkWritingView extends FileView {
   }
 
   protected onDocumentPointerEnd(event: PointerEvent): void {
+    if (this.desktopPan?.pointerId === event.pointerId) { this.endDesktopPan(); return; }
     // The input host handles ordinary endings first. This catches an
     // uncaptured Pencil released elsewhere in the document after capture was
     // unavailable.
@@ -2655,6 +2824,8 @@ export abstract class InkWritingView extends FileView {
   protected addIconButton(parent: HTMLElement, icon: string, label: string, callback: (event: MouseEvent) => void, disabled = false): HTMLButtonElement {
     const button = parent.createEl("button", { cls: "ink-icon-button", attr: { type: "button", title: label, "aria-label": label } });
     button.disabled = disabled;
+    if (label === "Undo") button.title = "Undo (Ctrl/Command+Z)";
+    if (label === "Redo") button.title = "Redo (Ctrl/Command+Shift+Z, Ctrl/Command+Y)";
     // Icon inside a .ink-button-icon span: iPadOS sizes a bare svg inside the
     // button unreliably (icons collapsed to dots), while this wrapped
     // structure renders correctly.
@@ -2670,6 +2841,8 @@ export abstract class InkWritingView extends FileView {
       type: "button", title: label, "aria-label": label, "aria-pressed": String(this.state.tool === tool), "data-tool": tool,
       ...(hasSettings ? { "aria-haspopup": "dialog", "aria-expanded": "false" } : {}),
     } });
+    const shortcut: Record<InkTool, string> = { pen: "B", highlighter: "H", eraser: "E", lasso: "V" };
+    button.title = `${label} (${shortcut[tool]})`;
     const iconHolder = button.createSpan({ cls: "ink-button-icon" });
     setIcon(iconHolder, icon);
     button.addEventListener("click", () => {
@@ -2678,21 +2851,21 @@ export abstract class InkWritingView extends FileView {
         this.toggleToolSettings(button);
         return;
       }
-      this.onToolSelected(tool);
-      this.state.tool = tool;
-      if (tool !== "lasso") this.clearSelection();
-      // The eraser's panel is its own mini popover: leaving the brush panel
-      // open here stranded an empty shell whose pinned title and sample
-      // stroke stayed on screen with every panel hidden.
-      if (tool === "eraser") this.brushPopover?.close();
-      // The eraser mini popover belongs to the eraser button; leaving it
-      // open after switching tools would strand it beside the wrong panel.
-      this.closeEraserPopover();
-      this.brushPopover?.update();
-      this.updateToolButtons();
-      this.refreshEraserCursor();
-      if (this.settingsOpen()) this.reopenToolSettings();
+      this.selectWritingTool(tool);
     });
+  }
+
+  private selectWritingTool(tool: InkTool): void {
+    this.finishPointerInput(false);
+    this.onToolSelected(tool);
+    this.state.tool = tool;
+    if (tool !== "lasso") this.clearSelection();
+    if (tool === "eraser") this.brushPopover?.close();
+    this.closeEraserPopover();
+    this.brushPopover?.update();
+    this.updateToolButtons();
+    this.refreshEraserCursor();
+    if (this.settingsOpen()) this.reopenToolSettings();
   }
 
   protected updateToolButtons(): void {

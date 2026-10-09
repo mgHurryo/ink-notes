@@ -167,8 +167,6 @@ export class PdfInkView extends InkWritingView {
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
     this.scope = new Scope(this.app.scope);
-    this.scope.register(["Mod"], "z", () => this.undo());
-    this.scope.register(["Mod", "Shift"], "z", () => this.redo());
   }
 
   /** Wired by the plugin right after construction. */
@@ -207,6 +205,7 @@ export class PdfInkView extends InkWritingView {
     this.pageWrap = scroller.createDiv({ cls: "ink-pdf-page-wrap" });
     this.pdfCanvas = this.pageWrap.createEl("canvas", { cls: "ink-pdf-canvas" });
     this.buildInkHost();
+    this.registerDesktopInput();
     this.viewReady = true;
     this.registerDomEvent(scroller, "scroll", () => this.onViewportMotion(), { passive: true });
     this.registerDomEvent(scroller, "touchstart", (event) => this.onTouchStart(event), { passive: false });
@@ -1124,7 +1123,6 @@ export class PdfInkView extends InkWritingView {
       this.eraserPointerInside = false;
       this.refreshEraserCursor();
     });
-    host.addEventListener("wheel", (event) => this.onWheel(event as WheelEvent), { passive: false });
     // Shared with the notebook editor: catches the stroke end when iPadOS
     // interrupts a Pencil (system gesture, haptic tick) or the pen lifts
     // outside an uncaptured host - otherwise the stroke stays preview-only
@@ -1135,11 +1133,14 @@ export class PdfInkView extends InkWritingView {
     });
   }
 
-  private onWheel(event: WheelEvent): void {
-    if (!event.ctrlKey && !event.metaKey) return;
-    event.preventDefault();
-    this.setZoom(this.zoom * (event.deltaY < 0 ? PDF_ZOOM_STEP : 1 / PDF_ZOOM_STEP), { x: event.clientX, y: event.clientY });
+  protected desktopNavigate(destination: "previous" | "next" | "first" | "last"): void {
+    const count = this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 1;
+    const next = destination === "first" ? 0 : destination === "last" ? count - 1
+      : this.noteIndex + (destination === "next" ? 1 : -1);
+    void this.navigatePages(next - this.noteIndex).catch((error) => this.setStatus(`Could not switch pages: ${messageOf(error)}`, true));
   }
+  protected desktopZoom(factor: number, target?: { x: number; y: number }): void { this.setZoom(this.zoom * factor, target); }
+  protected desktopResetZoom(): void { this.resetZoom(); }
 
   // ------------------------------------------------------ writing-layer seams
 

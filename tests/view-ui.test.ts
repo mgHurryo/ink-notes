@@ -52,6 +52,45 @@ afterEach(async () => {
 });
 
 describe("reference-style editor", () => {
+  it("keeps desktop shortcuts out of form fields and supports native button Space activation", () => {
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    const host = view as unknown as { state: { tool: string }; desktopSpaceDown: boolean };
+    const input = document.querySelector(".ink-notes-view")!.createEl("input");
+    input.focus();
+    const typing = new KeyboardEvent("keydown", { key: "e", bubbles: true, cancelable: true });
+    input.dispatchEvent(typing);
+    expect(typing.defaultPrevented).toBe(false);
+    expect(host.state.tool).toBe("pen");
+    const buttonSpace = new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true });
+    button("Pages").dispatchEvent(buttonSpace);
+    expect(buttonSpace.defaultPrevented).toBe(false);
+    scroller.focus();
+    scroller.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true }));
+    expect(host.desktopSpaceDown).toBe(true);
+    window.dispatchEvent(new Event("blur"));
+    expect(host.desktopSpaceDown).toBe(false);
+    expect(scroller.classList.contains("ink-pan-ready")).toBe(false);
+  });
+
+  it("normalizes line/page wheel zoom, preserves scrolling and honors the zoom lock", () => {
+    const host = view as unknown as { zoom: number; zoomLocked: boolean; desktopZoom(f: number, target?: unknown): void };
+    const zoom = vi.spyOn(host, "desktopZoom");
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    Object.defineProperty(scroller, "clientHeight", { value: 600 });
+    const wheel = (deltaY: number, deltaMode = 0, ctrlKey = true) => {
+      const event = new WheelEvent("wheel", { deltaY, deltaMode, ctrlKey, bubbles: true, cancelable: true });
+      scroller.dispatchEvent(event); return event;
+    };
+    expect(wheel(30, 0, false).defaultPrevented).toBe(false);
+    expect(zoom).not.toHaveBeenCalled();
+    wheel(-1, 1);
+    expect(zoom).toHaveBeenLastCalledWith(Math.exp(16 * 0.004), { x: 0, y: 0 });
+    host.zoomLocked = true;
+    const before = host.zoom;
+    expect(wheel(-1, 2).defaultPrevented).toBe(true);
+    expect(host.zoom).toBe(before);
+  });
+
   it.each([
     ["Add page before current", 1], ["Add page after current", 2],
     ["Add page before first", 0], ["Add page after last", 3],

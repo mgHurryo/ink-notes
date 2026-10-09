@@ -24254,6 +24254,10 @@ var InkWritingView = class extends import_obsidian3.FileView {
     this.pageOptionsMenu = null;
     this.pageOptionsTriggerPressed = false;
     this.pageOptionsDismissRegistered = false;
+    this.desktopPan = null;
+    this.desktopSpaceDown = false;
+    this.desktopWheelTravel = 0;
+    this.desktopWheelFlipped = false;
   }
   /** True while gestures must not start new input (reading mode, locks). */
   inputLocked() {
@@ -24643,14 +24647,210 @@ var InkWritingView = class extends import_obsidian3.FileView {
     var _a, _b, _c;
     return !!((_c = (_b = (_a = this.containerEl) == null ? void 0 : _a.ownerDocument) == null ? void 0 : _b.querySelector) == null ? void 0 : _c.call(_b, ".menu"));
   }
+  desktopNavigate(_destination) {
+  }
+  desktopZoom(_factor, _target) {
+  }
+  desktopResetZoom() {
+  }
+  registerDesktopInput() {
+    const scroller = this.inputScroller();
+    const doc = this.containerEl.ownerDocument;
+    scroller.tabIndex = 0;
+    this.registerDomEvent(scroller, "pointerdown", (event) => {
+      if (event.pointerType !== "mouse" || this.nativeMenuOpen()) return;
+      scroller.focus({ preventScroll: true });
+      if (this.beginDesktopPan(event)) event.stopPropagation();
+    }, true);
+    this.registerDomEvent(this.containerEl, "keydown", (event) => {
+      var _a, _b;
+      const target = event.target;
+      if (event.defaultPrevented || event.isComposing || this.nativeMenuOpen() || ((_a = target == null ? void 0 : target.closest) == null ? void 0 : _a.call(target, 'input, textarea, select, [contenteditable], [role="dialog"]'))) return;
+      if (event.code === "Space" || event.key === " ") {
+        if (((_b = target == null ? void 0 : target.closest) == null ? void 0 : _b.call(target, "button")) || event.ctrlKey || event.metaKey || event.altKey) return;
+        this.desktopSpaceDown = true;
+        scroller.classList.add("ink-pan-ready");
+        event.preventDefault();
+        return;
+      }
+      if (this.onDesktopKeyDown(event)) {
+        event.preventDefault();
+        event.stopPropagation();
+      }
+    });
+    this.registerDomEvent(doc, "keyup", (event) => {
+      if (event.code === "Space" || event.key === " ") {
+        this.desktopSpaceDown = false;
+        scroller.classList.remove("ink-pan-ready");
+      }
+    });
+    this.registerDomEvent(doc, "pointermove", (event) => {
+      var _a;
+      if (((_a = this.desktopPan) == null ? void 0 : _a.pointerId) === event.pointerId) {
+        this.onPointerMove(event);
+        event.stopPropagation();
+      }
+    }, true);
+    for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
+      this.registerDomEvent(doc, type, (event) => {
+        var _a;
+        if (((_a = this.desktopPan) == null ? void 0 : _a.pointerId) === event.pointerId) this.endDesktopPan();
+      }, true);
+    }
+    const reset = () => {
+      this.desktopSpaceDown = false;
+      scroller.classList.remove("ink-pan-ready");
+      this.endDesktopPan();
+      if (this.desktopWheelTimer !== void 0) window.clearTimeout(this.desktopWheelTimer);
+      this.desktopWheelTravel = 0;
+      this.desktopWheelFlipped = false;
+    };
+    if (doc.defaultView) this.registerDomEvent(doc.defaultView, "blur", reset);
+    this.register(reset);
+    this.registerDomEvent(scroller, "wheel", (event) => this.onWheel(event), { passive: false });
+  }
+  onDesktopKeyDown(event) {
+    if (this.activePointerId !== null || this.desktopPan || this.flipSettling) return false;
+    const key = event.key.toLowerCase();
+    if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+      if (key === "+" || key === "=") {
+        this.desktopZoom(1.1);
+        return true;
+      }
+      if (key === "-") {
+        this.desktopZoom(1 / 1.1);
+        return true;
+      }
+      if (key === "0") {
+        this.desktopResetZoom();
+        return true;
+      }
+      if (this.inputLocked()) return false;
+      if (key === "z") {
+        if (event.shiftKey) this.redo();
+        else this.undo();
+        return true;
+      }
+      if (key === "y" && !event.shiftKey) {
+        this.redo();
+        return true;
+      }
+      return false;
+    }
+    if (event.altKey) {
+      if (key === "arrowleft") {
+        this.desktopNavigate("previous");
+        return true;
+      }
+      if (key === "arrowright") {
+        this.desktopNavigate("next");
+        return true;
+      }
+      return false;
+    }
+    const destinations = {
+      pageup: "previous",
+      pagedown: "next",
+      home: "first",
+      end: "last"
+    };
+    const destination = destinations[key];
+    if (destination) {
+      this.desktopNavigate(destination);
+      return true;
+    }
+    if (key === "+" || key === "=") {
+      this.desktopZoom(1.1);
+      return true;
+    }
+    if (key === "-") {
+      this.desktopZoom(1 / 1.1);
+      return true;
+    }
+    if (key === "0") {
+      this.desktopResetZoom();
+      return true;
+    }
+    if (event.shiftKey || this.inputLocked()) return false;
+    const tools = { b: "pen", h: "highlighter", e: "eraser", v: "lasso" };
+    const tool = tools[key];
+    if (tool) {
+      this.selectWritingTool(tool);
+      return true;
+    }
+    if (key === "escape") {
+      this.clearSelection();
+      return true;
+    }
+    return false;
+  }
+  beginDesktopPan(event) {
+    var _a, _b;
+    if (event.pointerType !== "mouse" || this.flipSettling || this.activePointerId !== null || this.nativeMenuOpen()) return false;
+    const button = (_a = event.button) != null ? _a : 0;
+    if (button !== 1 && !(button === 0 && this.desktopSpaceDown)) return false;
+    this.desktopPan = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+    this.inputScroller().classList.add("ink-panning");
+    this.capturePointer(event.pointerId);
+    (_b = event.preventDefault) == null ? void 0 : _b.call(event);
+    return true;
+  }
+  endDesktopPan() {
+    var _a;
+    const pan = this.desktopPan;
+    this.desktopPan = null;
+    (_a = this.inputScroller()) == null ? void 0 : _a.classList.remove("ink-panning");
+    if (pan) this.releasePointer(pan.pointerId);
+  }
+  onWheel(event) {
+    if (this.nativeMenuOpen() || this.activePointerId !== null || this.desktopPan || this.flipSettling) return;
+    const scroller = this.inputScroller();
+    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? scroller.clientHeight : 1;
+    const x = event.deltaX * unit, y = event.deltaY * unit;
+    if (event.ctrlKey || event.metaKey) {
+      event.preventDefault();
+      this.desktopZoom(Math.exp(-Math.max(-100, Math.min(100, y)) * 4e-3), { x: event.clientX, y: event.clientY });
+      this.showZoomHud();
+      this.scheduleZoomHudHide();
+      return;
+    }
+    if (event.shiftKey && !x && y) {
+      event.preventDefault();
+      scroller.scrollLeft += y;
+      return;
+    }
+    if (event.deltaMode !== 0 || Math.abs(x) < Math.abs(y) * 1.5 || !x) return;
+    if (this.desktopWheelTimer !== void 0) window.clearTimeout(this.desktopWheelTimer);
+    this.desktopWheelTimer = window.setTimeout(() => {
+      this.desktopWheelTimer = void 0;
+      this.desktopWheelTravel = 0;
+      this.desktopWheelFlipped = false;
+    }, 180);
+    event.preventDefault();
+    const before = scroller.scrollLeft;
+    scroller.scrollLeft += x;
+    if (Math.abs(scroller.scrollLeft - before) > 0.5) {
+      this.desktopWheelTravel = 0;
+      return;
+    }
+    if (this.desktopWheelFlipped) return;
+    if (Math.sign(this.desktopWheelTravel) !== Math.sign(x)) this.desktopWheelTravel = 0;
+    this.desktopWheelTravel += x;
+    if (Math.abs(this.desktopWheelTravel) >= 100) {
+      this.desktopWheelFlipped = true;
+      this.desktopNavigate(x > 0 ? "next" : "previous");
+    }
+  }
   onPointerDown(event, source = "pointer") {
-    var _a, _b, _c, _d, _e, _f, _g;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     this.devPointerEvents += 1;
     this.devLastPointerType = event.pointerType || this.devLastPointerType;
+    if (this.beginDesktopPan(event)) return;
+    if (event.pointerType === "mouse" && (((_a = event.button) != null ? _a : 0) !== 0 || this.desktopPan)) return;
     if (this.inputLocked()) return;
     if (this.nativeMenuOpen()) return;
     if (event.pointerType === "touch") return;
-    if (source === "pointer" && event.pointerType === "pen" && ((_a = this.interaction) == null ? void 0 : _a.source) === "stylus-touch") return;
+    if (source === "pointer" && event.pointerType === "pen" && ((_b = this.interaction) == null ? void 0 : _b.source) === "stylus-touch") return;
     this.onInputStarting();
     this.interactionGeneration += 1;
     if (this.activePointerId !== null) this.finishPointerInput(false);
@@ -24659,9 +24859,9 @@ var InkWritingView = class extends import_obsidian3.FileView {
     const tool = this.state.tool;
     const brush = isBrushTool(tool) ? this.brushSettings(tool) : null;
     const rect = this.inputRect();
-    (_c = (_b = this.tiles) == null ? void 0 : _b.beginInput) == null ? void 0 : _c.call(_b);
+    (_d = (_c = this.tiles) == null ? void 0 : _c.beginInput) == null ? void 0 : _d.call(_c);
     this.cancelPendingInkCommitTimer();
-    if (tool === "pen" || tool === "highlighter") (_d = this.tiles) == null ? void 0 : _d.pauseInkCommit();
+    if (tool === "pen" || tool === "highlighter") (_e = this.tiles) == null ? void 0 : _e.pauseInkCommit();
     else if (this.pendingInkStrokes.length > 0 || this.committingInkStrokes) this.materializePendingInkPreview(page);
     if (this.saveTimer !== void 0) {
       window.clearTimeout(this.saveTimer);
@@ -24721,9 +24921,9 @@ var InkWritingView = class extends import_obsidian3.FileView {
       opacity: brush.opacity,
       points: [point],
       dynamics: tool === "pen" ? {
-        taper: (_e = this.state.pen.taper) != null ? _e : 0,
-        pressure: (_f = this.state.pen.pressureGain) != null ? _f : 100,
-        speed: (_g = this.state.pen.speedGain) != null ? _g : 0,
+        taper: (_f = this.state.pen.taper) != null ? _f : 0,
+        pressure: (_g = this.state.pen.pressureGain) != null ? _g : 100,
+        speed: (_h = this.state.pen.speedGain) != null ? _h : 0,
         pressureCurve: this.state.pen.pressureCurve ? this.state.pen.pressureCurve.map((point2) => [...point2]) : void 0
       } : void 0,
       createdAt: Date.now(),
@@ -24755,21 +24955,30 @@ var InkWritingView = class extends import_obsidian3.FileView {
     this.updateEraserHover(this.toPoint(event, rect), pointInsideRect(event, rect));
   }
   onPointerMove(event, source = "pointer") {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f;
     this.devPointerEvents += 1;
     if (event.pointerType === "touch") return;
-    if (this.interaction && ((_a = this.interaction.source) != null ? _a : "pointer") !== source) return;
+    if (((_a = this.desktopPan) == null ? void 0 : _a.pointerId) === event.pointerId) {
+      const scroller = this.inputScroller();
+      scroller.scrollLeft -= event.clientX - this.desktopPan.x;
+      scroller.scrollTop -= event.clientY - this.desktopPan.y;
+      this.desktopPan.x = event.clientX;
+      this.desktopPan.y = event.clientY;
+      (_b = event.preventDefault) == null ? void 0 : _b.call(event);
+      return;
+    }
+    if (this.interaction && ((_c = this.interaction.source) != null ? _c : "pointer") !== source) return;
     const rect = this.inputRect();
     const point = this.toPoint(event, rect);
     const inside = pointInsideRect(event, rect);
     if (this.activePointerId === null) {
-      if (((_b = this.rawUpdateCapture) == null ? void 0 : _b.pointerId) !== event.pointerId) this.recordPenSampleIntervals(this.pointerSamples(event));
+      if (((_d = this.rawUpdateCapture) == null ? void 0 : _d.pointerId) !== event.pointerId) this.recordPenSampleIntervals(this.pointerSamples(event));
       this.updateEraserHover(point, inside);
       return;
     }
     if (this.activePointerId !== event.pointerId) return;
-    if (((_c = this.interaction) == null ? void 0 : _c.tool) === "eraser") this.updateEraserHover(point, inside);
-    if (((_d = this.rawUpdateCapture) == null ? void 0 : _d.pointerId) === event.pointerId) return;
+    if (((_e = this.interaction) == null ? void 0 : _e.tool) === "eraser") this.updateEraserHover(point, inside);
+    if (((_f = this.rawUpdateCapture) == null ? void 0 : _f.pointerId) === event.pointerId) return;
     this.applyPointerSamples(event, rect, "move");
   }
   /** Consumes Chromium raw hardware samples so ink forms at full pen rate
@@ -24792,9 +25001,13 @@ var InkWritingView = class extends import_obsidian3.FileView {
     this.applyPointerSamples(event, this.inputRect(), "move");
   }
   onPointerUp(event, source = "pointer") {
-    var _a, _b;
+    var _a, _b, _c;
     this.devPointerEvents += 1;
-    if (this.activePointerId !== event.pointerId || ((_b = (_a = this.interaction) == null ? void 0 : _a.source) != null ? _b : "pointer") !== source) return;
+    if (((_a = this.desktopPan) == null ? void 0 : _a.pointerId) === event.pointerId) {
+      this.endDesktopPan();
+      return;
+    }
+    if (this.activePointerId !== event.pointerId || ((_c = (_b = this.interaction) == null ? void 0 : _b.source) != null ? _c : "pointer") !== source) return;
     const rect = this.inputRect();
     const point = this.toPoint(event, rect);
     const inside = pointInsideRect(event, rect);
@@ -24808,9 +25021,13 @@ var InkWritingView = class extends import_obsidian3.FileView {
     this.updateEraserHover(point, inside);
   }
   onPointerCancel(event, source = "pointer") {
-    var _a, _b;
+    var _a, _b, _c;
     this.devPointerEvents += 1;
-    if (this.activePointerId !== event.pointerId || ((_b = (_a = this.interaction) == null ? void 0 : _a.source) != null ? _b : "pointer") !== source) return;
+    if (((_a = this.desktopPan) == null ? void 0 : _a.pointerId) === event.pointerId) {
+      this.endDesktopPan();
+      return;
+    }
+    if (this.activePointerId !== event.pointerId || ((_c = (_b = this.interaction) == null ? void 0 : _b.source) != null ? _c : "pointer") !== source) return;
     this.eraserPointerInside = false;
     this.finishPointerInput(false);
   }
@@ -25141,11 +25358,20 @@ var InkWritingView = class extends import_obsidian3.FileView {
     };
   }
   onLostPointerCapture(event) {
+    var _a;
+    if (((_a = this.desktopPan) == null ? void 0 : _a.pointerId) === event.pointerId) {
+      this.endDesktopPan();
+      return;
+    }
     if (this.activePointerId !== event.pointerId) return;
   }
   onDocumentPointerEnd(event) {
-    var _a;
-    if (((_a = this.interaction) == null ? void 0 : _a.source) !== "stylus-touch" && this.activePointerId === event.pointerId) this.finishPointerInput(false);
+    var _a, _b;
+    if (((_a = this.desktopPan) == null ? void 0 : _a.pointerId) === event.pointerId) {
+      this.endDesktopPan();
+      return;
+    }
+    if (((_b = this.interaction) == null ? void 0 : _b.source) !== "stylus-touch" && this.activePointerId === event.pointerId) this.finishPointerInput(false);
   }
   capturePointer(pointerId) {
     const host = this.inputHost();
@@ -26239,6 +26465,8 @@ var InkWritingView = class extends import_obsidian3.FileView {
   addIconButton(parent, icon, label, callback, disabled = false) {
     const button = parent.createEl("button", { cls: "ink-icon-button", attr: { type: "button", title: label, "aria-label": label } });
     button.disabled = disabled;
+    if (label === "Undo") button.title = "Undo (Ctrl/Command+Z)";
+    if (label === "Redo") button.title = "Redo (Ctrl/Command+Shift+Z, Ctrl/Command+Y)";
     const iconHolder = button.createSpan({ cls: "ink-button-icon" });
     (0, import_obsidian3.setIcon)(iconHolder, icon);
     button.addEventListener("click", callback);
@@ -26254,25 +26482,31 @@ var InkWritingView = class extends import_obsidian3.FileView {
       "data-tool": tool,
       ...hasSettings ? { "aria-haspopup": "dialog", "aria-expanded": "false" } : {}
     } });
+    const shortcut = { pen: "B", highlighter: "H", eraser: "E", lasso: "V" };
+    button.title = `${label} (${shortcut[tool]})`;
     const iconHolder = button.createSpan({ cls: "ink-button-icon" });
     (0, import_obsidian3.setIcon)(iconHolder, icon);
     button.addEventListener("click", () => {
-      var _a, _b;
       this.finishPointerInput(false);
       if (this.state.tool === tool && hasSettings) {
         this.toggleToolSettings(button);
         return;
       }
-      this.onToolSelected(tool);
-      this.state.tool = tool;
-      if (tool !== "lasso") this.clearSelection();
-      if (tool === "eraser") (_a = this.brushPopover) == null ? void 0 : _a.close();
-      this.closeEraserPopover();
-      (_b = this.brushPopover) == null ? void 0 : _b.update();
-      this.updateToolButtons();
-      this.refreshEraserCursor();
-      if (this.settingsOpen()) this.reopenToolSettings();
+      this.selectWritingTool(tool);
     });
+  }
+  selectWritingTool(tool) {
+    var _a, _b;
+    this.finishPointerInput(false);
+    this.onToolSelected(tool);
+    this.state.tool = tool;
+    if (tool !== "lasso") this.clearSelection();
+    if (tool === "eraser") (_a = this.brushPopover) == null ? void 0 : _a.close();
+    this.closeEraserPopover();
+    (_b = this.brushPopover) == null ? void 0 : _b.update();
+    this.updateToolButtons();
+    this.refreshEraserCursor();
+    if (this.settingsOpen()) this.reopenToolSettings();
   }
   updateToolButtons() {
     this.toolbarRoot().querySelectorAll(".ink-tool-button").forEach((el) => {
@@ -27386,14 +27620,6 @@ var InkView = class extends InkWritingView {
     this.workers = workers;
     if (toolState) this.useSharedToolState(toolState);
     this.scope = new import_obsidian4.Scope(this.app.scope);
-    this.scope.register(["Mod"], "z", () => {
-      this.undo();
-      return false;
-    });
-    this.scope.register(["Mod", "Shift"], "z", () => {
-      this.redo();
-      return false;
-    });
   }
   getViewType() {
     return VIEW_TYPE_INK;
@@ -27418,6 +27644,7 @@ var InkView = class extends InkWritingView {
     this.root.createSpan({ cls: "ink-page-status", attr: { "aria-live": "polite" } });
     this.renderToolbar();
     this.renderCanvas();
+    this.registerDesktopInput();
     this.buildZoomHud(this.root.querySelector(".ink-workspace"));
     this.register(() => this.closeEraserPopover());
     this.viewReady = true;
@@ -27594,7 +27821,6 @@ var InkView = class extends InkWritingView {
     this.registerDomEvent(this.pageElement, "pointercancel", (event) => this.onPointerCancel(event));
     this.registerDomEvent(this.pageElement, "lostpointercapture", (event) => this.onLostPointerCapture(event));
     registerDocumentPointerEndEvents(this.pageElement, (cleanup) => this.register(cleanup), (event) => this.onDocumentPointerEnd(event));
-    this.registerDomEvent(this.pageElement, "wheel", (event) => this.onWheel(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "scroll", () => this.onViewportMotion(), { passive: true });
     this.registerDomEvent(this.pageScroller, "touchstart", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
@@ -27881,6 +28107,17 @@ var InkView = class extends InkWritingView {
   onZoomLockChanged() {
     this.finishPinchRender();
     this.updateZoomControls();
+  }
+  desktopNavigate(destination) {
+    const index = destination === "first" ? 0 : destination === "last" ? this.notebook.pages.length - 1 : this.pageIndex + (destination === "next" ? 1 : -1);
+    const page = this.notebook.pages[index];
+    if (page) void this.navigateToPage(page.id);
+  }
+  desktopZoom(factor, target) {
+    this.setZoom(this.zoom * factor, target);
+  }
+  desktopResetZoom() {
+    this.setZoom(1);
   }
   onTouchStart(event) {
     this.finishPinchRender();
@@ -28541,11 +28778,6 @@ page: ${this.currentPage().id}
     this.pageScroller.scrollTop += after.top + anchor.y * after.height - target.y;
     this.updateZoomControls();
     this.onViewportMotion();
-  }
-  onWheel(event) {
-    if (!event.ctrlKey && !event.metaKey) return;
-    event.preventDefault();
-    this.setZoom(this.zoom * (event.deltaY > 0 ? 0.92 : 1.08), { x: event.clientX, y: event.clientY });
   }
   // ------------------------------------------------------- notebook saving
   async save(file = this.file) {
@@ -29472,8 +29704,6 @@ var PdfInkView = class extends InkWritingView {
     /** Last drag offset; settle animations continue from it. */
     this.swipeDragOffset = 0;
     this.scope = new import_obsidian8.Scope(this.app.scope);
-    this.scope.register(["Mod"], "z", () => this.undo());
-    this.scope.register(["Mod", "Shift"], "z", () => this.redo());
   }
   /** Wired by the plugin right after construction. */
   configure(deps) {
@@ -29504,6 +29734,7 @@ var PdfInkView = class extends InkWritingView {
     this.pageWrap = scroller.createDiv({ cls: "ink-pdf-page-wrap" });
     this.pdfCanvas = this.pageWrap.createEl("canvas", { cls: "ink-pdf-canvas" });
     this.buildInkHost();
+    this.registerDesktopInput();
     this.viewReady = true;
     this.registerDomEvent(scroller, "scroll", () => this.onViewportMotion(), { passive: true });
     this.registerDomEvent(scroller, "touchstart", (event) => this.onTouchStart(event), { passive: false });
@@ -30336,16 +30567,22 @@ var PdfInkView = class extends InkWritingView {
       this.eraserPointerInside = false;
       this.refreshEraserCursor();
     });
-    host.addEventListener("wheel", (event) => this.onWheel(event), { passive: false });
     registerDocumentPointerEndEvents(host, (cleanup) => this.register(cleanup), (event, cancelled) => {
       void cancelled;
       this.onDocumentPointerEnd(event);
     });
   }
-  onWheel(event) {
-    if (!event.ctrlKey && !event.metaKey) return;
-    event.preventDefault();
-    this.setZoom(this.zoom * (event.deltaY < 0 ? PDF_ZOOM_STEP : 1 / PDF_ZOOM_STEP), { x: event.clientX, y: event.clientY });
+  desktopNavigate(destination) {
+    var _a, _b, _c, _d;
+    const count = (_d = (_c = (_a = this.sidecar) == null ? void 0 : _a.notePages.length) != null ? _c : (_b = this.pdfDoc) == null ? void 0 : _b.numPages) != null ? _d : 1;
+    const next = destination === "first" ? 0 : destination === "last" ? count - 1 : this.noteIndex + (destination === "next" ? 1 : -1);
+    void this.navigatePages(next - this.noteIndex).catch((error) => this.setStatus(`Could not switch pages: ${messageOf(error)}`, true));
+  }
+  desktopZoom(factor, target) {
+    this.setZoom(this.zoom * factor, target);
+  }
+  desktopResetZoom() {
+    this.resetZoom();
   }
   // ------------------------------------------------------ writing-layer seams
   currentNotebook() {
