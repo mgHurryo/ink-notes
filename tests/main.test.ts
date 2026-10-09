@@ -5,6 +5,9 @@ const register = vi.fn();
 const registerMarkdown = vi.fn();
 const list = vi.fn();
 const notice = vi.fn();
+const pickerOpen = vi.fn();
+const pickerArguments = vi.fn();
+const create = vi.fn();
 
 vi.mock("obsidian", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -31,8 +34,12 @@ vi.mock("obsidian", async (importOriginal) => ({
 }));
 vi.mock("../src/storage", () => ({
   INK_EXTENSION: "ink",
-  NotebookStore: class { observe = observe; list = list; },
+  NotebookStore: class { observe = observe; list = list; create = create; },
 }));
+vi.mock("../src/notebook-modal", () => ({ NotebookSuggestModal: class {
+  constructor(...args: unknown[]) { pickerArguments(...args); }
+  open = pickerOpen;
+} }));
 vi.mock("../src/embed", () => ({ createInkEmbedProcessor: vi.fn(() => vi.fn()) }));
 vi.mock("../src/view", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -44,7 +51,41 @@ import InkNotesPlugin from "../src/main";
 import { InkView } from "../src/view";
 
 describe("plugin event synchronization", () => {
-  beforeEach(() => { observe.mockReset(); register.mockReset(); registerMarkdown.mockReset(); list.mockReset(); notice.mockReset(); });
+  beforeEach(() => { observe.mockReset(); register.mockReset(); registerMarkdown.mockReset(); list.mockReset(); notice.mockReset();
+    pickerOpen.mockReset(); pickerArguments.mockReset(); create.mockReset(); });
+  it.each([{ files: [] }, { files: [{ path: "Ink Notes/Existing.ink", basename: "Existing" }] }])("ribbon always opens a picker with a reusable creation action: $files", async ({ files }) => {
+    list.mockResolvedValue(files);
+    const file = { path: "Ink Notes/New name.ink" };
+    create.mockResolvedValue(file);
+    const plugin = new InkNotesPlugin({} as never, {} as never);
+    const openFile = vi.fn(async () => undefined);
+    const getLeaf = vi.fn(() => ({ openFile }));
+    Object.assign(plugin.app.workspace, { getLeaf });
+    await plugin.onload();
+    (plugin.addRibbonIcon as unknown as ReturnType<typeof vi.fn>).mock.calls[0][2]();
+    await vi.waitFor(() => expect(pickerOpen).toHaveBeenCalledOnce());
+    expect(create).not.toHaveBeenCalled();
+    expect(pickerArguments.mock.calls[0][1]).toBe(files);
+    const add = pickerArguments.mock.calls[0][3] as (title: string) => Promise<void>;
+    await add("New name"); await add("Another name");
+    expect(create.mock.calls).toEqual([["New name"], ["Another name"]]);
+    expect(openFile).toHaveBeenCalledWith(file);
+  });
+
+  it("renames through FileManager while retaining the current directory and ink extension", async () => {
+    const file = { path: "Ink Notes/Course/Existing.ink", basename: "Existing" };
+    list.mockResolvedValue([file]);
+    const plugin = new InkNotesPlugin({} as never, {} as never);
+    const renameFile = vi.fn(async () => undefined);
+    Object.assign(plugin.app, { fileManager: { renameFile } });
+    await plugin.onload();
+    await (plugin as unknown as { openNotebook(): Promise<void> }).openNotebook();
+    const rename = pickerArguments.mock.calls[0][4] as (file: unknown, title: string) => Promise<void>;
+    await rename(file, "Existing");
+    expect(renameFile).not.toHaveBeenCalled();
+    await rename(file, "Renamed");
+    expect(renameFile).toHaveBeenCalledWith(file, "Ink Notes/Course/Renamed.ink");
+  });
   it("registers markdown embeds and vault observation without polling", async () => {
     const dispose = vi.fn();
     observe.mockReturnValue(dispose);

@@ -90,9 +90,6 @@ export class InkView extends InkWritingView {
   private pendingMergedNotebook: InkNotebook | null = null;
   private pendingMergedNotebookIsFinal = false;
   private externalRefreshPending = false;
-  /** Reading mode: view-only. Ink tools, the popover and eraser tracking are
-   *  disabled and the page restores native panning/scrolling. */
-  private readingMode = false;
   private zoomRenderTimer: number | undefined;
   /** Freeze the page's raster/layout scale while a pinch composites the whole sheet. */
   private pinchRenderZoom: number | undefined;
@@ -110,8 +107,6 @@ export class InkView extends InkWritingView {
     this.workers = workers;
     if (toolState) this.useSharedToolState(toolState);
     this.scope = new Scope(this.app.scope);
-    this.scope.register(["Mod"], "z", () => { this.undo(); return false; });
-    this.scope.register(["Mod", "Shift"], "z", () => { this.redo(); return false; });
   }
 
   getViewType(): string { return VIEW_TYPE_INK; }
@@ -132,12 +127,15 @@ export class InkView extends InkWritingView {
     this.root.createSpan({ cls: "ink-page-status", attr: { "aria-live": "polite" } });
     this.renderToolbar();
     this.renderCanvas();
+    this.registerDesktopInput();
+    this.buildZoomHud(this.root.querySelector<HTMLElement>(".ink-workspace")!);
     this.register(() => this.closeEraserPopover());
     this.viewReady = true;
     this.renderAll();
   }
 
   async onClose(): Promise<void> {
+    this.disposeZoomHud();
     this.closePageOptionsMenu();
     this.pageNavigationGeneration += 1;
     this.closeDevPanel();
@@ -225,7 +223,8 @@ export class InkView extends InkWritingView {
   private renderToolbar(): void {
     const toolbar = this.root.querySelector<HTMLElement>(".ink-toolbar")!;
     toolbar.empty();
-    const navigation = this.addToolbarSection(toolbar, "Pages");
+    const start = toolbar.createDiv({ cls: "ink-toolbar-start" });
+    const navigation = this.addToolbarSection(start, "Pages");
     const toggle = this.addIconButton(navigation, "panel-left", "Pages", () => {
       const hidden = !this.root.hasClass("ink-rail-hidden");
       this.root.toggleClass("ink-rail-hidden", hidden);
@@ -236,10 +235,13 @@ export class InkView extends InkWritingView {
       if (!hidden) this.scheduleRailThumbnailRefresh();
     });
     toggle.setAttribute("aria-pressed", String(!this.root.hasClass("ink-rail-hidden")));
-    this.buildWritingSections(toolbar);
+    this.buildWritingSections(toolbar, start);
     const document_ = this.addToolbarSection(toolbar, "Document");
-    this.addIconButton(document_, "more-horizontal", "Page options", (event) => this.openPageMenu(event));
+    this.buildReadingModeButton(document_);
+    this.addIconButton(document_, "plus", "Add page", (event) => this.openPageInsertMenu(event,
+      this.pageIndex, this.notebook.pages.length, (index) => this.addPage(index))).classList.add("ink-edit-only");
     this.addIconButton(document_, "download", "Export as PDF", () => void this.exportNotebookCopy());
+    this.addIconButton(document_, "more-horizontal", "Page options", (event) => this.openPageMenu(event)).classList.add("ink-edit-only");
     this.updateToolButtons();
   }
 
@@ -310,12 +312,12 @@ export class InkView extends InkWritingView {
     this.registerDomEvent(this.pageElement, "pointercancel", (event) => this.onPointerCancel(event));
     this.registerDomEvent(this.pageElement, "lostpointercapture", (event) => this.onLostPointerCapture(event));
     registerDocumentPointerEndEvents(this.pageElement, (cleanup) => this.register(cleanup), (event) => this.onDocumentPointerEnd(event));
-    this.registerDomEvent(this.pageElement, "wheel", (event) => this.onWheel(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "scroll", () => this.onViewportMotion(), { passive: true });
     this.registerDomEvent(this.pageScroller, "touchstart", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchcancel", (event) => {
+      this.scheduleZoomHudHide();
       this.finishPinchRender();
       this.onStylusTouch(event);
       this.cancelPageFlip();
@@ -576,6 +578,10 @@ export class InkView extends InkWritingView {
   protected inputRect(): DOMRect { return this.pageElement.getBoundingClientRect(); }
   protected inputHost(): HTMLElement { return this.pageElement; }
   protected inputLocked(): boolean { return this.readingMode || this.flipSettling; }
+  protected onReadingModeChanged(): void {
+    this.destroySwipeStage();
+    this.touchGesture = null;
+  }
   protected pagePixelSize(): { width: number; height: number } {
     return { width: this.notebook.pageWidth, height: this.notebook.pageHeight };
   }
@@ -604,6 +610,16 @@ export class InkView extends InkWritingView {
   protected performScheduledSave(): void { void this.save(); }
   protected toolbarRoot(): HTMLElement { return this.root; }
   protected inputScroller(): HTMLElement { return this.pageScroller; }
+  protected onZoomLockChanged(): void { this.finishPinchRender(); this.updateZoomControls(); }
+
+  protected desktopNavigate(destination: "previous" | "next" | "first" | "last"): void {
+    const index = destination === "first" ? 0 : destination === "last" ? this.notebook.pages.length - 1
+      : this.pageIndex + (destination === "next" ? 1 : -1);
+    const page = this.notebook.pages[index];
+    if (page) void this.navigateToPage(page.id);
+  }
+  protected desktopZoom(factor: number, target?: { x: number; y: number }): void { this.setZoom(this.zoom * factor, target); }
+  protected desktopResetZoom(): void { this.setZoom(1); }
   protected onTouchStart(event: TouchEvent): void {
     // Commit before the base handler captures the next gesture's page anchor.
     this.finishPinchRender();
@@ -617,6 +633,7 @@ export class InkView extends InkWritingView {
   }
 
   protected applyGestureZoom(value: number, focus: { x: number; y: number }, anchor: { x: number; y: number }): void {
+    if (this.zoomLocked) return;
     if (Number.isFinite(value) && value !== this.zoom && this.pinchRenderZoom === undefined) {
       this.pinchRenderZoom = this.zoom;
       if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
@@ -633,6 +650,7 @@ export class InkView extends InkWritingView {
     const extent = this.pageExtent;
     if (!extent || this.flipSettling) return;
     this.ensureSwipeStage(offset);
+    this.updatePageInsertPreview(this.swipeStage, offset);
     const pitch = this.swipePitch();
     offset = this.swipeStage ? Math.max(-pitch, Math.min(pitch, offset)) : offset / (1 + Math.abs(offset) / 80);
     this.swipeDragOffset = offset;
@@ -655,34 +673,38 @@ export class InkView extends InkWritingView {
       if (Number(this.swipeStage.dataset.neighbor) === neighborIndex) return;
       this.destroySwipeStage();
     }
-    if (neighborIndex < 0 || neighborIndex >= this.notebook.pages.length) return;
-    const neighbor = this.notebook.pages[neighborIndex];
+    const insert = neighborIndex < 0 || neighborIndex >= this.notebook.pages.length;
+    if (insert && this.readingMode) return;
+    const neighbor = insert ? null : this.notebook.pages[neighborIndex];
     const page = this.pageElement;
     const pitch = this.swipePitch();
     // Clip previews separately: offscreen pages must not enlarge scrollWidth.
     this.swipeLayer = this.pageScroller.createDiv({ cls: "ink-swipe-layer" });
     this.swipeLayer.setCssStyles({ left: `${this.pageScroller.scrollLeft}px`, top: `${this.pageScroller.scrollTop}px`,
       width: `${this.pageScroller.clientWidth}px`, height: `${this.pageScroller.clientHeight}px`, right: "auto", bottom: "auto" });
-    const stage = this.swipeLayer.createDiv({ cls: `ink-page ink-paper-${neighbor.paper} ink-swipe-stage` });
+    const stage = this.swipeLayer.createDiv({ cls: `ink-page ink-paper-${neighbor?.paper ?? "blank"} ink-swipe-stage` });
+    const previewZoom = this.zoomLocked ? this.zoom : 1;
     stage.dataset.neighbor = String(neighborIndex);
     stage.setCssStyles({
       position: "absolute", margin: "0", overflow: "hidden",
       left: `${extent.offsetLeft + page.offsetLeft - this.pageScroller.scrollLeft + side * pitch}px`,
       top: `${extent.offsetTop + page.offsetTop - this.pageScroller.scrollTop}px`,
-      width: `${this.pageBaseWidth}px`,
-      height: `${this.pageBaseHeight}px`,
+      width: `${this.pageBaseWidth * previewZoom}px`,
+      height: `${this.pageBaseHeight * previewZoom}px`,
       transform: "translateX(0px)",
     });
-    stage.style.setProperty("--ink-page-scale", "1");
+    stage.style.setProperty("--ink-page-scale", String(previewZoom));
+    this.swipeStage = stage;
+    if (insert) { this.showPageInsertPreview(stage, side); return; }
     const canvas = stage.createEl("canvas");
     canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%";
-    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, window.devicePixelRatio || 1, 1, OVERLAY_RESIZE_BUDGET);
+    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, window.devicePixelRatio || 1, previewZoom, OVERLAY_RESIZE_BUDGET);
     canvas.width = resolution.width;
     canvas.height = resolution.height;
     const ctx = canvas.getContext("2d");
     if (ctx) {
       ctx.setTransform(canvas.width / this.canvasLogicalWidth, 0, 0, canvas.height / this.canvasLogicalHeight, 0, 0);
-      for (const stroke of neighbor.strokes) drawInkStroke(ctx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
+      for (const stroke of neighbor!.strokes) drawInkStroke(ctx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
     }
     this.swipeStage = stage;
   }
@@ -694,22 +716,31 @@ export class InkView extends InkWritingView {
     return Math.max(this.pageScroller.clientWidth, this.pageElement.offsetWidth) + 16;
   }
 
-  protected swipeSettle(delta: number): void {
+  protected swipeSettle(delta: number, travel = 0): void {
     // Guard every settle path, including cancellation and a second touchend.
     if (this.flipSettling) return;
     const extent = this.pageExtent;
     if (!extent) { this.destroySwipeStage(); return; }
     const stage = this.swipeStage;
     const side = stage ? Number(stage.dataset.neighbor) - this.pageIndex : 0;
-    const flip = delta !== 0 && side === delta;
+    const insert = !!stage?.dataset.insert;
+    const create = insert && !this.readingMode && Math.sign(travel) === -side && Math.abs(travel) >= this.pageInsertThreshold();
+    const flip = create || (!insert && delta !== 0 && side === delta);
     const from = this.swipeDragOffset;
     const to = flip ? -side * this.swipePitch() : 0;
     const isCurrent = this.beginPageSwipe(this.pageIndex + (flip ? delta : 0), this.notebook.pages.length);
     this.flipSettling = true;
     this.animatePageSwipe(stage ? [extent, stage] : [extent], from, to, () => {
+      if (!isCurrent()) return;
       // Reset geometry before rendering, while the incoming snapshot covers it.
       this.cancelPageSwipeAnimations();
       extent.style.transform = "";
+      if (create) {
+        this.addPage(side < 0 ? 0 : this.notebook.pages.length);
+        this.destroySwipeStage();
+        this.resumePageSwipeDrag();
+        return;
+      }
       if (flip && stage) extent.style.visibility = "hidden";
       void this.navigatePageSwipe((index) => {
         const page = this.notebook.pages[index];
@@ -898,20 +929,24 @@ export class InkView extends InkWritingView {
 
   // ------------------------------------------------------------ page tools
 
-  private addPage(): void {
+  private addPage(index = this.notebook.pages.length): void {
+    if (this.readingMode) return;
+    this.destroySwipeStage();
+    this.pageNavigationGeneration += 1;
     this.finishPointerInput(false);
     const before = cloneNotebook(this.notebook);
     const beforePageId = this.currentPage().id;
     const now = Date.now();
-    const page: InkPage = { id: newId("page"), title: `Page ${this.notebook.pages.length + 1}`, paper: "ruled", strokes: [], deletedStrokeIds: [], createdAt: now, updatedAt: now };
-    this.notebook.pages.push(page);
-    this.notebook.pageOrder.push(page.id);
+    index = Math.max(0, Math.min(index, this.notebook.pages.length));
+    const page: InkPage = { id: newId("page"), title: `Page ${this.notebook.pages.length + 1}`, paper: "blank", strokes: [], deletedStrokeIds: [], createdAt: now, updatedAt: now };
+    this.notebook.pages.splice(index, 0, page);
+    this.notebook.pageOrder.splice(index, 0, page.id);
     this.notebook.pageOrderUpdatedAt = now;
     this.notebook.updatedAt = now;
     this.dirtyRevision += 1;
     this.queueWorkerOperation({ type: "page-operation", action: "add", page: clonePage(page),
       pageOrder: [...this.notebook.pageOrder], pageOrderUpdatedAt: now, notebookUpdatedAt: now });
-    this.pageIndex = this.notebook.pages.length - 1;
+    this.pageIndex = index;
     this.resetPageView();
     this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, page.id);
     this.renderPageRail();
@@ -953,6 +988,7 @@ export class InkView extends InkWritingView {
   }
 
   private openPageMenu(event: MouseEvent): void {
+    if (this.readingMode) return;
     const menu = this.beginPageOptionsMenu(event);
     if (!menu) return;
     for (const paper of ["blank", "ruled", "grid", "dot"] as PaperStyle[]) menu.addItem((item) => item.setTitle(`Paper: ${paper}`).setChecked(this.currentPage().paper === paper).onClick(() => {
@@ -970,7 +1006,6 @@ export class InkView extends InkWritingView {
       this.renderPageRail(); this.renderPage(); this.scheduleSave();
     }));
     menu.addSeparator();
-    menu.addItem((item) => item.setTitle("Add page").onClick(() => this.addPage()));
     menu.addItem((item) => item.setTitle("Rename page").onClick(() => this.renamePage()));
     menu.addItem((item) => item.setTitle("Duplicate page").onClick(() => this.duplicateCurrentPage()));
     menu.addItem((item) => item.setTitle("Move page up").setDisabled(this.pageIndex === 0).onClick(() => this.moveCurrentPage(-1)));
@@ -978,13 +1013,14 @@ export class InkView extends InkWritingView {
     menu.addItem((item) => item.setTitle("Delete page").setDisabled(this.notebook.pages.length <= 1).onClick(() => this.deleteCurrentPage()));
     menu.addSeparator();
     menu.addItem((item) => item.setTitle("Copy page embed syntax").onClick(() => void this.copyCurrentPageEmbed()));
-    menu.addItem((item) => item.setTitle("Zoom out").setDisabled(this.zoom <= 0.5).onClick(() => this.setZoom(this.zoom - 0.1)));
-    menu.addItem((item) => item.setTitle("Reset zoom").setDisabled(this.zoom === 1).onClick(() => this.setZoom(1)));
-    menu.addItem((item) => item.setTitle("Zoom in").setDisabled(this.zoom >= 3).onClick(() => this.setZoom(this.zoom + 0.1)));
+    menu.addItem((item) => item.setTitle("Zoom out").setDisabled(this.zoomLocked || this.zoom <= 0.5).onClick(() => this.setZoom(this.zoom - 0.1)));
+    menu.addItem((item) => item.setTitle("Reset zoom").setDisabled(this.zoomLocked || this.zoom === 1).onClick(() => this.setZoom(1)));
+    menu.addItem((item) => item.setTitle("Zoom in").setDisabled(this.zoomLocked || this.zoom >= 3).onClick(() => this.setZoom(this.zoom + 0.1)));
     menu.showAtMouseEvent(event);
   }
 
   private renamePage(): void {
+    if (this.readingMode) return;
     const title = window.prompt("Page title", this.currentPage().title)?.trim();
     if (!title) return;
     const page = this.currentPage();
@@ -1004,6 +1040,7 @@ export class InkView extends InkWritingView {
   }
 
   private duplicateCurrentPage(): void {
+    if (this.readingMode) return;
     this.finishPointerInput(false);
     const before = cloneNotebook(this.notebook);
     const beforePageId = this.currentPage().id;
@@ -1022,6 +1059,7 @@ export class InkView extends InkWritingView {
   }
 
   private deleteCurrentPage(): void {
+    if (this.readingMode) return;
     if (this.notebook.pages.length <= 1) return;
     this.finishPointerInput(false);
     const before = cloneNotebook(this.notebook);
@@ -1041,6 +1079,7 @@ export class InkView extends InkWritingView {
   }
 
   private moveCurrentPage(delta: number): void {
+    if (this.readingMode) return;
     const target = this.pageIndex + delta;
     if (target < 0 || target >= this.notebook.pages.length) return;
     this.finishPointerInput(false);
@@ -1075,6 +1114,8 @@ export class InkView extends InkWritingView {
   }
 
   private restoreNotebookState(snapshot: InkNotebook, selectedPageId: string): void {
+    this.destroySwipeStage();
+    this.pageNavigationGeneration += 1;
     const current = this.notebook;
     const next = cloneNotebook(snapshot);
     const now = Date.now();
@@ -1192,17 +1233,18 @@ export class InkView extends InkWritingView {
   }
 
   private updateZoomControls(): void {
+    this.updateZoomHud();
     const readout = this.root?.querySelector<HTMLElement>(".ink-zoom-value");
     if (readout) readout.textContent = Math.round(this.zoom * 100) + "%";
     const zoomOut = this.root?.querySelector<HTMLButtonElement>("[aria-label='Zoom out']");
     const zoomIn = this.root?.querySelector<HTMLButtonElement>("[aria-label='Zoom in']");
-    if (zoomOut) zoomOut.disabled = this.zoom <= 0.5;
-    if (zoomIn) zoomIn.disabled = this.zoom >= 3;
+    if (zoomOut) zoomOut.disabled = this.zoomLocked || this.zoom <= 0.5;
+    if (zoomIn) zoomIn.disabled = this.zoomLocked || this.zoom >= 3;
   }
 
   private resetPageView(): void {
     this.pinchRenderZoom = undefined;
-    this.zoom = 1;
+    if (!this.zoomLocked) this.zoom = 1;
     if (this.pageScroller) {
       this.pageScroller.scrollLeft = 0;
       this.pageScroller.scrollTop = 0;
@@ -1211,7 +1253,7 @@ export class InkView extends InkWritingView {
   }
 
   private setZoom(value: number, target?: { x: number; y: number }, anchor?: { x: number; y: number }): void {
-    if (!Number.isFinite(value)) return;
+    if (this.zoomLocked || !Number.isFinite(value)) return;
     const viewport = this.pageScroller.getBoundingClientRect();
     target ??= { x: viewport.left + this.pageScroller.clientWidth / 2, y: viewport.top + this.pageScroller.clientHeight / 2 };
     const before = this.pageElement.getBoundingClientRect();
@@ -1229,11 +1271,6 @@ export class InkView extends InkWritingView {
     this.onViewportMotion();
   }
 
-  private onWheel(event: WheelEvent): void {
-    if (!event.ctrlKey && !event.metaKey) return;
-    event.preventDefault();
-    this.setZoom(this.zoom * (event.deltaY > 0 ? 0.92 : 1.08), { x: event.clientX, y: event.clientY });
-  }
 
 
 

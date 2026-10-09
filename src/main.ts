@@ -1,4 +1,5 @@
-import { Notice, Plugin, PluginSettingTab, SuggestModal, TAbstractFile, TFile, WorkspaceLeaf } from "obsidian";
+import { Notice, Plugin, PluginSettingTab, TAbstractFile, TFile, WorkspaceLeaf } from "obsidian";
+import { NotebookSuggestModal } from "./notebook-modal";
 import { InkView, VIEW_TYPE_INK } from "./view";
 import { INK_EXTENSION, NotebookStore } from "./storage";
 import { createInkEmbedProcessor } from "./embed";
@@ -201,12 +202,16 @@ export default class InkNotesPlugin extends Plugin {
 
   private async openNotebook(): Promise<void> {
     const files = await this.store.list();
-    if (files.length === 0) { await this.createNotebook(); return; }
-    new NotebookSuggestModal(this.app, files, (file) => this.runAsync(this.openFile(file), `open ${file.path}`)).open();
+    new NotebookSuggestModal(this.app, files, (file) => this.runAsync(this.openFile(file), `open ${file.path}`),
+      (title) => this.createNotebook(title), async (file, title) => {
+        const parent = file.path.slice(0, file.path.lastIndexOf("/") + 1);
+        const path = `${parent}${title}.${INK_EXTENSION}`;
+        if (path !== file.path) await this.app.fileManager.renameFile(file, path);
+      }).open();
   }
 
-  private async createNotebook(): Promise<void> {
-    const file = await this.store.create("Ink Notebook");
+  private async createNotebook(title = "Ink Notebook"): Promise<void> {
+    const file = await this.store.create(title);
     await this.openFile(file);
   }
 
@@ -294,14 +299,4 @@ class InkSettingTab extends PluginSettingTab {
       if (leaf.view instanceof InkView) run(leaf.view);
     }
   }
-}
-
-class NotebookSuggestModal extends SuggestModal<TFile> {
-  constructor(app: Plugin["app"], private readonly files: TFile[], private readonly select: (file: TFile) => void) { super(app); }
-  getSuggestions(query: string): TFile[] {
-    const search = query.trim().toLowerCase();
-    return this.files.filter((file) => !search || file.path.toLowerCase().includes(search));
-  }
-  renderSuggestion(file: TFile, el: HTMLElement): void { el.setText(file.path); }
-  onChooseSuggestion(file: TFile): void { this.select(file); }
 }

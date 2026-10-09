@@ -191,6 +191,181 @@ afterEach(async () => {
 });
 
 describe("pdf page preview rail", () => {
+  it("switches PDF reading mode without changing navigation or writer ownership", async () => {
+    const { view, internal, sidecar } = await setup(2);
+    const host = view as unknown as { readingMode: boolean; setReadingMode(value: boolean): void;
+      addBlankPage(index: number): void; withPageUndo(change: () => boolean, label: string): void;
+      writerHeld: boolean; inputLocked(): boolean; state: { tool: string }; ensureSwipeStage(offset: number): void;
+      exportHandwrittenCopy(): Promise<void> };
+    const before = serializeSidecar(sidecar);
+    const toggle = document.querySelector<HTMLButtonElement>('[aria-label="Reading mode"]')!;
+    toggle.click();
+    expect(host.readingMode).toBe(true);
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(document.querySelector(".ink-pdf-view")!.classList.contains("ink-reading")).toBe(true);
+    expect(host.writerHeld).toBe(true);
+    expect(host.inputLocked()).toBe(true);
+    const scroller = document.querySelector<HTMLElement>(".ink-pdf-scroller")!;
+    scroller.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true }));
+    expect(internal.noteIndex).toBe(1);
+    scroller.dispatchEvent(new KeyboardEvent("keydown", { key: "e", bubbles: true }));
+    expect(host.state.tool).toBe("pen");
+    host.ensureSwipeStage(-250);
+    expect(document.querySelector(".ink-swipe-stage")).toBeNull();
+    const exportCopy = vi.spyOn(host, "exportHandwrittenCopy").mockResolvedValue();
+    document.querySelector<HTMLButtonElement>('[aria-label="Export PDF with handwriting"]')!.click();
+    expect(exportCopy).toHaveBeenCalledOnce();
+    host.addBlankPage(1);
+    host.withPageUndo(() => true, "change the page");
+    expect(serializeSidecar(sidecar)).toBe(before);
+    toggle.click();
+    expect(host.readingMode).toBe(false);
+    expect(document.querySelector(".ink-pdf-view")!.classList.contains("ink-reading")).toBe(false);
+    expect(host.inputLocked()).toBe(false);
+    host.writerHeld = false;
+    toggle.click(); toggle.click();
+    expect(host.inputLocked()).toBe(true);
+  });
+
+  it("shares PDF desktop navigation and tool shortcuts, without taking text input or read-only history", async () => {
+    const { view, internal } = await setup(3);
+    const scroller = document.querySelector<HTMLElement>(".ink-pdf-scroller")!;
+    const key = (value: string, options = {}) => scroller.dispatchEvent(new KeyboardEvent("keydown",
+      { key: value, bubbles: true, cancelable: true, ...options }));
+    scroller.focus();
+    key("PageDown");
+    expect(internal.noteIndex).toBe(1);
+    key("End");
+    expect(internal.noteIndex).toBe(2);
+    key("Home");
+    expect(internal.noteIndex).toBe(0);
+    key("e");
+    expect(document.querySelector('[aria-label="Erase"]')?.getAttribute("aria-pressed")).toBe("true");
+    const host = view as unknown as { undo(): void; writerHeld: boolean };
+    const undo = vi.spyOn(host, "undo");
+    host.writerHeld = false;
+    key("z", { ctrlKey: true });
+    expect(undo).not.toHaveBeenCalled();
+    key("PageDown");
+    expect(internal.noteIndex).toBe(1);
+  });
+
+  it("allows read-only PDF middle-button panning and clears it when capture is lost", async () => {
+    const { view } = await setup();
+    const host = view as unknown as { writerHeld: boolean; scroller: HTMLElement; desktopPan: unknown;
+      onPointerDown(e: PointerEvent): void; onPointerMove(e: PointerEvent): void; onLostPointerCapture(e: PointerEvent): void;
+      capturePointer(id: number): void; releasePointer(id: number): void };
+    host.writerHeld = false;
+    vi.spyOn(host, "capturePointer").mockImplementation(() => undefined);
+    vi.spyOn(host, "releasePointer").mockImplementation(() => undefined);
+    const event = { pointerType: "mouse", pointerId: 2, button: 1, clientX: 200, clientY: 200, preventDefault: vi.fn() } as unknown as PointerEvent;
+    host.onPointerDown(event);
+    host.onPointerMove({ ...event, clientX: 170, clientY: 160 });
+    expect(host.scroller.scrollLeft).toBe(30);
+    expect(host.scroller.scrollTop).toBe(40);
+    host.onLostPointerCapture(event);
+    expect(host.desktopPan).toBeNull();
+    expect(host.scroller.classList.contains("ink-panning")).toBe(false);
+  });
+
+  it.each([
+    ["Add page before current", 1], ["Add page after current", 2],
+    ["Add page before first", 0], ["Add page after last", 3],
+  ])("inserts a selected PDF blank with %s and restores selection on undo/redo", async (label, index) => {
+    const { view, internal } = await setup(3);
+    await view.navigatePages(1);
+    const sources = internal.sidecar.notePages.map((page) => ({ ...page }));
+    document.querySelector<HTMLButtonElement>('[aria-label="Add page"]')!.click();
+    Array.from(document.querySelectorAll<HTMLButtonElement>(".preview-menu button"))
+      .find((item) => item.textContent === label)!.click();
+    const id = internal.sidecar.notePages[index].id;
+    expect(internal.noteIndex).toBe(index);
+    expect(internal.sidecar.notePages[index].sourceIndex).toBeUndefined();
+    expect(internal.sidecar.notebook.pages[index]).toMatchObject({ id, paper: "blank", strokes: [] });
+    expect(internal.sidecar.notePages.filter((page) => page.id !== id)).toEqual(sources);
+    document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')!.click();
+    expect(internal.sidecar.notePages).toEqual(sources);
+    expect(internal.noteIndex).toBe(1);
+    document.querySelector<HTMLButtonElement>('[aria-label="Redo"]')!.click();
+    expect(internal.sidecar.notePages[index].id).toBe(id);
+    expect(internal.noteIndex).toBe(index);
+  });
+
+  it.each([-1, 1])("adds once at PDF boundary %s only after the distance threshold", async (side) => {
+    const { view, internal } = await setup(3);
+    const host = view as unknown as SwipeInternals;
+    Object.defineProperties(host.scroller, { clientWidth: { value: 800 }, clientHeight: { value: 700 } });
+    if (side > 0) await view.navigatePages(2);
+    host.onTouchStart(swipeTouch([[1, 400, 300]]));
+    host.onTouchMove(swipeTouch([[1, 400 - side * 80, 300]]));
+    host.onTouchStart(swipeTouch([]));
+    await vi.waitFor(() => expect(host.flipSettling).toBe(false));
+    expect(internal.sidecar.notePages).toHaveLength(3);
+    host.onTouchStart(swipeTouch([[1, 400, 300]]));
+    host.onTouchMove(swipeTouch([[1, 400 - side * 250, 300]]));
+    expect(document.querySelector(".ink-swipe-stage")?.classList.contains("is-ready")).toBe(true);
+    host.onTouchStart(swipeTouch([])); host.onTouchStart(swipeTouch([]));
+    expect(internal.sidecar.notePages).toHaveLength(4);
+    expect(internal.noteIndex).toBe(side < 0 ? 0 : 3);
+    expect(internal.sidecar.notePages[internal.noteIndex].sourceIndex).toBeUndefined();
+  });
+
+  it("blocks menu and boundary insertion after losing the PDF writer lock", async () => {
+    const { view, internal } = await setup();
+    const host = view as unknown as SwipeInternals & { writerHeld: boolean };
+    host.writerHeld = false;
+    Object.defineProperties(host.scroller, { clientWidth: { value: 800 }, clientHeight: { value: 700 } });
+    document.querySelector<HTMLButtonElement>('[aria-label="Add page"]')!.click();
+    Array.from(document.querySelectorAll<HTMLButtonElement>(".preview-menu button"))[0].click();
+    rapidSwipe(host, -1);
+    await Promise.resolve();
+    expect(internal.sidecar.notePages).toHaveLength(3);
+    expect(document.querySelector(".ink-page-insert-hint")).toBeNull();
+  });
+
+  it("shows a locked PDF pinch again and pans without changing the scale", async () => {
+    const { view, host } = await rasterSetup(800, 700, 1, 1);
+    const gestureHost = host as unknown as { zoom: number; zoomLocked: boolean; onTouchStart(event: TouchEvent): void; onTouchMove(event: TouchEvent): void };
+    gestureHost.zoom = 1.5;
+    gestureHost.zoomLocked = true;
+    const before = host.scroller.scrollTop;
+    gestureHost.onTouchStart(swipeTouch([[1, 300, 300], [2, 400, 300]]));
+    gestureHost.onTouchMove(swipeTouch([[1, 250, 260], [2, 450, 260]]));
+    expect(gestureHost.zoom).toBe(1.5);
+    expect(host.scroller.scrollTop).toBeGreaterThan(before);
+    expect(document.querySelector(".ink-zoom-hud")?.classList.contains("is-visible")).toBe(true);
+    await view.onClose();
+  });
+  it("keeps a locked PDF magnification across mixed page fits and disables menu zoom", async () => {
+    const { view, sidecar, host } = await rasterSetup(800, 700, 2);
+    const oldFit = host.fitZoom;
+    // 200% is relative to each page's default fit, including portrait/landscape.
+    host.zoom = oldFit * 2;
+    const lock = document.querySelector<HTMLButtonElement>('[aria-label="Lock zoom"]')!;
+    lock.click();
+    sidecar.notePages[1].width = 960;
+    sidecar.notePages[1].height = 540;
+    const previewSize = (view as unknown as { swipePageSize(page: unknown): { zoom: number } }).swipePageSize(sidecar.notePages[1]);
+    expect(previewSize.zoom).toBe(2);
+    await view.navigatePages(1);
+    expect(host.fitZoom).toBe(1);
+    expect(host.zoom).toBe(2);
+    expect(document.querySelector(".ink-zoom-hud-value")?.textContent).toBe("200%");
+    document.querySelector<HTMLButtonElement>('[aria-label="Page options"]')!.click();
+    const entries = Array.from(document.querySelectorAll<HTMLButtonElement>(".preview-menu button"))
+      .filter((item) => ["Zoom out", "Reset zoom", "Zoom in"].includes(item.textContent!));
+    expect(entries).toHaveLength(3);
+    expect(entries.every((item) => item.disabled)).toBe(true);
+    (view as unknown as { resetZoom(): void; setZoom(value: number): void }).resetZoom();
+    (view as unknown as { setZoom(value: number): void }).setZoom(3);
+    expect(host.zoom).toBe(2);
+    document.querySelector<HTMLButtonElement>('[aria-label="Page options"]')!.click();
+    document.querySelector<HTMLButtonElement>('[aria-label="Unlock zoom"]')!.click();
+    await view.navigatePages(-1);
+    expect(host.zoom).toBeCloseTo(oldFit);
+    expect(document.querySelector(".ink-zoom-hud-value")?.textContent).toBe("100%");
+  });
+
   it("toggles the PDF three-dot menu instead of reopening after native dismissal", async () => {
     const { view } = await setup();
     try {
@@ -382,6 +557,10 @@ describe("pdf page preview rail", () => {
   it("starts collapsed and toggles from the toolbar Pages button", async () => {
     const { view } = await setup(3);
     const root = document.querySelector<HTMLElement>(".ink-pdf-view")!;
+    const labels = (selector: string) => Array.from(root.querySelectorAll(selector)).map((el) => el.getAttribute("aria-label"));
+    expect(labels(".ink-toolbar-start button")).toEqual(["Pages", "Undo", "Redo"]);
+    expect(labels(".ink-toolbar-section-draw button")).toEqual(["Pen", "Highlight", "Erase", "Select"]);
+    expect(labels(".ink-toolbar-section-document button")).toEqual(["Reading mode", "Add page", "Export PDF with handwriting", "Page options"]);
     expect(root.classList.contains("ink-rail-hidden")).toBe(true);
     const toggle = document.querySelector<HTMLButtonElement>('button[aria-label="Pages"]')!;
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
@@ -714,7 +893,7 @@ describe("pdf page preview rail", () => {
     const host = view as unknown as { pageWrap: HTMLElement; swipeDrag(x: number): void; swipeSettle(delta: number): void };
     const navigation = vi.spyOn(view, "navigatePages");
     host.swipeDrag(240);
-    expect(host.pageWrap.style.transform).toBe("translateX(60px)");
+    expect(host.pageWrap.style.transform).toBe("translateX(16px)");
     host.swipeSettle(-1);
     expect(navigation).not.toHaveBeenCalled();
     expect(host.pageWrap.style.transform).toBe("");

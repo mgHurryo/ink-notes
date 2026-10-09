@@ -107,10 +107,68 @@ export class WorkspaceLeaf {}
 export class App {}
 /** pdf-view's RecoveryChoiceModal extends this at module load; the preview
  *  never opens one, the jsdom unit tests only need the class to exist. */
-export class SuggestModal<T> {
-  constructor(_app?: unknown) {}
-  open(): void {}
+export class Modal {
+  containerEl = document.createElement("div");
+  modalEl = document.createElement("div");
+  titleEl = document.createElement("h2");
+  contentEl = document.createElement("div");
+  private previousFocus: HTMLElement | null = null;
+  private escape = (event: KeyboardEvent) => { if (event.key === "Escape") this.close(); };
+  constructor(public app?: unknown) {
+    this.containerEl.className = "preview-modal-container";
+    this.modalEl.className = "preview-modal";
+    this.modalEl.setAttribute("role", "dialog");
+    this.modalEl.setAttribute("aria-modal", "true");
+    this.modalEl.append(this.titleEl, this.contentEl);
+    this.containerEl.append(this.modalEl);
+  }
+  setTitle(title: string) { this.titleEl.textContent = title; this.modalEl.setAttribute("aria-label", title); return this; }
+  open(): void {
+    this.previousFocus = document.activeElement as HTMLElement | null;
+    document.body.append(this.containerEl);
+    document.addEventListener("keydown", this.escape);
+    this.onOpen();
+  }
+  close(): void {
+    this.containerEl.remove();
+    document.removeEventListener("keydown", this.escape);
+    this.onClose();
+    this.previousFocus?.focus();
+  }
+  onOpen(): void {}
   onClose(): void {}
+}
+export class SuggestModal<T> extends Modal {
+  inputEl = document.createElement("input");
+  resultContainerEl = document.createElement("div");
+  emptyStateText = "No results";
+  constructor(app?: unknown) {
+    super(app);
+    this.contentEl.append(this.inputEl, this.resultContainerEl);
+    this.inputEl.addEventListener("input", () => this.refresh());
+    this.inputEl.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") return;
+      const first = this.getSuggestions(this.inputEl.value)[0];
+      if (first !== undefined) { event.preventDefault(); this.close(); this.onChooseSuggestion(first, event); }
+    });
+  }
+  setPlaceholder(value: string) { this.inputEl.placeholder = value; this.inputEl.setAttribute("aria-label", value); }
+  onOpen(): void { this.refresh(); this.inputEl.focus(); }
+  getSuggestions(_query: string): T[] { return []; }
+  renderSuggestion(_value: T, _el: HTMLElement): void {}
+  onChooseSuggestion(_value: T, _event: MouseEvent | KeyboardEvent): void {}
+  private refresh(): void {
+    this.resultContainerEl.replaceChildren();
+    const results = this.getSuggestions(this.inputEl.value);
+    if (!results.length) this.resultContainerEl.textContent = this.emptyStateText;
+    for (const result of results) {
+      const row = document.createElement("div");
+      row.className = "suggestion-item";
+      this.renderSuggestion(result, row);
+      row.addEventListener("click", (event) => { this.close(); this.onChooseSuggestion(result, event); });
+      this.resultContainerEl.append(row);
+    }
+  }
 }
 export class MarkdownRenderChild {
   constructor(public containerEl: HTMLElement) {}
