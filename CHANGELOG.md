@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.0-beta.34 - 2026-10-10
+
+- Page swipes now move both pages together on a viewport-sized track, keeping the gap fixed throughout the slide. PDF neighbours retain their own aspect ratio instead of stretching into the current page dimensions.
+- Flips continue from the release position, short drags and unavailable neighbours rebound, and stale or opposite-direction velocity no longer triggers a fling. PDF previews include handwriting, and notebook previews retain scaled paper patterns.
+- Navigation resets the real page transform and keeps the incoming snapshot until the save/Worker barrier and page rendering finish, replacing the notebook fixed handoff timer. Duplicate settles, interrupted gestures, and obsolete animations cannot commit another flip.
+- Added regression tests for frame spacing and proportions, forward/backward landing, boundaries, cancellation, and delayed Worker handoff. iPad/WebKit feel and dense-document swipe performance remain unverified.
+
 ## 0.8.0-beta.33 - 2026-10-10
 
 - Preset color edits apply LIVE while you adjust: the platform picker fires an input event per adjustment, and edits now key off that instead of the unreliable change/close signals - with the swatch slot tracking its current color so every following adjustment lands. Fixes double-tap re-colors not sticking.
