@@ -172,6 +172,27 @@ describe("page touch navigation", () => {
     expect(settles.filter((d) => d !== 0)).toHaveLength(2);
   });
 
+  it.each([
+    { release: 120, velocity: -0.8, expected: 1 },
+    { release: 350, velocity: -0.8, expected: 0 },
+    { release: 120, velocity: 0.8, expected: 0 },
+  ])("only flings with fresh velocity in the travel direction: $release/$velocity", ({ release, velocity, expected }) => {
+    const { view } = setup();
+    view.swipeSettle = vi.fn();
+    view.touchGesture = { ids: [1], axis: "x", dragX: -60, lastT: 100, velocity };
+    view.onTouchStart({ ...touchEvent([]), timeStamp: release });
+    expect(view.swipeSettle).toHaveBeenCalledWith(expected);
+  });
+
+  it("rebounds a page drag when a second finger arrives", () => {
+    const { view } = setup();
+    view.swipeSettle = vi.fn();
+    view.touchGesture = { ids: [1], axis: "x", dragX: -60 };
+    view.onTouchStart(touchEvent([[1, 300, 400], [2, 600, 400]]));
+    expect(view.swipeSettle).toHaveBeenCalledWith(0);
+    expect(view.touchGesture).toBeNull();
+  });
+
   it("allows a zoomed flip drag only from the scroll edge the drag heads for", () => {
     const { view } = setup();
     const scroller = view.pageScroller;

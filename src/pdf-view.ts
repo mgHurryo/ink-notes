@@ -4,7 +4,7 @@ import { canvasResolution, drawInkStroke, scaledStroke } from "./rendering";
 import { registerDocumentPointerEndEvents } from "./ink-input";
 import { InkWritingView } from "./ink-writing";
 import type { SharedToolState } from "./tool-state";
-import { TileRenderer } from "./tiles";
+import { TileRenderer, cellKeys } from "./tiles";
 import { InkWorkerService } from "./worker-service";
 import {
   PdfSidecar,
@@ -921,6 +921,9 @@ export class PdfInkView extends InkWritingView {
     this.layoutPage();
     this.renderAll();
     await this.renderPdfPage();
+    if (this.flipSettling) this.tiles?.previewInteractiveCells(
+      cellKeys(this.viewport, this.canvasLogicalWidth, this.canvasLogicalHeight), this.viewport,
+      (window.devicePixelRatio || 1) * this.zoom);
   }
 
   private setZoom(zoom: number, target?: { x: number; y: number }, anchor?: { x: number; y: number }): void {
@@ -1104,7 +1107,7 @@ export class PdfInkView extends InkWritingView {
   }
 
   protected inputLocked(): boolean {
-    return this.editingLocked();
+    return this.editingLocked() || this.flipSettling;
   }
 
   private editingLocked(): boolean {
@@ -1140,15 +1143,15 @@ export class PdfInkView extends InkWritingView {
   }
 
   private swipeStage: HTMLElement | null = null;
-  /** True while a decided flip is animating/committing; a trailing
-   *  touchcancel must not spring it back (double-settle = the flash). */
-  private flipSettling = false;
+  private swipeLayer: HTMLElement | null = null;
 
   protected swipeDrag(offset: number): void {
     const wrap = this.pageWrap;
-    if (!wrap) return;
-    this.swipeDragOffset = offset;
+    if (!wrap || this.flipSettling) return;
     this.ensureSwipeStage(offset);
+    const pitch = this.swipePitch();
+    offset = this.swipeStage ? Math.max(-pitch, Math.min(pitch, offset)) : offset / (1 + Math.abs(offset) / 80);
+    this.swipeDragOffset = offset;
     wrap.setCssStyles({ transition: "none", transform: `translateX(${offset}px)` });
     if (this.swipeStage) this.swipeStage.setCssStyles({ transition: "none", transform: `translateX(${offset}px)` });
   }
@@ -1166,28 +1169,48 @@ export class PdfInkView extends InkWritingView {
     }
     const count = this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 0;
     if (neighborIndex < 0 || neighborIndex >= count) return;
-    // Keep the visible gutter between the two pages equal to the page's own
-    // edge distance, so pages never look stitched together mid-drag.
-    const gap = Math.max(12, Math.round(wrap.offsetLeft));
-    const stage = scroller.createDiv({ cls: "ink-swipe-stage" });
+    const pitch = this.swipePitch();
+    const display = this.rotatedSize(this.sidecar?.notePages[neighborIndex] ?? null);
+    const baseWidth = Math.max(200, scroller.clientWidth - PDF_PAGE_PADDING * 2);
+    const fit = Math.max(0.05, Math.min(1, Math.max(1, scroller.clientHeight - PDF_PAGE_PADDING * 2)
+      / (baseWidth * display.height / display.width)));
+    const zoom = this.zoomTouched ? this.zoom : fit;
+    const width = baseWidth * zoom;
+    const height = width * display.height / display.width;
+    this.swipeLayer = scroller.createDiv({ cls: "ink-swipe-layer" });
+    this.swipeLayer.setCssStyles({ left: `${scroller.scrollLeft}px`, top: `${scroller.scrollTop}px`,
+      width: `${scroller.clientWidth}px`, height: `${scroller.clientHeight}px`, right: "auto", bottom: "auto" });
+    const stage = this.swipeLayer.createDiv({ cls: "ink-swipe-stage" });
     stage.dataset.neighbor = String(neighborIndex);
     stage.setCssStyles({
       position: "absolute", margin: "0", overflow: "hidden", background: "#fff",
       borderRadius: "2px", boxShadow: "var(--ink-shadow-paper)",
-      left: `${wrap.offsetLeft + side * (wrap.offsetWidth + gap)}px`,
-      top: `${wrap.offsetTop}px`,
-      width: `${wrap.offsetWidth}px`,
-      height: `${wrap.offsetHeight}px`,
+      left: `${Math.max(PDF_PAGE_PADDING, (scroller.clientWidth - width) / 2) - scroller.scrollLeft + side * pitch}px`,
+      top: `${Math.max(PDF_PAGE_PADDING, (scroller.clientHeight - height) / 2) - scroller.scrollTop}px`,
+      width: `${width}px`,
+      height: `${height}px`,
       transform: "translateX(0px)",
     });
     this.swipeStage = stage;
     void this.renderSwipeStagePage(stage, neighborIndex);
+    const ink = stage.createEl("canvas");
+    ink.style.cssText = "position:absolute;inset:0;width:100%;height:100%";
+    const logicalHeight = baseWidth * display.height / display.width;
+    const resolution = canvasResolution(baseWidth, logicalHeight, window.devicePixelRatio || 1, zoom, SELECTION_OVERLAY_BUDGET);
+    ink.width = resolution.width; ink.height = resolution.height;
+    const ctx = ink.getContext("2d");
+    if (ctx) {
+      ctx.setTransform(ink.width / baseWidth, 0, 0, ink.height / logicalHeight, 0, 0);
+      for (const stroke of this.sidecar?.notebook.pages[neighborIndex]?.strokes ?? []) {
+        drawInkStroke(ctx, stroke, baseWidth, logicalHeight);
+      }
+    }
   }
 
   private async renderSwipeStagePage(stage: HTMLElement, index: number): Promise<void> {
     const notePage = this.sidecar?.notePages[index];
     const canvas = stage.createEl("canvas");
-    canvas.setCssStyles({ width: "100%", height: "100%" });
+    canvas.setCssStyles({ position: "absolute", inset: "0", width: "100%", height: "100%" });
     if (!notePage || notePage.sourceIndex === undefined || !this.pdfDoc) return;
     // The prewarm cache makes the flip instant when it holds the page.
     const cached = this.neighbourCache.get(index);
@@ -1248,55 +1271,43 @@ export class PdfInkView extends InkWritingView {
   /** Last drag offset; settle animations continue from it. */
   private swipeDragOffset = 0;
 
-  /** Continues a transform from `from` to `to` via the Web Animations API:
-   *  unlike a CSS transition it starts deterministically (no re-style edge
-   *  cases inside touch handlers) and onfinish is a reliable commit point. */
-  private animateTransformX(el: HTMLElement, from: number, to: number, done?: () => void): void {
-    el.setCssStyles({ transition: "none", transform: `translateX(${from}px)` });
-    if (from === to || typeof el.animate !== "function") {
-      el.setCssStyles({ transform: `translateX(${to}px)` });
-      done?.();
-      return;
-    }
-    const animation = el.animate(
-      [{ transform: `translateX(${from}px)` }, { transform: `translateX(${to}px)` }],
-      { duration: 160, easing: "ease-out" });
-    animation.onfinish = () => {
-      el.setCssStyles({ transform: `translateX(${to}px)` });
-      done?.();
-    };
-    animation.oncancel = () => done?.();
+  private swipePitch(): number {
+    return Math.max(this.scroller?.clientWidth ?? 0, this.pageWrap?.offsetWidth ?? 0) + 16;
   }
 
   protected swipeSettle(delta: number): void {
+    if (this.flipSettling) return;
     const wrap = this.pageWrap;
     if (!wrap) { this.destroySwipeStage(); return; }
     const stage = this.swipeStage;
+    const side = stage ? Number(stage.dataset.neighbor) - this.noteIndex : 0;
+    const flip = delta !== 0 && side === delta;
     const from = this.swipeDragOffset;
-    this.swipeDragOffset = 0;
-    if (!delta || !stage) {
-      // Spring back: both pages glide home from where the finger left them.
-      this.animateTransformX(wrap, from, 0);
-      if (stage) this.animateTransformX(stage, from, 0, () => this.destroySwipeStage());
-      return;
-    }
-    if (this.flipSettling) return;
+    const to = flip ? -side * this.swipePitch() : 0;
     this.flipSettling = true;
-    // The slide continues from the release point INTO the slot; the stage
-    // keeps covering the slot until the real page has rendered underneath.
-    const side = Number(stage.dataset.neighbor) - this.noteIndex;
-    const width = wrap.offsetWidth;
-    const gap = Math.max(12, Math.round(wrap.offsetLeft));
-    this.animateTransformX(wrap, from, -delta * width);
-    this.animateTransformX(stage, from, -side * (width + gap), () => {
-      this.flipSettling = false;
-      void this.navigatePages(delta).finally(() => this.destroySwipeStage());
+    this.animatePageSwipe(stage ? [wrap, stage] : [wrap], from, to, () => {
+      if (!flip || !stage) { this.destroySwipeStage(); return; }
+      this.cancelPageSwipeAnimations();
+      wrap.style.transform = "";
+      wrap.style.visibility = "hidden";
+      void this.navigatePages(delta).catch((error) => {
+        this.setStatus(`Could not switch pages: ${messageOf(error)}`, true);
+      }).finally(() => {
+        if (this.swipeStage === stage) this.destroySwipeStage();
+      });
     });
   }
 
   private destroySwipeStage(): void {
+    this.cancelPageSwipeAnimations();
+    this.swipeLayer?.remove();
     this.swipeStage?.remove();
-    this.swipeStage = null;
+    this.swipeLayer = this.swipeStage = null;
+    if (this.pageWrap) {
+      this.pageWrap.style.transform = "";
+      this.pageWrap.style.visibility = "";
+    }
+    this.swipeDragOffset = 0;
     this.flipSettling = false;
   }
   protected settingsOpen(): boolean {
@@ -1416,6 +1427,7 @@ export class PdfInkView extends InkWritingView {
   }
 
   private resetViewState(): void {
+    this.destroySwipeStage();
     this.cancelPdfRender();
     this.finishPointerInput(false);
     this.discardPendingInkPreview();
