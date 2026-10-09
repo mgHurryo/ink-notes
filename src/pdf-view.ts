@@ -981,17 +981,15 @@ export class PdfInkView extends InkWritingView {
     const display = this.rotatedSize(this.currentNotePage());
     this.pageBaseWidth = Math.max(200, this.scroller.clientWidth - PDF_PAGE_PADDING * 2) || 700;
     this.pageBaseHeight = this.pageBaseWidth * display.height / display.width;
-    // Fit = contain without caps: the tight axis sits flush (a landscape
-    // slide fills the pane width, a portrait page fills the pane height -
-    // never width-filled across a portrait page), and the page is as large
-    // as the pane allows. The old rule read as "small page floating in the
-    // middle" only because of its two caps: the 980px page-box limit and the
-    // fitZoom <= 1 limit, which together held a fullscreen pane to half size.
+    // The page BOX at zoom 1 already spans the pane width; the fit only
+    // decides whether zoom 1 holds (landscape pages: width-fill, the tall
+    // axis scrolls if ever needed) or the height axis must win (portrait
+    // pages shrink until they fit the pane height). beta.29/30 multiplied
+    // the box width by paneWidth/pageWidth AGAIN - a units mix-up that blew
+    // every page up ~1.4x past the pane, and Reset recomputed the same
+    // broken value.
     const contentHeight = Math.max(1, this.scroller.clientHeight - PDF_PAGE_PADDING * 2);
-    this.fitZoom = Math.max(0.05, Math.min(
-      this.pageBaseWidth / Math.max(1, display.width),
-      contentHeight / Math.max(1, display.height),
-      PDF_ZOOM_MAX));
+    this.fitZoom = Math.max(0.05, Math.min(1, contentHeight / this.pageBaseHeight));
     if (!this.zoomTouched) this.zoom = this.fitZoom;
     this.pageWrap.setCssStyles({
       width: `${this.pageBaseWidth * this.zoom}px`,
@@ -1143,6 +1141,9 @@ export class PdfInkView extends InkWritingView {
 
   private swipeStage: HTMLElement | null = null;
   private swipeStageTimer: number | undefined;
+  /** True while a decided flip is animating/committing; a trailing
+   *  touchcancel must not spring it back (double-settle = the flash). */
+  private flipSettling = false;
 
   protected swipeDrag(offset: number): void {
     const wrap = this.pageWrap;
@@ -1248,6 +1249,10 @@ export class PdfInkView extends InkWritingView {
     const wrap = this.pageWrap;
     if (!wrap) { this.destroySwipeStage(); return; }
     if (!delta || !this.swipeStage) {
+      // A decided flip is never spring-backed: a trailing touchcancel (or a
+      // duplicated settle) used to slide the stage back beside the incoming
+      // page and destroy it there - the old page flashed beside the new one.
+      if (this.flipSettling) return;
       wrap.setCssStyles({ transition: "transform 160ms ease-out", transform: "translateX(0px)" });
       if (this.swipeStage) this.swipeStage.setCssStyles({ transition: "transform 160ms ease-out", transform: "translateX(0px)" });
       if (this.swipeStageTimer === undefined) {
@@ -1255,6 +1260,8 @@ export class PdfInkView extends InkWritingView {
       }
       return;
     }
+    if (this.flipSettling) return;
+    this.flipSettling = true;
     // The neighbour page slides all the way INTO the page slot while the
     // current page slides out; the stage then keeps covering the slot until
     // the real page has rendered underneath, so the old canvas never flashes.
@@ -1273,6 +1280,7 @@ export class PdfInkView extends InkWritingView {
     const commit = (): void => {
       if (committed || !this.swipeStage) return;
       committed = true;
+      this.flipSettling = false;
       // At the animation end the stage sits exactly on the page slot, so
       // only the page's own transform drops (invisible underneath the
       // stage). The stage itself never re-positions here: reading fresh
@@ -1281,7 +1289,10 @@ export class PdfInkView extends InkWritingView {
       wrap.setCssStyles({ transition: "none", transform: "none" });
       void this.navigatePages(delta).finally(() => this.destroySwipeStage());
     };
-    wrap.addEventListener("transitionend", commit, { once: true });
+    // Listen on the STAGE: it carries no transition-firing descendants, so
+    // its transitionend can never be a bubbled foreign one (a wrap listener
+    // fired early and committed mid-slide on devices).
+    this.swipeStage.addEventListener("transitionend", commit, { once: true });
     if (this.swipeStageTimer !== undefined) window.clearTimeout(this.swipeStageTimer);
     this.swipeStageTimer = window.setTimeout(commit, 280);
   }
@@ -1290,6 +1301,7 @@ export class PdfInkView extends InkWritingView {
     if (this.swipeStageTimer !== undefined) { window.clearTimeout(this.swipeStageTimer); this.swipeStageTimer = undefined; }
     this.swipeStage?.remove();
     this.swipeStage = null;
+    this.flipSettling = false;
   }
   protected settingsOpen(): boolean {
     return this.state.tool === "eraser" ? this.eraserPopover !== null : this.brushPopover?.isOpen ?? false;

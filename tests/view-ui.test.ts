@@ -162,20 +162,18 @@ describe("reference-style editor", () => {
     button("Highlight").click(); // panel switch must land at the top
     expect(body.scrollTop).toBe(0);
   });
-  it("re-colors a preset straight in the system picker on double-tap", async () => {
+  it("re-colors a preset through its own picker armed by the first tap", () => {
     button("Pen").click();
     const blue = button("Pen blue");
     expect(blue.getAttribute("title")).toContain("double-tap to change");
-    blue.click(); // select it first
-    const input = document.querySelector<HTMLInputElement>(".ink-hidden-color-input")!;
-    const click = vi.spyOn(input, "click").mockImplementation(() => undefined);
-    doubleTap(blue);
-    // The shared off-screen picker was pointed at this swatch and opened.
-    expect(click).toHaveBeenCalled();
-    expect(input.value.toLowerCase()).toBe("#195bff");
-    // The settled pick replaces the preset and follows the selected color.
-    input.value = "#123456";
-    input.dispatchEvent(new Event("change"));
+    // Tap 1 selects and arms the swatch's own native picker input.
+    blue.click();
+    const picker = document.querySelector<HTMLInputElement>('input.ink-swatch-picker[data-color="#195bff"]')!;
+    expect(picker.style.pointerEvents).toBe("auto");
+    // Tap 2 lands on the real input and opens the system picker natively;
+    // the settled pick replaces the preset and follows the selected color.
+    picker.value = "#123456";
+    picker.dispatchEvent(new Event("change"));
     const edited = document.querySelector<HTMLElement>('.ink-color-swatch[data-brush-tool="pen"][data-color="#123456"]');
     expect(edited?.getAttribute("aria-pressed")).toBe("true");
     expect(button("Pen blue")).toBeNull();

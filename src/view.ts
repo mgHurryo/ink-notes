@@ -602,6 +602,9 @@ export class InkView extends InkWritingView {
 
   private swipeStage: HTMLElement | null = null;
   private swipeStageTimer: number | undefined;
+  /** True while a decided flip is animating/committing; a trailing
+   *  touchcancel must not spring it back (double-settle = the flash). */
+  private flipSettling = false;
 
   protected swipeDrag(offset: number): void {
     const extent = this.pageExtent;
@@ -661,6 +664,9 @@ export class InkView extends InkWritingView {
     const extent = this.pageExtent;
     if (!extent) { this.destroySwipeStage(); return; }
     if (!delta || !this.swipeStage) {
+      // A decided flip is never spring-backed (see the PDF view): a trailing
+      // touchcancel used to slide the stage back beside the incoming page.
+      if (this.flipSettling) return;
       extent.style.transition = "transform 160ms ease-out";
       extent.style.transform = "translateX(0px)";
       if (this.swipeStage) {
@@ -672,6 +678,8 @@ export class InkView extends InkWritingView {
       }
       return;
     }
+    if (this.flipSettling) return;
+    this.flipSettling = true;
     // Same gallery geometry as the PDF view: the neighbour slides into the
     // page slot and covers it until the real page renders underneath.
     const side = Number(this.swipeStage.dataset.neighbor) - this.pageIndex;
@@ -687,6 +695,7 @@ export class InkView extends InkWritingView {
     const commit = (): void => {
       if (committed || !this.swipeStage) return;
       committed = true;
+      this.flipSettling = false;
       // At the animation end the stage sits exactly on the page slot, so
       // only the extent's transform drops (invisible underneath the stage).
       // The stage itself never re-positions here: fresh offset reads during
@@ -697,7 +706,9 @@ export class InkView extends InkWritingView {
       this.changePage(delta);
       this.swipeStageTimer = window.setTimeout(() => { this.swipeStageTimer = undefined; this.destroySwipeStage(); }, 650);
     };
-    extent.addEventListener("transitionend", commit, { once: true });
+    // Listen on the STAGE (no transition-firing descendants - see the PDF
+    // view): a wrap listener committed mid-slide on devices.
+    this.swipeStage.addEventListener("transitionend", commit, { once: true });
     if (this.swipeStageTimer !== undefined) window.clearTimeout(this.swipeStageTimer);
     this.swipeStageTimer = window.setTimeout(commit, 280);
   }
@@ -706,6 +717,7 @@ export class InkView extends InkWritingView {
     if (this.swipeStageTimer !== undefined) { window.clearTimeout(this.swipeStageTimer); this.swipeStageTimer = undefined; }
     this.swipeStage?.remove();
     this.swipeStage = null;
+    this.flipSettling = false;
   }
   protected settingsOpen(): boolean {
     return this.state.tool === "eraser" ? this.eraserPopover !== null : this.brushPopover?.isOpen ?? false;

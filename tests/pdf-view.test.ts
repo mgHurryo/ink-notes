@@ -339,3 +339,53 @@ describe("predicted ghost tip", () => {
     expect(Math.abs(moveTo.mock.calls[0][0] - stroke.points[0].x * internal.canvasLogicalWidth)).toBeGreaterThan(1);
   });
 });
+
+
+describe("pdf page fit", () => {
+  /** layoutPage harness: pane metrics plus a minimal page geometry; tiles
+   *  stay unset (all call sites are optional-chained). */
+  function layoutHarness(clientWidth: number, clientHeight: number, page: { width: number; height: number }) {
+    const view = Object.create(PdfInkView.prototype) as unknown as {
+      scroller: unknown; pageWrap: unknown; sidecar: unknown; noteIndex: number;
+      zoom: number; zoomTouched: boolean; fitZoom: number;
+      pageWrapStyle: Record<string, string>;
+      layoutPage(): void;
+    };
+    view.pageWrapStyle = {};
+    view.scroller = {
+      clientWidth, clientHeight,
+      getBoundingClientRect: () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }),
+    };
+    view.pageWrap = {
+      style: view.pageWrapStyle,
+      setCssStyles(styles: Record<string, string>) { Object.assign(view.pageWrapStyle, styles); },
+      getBoundingClientRect: () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }),
+    };
+    view.sidecar = { notebook: { pages: [{ id: "p1" }] }, notePages: [page] };
+    view.noteIndex = 0;
+    view.zoom = 1;
+    view.zoomTouched = false;
+    return view;
+  }
+
+  it("fits a landscape page to the pane WIDTH at zoom 1 (no double scaling)", () => {
+    // A 16:9 slide on a 12.9" landscape pane. The beta.29/30 regression
+    // multiplied the box width (already pane-wide at zoom 1) by
+    // paneWidth/pageWidth again, blowing the page ~1.4x past the pane.
+    const view = layoutHarness(1318, 928, { width: 960, height: 540 });
+    view.layoutPage();
+    expect(view.zoom).toBe(1);
+    // Pane width minus the page padding (1318 - 2x24).
+    expect(parseFloat(view.pageWrapStyle.width)).toBe(1270);
+    expect(parseFloat(view.pageWrapStyle.height)).toBeLessThanOrEqual(928);
+  });
+
+  it("fits a portrait page to the pane HEIGHT, never across the width", () => {
+    const view = layoutHarness(1318, 928, { width: 595.28, height: 841.89 });
+    view.layoutPage();
+    const width = parseFloat(view.pageWrapStyle.width);
+    const height = parseFloat(view.pageWrapStyle.height);
+    expect(height).toBeCloseTo(880, 0);
+    expect(width).toBeLessThan(1270);
+  });
+});

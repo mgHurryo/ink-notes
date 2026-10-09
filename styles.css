@@ -1135,16 +1135,20 @@
 
 .ink-eraser-size-row { display: flex; flex-direction: column; }
 
-/* Off-screen system color picker for direct preset edits: out of flow so it
-   can never intercept taps, but still openable via .click() in a gesture. */
-.ink-size-popover .ink-hidden-color-input {
+/* Swatch slot: the visible button plus its own native picker input, which
+   only becomes tappable while armed (a tap on the swatch arms it; the next
+   tap opens the system picker natively). */
+.ink-swatch-slot { position: relative; flex: 0 0 40px; width: 40px; min-width: 40px; }
+
+.ink-swatch-slot .ink-swatch-picker {
   position: absolute;
-  width: 1px;
-  height: 1px;
+  inset: 0;
+  width: 100%;
+  height: 100%;
   padding: 0;
   border: 0;
   opacity: 0;
-  pointer-events: none;
+  cursor: pointer;
 }
 
 /* Anchor-true popovers: panels grow out of the control that opened them and
