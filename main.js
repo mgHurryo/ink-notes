@@ -29740,7 +29740,6 @@ var PdfInkView = class extends InkWritingView {
     menu.addItem((item) => item.setTitle("Reset zoom").setDisabled(!this.zoomTouched).onClick(() => this.resetZoom()));
     menu.addItem((item) => item.setTitle("Zoom in").setDisabled(this.zoom >= PDF_ZOOM_MAX).onClick(() => this.setZoom(this.zoom * PDF_ZOOM_STEP)));
     menu.addSeparator();
-    menu.addItem((item) => item.setTitle("Export PDF with handwriting").setIcon("download").onClick(() => void this.exportHandwrittenCopy()));
     menu.addItem((item) => item.setTitle("Open with the built-in viewer").setIcon("book-open").onClick(() => void this.restoreBuiltinViewer()));
     menu.showAtMouseEvent(event);
   }
