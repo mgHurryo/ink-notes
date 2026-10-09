@@ -10,11 +10,13 @@ import { PdfTabTakeover } from "../src/pdf-takeover";
 import type { TFile, WorkspaceLeaf } from "obsidian";
 
 const FINGERPRINT = { sha256: "a".repeat(64), byteLength: 100 };
+const rasterViews = new Set<PdfInkView>();
+const resizeCallbacks: (() => void)[] = [];
 
 interface RailInternals {
   sidecar: PdfSidecar;
   noteIndex: number;
-  pdfDoc: { numPages: number; getPage(n: number): Promise<unknown> } | null;
+  pdfDoc: { numPages: number; getPage(n: number): Promise<unknown>; destroy(): Promise<void> } | null;
   neighbourCache: Map<number, HTMLCanvasElement>;
   thumbCache: Map<number, HTMLCanvasElement>;
   renderPdfPage(): Promise<void>;
@@ -90,6 +92,47 @@ interface SwipeInternals {
   cancelPageFlip(): void;
 }
 
+interface RasterInternals extends RailInternals {
+  scroller: HTMLElement;
+  pageWrap: HTMLElement;
+  pdfCanvas: HTMLCanvasElement;
+  zoom: number;
+  zoomTouched: boolean;
+  layoutPage(): void;
+  swipeDrag(offset: number): void;
+  prewarmToken: number;
+  prewarmNeighbour(index: number, token: number): Promise<void>;
+  renderSwipeStagePage(stage: HTMLElement, index: number): Promise<void>;
+}
+
+async function rasterSetup(width: number, height: number, dpr: number, zoom = 1) {
+  const context = await setup(3);
+  rasterViews.add(context.view);
+  const host = context.view as unknown as RasterInternals;
+  Object.defineProperties(host.scroller, { clientWidth: { value: width, configurable: true }, clientHeight: { value: height } });
+  vi.stubGlobal("devicePixelRatio", dpr);
+  host.zoomTouched = true;
+  host.zoom = zoom;
+  host.layoutPage();
+  host.renderPdfPage = Reflect.get(PdfInkView.prototype, "renderPdfPage").bind(context.view);
+  const viewports: { width: number; height: number }[] = [];
+  const render = vi.fn(({ viewport }: { viewport: { width: number; height: number } }) => {
+    viewports.push(viewport);
+    return { promise: Promise.resolve(), cancel: vi.fn() };
+  });
+  host.pdfDoc = { numPages: 3, destroy: async () => undefined, getPage: vi.fn(async (number: number) => {
+    const note = context.sidecar.notePages[number - 1];
+    const rotated = note.rotation === 90 || note.rotation === 270;
+    return { getViewport: ({ scale }: { scale: number }) => ({
+      width: (rotated ? note.height : note.width) * scale,
+      height: (rotated ? note.width : note.height) * scale,
+    }), render };
+  }) };
+  // Keep main-raster assertions independent of optional neighbour prewarming.
+  vi.spyOn(host, "prewarmNeighbours").mockImplementation(() => undefined);
+  return { ...context, host, render, viewports };
+}
+
 function swipeTouch(points: number[][]): TouchEvent {
   return { touches: points.map(([identifier, clientX, clientY]) => ({ identifier, clientX, clientY })),
     cancelable: true, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as TouchEvent;
@@ -124,17 +167,109 @@ async function setupExpanded(sourcePageCount = 3) {
 
 beforeEach(() => {
   document.body.innerHTML = '<div id="host"><div></div><main></main></div>';
-  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  resizeCallbacks.length = 0;
+  vi.stubGlobal("ResizeObserver", class {
+    constructor(callback: () => void) { resizeCallbacks.push(callback); }
+    observe() {} disconnect() {}
+  });
   const ctx = new Proxy({}, { get: () => vi.fn(), set: () => true });
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as CanvasRenderingContext2D);
 });
 
 afterEach(async () => {
+  for (const view of rasterViews) await view.onClose();
+  rasterViews.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe("pdf page preview rail", () => {
+  it.each([[1318, 1, 1, 1270], [1318, 2, 1, 2540], [390, 3, 1, 1026], [800, 2, 2, 3008]])(
+    "renders the visible PDF at display density (pane %ipx, DPR %i, zoom %i)",
+    async (width, dpr, zoom, expectedWidth) => {
+      const { view, host, viewports } = await rasterSetup(width, 928, dpr, zoom);
+      await host.renderPdfPage();
+      expect(host.pdfCanvas.width).toBe(expectedWidth);
+      expect(host.pdfCanvas.height).toBeCloseTo(parseFloat(host.pageWrap.style.height) * dpr, -1);
+      expect(viewports[0].width).toBeCloseTo(expectedWidth);
+      expect(viewports[0].height).toBeCloseTo(host.pdfCanvas.height, 0);
+      await view.onClose();
+    });
+
+  it("preserves display density for rotated pages at 100%", async () => {
+    const { view, sidecar, host, viewports } = await rasterSetup(1318, 928, 2);
+    sidecar.notePages[0].rotation = 90;
+    host.layoutPage();
+    await host.renderPdfPage();
+    expect(host.pdfCanvas.width).toBe(2540);
+    expect(viewports[0].width).toBeCloseTo(2540);
+    expect(host.pdfCanvas.height).toBe(Math.round(2540 * 595.28 / 841.89));
+    await view.onClose();
+  });
+
+  it("prewarms and renders swipe previews at their own displayed size and fit", async () => {
+    const { view, sidecar, host } = await rasterSetup(1318, 928, 2);
+    // The current portrait page fits by height; the landscape neighbour fits by width.
+    host.zoomTouched = false;
+    sidecar.notePages[1].width = 960;
+    sidecar.notePages[1].height = 540;
+    host.layoutPage();
+    host.swipeDrag(-180);
+    const stage = document.querySelector<HTMLElement>(".ink-swipe-stage")!;
+    await host.prewarmNeighbour(1, host.prewarmToken);
+    const cached = host.neighbourCache.get(1)!;
+    expect(cached.width).toBe(2540);
+    expect(cached.height).toBe(Math.round(2540 * 540 / 960));
+    expect(cached.width).toBe(parseFloat(stage.style.width) * 2);
+    host.neighbourCache.clear();
+    await host.renderSwipeStagePage(stage, 1);
+    const raster = stage.querySelector<HTMLCanvasElement>("canvas:last-child")!;
+    expect(raster.width).toBe(cached.width);
+    expect(raster.height).toBe(cached.height);
+    await view.onClose();
+  });
+
+  it("keeps high zoom and DPR PDF allocations within the existing canvas limits", async () => {
+    const { view, host, viewports } = await rasterSetup(2000, 1200, 3, 3);
+    await host.renderPdfPage();
+    expect(host.pdfCanvas.width * host.pdfCanvas.height).toBeLessThanOrEqual(16_010_000);
+    expect(Math.max(host.pdfCanvas.width, host.pdfCanvas.height)).toBeLessThanOrEqual(8192);
+    expect(viewports[0].width).toBeCloseTo(host.pdfCanvas.width);
+    // Width and height are independently rounded to integer backing pixels.
+    expect(Math.abs(viewports[0].height - host.pdfCanvas.height)).toBeLessThanOrEqual(1);
+    await view.onClose();
+  });
+
+  it("does not enlarge a cached swipe raster from an old pane size", async () => {
+    const { view, host, render } = await rasterSetup(1318, 928, 2);
+    const stale = document.createElement("canvas");
+    stale.width = 595; stale.height = 842;
+    host.neighbourCache.set(1, stale);
+    host.swipeDrag(-180);
+    const stage = document.querySelector<HTMLElement>(".ink-swipe-stage")!;
+    await host.renderSwipeStagePage(stage, 1);
+    expect(render).toHaveBeenCalled();
+    expect(host.neighbourCache.get(1)?.width).toBe(2540);
+    await view.onClose();
+  });
+
+  it("invalidates old prewarm work when the pane resizes", async () => {
+    const { view, host, render } = await rasterSetup(1318, 928, 2);
+    let finish!: () => void;
+    render.mockImplementationOnce(() => ({ promise: new Promise<void>((resolve) => { finish = resolve; }), cancel: vi.fn() }));
+    const pending = host.prewarmNeighbour(1, host.prewarmToken);
+    await Promise.resolve();
+    expect(render).toHaveBeenCalledOnce();
+    Object.defineProperty(host.scroller, "clientWidth", { value: 900 });
+    resizeCallbacks[0]();
+    finish();
+    await pending;
+    expect(host.neighbourCache.has(1)).toBe(false);
+    await host.prewarmNeighbour(1, host.prewarmToken);
+    expect(host.neighbourCache.get(1)?.width).toBe(1704);
+    await view.onClose();
+  });
+
   it("keeps rapid swipe destinations and coalesces renders while the PDF is loading", async () => {
     const { view, internal, host, render, navigation, release } = await delayedSwipeSetup();
     for (const delta of [1, 1, -1, 1]) rapidSwipe(host, delta);

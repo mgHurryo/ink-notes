@@ -29095,6 +29095,8 @@ var PdfInkView = class extends InkWritingView {
     const observer = new ResizeObserver(() => {
       var _a;
       (_a = this.brushPopover) == null ? void 0 : _a.position();
+      this.prewarmToken += 1;
+      this.neighbourCache.clear();
       this.layoutPage();
       if (this.resizeRenderTimer !== void 0) window.clearTimeout(this.resizeRenderTimer);
       this.resizeRenderTimer = window.setTimeout(() => void this.renderPdfPage(), 100);
@@ -29759,6 +29761,7 @@ var PdfInkView = class extends InkWritingView {
     const clamped = Math.max(this.fitZoom, Math.min(PDF_ZOOM_MAX, zoom));
     if (clamped === this.zoom) return;
     this.zoomTouched = true;
+    this.prewarmToken += 1;
     this.neighbourCache.clear();
     const scroller = this.scroller;
     const page = this.pageWrap;
@@ -29941,9 +29944,18 @@ var PdfInkView = class extends InkWritingView {
     wrap.setCssStyles({ transition: "none", transform: `translateX(${offset}px)` });
     if (this.swipeStage) this.swipeStage.setCssStyles({ transition: "none", transform: `translateX(${offset}px)` });
   }
+  /** Use the neighbour's own fit: mixed portrait/landscape pages have different zooms. */
+  swipePageSize(notePage) {
+    const display = this.rotatedSize(notePage);
+    const baseWidth = Math.max(200, this.scroller.clientWidth - PDF_PAGE_PADDING * 2);
+    const fit = Math.max(0.05, Math.min(1, Math.max(1, this.scroller.clientHeight - PDF_PAGE_PADDING * 2) / (baseWidth * display.height / display.width)));
+    const zoom = this.zoomTouched ? this.zoom : fit;
+    const width = baseWidth * zoom;
+    return { width, height: width * display.height / display.width, baseWidth, zoom };
+  }
   /** Slides the neighbouring page in beside the current one while dragging. */
   ensureSwipeStage(offset) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
     const wrap = this.pageWrap;
     const scroller = this.scroller;
     if (!wrap || !scroller) return;
@@ -29957,11 +29969,7 @@ var PdfInkView = class extends InkWritingView {
     if (neighborIndex < 0 || neighborIndex >= count) return;
     const pitch = this.swipePitch();
     const display = this.rotatedSize((_f = (_e = this.sidecar) == null ? void 0 : _e.notePages[neighborIndex]) != null ? _f : null);
-    const baseWidth = Math.max(200, scroller.clientWidth - PDF_PAGE_PADDING * 2);
-    const fit = Math.max(0.05, Math.min(1, Math.max(1, scroller.clientHeight - PDF_PAGE_PADDING * 2) / (baseWidth * display.height / display.width)));
-    const zoom = this.zoomTouched ? this.zoom : fit;
-    const width = baseWidth * zoom;
-    const height = width * display.height / display.width;
+    const { width, height, baseWidth, zoom } = this.swipePageSize((_h = (_g = this.sidecar) == null ? void 0 : _g.notePages[neighborIndex]) != null ? _h : null);
     this.swipeLayer = scroller.createDiv({ cls: "ink-swipe-layer" });
     this.swipeLayer.setCssStyles({
       left: `${scroller.scrollLeft}px`,
@@ -29997,7 +30005,7 @@ var PdfInkView = class extends InkWritingView {
     const ctx = ink.getContext("2d");
     if (ctx) {
       ctx.setTransform(ink.width / baseWidth, 0, 0, ink.height / logicalHeight, 0, 0);
-      for (const stroke of (_i = (_h = (_g = this.sidecar) == null ? void 0 : _g.notebook.pages[neighborIndex]) == null ? void 0 : _h.strokes) != null ? _i : []) {
+      for (const stroke of (_k = (_j = (_i = this.sidecar) == null ? void 0 : _i.notebook.pages[neighborIndex]) == null ? void 0 : _j.strokes) != null ? _k : []) {
         drawInkStroke(ctx, stroke, baseWidth, logicalHeight);
       }
     }
@@ -30008,8 +30016,9 @@ var PdfInkView = class extends InkWritingView {
     const canvas = stage.createEl("canvas");
     canvas.setCssStyles({ position: "absolute", inset: "0", width: "100%", height: "100%" });
     if (!notePage || notePage.sourceIndex === void 0 || !this.pdfDoc) return;
+    const resolution = canvasResolution(parseFloat(stage.style.width), parseFloat(stage.style.height), window.devicePixelRatio || 1, 1);
     const cached = this.neighbourCache.get(index);
-    if (cached) {
+    if (cached && cached.width === resolution.width && cached.height === resolution.height) {
       canvas.width = cached.width;
       canvas.height = cached.height;
       (_b = canvas.getContext("2d")) == null ? void 0 : _b.drawImage(cached, 0, 0);
@@ -30018,9 +30027,9 @@ var PdfInkView = class extends InkWritingView {
     try {
       const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
       if (!stage.isConnected) return;
-      const scale = (window.devicePixelRatio || 1) * this.zoom;
-      canvas.width = Math.max(1, Math.round(this.rotatedSize(notePage).width * scale));
-      canvas.height = Math.max(1, Math.round(this.rotatedSize(notePage).height * scale));
+      const scale = resolution.width / page.getViewport({ scale: 1 }).width;
+      canvas.width = resolution.width;
+      canvas.height = resolution.height;
       const viewport = page.getViewport({ scale });
       await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
       if (stage.isConnected && canvas.width > 0) this.neighbourCache.set(index, canvas);
@@ -30049,10 +30058,12 @@ var PdfInkView = class extends InkWritingView {
     try {
       const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
       if (token !== this.prewarmToken || this.neighbourCache.has(index)) return;
-      const scale = (window.devicePixelRatio || 1) * this.zoom;
+      const size = this.swipePageSize(notePage);
+      const resolution = canvasResolution(size.width, size.height, window.devicePixelRatio || 1, 1);
+      const scale = resolution.width / page.getViewport({ scale: 1 }).width;
       const buffer = document.createElement("canvas");
-      buffer.width = Math.max(1, Math.round(this.rotatedSize(notePage).width * scale));
-      buffer.height = Math.max(1, Math.round(this.rotatedSize(notePage).height * scale));
+      buffer.width = resolution.width;
+      buffer.height = resolution.height;
       const viewport = page.getViewport({ scale });
       await page.render({ canvasContext: buffer.getContext("2d"), viewport }).promise;
       if (token !== this.prewarmToken) return;
@@ -30170,10 +30181,12 @@ var PdfInkView = class extends InkWritingView {
     const generation = ++this.pdfRenderGeneration;
     this.cancelPdfRender();
     const notePage = this.currentNotePage();
-    const display = this.rotatedSize(notePage);
-    const scale = (window.devicePixelRatio || 1) * this.zoom;
-    const targetWidth = Math.max(1, Math.round(display.width * scale));
-    const targetHeight = Math.max(1, Math.round(display.height * scale));
+    const { width: targetWidth, height: targetHeight } = canvasResolution(
+      this.pageBaseWidth,
+      this.pageBaseHeight,
+      window.devicePixelRatio || 1,
+      this.zoom
+    );
     canvas.setCssStyles({ width: "100%", height: "100%" });
     if (!notePage || notePage.sourceIndex === void 0 || !this.pdfDoc) {
       if (canvas.width !== targetWidth) canvas.width = targetWidth;
@@ -30187,6 +30200,7 @@ var PdfInkView = class extends InkWritingView {
     try {
       const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
       if (generation !== this.pdfRenderGeneration) return;
+      const scale = targetWidth / page.getViewport({ scale: 1 }).width;
       const viewport = page.getViewport({ scale });
       const buffer = document.createElement("canvas");
       buffer.width = targetWidth;
