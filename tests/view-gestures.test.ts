@@ -261,7 +261,7 @@ describe("page touch navigation", () => {
     view.swipeSettle = vi.fn();
     view.touchGesture = { ids: [1], axis: "x", dragX: -60, lastT: 100, velocity };
     view.onTouchStart({ ...touchEvent([]), timeStamp: release });
-    expect(view.swipeSettle).toHaveBeenCalledWith(expected);
+    expect(view.swipeSettle).toHaveBeenCalledWith(expected, -60);
   });
 
   it("rebounds a page drag when a second finger arrives", () => {

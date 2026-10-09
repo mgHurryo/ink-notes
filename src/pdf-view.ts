@@ -12,7 +12,7 @@ import {
   PdfSidecarNotePage,
   PdfSourcePageGeometry,
   deleteBlankNotePage,
-  insertBlankNotePage,
+  insertBlankNotePageAt,
   mergeSidecars,
   moveBlankNotePage,
   normalizeSidecar,
@@ -573,6 +573,10 @@ export class PdfInkView extends InkWritingView {
     this.toolbarButtons.set("indicator", indicator);
 
     const docGroup = this.addToolbarSection(toolbar, "Document");
+    this.addTrackedIconButton(docGroup, "add-page", "plus", "Add page", (event) => {
+      if (this.sidecar) this.openPageInsertMenu(event, this.noteIndex, this.sidecar.notePages.length,
+        (index) => this.addBlankPage(index));
+    });
     // Menu and export respond regardless of the writer lock: the menu's
     // mutating items fail with a notice when read-only, and export only
     // reads. A silently dead button is indistinguishable from a broken one.
@@ -851,8 +855,6 @@ export class PdfInkView extends InkWritingView {
     const menu = this.beginPageOptionsMenu(event);
     if (!menu) return;
     const current = this.sidecar.notePages[this.noteIndex];
-    menu.addItem((item) => item.setTitle("Insert blank page after this one").setIcon("plus")
-      .onClick(() => this.withPageUndo(() => insertBlankNotePage(this.sidecar!, current?.id ?? null) !== null, "insert a blank page")));
     if (current && current.sourceIndex === undefined) {
       menu.addItem((item) => item.setTitle("Move blank page left").setIcon("arrow-left")
         .onClick(() => this.withPageUndo(() => moveBlankNotePage(this.sidecar!, current.id, this.noteIndex - 1), "move the blank page")));
@@ -890,30 +892,50 @@ export class PdfInkView extends InkWritingView {
 
   // ------------------------------------------------------------- page ops
 
+  private addBlankPage(index: number): void {
+    this.destroySwipeStage();
+    this.withPageUndo(() => {
+      const id = insertBlankNotePageAt(this.sidecar!, index);
+      this.noteIndex = this.sidecar!.notePages.findIndex((page) => page.id === id);
+      this.zoomTouched = this.zoomLocked;
+      if (this.scroller) this.scroller.scrollLeft = this.scroller.scrollTop = 0;
+      return true;
+    }, "insert a blank page");
+  }
+
   /** Apply a note page sequence change, sync the worker, and record undo. */
   private withPageUndo(change: () => boolean, label: string): void {
-    if (!this.sidecar) return;
+    if (!this.sidecar || !this.canEdit() || !this.writerHeld) {
+      new Notice(`Ink Notes could not ${label}: this view is read-only`);
+      return;
+    }
+    this.finishPointerInput(false);
     const before = serializeSidecar(this.sidecar);
+    const beforePageId = this.sidecar.notePages[this.noteIndex]?.id;
     if (!change()) {
       new Notice(`Ink Notes could not ${label}: source PDF pages are permanent`);
       return;
     }
     const after = serializeSidecar(this.sidecar);
+    const afterPageId = this.sidecar.notePages[this.noteIndex]?.id;
     this.markSidecarChanged();
     this.syncNotebookToWorker();
     this.layoutPage();
     this.renderAll();
     void this.renderPdfPage();
     this.pushCommand({
-      undo: () => this.restoreSidecarSnapshot(before),
-      redo: () => this.restoreSidecarSnapshot(after),
+      undo: () => this.restoreSidecarSnapshot(before, beforePageId),
+      redo: () => this.restoreSidecarSnapshot(after, afterPageId),
     });
   }
 
-  private restoreSidecarSnapshot(snapshot: string): void {
+  private restoreSidecarSnapshot(snapshot: string, pageId?: string): void {
     if (!this.sidecar) return;
+    this.destroySwipeStage();
     try {
       this.sidecar = normalizeSidecar(JSON.parse(snapshot));
+      const selected = this.sidecar.notePages.findIndex((page) => page.id === pageId);
+      this.noteIndex = selected < 0 ? Math.min(this.noteIndex, this.sidecar.notePages.length - 1) : selected;
       this.markSidecarChanged();
       this.syncNotebookToWorker();
       this.layoutPage();
@@ -1182,6 +1204,7 @@ export class PdfInkView extends InkWritingView {
     const wrap = this.pageWrap;
     if (!wrap || this.flipSettling) return;
     this.ensureSwipeStage(offset);
+    this.updatePageInsertPreview(this.swipeStage, offset);
     const pitch = this.swipePitch();
     offset = this.swipeStage ? Math.max(-pitch, Math.min(pitch, offset)) : offset / (1 + Math.abs(offset) / 80);
     this.swipeDragOffset = offset;
@@ -1212,10 +1235,12 @@ export class PdfInkView extends InkWritingView {
       this.destroySwipeStage();
     }
     const count = this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 0;
-    if (neighborIndex < 0 || neighborIndex >= count) return;
+    const insert = neighborIndex < 0 || neighborIndex >= count;
+    if (insert && (!this.canEdit() || !this.writerHeld)) return;
     const pitch = this.swipePitch();
-    const display = this.rotatedSize(this.sidecar?.notePages[neighborIndex] ?? null);
-    const { width, height, baseWidth, zoom } = this.swipePageSize(this.sidecar?.notePages[neighborIndex] ?? null);
+    const note = this.sidecar?.notePages[insert ? this.noteIndex : neighborIndex] ?? null;
+    const display = this.rotatedSize(note);
+    const { width, height, baseWidth, zoom } = this.swipePageSize(note);
     this.swipeLayer = scroller.createDiv({ cls: "ink-swipe-layer" });
     this.swipeLayer.setCssStyles({ left: `${scroller.scrollLeft}px`, top: `${scroller.scrollTop}px`,
       width: `${scroller.clientWidth}px`, height: `${scroller.clientHeight}px`, right: "auto", bottom: "auto" });
@@ -1231,6 +1256,7 @@ export class PdfInkView extends InkWritingView {
       transform: "translateX(0px)",
     });
     this.swipeStage = stage;
+    if (insert) { this.showPageInsertPreview(stage, side); return; }
     void this.renderSwipeStagePage(stage, neighborIndex);
     const ink = stage.createEl("canvas");
     ink.style.cssText = "position:absolute;inset:0;width:100%;height:100%";
@@ -1317,21 +1343,30 @@ export class PdfInkView extends InkWritingView {
     return Math.max(this.scroller?.clientWidth ?? 0, this.pageWrap?.offsetWidth ?? 0) + 16;
   }
 
-  protected swipeSettle(delta: number): void {
+  protected swipeSettle(delta: number, travel = 0): void {
     if (this.flipSettling) return;
     const wrap = this.pageWrap;
     if (!wrap) { this.destroySwipeStage(); return; }
     const stage = this.swipeStage;
     const side = stage ? Number(stage.dataset.neighbor) - this.noteIndex : 0;
-    const flip = delta !== 0 && side === delta;
+    const insert = !!stage?.dataset.insert;
+    const create = insert && this.canEdit() && this.writerHeld && Math.sign(travel) === -side && Math.abs(travel) >= this.pageInsertThreshold();
+    const flip = create || (!insert && delta !== 0 && side === delta);
     const from = this.swipeDragOffset;
     const to = flip ? -side * this.swipePitch() : 0;
     const isCurrent = this.beginPageSwipe(this.noteIndex + (flip ? delta : 0),
       this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 1);
     this.flipSettling = true;
     this.animatePageSwipe(stage ? [wrap, stage] : [wrap], from, to, () => {
+      if (!isCurrent()) return;
       this.cancelPageSwipeAnimations();
       wrap.style.transform = "";
+      if (create) {
+        this.addBlankPage(side < 0 ? 0 : this.sidecar!.notePages.length);
+        this.destroySwipeStage();
+        this.resumePageSwipeDrag();
+        return;
+      }
       if (flip && stage) wrap.style.visibility = "hidden";
       void this.navigatePageSwipe((index) => this.navigatePages(index - this.noteIndex),
         () => this.noteIndex, isCurrent).catch((error) => {

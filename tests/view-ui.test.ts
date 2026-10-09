@@ -52,6 +52,63 @@ afterEach(async () => {
 });
 
 describe("reference-style editor", () => {
+  it.each([
+    ["Add page before current", 1], ["Add page after current", 2],
+    ["Add page before first", 0], ["Add page after last", 3],
+  ])("inserts and selects a blank page with %s, with undo and redo", (label, index) => {
+    const host = view as unknown as { notebook: ReturnType<typeof createNotebook>; pageIndex: number; addPage(): void };
+    host.addPage(); host.addPage(); host.pageIndex = 1;
+    const previous = host.notebook.pages.map((page) => page.id);
+    button("Add page").click();
+    Array.from(document.querySelectorAll<HTMLButtonElement>(".preview-menu button"))
+      .find((item) => item.textContent === label)!.click();
+    const added = host.notebook.pages[index];
+    expect(host.pageIndex).toBe(index);
+    expect(added).toMatchObject({ paper: "blank", strokes: [] });
+    expect(host.notebook.pageOrder).toEqual(host.notebook.pages.map((page) => page.id));
+    expect(host.notebook.pages.filter((page) => page.id !== added.id).map((page) => page.id)).toEqual(previous);
+    button("Undo").click();
+    expect(host.notebook.pages.map((page) => page.id)).toEqual(previous);
+    expect(host.pageIndex).toBe(1);
+    button("Redo").click();
+    expect(host.pageIndex).toBe(index);
+    expect(host.notebook.pages[index].strokes).toEqual([]);
+  });
+
+  it("switches between the plus and options menus and toggles plus closed", () => {
+    button("Page options").click();
+    button("Add page").click();
+    expect(document.querySelectorAll(".preview-menu")).toHaveLength(1);
+    expect(button("Page options").getAttribute("aria-expanded")).toBe("false");
+    expect(document.querySelector(".preview-menu")!.textContent).toContain("Add page before first");
+    button("Add page").dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    button("Add page").click();
+    expect(document.querySelector(".preview-menu")).toBeNull();
+  });
+
+  it("creates once after a deliberate boundary release, and cancels short or interrupted drags", async () => {
+    const host = view as unknown as { notebook: ReturnType<typeof createNotebook>; pageIndex: number; pageScroller: HTMLElement;
+      onTouchStart(e: TouchEvent): void; onTouchMove(e: TouchEvent): void; cancelPageFlip(): void; flipSettling: boolean };
+    Object.defineProperties(host.pageScroller, { clientWidth: { value: 800 }, clientHeight: { value: 700 } });
+    const touch = (x?: number) => ({ touches: x === undefined ? [] : [{ identifier: 1, clientX: x, clientY: 200 }],
+      timeStamp: 100, cancelable: true, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as TouchEvent);
+    const drag = (distance: number) => { host.onTouchStart(touch(400)); host.onTouchMove(touch(400 + distance)); };
+    const original = host.notebook.pages[0].id;
+    drag(80); host.onTouchStart(touch());
+    await vi.waitFor(() => expect(host.flipSettling).toBe(false));
+    expect(host.notebook.pages).toHaveLength(1);
+    drag(250);
+    expect(document.querySelector(".ink-swipe-stage")!.classList.contains("is-ready")).toBe(true);
+    host.cancelPageFlip(); host.onTouchStart(touch());
+    await vi.waitFor(() => expect(host.flipSettling).toBe(false));
+    expect(host.notebook.pages).toHaveLength(1);
+    drag(250); host.onTouchStart(touch()); host.onTouchStart(touch());
+    expect(host.notebook.pages).toHaveLength(2);
+    expect(host.pageIndex).toBe(0);
+    expect(host.notebook.pages[1].id).toBe(original);
+    expect(host.notebook.pages[0].paper).toBe("blank");
+  });
+
   it("shows pinch magnification, keeps it while held, and hides within one second of release", () => {
     vi.useFakeTimers();
     try {
@@ -121,7 +178,7 @@ describe("reference-style editor", () => {
       .map((el) => el.getAttribute("aria-label"));
     expect(labels(".ink-toolbar-start button")).toEqual(["Pages", "Undo", "Redo"]);
     expect(labels(".ink-toolbar-section-draw button")).toEqual(["Pen", "Highlight", "Erase", "Select"]);
-    expect(labels(".ink-toolbar-section-document button")).toEqual(["Export as PDF", "Page options"]);
+    expect(labels(".ink-toolbar-section-document button")).toEqual(["Add page", "Export as PDF", "Page options"]);
   });
 
   it("toggles closed even when the host's document dismissal was registered first", () => {

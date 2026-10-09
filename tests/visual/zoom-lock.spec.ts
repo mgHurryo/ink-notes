@@ -73,8 +73,8 @@ for (const width of [360, 1280]) {
 test("locked notebook page and incoming preview retain magnification", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
-  await page.getByRole("button", { name: "Page options", exact: true }).click();
   await page.getByRole("button", { name: "Add page", exact: true }).click();
+  await page.getByRole("button", { name: "Add page after current", exact: true }).click();
   await page.evaluate(() => {
     const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
     const send = (type: string, distance?: number) => {

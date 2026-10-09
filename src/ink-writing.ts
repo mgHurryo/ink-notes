@@ -635,7 +635,34 @@ export abstract class InkWritingView extends FileView {
   protected swipeDrag(_offset: number): void {}
   /** View hook: the drag ended. delta is -1/+1 to flip (animated slide to
    *  the neighbouring page) or 0 to spring back. */
-  protected swipeSettle(_delta: number): void {}
+  protected swipeSettle(_delta: number, _travel = 0): void {}
+
+  protected pageInsertThreshold(): number {
+    return Math.max(120, Math.min(240, this.inputScroller().clientWidth * 0.35));
+  }
+
+  protected showPageInsertPreview(stage: HTMLElement, side: number): void {
+    stage.dataset.insert = "true";
+    const hint = stage.createDiv({ cls: "ink-page-insert-hint", attr: { "aria-hidden": "true" } });
+    hint.style[side < 0 ? "right" : "left"] = "24px";
+    setIcon(hint, "plus");
+  }
+
+  protected updatePageInsertPreview(stage: HTMLElement | null, offset: number): void {
+    if (stage?.dataset.insert) stage.toggleClass("is-ready", Math.abs(offset) >= this.pageInsertThreshold());
+  }
+
+  protected openPageInsertMenu(event: MouseEvent, index: number, count: number, insert: (index: number) => void): void {
+    const menu = this.beginPageOptionsMenu(event);
+    if (!menu) return;
+    for (const [title, position] of [
+      ["Add page before current", index], ["Add page after current", index + 1],
+      ["Add page before first", 0], ["Add page after last", count],
+    ] as const) {
+      menu.addItem((item) => item.setTitle(title).setIcon("plus").onClick(() => insert(position)));
+    }
+    menu.showAtMouseEvent(event);
+  }
 
   protected flipSettling = false;
   private pageSwipeAnimations: Animation[] = [];
@@ -725,7 +752,7 @@ export abstract class InkWritingView extends FileView {
       const request = this.pageSwipeRequest;
       if (request) request.target = Math.max(0, Math.min(request.count - 1, request.target + delta));
     } else {
-      this.swipeSettle(delta);
+      this.swipeSettle(delta, travel);
     }
   }
 
@@ -883,11 +910,12 @@ export abstract class InkWritingView extends FileView {
       this.registerDomEvent(doc, "keydown", () => { this.pageOptionsTriggerPressed = false; }, true);
       this.register(() => this.closePageOptionsMenu());
     }
-    if (this.pageOptionsTriggerPressed || this.pageOptionsMenu) {
+    const trigger = event.currentTarget as HTMLElement | null;
+    if (this.pageOptionsTriggerPressed || this.pageOptionsMenu?.trigger === trigger) {
       this.closePageOptionsMenu();
       return null;
     }
-    const trigger = event.currentTarget as HTMLElement | null;
+    this.closePageOptionsMenu();
     const menu = new Menu();
     const opened = { menu, trigger };
     this.pageOptionsMenu = opened;

@@ -515,6 +515,25 @@
 }
 
 .ink-swipe-stage { position: absolute; pointer-events: none; }
+.ink-page-insert-hint {
+  position: absolute;
+  top: 50%;
+  transform: translateY(-50%);
+  display: grid;
+  place-items: center;
+  width: 48px;
+  height: 48px;
+  border: 2px solid var(--text-muted);
+  border-radius: 50%;
+  color: var(--text-muted);
+  transition: color 100ms ease, border-color 100ms ease, background 100ms ease;
+}
+.ink-page-insert-hint svg { width: 24px; height: 24px; }
+.ink-swipe-stage.is-ready .ink-page-insert-hint {
+  color: var(--text-on-accent);
+  border-color: var(--interactive-accent);
+  background: var(--interactive-accent);
+}
 
 .ink-page {
   position: absolute;

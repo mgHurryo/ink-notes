@@ -8,7 +8,7 @@ const viewports = [
   { width: 720, height: 900 },
   { width: 1280, height: 720 },
 ];
-const primaryTools = ["Pages", "Undo", "Redo", "Pen", "Highlight", "Erase", "Select", "Export as PDF", "Page options"];
+const primaryTools = ["Pages", "Undo", "Redo", "Pen", "Highlight", "Erase", "Select", "Add page", "Export as PDF", "Page options"];
 
 const themes = {
   light: {
