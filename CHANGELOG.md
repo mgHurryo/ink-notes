@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.8.0-beta.33 - 2026-10-10
+
+- Preset color edits apply LIVE while you adjust: the platform picker fires an input event per adjustment, and edits now key off that instead of the unreliable change/close signals - with the swatch slot tracking its current color so every following adjustment lands. Fixes double-tap re-colors not sticking.
+- The plus button settles the new preset on a quiet period after you stop adjusting (800ms), with input blur and panel close as immediate backstops - the platform picker neither blurs its input nor reports close when dismissed on iPad, which is why a pick only landed after closing the whole settings panel.
+
 ## 0.8.0-beta.32 - 2026-10-10
 
 - The page-flip settle now CONTINUES the slide from the exact release point - flips glide into the slot, rejected flips glide home - driven by the Web Animations API with the commit on animation finish. The previous transition/timer chain was what devices delayed (the freeze mid-slide with both pages visible that then self-recovered). Both editors.

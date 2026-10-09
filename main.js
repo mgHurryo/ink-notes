@@ -22710,6 +22710,7 @@ var PRESET_PALETTE_MIN = 1;
 var PRESET_PALETTE_MAX = 10;
 var LONG_PRESS_MS = 550;
 var PICKER_ARM_MS = 400;
+var PICKER_SETTLE_MS = 800;
 var POPOVER_TRANSITION_MS = 150;
 function placePopover(pop, anchor, margin = 12) {
   const anchorRect = anchor.getBoundingClientRect();
@@ -22867,11 +22868,16 @@ var BrushPopoverController = class {
       "aria-label": `${spec.label} custom color`,
       "data-brush-tool": spec.tool
     } });
-    let pickedSinceBlur = false;
+    let dirty = false;
+    let settleTimer;
     const flushPickedColor = () => {
       var _a, _b;
-      if (!pickedSinceBlur) return;
-      pickedSinceBlur = false;
+      if (settleTimer !== void 0) {
+        window.clearTimeout(settleTimer);
+        settleTimer = void 0;
+      }
+      if (!dirty) return;
+      dirty = false;
       const picked = input.value;
       settings.color = picked;
       const palette = (_b = (_a = this.options).palette) == null ? void 0 : _b.call(_a);
@@ -22884,13 +22890,15 @@ var BrushPopoverController = class {
       this.update();
     };
     input.addEventListener("input", () => {
-      pickedSinceBlur = true;
+      dirty = true;
       settings.color = input.value;
       this.updateColorSwatches(spec.tool, input.value);
       this.update();
+      if (settleTimer !== void 0) window.clearTimeout(settleTimer);
+      settleTimer = window.setTimeout(flushPickedColor, PICKER_SETTLE_MS);
     });
     input.addEventListener("change", () => {
-      pickedSinceBlur = true;
+      dirty = true;
     });
     input.addEventListener("blur", flushPickedColor);
     this.customPickers.push(flushPickedColor);
@@ -22927,6 +22935,7 @@ var BrushPopoverController = class {
         tabindex: "-1"
       } });
       picker.style.pointerEvents = "none";
+      let current = value;
       let suppressClick = false;
       let armTimer;
       swatch.addEventListener("click", () => {
@@ -22934,8 +22943,8 @@ var BrushPopoverController = class {
           suppressClick = false;
           return;
         }
-        settings.color = value;
-        this.updateColorSwatches(spec.tool, value);
+        settings.color = current;
+        this.updateColorSwatches(spec.tool, current);
         this.update();
         picker.style.pointerEvents = "auto";
         if (armTimer !== void 0) window.clearTimeout(armTimer);
@@ -22944,13 +22953,13 @@ var BrushPopoverController = class {
           picker.style.pointerEvents = "none";
         }, PICKER_ARM_MS);
       });
-      picker.addEventListener("change", () => {
+      const applyPick = () => {
         var _a2, _b2, _c2, _d2;
         const palette2 = (_b2 = (_a2 = this.options).palette) == null ? void 0 : _b2.call(_a2);
         if (!palette2) return;
-        const index = palette2.findIndex((entry) => entry.toLowerCase() === value.toLowerCase());
-        if (index < 0 || picker.value.toLowerCase() === value.toLowerCase()) return;
-        if (settings.color.toLowerCase() === value.toLowerCase()) settings.color = picker.value;
+        const index = palette2.findIndex((entry) => entry.toLowerCase() === current.toLowerCase());
+        if (index < 0 || picker.value.toLowerCase() === current.toLowerCase()) return;
+        if (settings.color.toLowerCase() === current.toLowerCase()) settings.color = picker.value;
         palette2[index] = picker.value;
         const newLabel = (_d2 = (_c2 = INK_COLORS.find((color) => color.value.toLowerCase() === picker.value.toLowerCase())) == null ? void 0 : _c2.label) != null ? _d2 : "Custom";
         swatch.style.backgroundColor = picker.value;
@@ -22958,8 +22967,11 @@ var BrushPopoverController = class {
         picker.dataset.color = picker.value;
         swatch.setAttribute("aria-label", `${spec.label} ${newLabel.toLowerCase()}`);
         swatch.title = `${newLabel} \u2014 double-tap to change, hold to remove`;
+        current = picker.value;
         this.update();
-      });
+      };
+      picker.addEventListener("input", applyPick);
+      picker.addEventListener("change", applyPick);
       let pressTimer;
       const cancelPress = () => {
         if (pressTimer !== void 0) {
@@ -22972,7 +22984,7 @@ var BrushPopoverController = class {
         pressTimer = window.setTimeout(() => {
           pressTimer = void 0;
           suppressClick = true;
-          this.removePresetColor(spec, value);
+          this.removePresetColor(spec, current);
         }, LONG_PRESS_MS);
       });
       swatch.addEventListener("pointerup", cancelPress);
