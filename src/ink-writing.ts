@@ -553,6 +553,38 @@ export abstract class InkWritingView extends FileView {
 
   protected flipSettling = false;
   private pageSwipeAnimations: Animation[] = [];
+  private pageSwipeRequest: { target: number; count: number } | null = null;
+
+  /** Track the requested destination, including swipes made while saving/rendering. */
+  protected beginPageSwipe(target: number, count: number): () => boolean {
+    const request = { target, count };
+    this.pageSwipeRequest = request;
+    return () => this.flipSettling && this.pageSwipeRequest === request;
+  }
+
+  protected clearPageSwipeTarget(): void { this.pageSwipeRequest = null; }
+
+  /** Coalesce rapid swipes instead of replaying a backlog of animations/renders. */
+  protected async navigatePageSwipe(navigate: (index: number) => Promise<void>,
+    index: () => number, isCurrent: () => boolean): Promise<void> {
+    while (isCurrent() && this.pageSwipeRequest !== null) {
+      const target = this.pageSwipeRequest.target;
+      if (target === index()) return;
+      await navigate(target);
+      // A failed or superseded navigation must not retry indefinitely.
+      if (index() !== target) return;
+    }
+  }
+
+  protected resumePageSwipeDrag(): void {
+    if (this.touchGesture?.axis === "x") this.swipeDrag(this.touchGesture.dragX);
+  }
+
+  private finishPageSwipeAnimations(): void {
+    for (const animation of this.pageSwipeAnimations) {
+      if (animation.playState === "running" || animation.playState === "paused") animation.finish();
+    }
+  }
 
   /** Both pages share a distance, clock and easing, so the gutter stays fixed. */
   protected animatePageSwipe(elements: HTMLElement[], from: number, to: number, done: () => void): void {
@@ -602,7 +634,13 @@ export abstract class InkWritingView extends FileView {
     const fling = releaseTime - gesture.lastT < 100 && gesture.velocity * travel > 0
       && Math.abs(gesture.velocity) > 0.35 && Math.abs(travel) > 24;
     const crossed = Math.abs(travel) > width * 0.35;
-    this.swipeSettle(fling || crossed ? (travel > 0 ? -1 : 1) : 0);
+    const delta = fling || crossed ? (travel > 0 ? -1 : 1) : 0;
+    if (this.flipSettling) {
+      const request = this.pageSwipeRequest;
+      if (request) request.target = Math.max(0, Math.min(request.count - 1, request.target + delta));
+    } else {
+      this.swipeSettle(delta);
+    }
   }
 
   /** Cancels an in-flight page-flip drag (spring back, no flip). */
@@ -1361,12 +1399,6 @@ export abstract class InkWritingView extends FileView {
   // ---------------------------------------------------------------- touch
 
   protected onTouchStart(event: TouchEvent): void {
-    if (this.flipSettling) {
-      event.stopPropagation();
-      if (event.cancelable) event.preventDefault();
-      this.touchGesture = null;
-      return;
-    }
     // A native menu owns the surface until dismissed: let its outside-tap
     // dismissal see this event instead of swallowing it (the menu otherwise
     // stayed open until one of its own items was picked).
@@ -1394,6 +1426,7 @@ export abstract class InkWritingView extends FileView {
     this.healStaleInteraction(Array.from(event.touches));
     const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus");
     if (touches.length < 1 || touches.length > 2) return;
+    if (this.flipSettling && touches.length === 2) return;
     if (this.activePointerId !== null) return;
     const [a, b] = touches;
     if (!a) return;
@@ -1478,7 +1511,15 @@ export abstract class InkWritingView extends FileView {
         gesture.lastX = a.clientX;
         gesture.lastT = now;
         gesture.dragX = totalX;
+        // A new horizontal gesture takes priority over the previous animation.
+        // The storage/render barrier still runs before changing the live page.
+        if (this.flipSettling) this.finishPageSwipeAnimations();
         this.swipeDrag(totalX);
+        return;
+      }
+      if (this.flipSettling) {
+        gesture.x = a.clientX;
+        gesture.y = a.clientY;
         return;
       }
       scroller.scrollLeft += gesture.x - a.clientX;
@@ -1487,6 +1528,7 @@ export abstract class InkWritingView extends FileView {
       gesture.y = a.clientY;
       return;
     }
+    if (this.flipSettling) return;
     if (gesture.distance < 1) {
       this.onTouchStart(event);
       return;

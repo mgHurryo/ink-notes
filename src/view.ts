@@ -680,20 +680,27 @@ export class InkView extends InkWritingView {
     const flip = delta !== 0 && side === delta;
     const from = this.swipeDragOffset;
     const to = flip ? -side * this.swipePitch() : 0;
+    const isCurrent = this.beginPageSwipe(this.pageIndex + (flip ? delta : 0), this.notebook.pages.length);
     this.flipSettling = true;
     this.animatePageSwipe(stage ? [extent, stage] : [extent], from, to, () => {
-      if (!flip || !stage) { this.destroySwipeStage(); return; }
       // Reset geometry before rendering, while the incoming snapshot covers it.
       this.cancelPageSwipeAnimations();
       extent.style.transform = "";
-      extent.style.visibility = "hidden";
-      void this.changePage(delta).finally(() => {
-        if (this.swipeStage === stage) this.destroySwipeStage();
+      if (flip && stage) extent.style.visibility = "hidden";
+      void this.navigatePageSwipe((index) => {
+        const page = this.notebook.pages[index];
+        return page ? this.navigateToPage(page.id) : Promise.resolve();
+      }, () => this.pageIndex, isCurrent).finally(() => {
+        if (isCurrent()) {
+          this.destroySwipeStage();
+          this.resumePageSwipeDrag();
+        }
       });
     });
   }
 
   private destroySwipeStage(): void {
+    this.clearPageSwipeTarget();
     this.cancelPageSwipeAnimations();
     this.swipeLayer?.remove();
     this.swipeStage?.remove();
@@ -885,12 +892,6 @@ export class InkView extends InkWritingView {
     this.renderPageRail();
     this.renderPage();
     this.scheduleSave();
-  }
-
-  private async changePage(delta: number): Promise<void> {
-    const index = Math.max(0, Math.min(this.notebook.pages.length - 1, this.pageIndex + delta));
-    const page = this.notebook.pages[index];
-    if (page) await this.navigateToPage(page.id);
   }
 
   private navigateToPage(pageId: string): Promise<void> {

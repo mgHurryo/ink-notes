@@ -1299,21 +1299,27 @@ export class PdfInkView extends InkWritingView {
     const flip = delta !== 0 && side === delta;
     const from = this.swipeDragOffset;
     const to = flip ? -side * this.swipePitch() : 0;
+    const isCurrent = this.beginPageSwipe(this.noteIndex + (flip ? delta : 0),
+      this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 1);
     this.flipSettling = true;
     this.animatePageSwipe(stage ? [wrap, stage] : [wrap], from, to, () => {
-      if (!flip || !stage) { this.destroySwipeStage(); return; }
       this.cancelPageSwipeAnimations();
       wrap.style.transform = "";
-      wrap.style.visibility = "hidden";
-      void this.navigatePages(delta).catch((error) => {
+      if (flip && stage) wrap.style.visibility = "hidden";
+      void this.navigatePageSwipe((index) => this.navigatePages(index - this.noteIndex),
+        () => this.noteIndex, isCurrent).catch((error) => {
         this.setStatus(`Could not switch pages: ${messageOf(error)}`, true);
       }).finally(() => {
-        if (this.swipeStage === stage) this.destroySwipeStage();
+        if (isCurrent()) {
+          this.destroySwipeStage();
+          this.resumePageSwipeDrag();
+        }
       });
     });
   }
 
   private destroySwipeStage(): void {
+    this.clearPageSwipeTarget();
     this.cancelPageSwipeAnimations();
     this.swipeLayer?.remove();
     this.swipeStage?.remove();

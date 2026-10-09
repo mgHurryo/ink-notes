@@ -24080,6 +24080,7 @@ var InkWritingView = class extends import_obsidian2.FileView {
     this.devLastPointerType = null;
     this.flipSettling = false;
     this.pageSwipeAnimations = [];
+    this.pageSwipeRequest = null;
   }
   /** True while gestures must not start new input (reading mode, locks). */
   inputLocked() {
@@ -24096,6 +24097,33 @@ var InkWritingView = class extends import_obsidian2.FileView {
   /** View hook: the drag ended. delta is -1/+1 to flip (animated slide to
    *  the neighbouring page) or 0 to spring back. */
   swipeSettle(_delta) {
+  }
+  /** Track the requested destination, including swipes made while saving/rendering. */
+  beginPageSwipe(target, count) {
+    const request = { target, count };
+    this.pageSwipeRequest = request;
+    return () => this.flipSettling && this.pageSwipeRequest === request;
+  }
+  clearPageSwipeTarget() {
+    this.pageSwipeRequest = null;
+  }
+  /** Coalesce rapid swipes instead of replaying a backlog of animations/renders. */
+  async navigatePageSwipe(navigate, index, isCurrent) {
+    while (isCurrent() && this.pageSwipeRequest !== null) {
+      const target = this.pageSwipeRequest.target;
+      if (target === index()) return;
+      await navigate(target);
+      if (index() !== target) return;
+    }
+  }
+  resumePageSwipeDrag() {
+    var _a;
+    if (((_a = this.touchGesture) == null ? void 0 : _a.axis) === "x") this.swipeDrag(this.touchGesture.dragX);
+  }
+  finishPageSwipeAnimations() {
+    for (const animation of this.pageSwipeAnimations) {
+      if (animation.playState === "running" || animation.playState === "paused") animation.finish();
+    }
   }
   /** Both pages share a distance, clock and easing, so the gutter stays fixed. */
   animatePageSwipe(elements, from, to, done) {
@@ -24145,7 +24173,13 @@ var InkWritingView = class extends import_obsidian2.FileView {
     const releaseTime = typeof event.timeStamp === "number" ? event.timeStamp : gesture.lastT;
     const fling = releaseTime - gesture.lastT < 100 && gesture.velocity * travel > 0 && Math.abs(gesture.velocity) > 0.35 && Math.abs(travel) > 24;
     const crossed = Math.abs(travel) > width * 0.35;
-    this.swipeSettle(fling || crossed ? travel > 0 ? -1 : 1 : 0);
+    const delta = fling || crossed ? travel > 0 ? -1 : 1 : 0;
+    if (this.flipSettling) {
+      const request = this.pageSwipeRequest;
+      if (request) request.target = Math.max(0, Math.min(request.count - 1, request.target + delta));
+    } else {
+      this.swipeSettle(delta);
+    }
   }
   /** Cancels an in-flight page-flip drag (spring back, no flip). */
   cancelPageFlip() {
@@ -24844,12 +24878,6 @@ var InkWritingView = class extends import_obsidian2.FileView {
   // ---------------------------------------------------------------- touch
   onTouchStart(event) {
     var _a, _b;
-    if (this.flipSettling) {
-      event.stopPropagation();
-      if (event.cancelable) event.preventDefault();
-      this.touchGesture = null;
-      return;
-    }
     if (this.nativeMenuOpen()) {
       this.touchGesture = null;
       return;
@@ -24867,6 +24895,7 @@ var InkWritingView = class extends import_obsidian2.FileView {
     this.healStaleInteraction(Array.from(event.touches));
     const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus");
     if (touches.length < 1 || touches.length > 2) return;
+    if (this.flipSettling && touches.length === 2) return;
     if (this.activePointerId !== null) return;
     const [a, b] = touches;
     if (!a) return;
@@ -24953,7 +24982,13 @@ var InkWritingView = class extends import_obsidian2.FileView {
         gesture.lastX = a.clientX;
         gesture.lastT = now;
         gesture.dragX = totalX;
+        if (this.flipSettling) this.finishPageSwipeAnimations();
         this.swipeDrag(totalX);
+        return;
+      }
+      if (this.flipSettling) {
+        gesture.x = a.clientX;
+        gesture.y = a.clientY;
         return;
       }
       scroller.scrollLeft += gesture.x - a.clientX;
@@ -24962,6 +24997,7 @@ var InkWritingView = class extends import_obsidian2.FileView {
       gesture.y = a.clientY;
       return;
     }
+    if (this.flipSettling) return;
     if (gesture.distance < 1) {
       this.onTouchStart(event);
       return;
@@ -27569,22 +27605,26 @@ var InkView = class extends InkWritingView {
     const flip = delta !== 0 && side === delta;
     const from = this.swipeDragOffset;
     const to = flip ? -side * this.swipePitch() : 0;
+    const isCurrent = this.beginPageSwipe(this.pageIndex + (flip ? delta : 0), this.notebook.pages.length);
     this.flipSettling = true;
     this.animatePageSwipe(stage ? [extent, stage] : [extent], from, to, () => {
-      if (!flip || !stage) {
-        this.destroySwipeStage();
-        return;
-      }
       this.cancelPageSwipeAnimations();
       extent.style.transform = "";
-      extent.style.visibility = "hidden";
-      void this.changePage(delta).finally(() => {
-        if (this.swipeStage === stage) this.destroySwipeStage();
+      if (flip && stage) extent.style.visibility = "hidden";
+      void this.navigatePageSwipe((index) => {
+        const page = this.notebook.pages[index];
+        return page ? this.navigateToPage(page.id) : Promise.resolve();
+      }, () => this.pageIndex, isCurrent).finally(() => {
+        if (isCurrent()) {
+          this.destroySwipeStage();
+          this.resumePageSwipeDrag();
+        }
       });
     });
   }
   destroySwipeStage() {
     var _a, _b;
+    this.clearPageSwipeTarget();
     this.cancelPageSwipeAnimations();
     (_a = this.swipeLayer) == null ? void 0 : _a.remove();
     (_b = this.swipeStage) == null ? void 0 : _b.remove();
@@ -27774,11 +27814,6 @@ var InkView = class extends InkWritingView {
     this.renderPageRail();
     this.renderPage();
     this.scheduleSave();
-  }
-  async changePage(delta) {
-    const index = Math.max(0, Math.min(this.notebook.pages.length - 1, this.pageIndex + delta));
-    const page = this.notebook.pages[index];
-    if (page) await this.navigateToPage(page.id);
   }
   navigateToPage(pageId) {
     if (this.currentPage().id === pageId || !this.pageById(pageId)) return Promise.resolve();
@@ -30030,6 +30065,7 @@ var PdfInkView = class extends InkWritingView {
     return Math.max((_b = (_a = this.scroller) == null ? void 0 : _a.clientWidth) != null ? _b : 0, (_d = (_c = this.pageWrap) == null ? void 0 : _c.offsetWidth) != null ? _d : 0) + 16;
   }
   swipeSettle(delta) {
+    var _a, _b, _c, _d;
     if (this.flipSettling) return;
     const wrap = this.pageWrap;
     if (!wrap) {
@@ -30041,24 +30077,32 @@ var PdfInkView = class extends InkWritingView {
     const flip = delta !== 0 && side === delta;
     const from = this.swipeDragOffset;
     const to = flip ? -side * this.swipePitch() : 0;
+    const isCurrent = this.beginPageSwipe(
+      this.noteIndex + (flip ? delta : 0),
+      (_d = (_c = (_a = this.sidecar) == null ? void 0 : _a.notePages.length) != null ? _c : (_b = this.pdfDoc) == null ? void 0 : _b.numPages) != null ? _d : 1
+    );
     this.flipSettling = true;
     this.animatePageSwipe(stage ? [wrap, stage] : [wrap], from, to, () => {
-      if (!flip || !stage) {
-        this.destroySwipeStage();
-        return;
-      }
       this.cancelPageSwipeAnimations();
       wrap.style.transform = "";
-      wrap.style.visibility = "hidden";
-      void this.navigatePages(delta).catch((error) => {
+      if (flip && stage) wrap.style.visibility = "hidden";
+      void this.navigatePageSwipe(
+        (index) => this.navigatePages(index - this.noteIndex),
+        () => this.noteIndex,
+        isCurrent
+      ).catch((error) => {
         this.setStatus(`Could not switch pages: ${messageOf(error)}`, true);
       }).finally(() => {
-        if (this.swipeStage === stage) this.destroySwipeStage();
+        if (isCurrent()) {
+          this.destroySwipeStage();
+          this.resumePageSwipeDrag();
+        }
       });
     });
   }
   destroySwipeStage() {
     var _a, _b;
+    this.clearPageSwipeTarget();
     this.cancelPageSwipeAnimations();
     (_a = this.swipeLayer) == null ? void 0 : _a.remove();
     (_b = this.swipeStage) == null ? void 0 : _b.remove();

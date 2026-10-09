@@ -80,6 +80,40 @@ async function setup(sourcePageCount = 3) {
 const thumbs = () => document.querySelectorAll<HTMLButtonElement>(".ink-pdf-view .ink-page-thumb");
 const thumbAt = (index: number) => thumbs()[index]!;
 
+interface SwipeInternals {
+  scroller: HTMLElement;
+  pageWrap: HTMLElement;
+  flipSettling: boolean;
+  touchGesture: unknown;
+  onTouchStart(event: TouchEvent): void;
+  onTouchMove(event: TouchEvent): void;
+  cancelPageFlip(): void;
+}
+
+function swipeTouch(points: number[][]): TouchEvent {
+  return { touches: points.map(([identifier, clientX, clientY]) => ({ identifier, clientX, clientY })),
+    cancelable: true, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as TouchEvent;
+}
+
+function rapidSwipe(host: SwipeInternals, delta: number): void {
+  host.onTouchStart(swipeTouch([[1, 400, 300]]));
+  host.onTouchMove(swipeTouch([[1, 400 - delta * 600, 300]]));
+  host.onTouchStart(swipeTouch([]));
+}
+
+async function delayedSwipeSetup(count = 8) {
+  const context = await setup(count);
+  const host = context.view as unknown as SwipeInternals;
+  Object.defineProperties(host.scroller, { clientWidth: { value: 800 }, clientHeight: { value: 700 } });
+  let release!: () => void;
+  const render = vi.fn(async (): Promise<void> => undefined)
+    .mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
+  context.internal.renderPdfPage = render;
+  const navigation = vi.spyOn(context.view, "navigatePages");
+  rapidSwipe(host, 1);
+  return { ...context, host, render, navigation, release: () => release() };
+}
+
 /** Thumbnail tests need the rail expanded: it starts collapsed (parity with
  *  the notebook editor), and thumbnails skip painting while collapsed. */
 async function setupExpanded(sourcePageCount = 3) {
@@ -101,6 +135,79 @@ afterEach(async () => {
 });
 
 describe("pdf page preview rail", () => {
+  it("keeps rapid swipe destinations and coalesces renders while the PDF is loading", async () => {
+    const { view, internal, host, render, navigation, release } = await delayedSwipeSetup();
+    for (const delta of [1, 1, -1, 1]) rapidSwipe(host, delta);
+    expect(internal.noteIndex).toBe(1);
+    expect(host.flipSettling).toBe(true);
+    expect(navigation).toHaveBeenCalledTimes(1);
+    release();
+    await vi.waitFor(() => expect(host.flipSettling).toBe(false));
+    expect(internal.noteIndex).toBe(3);
+    expect(navigation.mock.calls.map(([delta]) => delta)).toEqual([1, 2]);
+    expect(render).toHaveBeenCalledTimes(2);
+    expect(host.pageWrap.style.visibility).toBe("");
+    await view.onClose();
+  });
+
+  it("clamps each rapid swipe at the page edge before reversing", async () => {
+    const { view, internal, host, release } = await delayedSwipeSetup(4);
+    for (const delta of [1, 1, 1, 1, 1, -1]) rapidSwipe(host, delta);
+    release();
+    await vi.waitFor(() => expect(host.flipSettling).toBe(false));
+    expect(internal.noteIndex).toBe(2);
+    await view.onClose();
+  });
+
+  it("resumes the finger's current drag after rendering and ignores cancelled gestures", async () => {
+    const { view, internal, host, release } = await delayedSwipeSetup();
+    rapidSwipe(host, 1);
+    host.onTouchStart(swipeTouch([[2, 400, 300]]));
+    host.onTouchMove(swipeTouch([[2, -200, 300]]));
+    host.cancelPageFlip();
+    host.touchGesture = null;
+    host.onTouchStart(swipeTouch([[3, 400, 300]]));
+    host.onTouchMove(swipeTouch([[3, 280, 300]]));
+    release();
+    await vi.waitFor(() => expect(host.flipSettling).toBe(false));
+    expect(internal.noteIndex).toBe(2);
+    expect(host.pageWrap.style.transform).toBe("translateX(-120px)");
+    expect(document.querySelector<HTMLElement>(".ink-swipe-stage")?.dataset.neighbor).toBe("3");
+    host.cancelPageFlip();
+    host.touchGesture = null;
+    await view.onClose();
+  });
+
+  it("discards pending destinations when a PDF view closes during rendering", async () => {
+    const { view, internal, host, navigation, release } = await delayedSwipeSetup();
+    rapidSwipe(host, 1);
+    rapidSwipe(host, 1);
+    await view.onClose();
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(navigation).toHaveBeenCalledTimes(1);
+    expect(internal.noteIndex).toBe(1);
+    expect(document.querySelector(".ink-swipe-stage")).toBeNull();
+  });
+
+  it("releases the swipe input lock after a failed navigation without retrying", async () => {
+    const { view } = await setup(3);
+    const host = view as unknown as SwipeInternals;
+    Object.defineProperties(host.scroller, { clientWidth: { value: 800 }, clientHeight: { value: 700 } });
+    // Supply Obsidian's visibility helper, which the preview DOM shim omits.
+    const status = (view as unknown as { statusEl: HTMLElement }).statusEl;
+    Object.assign(status, { toggle: (visible: boolean) => { status.style.display = visible ? "" : "none"; } });
+    const navigation = vi.spyOn(view, "navigatePages").mockRejectedValueOnce(new Error("render unavailable"));
+    rapidSwipe(host, 1);
+    await vi.waitFor(() => expect(host.flipSettling).toBe(false));
+    expect(navigation).toHaveBeenCalledOnce();
+    expect(status.textContent).toBe("Could not switch pages: render unavailable");
+    expect(status.style.display).toBe("");
+    expect(host.pageWrap.style.visibility).toBe("");
+    expect(document.querySelector(".ink-swipe-stage")).toBeNull();
+    await view.onClose();
+  });
+
   it("starts collapsed and toggles from the toolbar Pages button", async () => {
     const { view } = await setup(3);
     const root = document.querySelector<HTMLElement>(".ink-pdf-view")!;

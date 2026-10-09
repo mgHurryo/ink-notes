@@ -64,6 +64,18 @@ function touchEvent(points: number[][]) {
 }
 
 describe("page touch navigation", () => {
+  it("does not pan or pinch the live page during an asynchronous swipe handoff", () => {
+    const { view } = setup();
+    view.flipSettling = true;
+    view.onTouchStart(touchEvent([[1, 300, 400]]));
+    view.onTouchMove(touchEvent([[1, 300, 200]]));
+    expect(view.pageScroller.scrollTop).toBe(0);
+    view.onTouchStart(touchEvent([[1, 300, 200], [2, 400, 200]]));
+    view.onTouchMove(touchEvent([[1, 250, 200], [2, 450, 200]]));
+    expect(view.zoom).toBe(1);
+    expect(view.touchGesture).toBeNull();
+  });
+
   it("updates the toolbar readout and limits after gesture zoom", () => {
     const { view, zoomReadout, zoomOut, zoomIn } = setup();
     view.setZoom(3);
