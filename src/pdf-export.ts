@@ -1,6 +1,7 @@
 import { PDFDocument, PDFPage, degrees, rgb } from "pdf-lib";
 import { InkNotebook, InkStroke } from "./model";
 import { PdfSidecar, PdfSidecarNotePage } from "./pdf-sidecar";
+import { penOutlineRings } from "./rendering";
 
 /**
  * Vector ink export: re-renders the sidecar's note pages on top of the source
@@ -54,6 +55,44 @@ export function inkToSvgPath(stroke: InkStroke, page: PdfSidecarNotePage): strin
   return points.map((point, index) => `${index === 0 ? "M" : "L"} ${fmt(point.x)} ${fmt(page.height - point.y)}`).join(" ");
 }
 
+/** Build a closed PDF fill path from the same pressure/speed outline used on screen. */
+export function inkToSvgOutlinePath(stroke: InkStroke, page: PdfSidecarNotePage, renderWidth?: number): string {
+  const rotated = page.rotation === 90 || page.rotation === 270;
+  const displayWidth = rotated ? page.height : page.width;
+  const displayHeight = rotated ? page.width : page.height;
+  const logicalWidth = renderWidth && Number.isFinite(renderWidth) && renderWidth > 0 ? renderWidth : displayWidth;
+  const logicalHeight = Math.max(1, Math.round((logicalWidth * displayHeight / displayWidth) * 64) / 64);
+  return penOutlineRings(stroke, logicalWidth, logicalHeight).map((ring) => {
+    const points = ring.map(([x, y]) => {
+      const point = displayToPdfPoint(x / logicalWidth, y / logicalHeight, page);
+      return `${fmt(point.x)} ${fmt(page.height - point.y)}`;
+    });
+    return `M ${points.join(" L ")} Z`;
+  }).join(" ");
+}
+
+function inkToSvgHighlighterPath(stroke: InkStroke, page: PdfSidecarNotePage): string {
+  const map = (x: number, y: number): { x: number; y: number } => {
+    const point = displayToPdfPoint(x, y, page);
+    return { x: point.x, y: page.height - point.y };
+  };
+  const first = map(stroke.points[0].x, stroke.points[0].y);
+  const commands = [`M ${fmt(first.x)} ${fmt(first.y)}`];
+  for (let index = 1; index < stroke.points.length; index++) {
+    const previous = stroke.points[index - 1];
+    const point = stroke.points[index];
+    const end = index === stroke.points.length - 1
+      ? point
+      : { x: (previous.x + point.x) / 2, y: (previous.y + point.y) / 2 };
+    const control = map(previous.x, previous.y);
+    const mappedEnd = map(end.x, end.y);
+    commands.push(`Q ${fmt(control.x)} ${fmt(control.y)} ${fmt(mappedEnd.x)} ${fmt(mappedEnd.y)}`);
+  }
+  const last = map(stroke.points[stroke.points.length - 1].x, stroke.points[stroke.points.length - 1].y);
+  commands.push(`L ${fmt(last.x)} ${fmt(last.y)}`);
+  return commands.join(" ");
+}
+
 /** Display-space (normalized, y down) to PDF user space (points, y up, un-rotated). */
 export function displayToPdfPoint(nx: number, ny: number, page: PdfSidecarNotePage): { x: number; y: number } {
   const rotated = page.rotation === 90 || page.rotation === 270;
@@ -74,13 +113,13 @@ export function displayToPdfPoint(nx: number, ny: number, page: PdfSidecarNotePa
  * notebook's own dimensions, handwriting drawn as vector paths. Shares the
  * stroke drawing with the PDF sidecar exporter.
  */
-export async function exportNotebookPdf(notebook: InkNotebook, sourceName: string): Promise<Uint8Array> {
+export async function exportNotebookPdf(notebook: InkNotebook, sourceName: string, renderWidth?: number): Promise<Uint8Array> {
   const output = await PDFDocument.create();
   output.setTitle(`${sourceName} (handwritten)`);
   for (const page of notebook.pages) {
     const geometry = { id: page.id, width: notebook.pageWidth, height: notebook.pageHeight, rotation: 0 as const };
     const pdfPage = output.addPage([notebook.pageWidth, notebook.pageHeight]);
-    for (const stroke of page.strokes) drawStroke(pdfPage, stroke, geometry);
+    for (const stroke of page.strokes) drawStroke(pdfPage, stroke, geometry, renderWidth);
   }
   return output.save();
 }
@@ -95,7 +134,7 @@ export function sidecarHasInk(sidecar: PdfSidecar): boolean {
   return sidecar.notebook.pages.some((page) => page.strokes.length > 0);
 }
 
-export async function exportHandwrittenPdf(sourceBytes: ArrayBuffer, sidecar: PdfSidecar, sourceName: string): Promise<Uint8Array> {
+export async function exportHandwrittenPdf(sourceBytes: ArrayBuffer, sidecar: PdfSidecar, sourceName: string, renderWidth?: number): Promise<Uint8Array> {
   if (looksDigitallySigned(sourceBytes)) {
     throw new PdfExportError("signed", "This PDF is digitally signed; exporting would invalidate the signature");
   }
@@ -126,23 +165,36 @@ export async function exportHandwrittenPdf(sourceBytes: ArrayBuffer, sidecar: Pd
       if (notePage.rotation !== 0) page.setRotation(degrees(notePage.rotation));
     }
     for (const stroke of strokesByPage.get(notePage.id) ?? []) {
-      drawStroke(page, stroke, notePage);
+      drawStroke(page, stroke, notePage, renderWidth);
     }
   }
   return output.save();
 }
 
-function drawStroke(page: PDFPage, stroke: InkStroke, notePage: PdfSidecarNotePage): void {
+function drawStroke(page: PDFPage, stroke: InkStroke, notePage: PdfSidecarNotePage, renderWidth?: number): void {
   const { red, green, blue } = parseHexColor(stroke.color);
   const color = rgb(red, green, blue);
-  if (stroke.points.length === 1) {
-    const center = displayToPdfPoint(stroke.points[0].x, stroke.points[0].y, notePage);
-    page.drawCircle({ x: center.x, y: center.y, size: stroke.width / 2, color, opacity: stroke.opacity });
+  const rotated = notePage.rotation === 90 || notePage.rotation === 270;
+  const displayWidth = rotated ? notePage.height : notePage.width;
+  const logicalWidth = renderWidth && Number.isFinite(renderWidth) && renderWidth > 0 ? renderWidth : displayWidth;
+  const widthScale = displayWidth / logicalWidth;
+  if (stroke.tool !== "highlighter") {
+    page.drawSvgPath(inkToSvgOutlinePath(stroke, notePage, logicalWidth), {
+      color,
+      opacity: stroke.opacity,
+      x: 0,
+      y: notePage.height,
+    });
     return;
   }
-  page.drawSvgPath(inkToSvgPath(stroke, notePage), {
+  if (stroke.points.length === 1) {
+    const center = displayToPdfPoint(stroke.points[0].x, stroke.points[0].y, notePage);
+    page.drawCircle({ x: center.x, y: center.y, size: stroke.width * widthScale / 2, color, opacity: stroke.opacity });
+    return;
+  }
+  page.drawSvgPath(inkToSvgHighlighterPath(stroke, notePage), {
     borderColor: color,
-    borderWidth: stroke.width,
+    borderWidth: stroke.width * widthScale,
     borderOpacity: stroke.opacity,
     borderLineCap: 1, // round caps, matching the on-screen renderer
     x: 0,

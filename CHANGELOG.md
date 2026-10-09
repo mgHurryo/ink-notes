@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0-beta.35 - 2026-10-10
+
+- PDF page previews now invalidate shifted rasters and blank-page neighbours, so inserting a blank page immediately shows a blank preview instead of reusing the following PDF page.
+- Notebook and PDF page swipes continue across rapid consecutive gestures with synchronized transitions, bounded destinations, and clean cancellation at page boundaries.
+- PDF pages render at display pixel density, keeping 100% text crisp across device densities, pane sizes, zoom, rotation, and neighbour prewarms.
+- Repeated Page options activation now closes the existing menu; PDF export has its own Download action without a duplicate menu item.
+- Stylus contacts after switching to the eraser are accepted immediately, and page zoom resets to 100% when navigating to another page.
+- Pen export reuses the visible pressure-sensitive outline, while pinch rendering keeps notebook paper and ink in one stable coordinate space during and after two-finger zoom.
+
 ## 0.8.0-beta.34 - 2026-10-10
 
 - Page swipes now move both pages together on a viewport-sized track, keeping the gap fixed throughout the slide. PDF neighbours retain their own aspect ratio instead of stretching into the current page dimensions.

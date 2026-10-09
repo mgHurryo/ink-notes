@@ -10,11 +10,16 @@ import { PdfTabTakeover } from "../src/pdf-takeover";
 import type { TFile, WorkspaceLeaf } from "obsidian";
 
 const FINGERPRINT = { sha256: "a".repeat(64), byteLength: 100 };
+const views = new Set<PdfInkView>();
+const resizeCallbacks: (() => void)[] = [];
 
 interface RailInternals {
   sidecar: PdfSidecar;
   noteIndex: number;
-  pdfDoc: { numPages: number; getPage(n: number): Promise<unknown> } | null;
+  zoom: number;
+  zoomTouched: boolean;
+  fitZoom: number;
+  pdfDoc: { numPages: number; getPage(n: number): Promise<unknown>; destroy(): Promise<void> } | null;
   neighbourCache: Map<number, HTMLCanvasElement>;
   thumbCache: Map<number, HTMLCanvasElement>;
   renderPdfPage(): Promise<void>;
@@ -22,6 +27,9 @@ interface RailInternals {
   refreshPageRail(): void;
   paintThumbnail(index: number): void;
   paintVisibleThumbnails(): void;
+  withPageUndo(change: () => boolean, label: string): void;
+  prewarmNeighbours(): void;
+  pendingThumbRenders: Set<number>;
 }
 
 /** Minimal pdf.js document stub: getPage(n) hands out a page whose render
@@ -30,7 +38,7 @@ function fakePdfDoc(pageCount: number) {
   const renderedPages: number[] = [];
   const getPage = vi.fn(async (pageNumber: number) => ({
     getViewport: ({ scale }: { scale: number }) => ({ width: 595.28 * scale, height: 841.89 * scale }),
-    render: vi.fn(async () => { renderedPages.push(pageNumber); }),
+    render: vi.fn(() => { renderedPages.push(pageNumber); return { promise: Promise.resolve() }; }),
   }));
   return { renderedPages, getPage, doc: { numPages: pageCount, getPage, destroy: async () => undefined } };
 }
@@ -56,6 +64,7 @@ async function setup(sourcePageCount = 3) {
   };
   const workers = { createSession: vi.fn(() => session) } as unknown as InkWorkerService;
   const view = new PdfInkView({} as WorkspaceLeaf);
+  views.add(view);
   view.configure({
     store: store as unknown as PdfSidecarStore,
     workers,
@@ -77,6 +86,80 @@ async function setup(sourcePageCount = 3) {
 const thumbs = () => document.querySelectorAll<HTMLButtonElement>(".ink-pdf-view .ink-page-thumb");
 const thumbAt = (index: number) => thumbs()[index]!;
 
+interface SwipeInternals {
+  scroller: HTMLElement;
+  pageWrap: HTMLElement;
+  flipSettling: boolean;
+  touchGesture: unknown;
+  onTouchStart(event: TouchEvent): void;
+  onTouchMove(event: TouchEvent): void;
+  cancelPageFlip(): void;
+}
+
+interface RasterInternals extends RailInternals {
+  scroller: HTMLElement;
+  pageWrap: HTMLElement;
+  pdfCanvas: HTMLCanvasElement;
+  zoom: number;
+  zoomTouched: boolean;
+  layoutPage(): void;
+  swipeDrag(offset: number): void;
+  prewarmToken: number;
+  prewarmNeighbour(index: number, token: number): Promise<void>;
+  renderSwipeStagePage(stage: HTMLElement, index: number): Promise<void>;
+}
+
+async function rasterSetup(width: number, height: number, dpr: number, zoom = 1) {
+  const context = await setup(3);
+  const host = context.view as unknown as RasterInternals;
+  Object.defineProperties(host.scroller, { clientWidth: { value: width, configurable: true }, clientHeight: { value: height } });
+  vi.stubGlobal("devicePixelRatio", dpr);
+  host.zoomTouched = true;
+  host.zoom = zoom;
+  host.layoutPage();
+  host.renderPdfPage = Reflect.get(PdfInkView.prototype, "renderPdfPage").bind(context.view);
+  const viewports: { width: number; height: number }[] = [];
+  const render = vi.fn(({ viewport }: { viewport: { width: number; height: number } }) => {
+    viewports.push(viewport);
+    return { promise: Promise.resolve(), cancel: vi.fn() };
+  });
+  host.pdfDoc = { numPages: 3, destroy: async () => undefined, getPage: vi.fn(async (number: number) => {
+    const note = context.sidecar.notePages[number - 1];
+    const rotated = note.rotation === 90 || note.rotation === 270;
+    return { getViewport: ({ scale }: { scale: number }) => ({
+      width: (rotated ? note.height : note.width) * scale,
+      height: (rotated ? note.width : note.height) * scale,
+    }), render };
+  }) };
+  // Keep main-raster assertions independent of optional neighbour prewarming.
+  vi.spyOn(host, "prewarmNeighbours").mockImplementation(() => undefined);
+  return { ...context, host, render, viewports };
+}
+
+function swipeTouch(points: number[][]): TouchEvent {
+  return { touches: points.map(([identifier, clientX, clientY]) => ({ identifier, clientX, clientY })),
+    cancelable: true, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as TouchEvent;
+}
+
+function rapidSwipe(host: SwipeInternals, delta: number): void {
+  host.onTouchStart(swipeTouch([[1, 400, 300]]));
+  host.onTouchMove(swipeTouch([[1, 400 - delta * 600, 300]]));
+  host.onTouchStart(swipeTouch([]));
+}
+
+async function delayedSwipeSetup(count = 8) {
+  const context = await setup(count);
+  const host = context.view as unknown as SwipeInternals;
+  Object.defineProperties(host.scroller, { clientWidth: { value: 800 }, clientHeight: { value: 700 } });
+  let release!: () => void;
+  const render = vi.fn(async (): Promise<void> => undefined)
+    .mockImplementationOnce(() => new Promise<void>((resolve) => { release = resolve; }));
+  context.internal.renderPdfPage = render;
+  const navigation = vi.spyOn(context.view, "navigatePages");
+  rapidSwipe(host, 1);
+  return { ...context, host, render, navigation, release: () => release() };
+}
+
 /** Thumbnail tests need the rail expanded: it starts collapsed (parity with
  *  the notebook editor), and thumbnails skip painting while collapsed. */
 async function setupExpanded(sourcePageCount = 3) {
@@ -87,17 +170,215 @@ async function setupExpanded(sourcePageCount = 3) {
 
 beforeEach(() => {
   document.body.innerHTML = '<div id="host"><div></div><main></main></div>';
-  vi.stubGlobal("ResizeObserver", class { observe() {} disconnect() {} });
+  resizeCallbacks.length = 0;
+  vi.stubGlobal("ResizeObserver", class {
+    constructor(callback: () => void) { resizeCallbacks.push(callback); }
+    observe() {} disconnect() {}
+  });
   const ctx = new Proxy({}, { get: () => vi.fn(), set: () => true });
   vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as CanvasRenderingContext2D);
 });
 
 afterEach(async () => {
+  // The host normally unloads every view; do so before restoring Canvas mocks.
+  for (const view of views) {
+    await view.onClose();
+    (view as unknown as { cleanups: (() => void)[] }).cleanups.forEach((cleanup) => cleanup());
+  }
+  views.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
 describe("pdf page preview rail", () => {
+  it("toggles the PDF three-dot menu instead of reopening after native dismissal", async () => {
+    const { view } = await setup();
+    try {
+      const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="Page options"]')!;
+      const tap = () => {
+        trigger.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+        trigger.click();
+      };
+      tap();
+      expect(document.querySelector(".preview-menu")).not.toBeNull();
+      tap();
+      expect(document.querySelector(".preview-menu")).toBeNull();
+      trigger.click();
+      expect(document.querySelector(".preview-menu")).not.toBeNull();
+      trigger.click();
+      expect(document.querySelector(".preview-menu")).toBeNull();
+      tap();
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      tap();
+      expect(document.querySelector(".preview-menu")).not.toBeNull();
+      await view.onClose();
+      expect(document.querySelector(".preview-menu")).toBeNull();
+    } finally {
+      await view.onClose();
+    }
+  });
+
+  it.each([[1318, 1, 1, 1270], [1318, 2, 1, 2540], [390, 3, 1, 1026], [800, 2, 2, 3008]])(
+    "renders the visible PDF at display density (pane %ipx, DPR %i, zoom %i)",
+    async (width, dpr, zoom, expectedWidth) => {
+      const { view, host, viewports } = await rasterSetup(width, 928, dpr, zoom);
+      await host.renderPdfPage();
+      expect(host.pdfCanvas.width).toBe(expectedWidth);
+      expect(host.pdfCanvas.height).toBeCloseTo(parseFloat(host.pageWrap.style.height) * dpr, -1);
+      expect(viewports[0].width).toBeCloseTo(expectedWidth);
+      expect(viewports[0].height).toBeCloseTo(host.pdfCanvas.height, 0);
+      await view.onClose();
+    });
+
+  it("preserves display density for rotated pages at 100%", async () => {
+    const { view, sidecar, host, viewports } = await rasterSetup(1318, 928, 2);
+    sidecar.notePages[0].rotation = 90;
+    host.layoutPage();
+    await host.renderPdfPage();
+    expect(host.pdfCanvas.width).toBe(2540);
+    expect(viewports[0].width).toBeCloseTo(2540);
+    expect(host.pdfCanvas.height).toBe(Math.round(2540 * 595.28 / 841.89));
+    await view.onClose();
+  });
+
+  it("prewarms and renders swipe previews at their own displayed size and fit", async () => {
+    const { view, sidecar, host } = await rasterSetup(1318, 928, 2, 2);
+    // The current portrait page fits by height; the landscape neighbour fits by width.
+    sidecar.notePages[1].width = 960;
+    sidecar.notePages[1].height = 540;
+    host.layoutPage();
+    host.swipeDrag(-180);
+    const stage = document.querySelector<HTMLElement>(".ink-swipe-stage")!;
+    await host.prewarmNeighbour(1, host.prewarmToken);
+    const cached = host.neighbourCache.get(1)!;
+    expect(cached.width).toBe(2540);
+    expect(cached.height).toBe(Math.round(2540 * 540 / 960));
+    expect(parseFloat(stage.style.width)).toBe(1270);
+    expect(cached.width).toBe(parseFloat(stage.style.width) * 2);
+    host.neighbourCache.clear();
+    await host.renderSwipeStagePage(stage, 1);
+    const raster = stage.querySelector<HTMLCanvasElement>("canvas:last-child")!;
+    expect(raster.width).toBe(cached.width);
+    expect(raster.height).toBe(cached.height);
+    await view.onClose();
+  });
+
+  it("keeps high zoom and DPR PDF allocations within the existing canvas limits", async () => {
+    const { view, host, viewports } = await rasterSetup(2000, 1200, 3, 3);
+    await host.renderPdfPage();
+    expect(host.pdfCanvas.width * host.pdfCanvas.height).toBeLessThanOrEqual(16_010_000);
+    expect(Math.max(host.pdfCanvas.width, host.pdfCanvas.height)).toBeLessThanOrEqual(8192);
+    expect(viewports[0].width).toBeCloseTo(host.pdfCanvas.width);
+    // Width and height are independently rounded to integer backing pixels.
+    expect(Math.abs(viewports[0].height - host.pdfCanvas.height)).toBeLessThanOrEqual(1);
+    await view.onClose();
+  });
+
+  it("does not enlarge a cached swipe raster from an old pane size", async () => {
+    const { view, host, render } = await rasterSetup(1318, 928, 2);
+    const stale = document.createElement("canvas");
+    stale.width = 595; stale.height = 842;
+    host.neighbourCache.set(1, stale);
+    host.swipeDrag(-180);
+    const stage = document.querySelector<HTMLElement>(".ink-swipe-stage")!;
+    await host.renderSwipeStagePage(stage, 1);
+    expect(render).toHaveBeenCalled();
+    const pageFitWidth = Math.min(1318 - 48, (928 - 48) / (841.89 / 595.28));
+    expect(host.neighbourCache.get(1)?.width).toBe(Math.round(pageFitWidth * 2));
+    await view.onClose();
+  });
+
+  it("invalidates old prewarm work when the pane resizes", async () => {
+    const { view, host, render } = await rasterSetup(1318, 928, 2);
+    let finish!: () => void;
+    render.mockImplementationOnce(() => ({ promise: new Promise<void>((resolve) => { finish = resolve; }), cancel: vi.fn() }));
+    const pending = host.prewarmNeighbour(1, host.prewarmToken);
+    await Promise.resolve();
+    expect(render).toHaveBeenCalledOnce();
+    Object.defineProperty(host.scroller, "clientWidth", { value: 900 });
+    resizeCallbacks[0]();
+    finish();
+    await pending;
+    expect(host.neighbourCache.has(1)).toBe(false);
+    await host.prewarmNeighbour(1, host.prewarmToken);
+    const pageFitWidth = Math.min(900 - 48, (928 - 48) / (841.89 / 595.28));
+    expect(host.neighbourCache.get(1)?.width).toBe(Math.round(pageFitWidth * 2));
+    await view.onClose();
+  });
+
+  it("keeps rapid swipe destinations and coalesces renders while the PDF is loading", async () => {
+    const { view, internal, host, render, navigation, release } = await delayedSwipeSetup();
+    for (const delta of [1, 1, -1, 1]) rapidSwipe(host, delta);
+    expect(internal.noteIndex).toBe(1);
+    expect(host.flipSettling).toBe(true);
+    expect(navigation).toHaveBeenCalledTimes(1);
+    release();
+    await vi.waitFor(() => expect(host.flipSettling).toBe(false));
+    expect(internal.noteIndex).toBe(3);
+    expect(navigation.mock.calls.map(([delta]) => delta)).toEqual([1, 2]);
+    expect(render).toHaveBeenCalledTimes(2);
+    expect(host.pageWrap.style.visibility).toBe("");
+    await view.onClose();
+  });
+
+  it("clamps each rapid swipe at the page edge before reversing", async () => {
+    const { view, internal, host, release } = await delayedSwipeSetup(4);
+    for (const delta of [1, 1, 1, 1, 1, -1]) rapidSwipe(host, delta);
+    release();
+    await vi.waitFor(() => expect(host.flipSettling).toBe(false));
+    expect(internal.noteIndex).toBe(2);
+    await view.onClose();
+  });
+
+  it("resumes the finger's current drag after rendering and ignores cancelled gestures", async () => {
+    const { view, internal, host, release } = await delayedSwipeSetup();
+    rapidSwipe(host, 1);
+    host.onTouchStart(swipeTouch([[2, 400, 300]]));
+    host.onTouchMove(swipeTouch([[2, -200, 300]]));
+    host.cancelPageFlip();
+    host.touchGesture = null;
+    host.onTouchStart(swipeTouch([[3, 400, 300]]));
+    host.onTouchMove(swipeTouch([[3, 280, 300]]));
+    release();
+    await vi.waitFor(() => expect(host.flipSettling).toBe(false));
+    expect(internal.noteIndex).toBe(2);
+    expect(host.pageWrap.style.transform).toBe("translateX(-120px)");
+    expect(document.querySelector<HTMLElement>(".ink-swipe-stage")?.dataset.neighbor).toBe("3");
+    host.cancelPageFlip();
+    host.touchGesture = null;
+    await view.onClose();
+  });
+
+  it("discards pending destinations when a PDF view closes during rendering", async () => {
+    const { view, internal, host, navigation, release } = await delayedSwipeSetup();
+    rapidSwipe(host, 1);
+    rapidSwipe(host, 1);
+    await view.onClose();
+    release();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(navigation).toHaveBeenCalledTimes(1);
+    expect(internal.noteIndex).toBe(1);
+    expect(document.querySelector(".ink-swipe-stage")).toBeNull();
+  });
+
+  it("releases the swipe input lock after a failed navigation without retrying", async () => {
+    const { view } = await setup(3);
+    const host = view as unknown as SwipeInternals;
+    Object.defineProperties(host.scroller, { clientWidth: { value: 800 }, clientHeight: { value: 700 } });
+    // Supply Obsidian's visibility helper, which the preview DOM shim omits.
+    const status = (view as unknown as { statusEl: HTMLElement }).statusEl;
+    Object.assign(status, { toggle: (visible: boolean) => { status.style.display = visible ? "" : "none"; } });
+    const navigation = vi.spyOn(view, "navigatePages").mockRejectedValueOnce(new Error("render unavailable"));
+    rapidSwipe(host, 1);
+    await vi.waitFor(() => expect(host.flipSettling).toBe(false));
+    expect(navigation).toHaveBeenCalledOnce();
+    expect(status.textContent).toBe("Could not switch pages: render unavailable");
+    expect(status.style.display).toBe("");
+    expect(host.pageWrap.style.visibility).toBe("");
+    expect(document.querySelector(".ink-swipe-stage")).toBeNull();
+    await view.onClose();
+  });
+
   it("starts collapsed and toggles from the toolbar Pages button", async () => {
     const { view } = await setup(3);
     const root = document.querySelector<HTMLElement>(".ink-pdf-view")!;
@@ -186,6 +467,77 @@ describe("pdf page preview rail", () => {
     internal.paintThumbnail(3);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(fakeDoc.getPage.mock.calls.map((call) => call[0])).toEqual([1, 2, 3]);
+    await view.onClose();
+  });
+
+  it("immediately paints an inserted blank instead of a prewarmed PDF at its old index", async () => {
+    const { view, internal, sidecar } = await setupExpanded(3);
+    internal.renderAll();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const oldPdf = document.createElement("canvas");
+    oldPdf.width = 595; oldPdf.height = 842;
+    internal.neighbourCache.set(1, oldPdf);
+    const drawImage = vi.fn(), fillRect = vi.fn();
+    const ctx = new Proxy({ drawImage, fillRect }, {
+      get: (target, key) => Reflect.get(target, key) ?? vi.fn(), set: () => true,
+    });
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
+    internal.withPageUndo(() => insertBlankNotePage(sidecar, sourcePageId(0)) !== null, "insert a blank page");
+    expect(sidecar.notePages[1].sourceIndex).toBeUndefined();
+    expect(internal.neighbourCache.has(1)).toBe(false);
+    expect(fillRect).toHaveBeenCalledWith(0, 0, 120, Math.round(120 * 841.89 / 595.28));
+    expect(drawImage.mock.calls.some(([bitmap]) => bitmap === oldPdf)).toBe(false);
+    expect(internal.thumbCache.has(1)).toBe(true);
+    await view.onClose();
+  });
+
+  it("does not let a prewarm started before insertion populate the blank index", async () => {
+    const { view, internal, sidecar, fakeDoc } = await setupExpanded(3);
+    internal.renderAll();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
+    const render = vi.fn(() => ({ promise: pending }));
+    fakeDoc.getPage.mockResolvedValueOnce({
+      getViewport: ({ scale }: { scale: number }) => ({ width: 595.28 * scale, height: 841.89 * scale }), render,
+    });
+    internal.prewarmNeighbours();
+    await Promise.resolve();
+    expect(render).toHaveBeenCalledOnce();
+    internal.withPageUndo(() => insertBlankNotePage(sidecar, sourcePageId(0)) !== null, "insert a blank page");
+    finish();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(internal.neighbourCache.has(1)).toBe(false);
+    expect(internal.thumbCache.has(1)).toBe(true);
+    await view.onClose();
+  });
+
+  it("discards a late thumbnail for an old page without clearing the replacement's pending render", async () => {
+    const { view, internal, sidecar, fakeDoc } = await setupExpanded(3);
+    let finishOld!: () => void, finishNew!: () => void;
+    const oldPaint = new Promise<void>((resolve) => { finishOld = resolve; });
+    const newPaint = new Promise<void>((resolve) => { finishNew = resolve; });
+    let inserted = false;
+    fakeDoc.getPage.mockImplementation(async (pageNumber) => ({
+      getViewport: ({ scale }: { scale: number }) => ({ width: 595.28 * scale, height: 841.89 * scale }),
+      render: vi.fn(() => ({ promise: pageNumber === 3 ? oldPaint
+        : inserted && pageNumber === 2 ? newPaint : Promise.resolve() })),
+    }));
+    internal.noteIndex = 1;
+    internal.renderAll();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(internal.pendingThumbRenders.has(2)).toBe(true);
+    inserted = true;
+    internal.withPageUndo(() => insertBlankNotePage(sidecar, sourcePageId(0)) !== null, "insert a blank page");
+    await Promise.resolve();
+    finishOld();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(internal.thumbCache.has(2)).toBe(false);
+    expect(internal.pendingThumbRenders.has(2)).toBe(true);
+    finishNew();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(internal.thumbCache.has(2)).toBe(true);
+    expect(internal.pendingThumbRenders.has(2)).toBe(false);
     await view.onClose();
   });
 
@@ -338,6 +690,23 @@ describe("pdf page preview rail", () => {
     expect(host.pageWrap.style.visibility).toBe("");
     expect(host.flipSettling).toBe(false);
     await view.onClose();
+  });
+
+  it("clears manual zoom when navigating to another PDF page", async () => {
+    const { view, internal } = await setup(3);
+    internal.zoom = 2;
+    internal.zoomTouched = true;
+    const scroller = (view as unknown as { scroller: HTMLElement }).scroller;
+    scroller.scrollLeft = 180;
+    scroller.scrollTop = 240;
+
+    await view.navigatePages(1);
+
+    expect(internal.noteIndex).toBe(1);
+    expect(internal.zoomTouched).toBe(false);
+    expect(internal.zoom).toBe(internal.fitZoom);
+    expect(scroller.scrollLeft).toBe(0);
+    expect(scroller.scrollTop).toBe(0);
   });
 
   it("resists an unavailable neighbour and restores the page without navigation", async () => {
