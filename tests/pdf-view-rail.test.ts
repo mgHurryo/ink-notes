@@ -239,6 +239,42 @@ describe("pdf page preview rail", () => {
     await view.onClose();
   });
 
+  it("never spring-backs a decided flip (double-settle = the flash)", async () => {
+    vi.useFakeTimers();
+    try {
+      const context = await setup(3);
+      const view = context.view;
+      const internal = context.internal;
+      const stage = document.createElement("div");
+      stage.dataset.neighbor = "1";
+      const stageStyles: string[][] = [];
+      (stage as unknown as { setCssStyles(styles: Record<string, string>): void }).setCssStyles = (styles) => {
+        stageStyles.push(Object.entries(styles).flat());
+      };
+      (internal as unknown as { swipeStage: HTMLElement }).swipeStage = stage;
+      const wrapStyles: string[][] = [];
+      const wrap = (view as unknown as { pageWrap: HTMLElement }).pageWrap;
+      const originalWrapStyles = wrap.setCssStyles.bind(wrap);
+      (wrap as unknown as { setCssStyles(styles: Record<string, string>): void }).setCssStyles = (styles) => {
+        wrapStyles.push(Object.entries(styles).flat());
+        originalWrapStyles(styles);
+      };
+      const settle = (view as unknown as { swipeSettle(delta: number): void }).swipeSettle;
+      settle.call(view, 1);
+      // The flip decided: it animates toward the neighbour slot...
+      expect(stageStyles.some((flat) => flat.includes("transform"))).toBe(true);
+      // ...and a trailing touchcancel / duplicate settle must not spring it
+      // back (that slid the stage beside the incoming page and destroyed it
+      // there - the reported flash).
+      settle.call(view, 0);
+      expect(stageStyles).toHaveLength(1);
+      expect(wrapStyles).toHaveLength(1);
+      expect((internal as unknown as { swipeStage: HTMLElement }).swipeStage).toBe(stage);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("draws the page's handwriting over the rendered thumbnail", async () => {
     const { view, internal, sidecar } = await setupExpanded(3);
     const page = sidecar.notebook.pages[0];

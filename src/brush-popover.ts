@@ -33,11 +33,12 @@ export const INK_COLORS = [
  *  middle of the range). */
 export const PRESET_PALETTE_MIN = 1;
 export const PRESET_PALETTE_MAX = 10;
-/** Double-tap window for re-coloring a preset swatch; iPads never deliver
- *  dblclick, so the gesture is detected on the pointer stream. */
-const DOUBLE_TAP_MS = 350;
 /** Hold duration that deletes a preset swatch outright. */
 const LONG_PRESS_MS = 550;
+/** How long the per-swatch picker input stays tappable after a tap on the
+ *  swatch: the next tap lands on the input and opens the system picker
+ *  natively - programmatic .click() never opens it on iPad. */
+const PICKER_ARM_MS = 400;
 
 /** Open/close animation length; keep in sync with the .is-open/.is-closing
  *  CSS transitions on the popovers. */
@@ -149,14 +150,6 @@ export class BrushPopoverController {
   private readonly preview: HTMLCanvasElement;
   private readonly body: HTMLElement;
   private readonly toolButtons = new Map<BrushTool, HTMLButtonElement>();
-  /** Off-screen system color picker shared by direct preset edits: a
-   *  double-tap points it at one swatch and opens it. Out-of-flow so it can
-   *  never intercept taps. */
-  private readonly presetColorInput: HTMLInputElement;
-  /** True while the off-screen picker above is open for a preset edit; the
-   *  tap-outside dismissal holds off, because the platform picker sheet sits
-   *  outside this popover's DOM. */
-  private pickingColor = false;
   private openState = false;
   private curveOpen = false;
   private dragIndex = -1;
@@ -183,10 +176,6 @@ export class BrushPopoverController {
     }
     const body = this.root.createDiv({ cls: "ink-popover-body" });
     this.body = body;
-    this.presetColorInput = this.root.createEl("input", {
-      cls: "ink-hidden-color-input",
-      attr: { type: "color", "aria-hidden": "true", tabindex: "-1" },
-    });
     for (const spec of options.tools) this.buildToolPanel(body, spec);
     options.buildExtras?.(body, {
       addRange: (parent, name, min, max, step, value, onChange) => this.addRange(parent, name, min, max, step, value, onChange),
@@ -325,38 +314,58 @@ export class BrushPopoverController {
     const palette = this.options.palette?.() ?? INK_COLORS.map((color) => color.value);
     for (const value of palette) {
       const label = INK_COLORS.find((color) => color.value.toLowerCase() === value.toLowerCase())?.label ?? "Custom";
-      const swatch = swatches.createEl("button", { cls: "ink-color-swatch", attr: {
+      // Each swatch carries its OWN native color input, on top of it but
+      // untappable until a tap on the swatch arms it: the next tap then
+      // lands on a real input and opens the system picker natively
+      // (programmatic .click() never opens it on iPad - the beta.30
+      // regression). Double-tap = change the preset; a 550ms hold on the
+      // swatch deletes it.
+      const slot = swatches.createDiv({ cls: "ink-swatch-slot" });
+      const swatch = slot.createEl("button", { cls: "ink-color-swatch", attr: {
         type: "button", title: `${label} — double-tap to change, hold to remove`, "aria-label": `${spec.label} ${label.toLowerCase()}`,
         "aria-pressed": String(settings.color.toLowerCase() === value.toLowerCase()), "data-color": value,
         "data-brush-tool": spec.tool,
       } });
       swatch.style.backgroundColor = value;
+      const picker = slot.createEl("input", { cls: "ink-swatch-picker", attr: {
+        type: "color", value, "aria-label": `${spec.label} ${label.toLowerCase()} preset picker`,
+        "data-color": value, "data-brush-tool": spec.tool, tabindex: "-1",
+      } });
+      picker.style.pointerEvents = "none";
       let suppressClick = false;
+      let armTimer: number | undefined;
       swatch.addEventListener("click", () => {
         // A finished long-press must not also select the color.
         if (suppressClick) { suppressClick = false; return; }
         settings.color = value;
         this.updateColorSwatches(spec.tool, value);
         this.update();
+        picker.style.pointerEvents = "auto";
+        if (armTimer !== undefined) window.clearTimeout(armTimer);
+        armTimer = window.setTimeout(() => {
+          armTimer = undefined;
+          picker.style.pointerEvents = "none";
+        }, PICKER_ARM_MS);
       });
-      // iPads deliver no dblclick for touch, so the gestures are detected on
-      // the raw pointer stream: two taps within 350ms re-colors this preset
-      // straight in the system picker, a 550ms hold deletes it outright - no
-      // intermediate editor, the user double-taps to change or remove.
-      let lastTapAt = 0;
+      // The settled pick replaces this preset (and follows the tool's color
+      // along when it was selected).
+      picker.addEventListener("change", () => {
+        picker.style.pointerEvents = "none";
+        if (armTimer !== undefined) { window.clearTimeout(armTimer); armTimer = undefined; }
+        const palette = this.options.palette?.();
+        if (!palette) return;
+        const index = palette.findIndex((entry) => entry.toLowerCase() === value.toLowerCase());
+        if (index < 0 || picker.value.toLowerCase() === value.toLowerCase()) return;
+        if (settings.color.toLowerCase() === value.toLowerCase()) settings.color = picker.value;
+        palette[index] = picker.value;
+        this.buildSwatchesInto(spec);
+        this.update();
+      });
       let pressTimer: number | undefined;
       const cancelPress = (): void => {
         if (pressTimer !== undefined) { window.clearTimeout(pressTimer); pressTimer = undefined; }
       };
       swatch.addEventListener("pointerdown", () => {
-        const now = Date.now();
-        if (now - lastTapAt <= DOUBLE_TAP_MS) {
-          lastTapAt = 0;
-          cancelPress();
-          this.editPresetColor(spec, value);
-          return;
-        }
-        lastTapAt = now;
         cancelPress();
         pressTimer = window.setTimeout(() => {
           pressTimer = undefined;
@@ -368,35 +377,6 @@ export class BrushPopoverController {
       swatch.addEventListener("pointercancel", cancelPress);
       swatch.addEventListener("pointerleave", cancelPress);
     }
-  }
-
-  /**
-   * Re-colors one palette entry straight in the system picker: the shared
-   * off-screen input is pointed at the swatch's color and opened inside the
-   * tap's gesture; the settled change replaces the preset (and follows the
-   * tool's color along if it was selected).
-   */
-  private editPresetColor(spec: BrushToolSpec, value: string): void {
-    const palette = this.options.palette?.();
-    if (!palette) return;
-    const index = palette.findIndex((entry) => entry.toLowerCase() === value.toLowerCase());
-    if (index < 0) return;
-    const input = this.presetColorInput;
-    input.value = palette[index];
-    this.pickingColor = true;
-    const settled = (): void => {
-      input.removeEventListener("change", settled);
-      this.pickingColor = false;
-      const currentIndex = palette.findIndex((entry) => entry.toLowerCase() === value.toLowerCase());
-      if (currentIndex < 0 || input.value.toLowerCase() === value.toLowerCase()) return;
-      const settings = this.options.getSettings(spec.tool);
-      if (settings.color.toLowerCase() === value.toLowerCase()) settings.color = input.value;
-      palette[currentIndex] = input.value;
-      this.buildSwatchesInto(spec);
-      this.update();
-    };
-    input.addEventListener("change", settled);
-    input.click();
   }
 
   /** Deletes one palette entry outright (the one-swatch minimum holds). */
@@ -411,11 +391,6 @@ export class BrushPopoverController {
     this.buildSwatchesInto(spec);
     this.update();
     new Notice("Preset color removed");
-  }
-
-  /** True while a preset's system picker is open; tap-outside must wait. */
-  isPickingColor(): boolean {
-    return this.pickingColor;
   }
 
   private updateColorSwatches(tool: BrushTool, color: string): void {

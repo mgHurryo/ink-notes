@@ -633,9 +633,6 @@ export abstract class InkWritingView extends FileView {
       // tool must not close the popover first (it rebuilds for that tool).
       if (target && target.closest?.(".ink-tool-button")) return;
       if (target && popover.root.contains(target)) return;
-      // A preset's system color picker sheet lives outside this DOM; taps on
-      // it must not close the panel the swatch belongs to.
-      if (popover.isPickingColor()) return;
       popover.close();
     });
     this.registerDomEvent(document, "keydown", (event) => {
@@ -2411,6 +2408,10 @@ export abstract class InkWritingView extends FileView {
       this.onToolSelected(tool);
       this.state.tool = tool;
       if (tool !== "lasso") this.clearSelection();
+      // The eraser's panel is its own mini popover: leaving the brush panel
+      // open here stranded an empty shell whose pinned title and sample
+      // stroke stayed on screen with every panel hidden.
+      if (tool === "eraser") this.brushPopover?.close();
       // The eraser mini popover belongs to the eraser button; leaving it
       // open after switching tools would strand it beside the wrong panel.
       this.closeEraserPopover();

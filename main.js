@@ -22708,8 +22708,8 @@ var INK_COLORS = [
 ];
 var PRESET_PALETTE_MIN = 1;
 var PRESET_PALETTE_MAX = 10;
-var DOUBLE_TAP_MS = 350;
 var LONG_PRESS_MS = 550;
+var PICKER_ARM_MS = 400;
 var POPOVER_TRANSITION_MS = 150;
 function placePopover(pop, anchor, margin = 12) {
   const anchorRect = anchor.getBoundingClientRect();
@@ -22750,10 +22750,6 @@ var BrushPopoverController = class {
   constructor(parent, options) {
     this.parent = parent;
     this.toolButtons = /* @__PURE__ */ new Map();
-    /** True while the off-screen picker above is open for a preset edit; the
-     *  tap-outside dismissal holds off, because the platform picker sheet sits
-     *  outside this popover's DOM. */
-    this.pickingColor = false;
     this.openState = false;
     this.curveOpen = false;
     this.dragIndex = -1;
@@ -22774,10 +22770,6 @@ var BrushPopoverController = class {
     }
     const body = this.root.createDiv({ cls: "ink-popover-body" });
     this.body = body;
-    this.presetColorInput = this.root.createEl("input", {
-      cls: "ink-hidden-color-input",
-      attr: { type: "color", "aria-hidden": "true", tabindex: "-1" }
-    });
     for (const spec of options.tools) this.buildToolPanel(body, spec);
     (_a = options.buildExtras) == null ? void 0 : _a.call(options, body, {
       addRange: (parent2, name, min, max, step, value, onChange) => this.addRange(parent2, name, min, max, step, value, onChange)
@@ -22912,7 +22904,8 @@ var BrushPopoverController = class {
     const palette = (_c = (_b = (_a = this.options).palette) == null ? void 0 : _b.call(_a)) != null ? _c : INK_COLORS.map((color) => color.value);
     for (const value of palette) {
       const label = (_e = (_d = INK_COLORS.find((color) => color.value.toLowerCase() === value.toLowerCase())) == null ? void 0 : _d.label) != null ? _e : "Custom";
-      const swatch = swatches.createEl("button", { cls: "ink-color-swatch", attr: {
+      const slot = swatches.createDiv({ cls: "ink-swatch-slot" });
+      const swatch = slot.createEl("button", { cls: "ink-color-swatch", attr: {
         type: "button",
         title: `${label} \u2014 double-tap to change, hold to remove`,
         "aria-label": `${spec.label} ${label.toLowerCase()}`,
@@ -22921,7 +22914,17 @@ var BrushPopoverController = class {
         "data-brush-tool": spec.tool
       } });
       swatch.style.backgroundColor = value;
+      const picker = slot.createEl("input", { cls: "ink-swatch-picker", attr: {
+        type: "color",
+        value,
+        "aria-label": `${spec.label} ${label.toLowerCase()} preset picker`,
+        "data-color": value,
+        "data-brush-tool": spec.tool,
+        tabindex: "-1"
+      } });
+      picker.style.pointerEvents = "none";
       let suppressClick = false;
+      let armTimer;
       swatch.addEventListener("click", () => {
         if (suppressClick) {
           suppressClick = false;
@@ -22930,8 +22933,29 @@ var BrushPopoverController = class {
         settings.color = value;
         this.updateColorSwatches(spec.tool, value);
         this.update();
+        picker.style.pointerEvents = "auto";
+        if (armTimer !== void 0) window.clearTimeout(armTimer);
+        armTimer = window.setTimeout(() => {
+          armTimer = void 0;
+          picker.style.pointerEvents = "none";
+        }, PICKER_ARM_MS);
       });
-      let lastTapAt = 0;
+      picker.addEventListener("change", () => {
+        var _a2, _b2;
+        picker.style.pointerEvents = "none";
+        if (armTimer !== void 0) {
+          window.clearTimeout(armTimer);
+          armTimer = void 0;
+        }
+        const palette2 = (_b2 = (_a2 = this.options).palette) == null ? void 0 : _b2.call(_a2);
+        if (!palette2) return;
+        const index = palette2.findIndex((entry) => entry.toLowerCase() === value.toLowerCase());
+        if (index < 0 || picker.value.toLowerCase() === value.toLowerCase()) return;
+        if (settings.color.toLowerCase() === value.toLowerCase()) settings.color = picker.value;
+        palette2[index] = picker.value;
+        this.buildSwatchesInto(spec);
+        this.update();
+      });
       let pressTimer;
       const cancelPress = () => {
         if (pressTimer !== void 0) {
@@ -22940,14 +22964,6 @@ var BrushPopoverController = class {
         }
       };
       swatch.addEventListener("pointerdown", () => {
-        const now = Date.now();
-        if (now - lastTapAt <= DOUBLE_TAP_MS) {
-          lastTapAt = 0;
-          cancelPress();
-          this.editPresetColor(spec, value);
-          return;
-        }
-        lastTapAt = now;
         cancelPress();
         pressTimer = window.setTimeout(() => {
           pressTimer = void 0;
@@ -22959,35 +22975,6 @@ var BrushPopoverController = class {
       swatch.addEventListener("pointercancel", cancelPress);
       swatch.addEventListener("pointerleave", cancelPress);
     }
-  }
-  /**
-   * Re-colors one palette entry straight in the system picker: the shared
-   * off-screen input is pointed at the swatch's color and opened inside the
-   * tap's gesture; the settled change replaces the preset (and follows the
-   * tool's color along if it was selected).
-   */
-  editPresetColor(spec, value) {
-    var _a, _b;
-    const palette = (_b = (_a = this.options).palette) == null ? void 0 : _b.call(_a);
-    if (!palette) return;
-    const index = palette.findIndex((entry) => entry.toLowerCase() === value.toLowerCase());
-    if (index < 0) return;
-    const input = this.presetColorInput;
-    input.value = palette[index];
-    this.pickingColor = true;
-    const settled = () => {
-      input.removeEventListener("change", settled);
-      this.pickingColor = false;
-      const currentIndex = palette.findIndex((entry) => entry.toLowerCase() === value.toLowerCase());
-      if (currentIndex < 0 || input.value.toLowerCase() === value.toLowerCase()) return;
-      const settings = this.options.getSettings(spec.tool);
-      if (settings.color.toLowerCase() === value.toLowerCase()) settings.color = input.value;
-      palette[currentIndex] = input.value;
-      this.buildSwatchesInto(spec);
-      this.update();
-    };
-    input.addEventListener("change", settled);
-    input.click();
   }
   /** Deletes one palette entry outright (the one-swatch minimum holds). */
   removePresetColor(spec, value) {
@@ -23002,10 +22989,6 @@ var BrushPopoverController = class {
     this.buildSwatchesInto(spec);
     this.update();
     new import_obsidian.Notice("Preset color removed");
-  }
-  /** True while a preset's system picker is open; tap-outside must wait. */
-  isPickingColor() {
-    return this.pickingColor;
   }
   updateColorSwatches(tool, color) {
     this.root.querySelectorAll(`.ink-color-swatch[data-brush-tool="${tool}"]`).forEach((swatch) => {
@@ -24177,7 +24160,6 @@ var InkWritingView = class extends import_obsidian2.FileView {
       const target = event.target;
       if (target && ((_a = target.closest) == null ? void 0 : _a.call(target, ".ink-tool-button"))) return;
       if (target && popover.root.contains(target)) return;
-      if (popover.isPickingColor()) return;
       popover.close();
     });
     this.registerDomEvent(document, "keydown", (event) => {
@@ -25830,7 +25812,7 @@ var InkWritingView = class extends import_obsidian2.FileView {
     const iconHolder = button.createSpan({ cls: "ink-button-icon" });
     (0, import_obsidian2.setIcon)(iconHolder, icon);
     button.addEventListener("click", () => {
-      var _a;
+      var _a, _b;
       this.finishPointerInput(false);
       if (this.state.tool === tool && hasSettings) {
         this.toggleToolSettings(button);
@@ -25839,8 +25821,9 @@ var InkWritingView = class extends import_obsidian2.FileView {
       this.onToolSelected(tool);
       this.state.tool = tool;
       if (tool !== "lasso") this.clearSelection();
+      if (tool === "eraser") (_a = this.brushPopover) == null ? void 0 : _a.close();
       this.closeEraserPopover();
-      (_a = this.brushPopover) == null ? void 0 : _a.update();
+      (_b = this.brushPopover) == null ? void 0 : _b.update();
       this.updateToolButtons();
       this.refreshEraserCursor();
       if (this.settingsOpen()) this.reopenToolSettings();
@@ -26951,6 +26934,9 @@ var InkView = class extends InkWritingView {
     /** Live rail drag (pointerdown → pointerup) from the resize handle. */
     this.railResize = null;
     this.swipeStage = null;
+    /** True while a decided flip is animating/committing; a trailing
+     *  touchcancel must not spring it back (double-settle = the flash). */
+    this.flipSettling = false;
     this.store = store;
     this.workers = workers;
     if (toolState) this.useSharedToolState(toolState);
@@ -27490,6 +27476,7 @@ var InkView = class extends InkWritingView {
       return;
     }
     if (!delta || !this.swipeStage) {
+      if (this.flipSettling) return;
       extent.style.transition = "transform 160ms ease-out";
       extent.style.transform = "translateX(0px)";
       if (this.swipeStage) {
@@ -27504,6 +27491,8 @@ var InkView = class extends InkWritingView {
       }
       return;
     }
+    if (this.flipSettling) return;
+    this.flipSettling = true;
     const side = Number(this.swipeStage.dataset.neighbor) - this.pageIndex;
     const page = this.pageElement;
     const width = page.offsetWidth;
@@ -27516,6 +27505,7 @@ var InkView = class extends InkWritingView {
     const commit = () => {
       if (committed || !this.swipeStage) return;
       committed = true;
+      this.flipSettling = false;
       extent.style.transition = "none";
       extent.style.transform = "none";
       this.changePage(delta);
@@ -27524,7 +27514,7 @@ var InkView = class extends InkWritingView {
         this.destroySwipeStage();
       }, 650);
     };
-    extent.addEventListener("transitionend", commit, { once: true });
+    this.swipeStage.addEventListener("transitionend", commit, { once: true });
     if (this.swipeStageTimer !== void 0) window.clearTimeout(this.swipeStageTimer);
     this.swipeStageTimer = window.setTimeout(commit, 280);
   }
@@ -27536,6 +27526,7 @@ var InkView = class extends InkWritingView {
     }
     (_a = this.swipeStage) == null ? void 0 : _a.remove();
     this.swipeStage = null;
+    this.flipSettling = false;
   }
   settingsOpen() {
     var _a, _b;
@@ -28945,6 +28936,9 @@ var PdfInkView = class extends InkWritingView {
     this.saveRequested = false;
     this.pendingRecoveryCandidates = null;
     this.swipeStage = null;
+    /** True while a decided flip is animating/committing; a trailing
+     *  touchcancel must not spring it back (double-settle = the flash). */
+    this.flipSettling = false;
     this.scope = new import_obsidian7.Scope(this.app.scope);
     this.scope.register(["Mod"], "z", () => this.undo());
     this.scope.register(["Mod", "Shift"], "z", () => this.redo());
@@ -29680,11 +29674,7 @@ var PdfInkView = class extends InkWritingView {
     this.pageBaseWidth = Math.max(200, this.scroller.clientWidth - PDF_PAGE_PADDING * 2) || 700;
     this.pageBaseHeight = this.pageBaseWidth * display.height / display.width;
     const contentHeight = Math.max(1, this.scroller.clientHeight - PDF_PAGE_PADDING * 2);
-    this.fitZoom = Math.max(0.05, Math.min(
-      this.pageBaseWidth / Math.max(1, display.width),
-      contentHeight / Math.max(1, display.height),
-      PDF_ZOOM_MAX
-    ));
+    this.fitZoom = Math.max(0.05, Math.min(1, contentHeight / this.pageBaseHeight));
     if (!this.zoomTouched) this.zoom = this.fitZoom;
     this.pageWrap.setCssStyles({
       width: `${this.pageBaseWidth * this.zoom}px`,
@@ -29916,6 +29906,7 @@ var PdfInkView = class extends InkWritingView {
       return;
     }
     if (!delta || !this.swipeStage) {
+      if (this.flipSettling) return;
       wrap.setCssStyles({ transition: "transform 160ms ease-out", transform: "translateX(0px)" });
       if (this.swipeStage) this.swipeStage.setCssStyles({ transition: "transform 160ms ease-out", transform: "translateX(0px)" });
       if (this.swipeStageTimer === void 0) {
@@ -29926,6 +29917,8 @@ var PdfInkView = class extends InkWritingView {
       }
       return;
     }
+    if (this.flipSettling) return;
+    this.flipSettling = true;
     const side = Number(this.swipeStage.dataset.neighbor) - this.noteIndex;
     const width = wrap.offsetWidth;
     const gap = Math.max(12, Math.round(wrap.offsetLeft));
@@ -29935,10 +29928,11 @@ var PdfInkView = class extends InkWritingView {
     const commit = () => {
       if (committed || !this.swipeStage) return;
       committed = true;
+      this.flipSettling = false;
       wrap.setCssStyles({ transition: "none", transform: "none" });
       void this.navigatePages(delta).finally(() => this.destroySwipeStage());
     };
-    wrap.addEventListener("transitionend", commit, { once: true });
+    this.swipeStage.addEventListener("transitionend", commit, { once: true });
     if (this.swipeStageTimer !== void 0) window.clearTimeout(this.swipeStageTimer);
     this.swipeStageTimer = window.setTimeout(commit, 280);
   }
@@ -29950,6 +29944,7 @@ var PdfInkView = class extends InkWritingView {
     }
     (_a = this.swipeStage) == null ? void 0 : _a.remove();
     this.swipeStage = null;
+    this.flipSettling = false;
   }
   settingsOpen() {
     var _a, _b;
