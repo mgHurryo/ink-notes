@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.8.0-beta.36 - 2026-10-10
+
+- Notebook and PDF views offer an explicit reading/editing toggle. Reading hides editing controls, blocks handwriting/history/page changes, and keeps previews, export, navigation and zoom. Switching completes active ink; editing remains the default and restores the selected tool.
+- Desktop controls share middle-button or Space+left dragging, wheel/trackpad scrolling and cursor zoom, horizontal edge navigation, and editor-scoped keyboard shortcuts. Reading also supports ordinary left-button panning.
+- Pinch zoom shows a compact animated readout with a zoom lock. Locked views keep the magnification across pages while allowing panning; unlocked navigation continues to reset the incoming page to 100%.
+- The Add page menu inserts blank pages before/after the current page or at the document boundaries. Deliberate outward swipes beyond the first/last page threshold also create a blank page in editing mode.
+- The notebook picker always offers creation, with search and rename actions. Toolbar navigation/history stay left, writing tools remain centered, and document actions stay right.
+- Storage formats and minimum Obsidian version remain compatible. Physical devices, actual Obsidian/popout lifecycle and WebKit remain unverified; reading mode is per-view and retains PDF writer ownership.
+
 ## 0.8.0-beta.35 - 2026-10-10
 
 - PDF page previews now invalidate shifted rasters and blank-page neighbours, so inserting a blank page immediately shows a blank preview instead of reusing the following PDF page.
