@@ -159,8 +159,8 @@ export class PdfInkView extends InkWritingView {
   private railSweepTimer: number | undefined;
 
   private dirty = false;
+  private editRevision = 0;
   private activeSave: Promise<SaveOutcome> | null = null;
-  private saveRequested = false;
   private zoomTimer: number | undefined;
   private pendingRecoveryCandidates: TFile[] | null = null;
 
@@ -235,10 +235,13 @@ export class PdfInkView extends InkWritingView {
   async onClose(): Promise<void> {
     this.disposeZoomHud();
     this.closePageOptionsMenu();
-    const outcome = await this.flushSaveNow();
-    if (outcome.status !== "saved") {
-      new Notice(`Ink Notes kept notes for ${this.file?.basename ?? "this PDF"} in a conflict copy: ${outcome.message}`);
+    this.finishPointerInput(false);
+    let outcome = await this.flushSaveNow();
+    if (outcome.status === "failed" && this.sidecar && this.sidecarFile) {
+      outcome = await this.saveConflictCopy(this.sidecarRaw, outcome.message);
     }
+    if (outcome.status === "failed") new Notice(`Ink Notes could not save this PDF's latest notes: ${outcome.message}`);
+    if (outcome.status === "conflict") new Notice(`Ink Notes kept a conflict copy: ${outcome.message}`);
     this.releaseWriter();
     this.loadGeneration += 1;
     this.cancelPdfRender();
@@ -246,7 +249,6 @@ export class PdfInkView extends InkWritingView {
     this.neighbourCache.clear();
     this.clearRailState();
     this.destroySwipeStage();
-    this.finishPointerInput(false);
     this.discardPendingInkPreview();
     this.clearSaveTimers();
     if (this.renderFrame !== null) window.cancelAnimationFrame(this.renderFrame);
@@ -261,6 +263,7 @@ export class PdfInkView extends InkWritingView {
   }
 
   async onLoadFile(file: TFile): Promise<void> {
+    const sourceMtime = file.stat?.mtime;
     const generation = ++this.loadGeneration;
     this.resetViewState();
     let bytes: ArrayBuffer;
@@ -312,13 +315,19 @@ export class PdfInkView extends InkWritingView {
     this.layoutPage();
     this.renderAll();
     await this.renderPdfPage();
+    if (generation === this.loadGeneration && file.stat?.mtime !== sourceMtime) await this.checkSourcePdfRevision();
   }
 
   async onUnloadFile(_file: TFile): Promise<void> {
     this.finishPointerInput(false);
+    const outcome = await this.flushSaveNow();
+    if (outcome.status === "failed") throw new Error(`Could not save PDF handwriting: ${outcome.message}`);
+    if (outcome.status === "conflict") new Notice(`Ink Notes kept a conflict copy: ${outcome.message}`);
+    this.clearSaveTimers();
     this.loadGeneration += 1;
     this.cancelPdfRender();
     this.discardPendingInkPreview();
+    void this.pdfDoc?.destroy().catch(() => undefined);
     this.pdfDoc = null;
     this.sidecar = null;
     this.sidecarFile = null;
@@ -379,7 +388,8 @@ export class PdfInkView extends InkWritingView {
   }
 
   /** Hand the tab back to the built-in (possibly PDF++-enhanced) viewer. */
-  async restoreBuiltinViewer(): Promise<void> {
+  async restoreBuiltinViewer(eState?: unknown): Promise<void> {
+    this.finishPointerInput(false);
     const outcome = await this.flushSaveNow();
     if (outcome.status === "failed") {
       new Notice(`Save failed, staying in the handwriting view: ${outcome.message}`);
@@ -388,10 +398,45 @@ export class PdfInkView extends InkWritingView {
     if (!this.file) return;
     this.takeover.suppressLeaf(this.leaf);
     try {
-      await this.leaf.setViewState({ type: "pdf", state: { file: this.file.path } });
-    } finally {
+      const sourceIndex = this.sidecar?.notePages[this.noteIndex]?.sourceIndex;
+      await this.leaf.setViewState({ type: "pdf", state: { file: this.file.path } },
+        eState ?? (sourceIndex === undefined ? undefined : { subpath: `#page=${sourceIndex + 1}` }));
+    } catch (error) {
       this.takeover.releaseLeaf(this.leaf);
+      new Notice(`Could not return to the PDF viewer: ${messageOf(error)}`);
     }
+  }
+
+  setEphemeralState(state: unknown): void {
+    // openLinkText can reuse an existing ink leaf without another setViewState call.
+    if (state != null && typeof state === "object" && Object.keys(state).length > 0) {
+      void this.restoreBuiltinViewer(state);
+    }
+  }
+
+  async checkSourcePdfRevision(): Promise<void> {
+    const file = this.file;
+    const sidecar = this.sidecar;
+    const generation = this.loadGeneration;
+    if (!file || !sidecar) return;
+    try {
+      const bytes = await this.app.vault.readBinary(file);
+      const fingerprint = await this.store.computeFingerprint(bytes);
+      if (generation !== this.loadGeneration || this.file?.path !== file.path) return;
+      if (fingerprint.sha256 !== sidecar.source.sha256 || fingerprint.byteLength !== sidecar.source.byteLength) this.sourcePdfModified();
+    } catch (error) {
+      if (generation === this.loadGeneration) this.setStatus(`Could not check the updated PDF: ${messageOf(error)}`, true);
+    }
+  }
+
+  /** An external editor changed the source; old ink coordinates belong to the old revision. */
+  sourcePdfModified(): void {
+    if (!this.sidecar) return;
+    this.finishPointerInput(false);
+    this.writeBlockedReason = "The source PDF changed. Reopen it to check the notes against the new revision.";
+    this.releaseWriter();
+    this.updateToolButtons();
+    this.setStatus(this.writeBlockedReason, true);
   }
 
   // --------------------------------------------------------------- sidecar
@@ -953,6 +998,7 @@ export class PdfInkView extends InkWritingView {
     this.sidecar.updatedAt = Date.now();
     this.sidecar.notebook.updatedAt = this.sidecar.updatedAt;
     this.dirty = true;
+    this.editRevision += 1;
     this.scheduleSave();
   }
 
@@ -1185,6 +1231,7 @@ export class PdfInkView extends InkWritingView {
     if (!this.sidecar) return;
     this.sidecar.updatedAt = Date.now();
     this.dirty = true;
+    this.editRevision += 1;
   }
 
   protected afterInputFullySettled(): void {
@@ -1544,6 +1591,7 @@ export class PdfInkView extends InkWritingView {
   }
 
   private setStatus(message: string, isError = false): void {
+    if (!message && this.writeBlockedReason) { message = this.writeBlockedReason; isError = true; }
     if (!this.statusEl) return;
     this.statusEl.setText(message);
     this.statusEl.toggleClass("is-error", isError);
@@ -1560,20 +1608,16 @@ export class PdfInkView extends InkWritingView {
   async flushSaveNow(): Promise<SaveOutcome> {
     if (!this.dirty || !this.sidecar || !this.sidecarFile) return { status: "saved" };
     if (this.activeSave) {
-      this.saveRequested = true;
       const previous = await this.activeSave;
       if (previous.status !== "saved") return previous;
-      if (!this.dirty) return { status: "saved" };
+      return this.flushSaveNow();
     }
     const save = this.performSave()
       .catch((error): SaveOutcome => ({ status: "failed", message: messageOf(error) }))
       .finally(() => { this.activeSave = null; });
     this.activeSave = save;
     const outcome = await save;
-    if (this.saveRequested) {
-      this.saveRequested = false;
-      if (outcome.status === "saved" && this.dirty) return this.flushSaveNow();
-    }
+    if (outcome.status === "saved" && this.dirty) return this.flushSaveNow();
     return outcome;
   }
 
@@ -1587,12 +1631,13 @@ export class PdfInkView extends InkWritingView {
   private async performSave(): Promise<SaveOutcome> {
     let latestRaw = this.sidecarRaw;
     for (let attempt = 0; attempt <= SAVE_CONFLICT_RETRIES; attempt++) {
+      const revision = this.editRevision;
       const next = { ...this.sidecar!, updatedAt: Date.now() };
       const nextRaw = serializeSidecar(next);
       if (await this.store.writeIfUnchanged(this.sidecarFile!, this.sidecarRaw, nextRaw)) {
         this.sidecarRaw = nextRaw;
-        this.sidecar = next;
-        this.dirty = false;
+        if (this.editRevision === revision) this.sidecar = next;
+        this.dirty = this.editRevision !== revision;
         return { status: "saved" };
       }
       // CAS mismatch: re-read, merge, retry. Unreadable or foreign content
@@ -1612,12 +1657,13 @@ export class PdfInkView extends InkWritingView {
         return this.saveConflictCopy(latestRaw, "the notes file on disk belongs to a different PDF revision");
       }
       try {
+        const mergeRevision = this.editRevision;
         const merged = mergeSidecars(latest, this.sidecar!);
         const mergedRaw = serializeSidecar(merged);
         if (await this.store.writeIfUnchanged(this.sidecarFile!, latestRaw, mergedRaw)) {
           this.sidecarRaw = mergedRaw;
-          this.sidecar = merged;
-          this.dirty = false;
+          this.sidecar = this.editRevision === mergeRevision ? merged : mergeSidecars(merged, this.sidecar!);
+          this.dirty = this.editRevision !== mergeRevision;
           this.syncNotebookToWorker();
           return { status: "saved" };
         }
@@ -1633,11 +1679,12 @@ export class PdfInkView extends InkWritingView {
   /** Keep local ink in a conflict copy; never clobber the file on disk. */
   private async saveConflictCopy(diskRaw: string, reason: string): Promise<SaveOutcome> {
     try {
+      const revision = this.editRevision;
       const conflictPath = `${this.sidecarFile!.path.replace(/\.pdfink\.json$/, "")}.conflict-${Date.now()}.pdfink.json`;
       const sidecar = { ...this.sidecar!, updatedAt: Date.now() };
       await this.app.vault.create(conflictPath, serializeSidecar(sidecar));
       this.sidecarRaw = diskRaw;
-      this.dirty = false;
+      this.dirty = this.editRevision !== revision;
       new Notice(`Ink Notes kept your notes in ${conflictPath}`);
       return { status: "conflict", message: reason };
     } catch (error) {
@@ -1649,6 +1696,7 @@ export class PdfInkView extends InkWritingView {
 
   async exportHandwrittenCopy(): Promise<void> {
     if (!this.file || !this.sidecar) return;
+    this.finishPointerInput(false);
     if (!sidecarHasInk(this.sidecar)) {
       new Notice("This PDF has no handwriting to export yet");
       return;
@@ -1660,6 +1708,12 @@ export class PdfInkView extends InkWritingView {
     }
     try {
       const bytes = await this.app.vault.readBinary(this.file);
+      const fingerprint = await this.store.computeFingerprint(bytes);
+      if (fingerprint.sha256 !== this.sidecar.source.sha256 || fingerprint.byteLength !== this.sidecar.source.byteLength) {
+        this.sourcePdfModified();
+        new Notice("Export cancelled: the source PDF changed. Your notes still belong to the previous revision.");
+        return;
+      }
       const output = await exportHandwrittenPdf(bytes, this.sidecar, this.file.basename, this.canvasLogicalWidth);
       const target = exportPathFor(this.file.path, (candidate) => this.app.vault.getAbstractFileByPath(candidate) !== null);
       await this.app.vault.createBinary(target, output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength) as ArrayBuffer);
