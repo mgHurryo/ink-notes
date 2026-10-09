@@ -526,6 +526,8 @@ export abstract class InkWritingView extends FileView {
 
   // ------------------------------------------------------------------ seams
 
+  protected readingMode = false;
+
   /** The notebook model this editor writes into (drives op metadata). */
   protected abstract currentNotebook(): InkNotebook;
   /** The page new input lands on. */
@@ -656,6 +658,7 @@ export abstract class InkWritingView extends FileView {
   }
 
   protected openPageInsertMenu(event: MouseEvent, index: number, count: number, insert: (index: number) => void): void {
+    if (this.readingMode) return;
     const menu = this.beginPageOptionsMenu(event);
     if (!menu) return;
     for (const [title, position] of [
@@ -883,6 +886,37 @@ export abstract class InkWritingView extends FileView {
     this.addToolButton(draw, "eraser", "Erase", "eraser");
     this.addToolButton(draw, "lasso-select", "Select", "lasso");
   }
+
+  protected buildReadingModeButton(parent: HTMLElement): void {
+    const button = this.addIconButton(parent, "book-open", "Reading mode", () => this.setReadingMode(!this.readingMode));
+    button.classList.add("ink-reading-toggle");
+    this.updateReadingModeButton();
+  }
+
+  protected setReadingMode(reading: boolean): void {
+    if (reading === this.readingMode) return;
+    this.finishPointerInput(false);
+    this.endDesktopPan();
+    this.closePageOptionsMenu();
+    this.brushPopover?.close();
+    this.closeEraserPopover();
+    this.clearSelection();
+    this.readingMode = reading;
+    this.toolbarRoot().toggleClass("ink-reading", reading);
+    this.onReadingModeChanged();
+    this.updateReadingModeButton();
+    this.updateHistoryButtons();
+    this.refreshEraserCursor();
+  }
+
+  protected onReadingModeChanged(): void {}
+
+  private updateReadingModeButton(): void {
+    const button = this.toolbarRoot().querySelector<HTMLButtonElement>(".ink-reading-toggle");
+    if (!button) return;
+    button.setAttribute("aria-pressed", String(this.readingMode));
+    button.title = this.readingMode ? "Switch to editing mode" : "Switch to reading mode";
+  }
   /** Whether the diagnostics panel wants raw point samples retained. */
   protected diagnosticsCaptureRawPoints(): boolean { return false; }
   /** Called at the top of a new pointerdown, after the input locks. */
@@ -1041,7 +1075,7 @@ export abstract class InkWritingView extends FileView {
   private beginDesktopPan(event: InkPointerSample): boolean {
     if (event.pointerType !== "mouse" || this.flipSettling || this.activePointerId !== null || this.nativeMenuOpen()) return false;
     const button = event.button ?? 0;
-    if (button !== 1 && !(button === 0 && this.desktopSpaceDown)) return false;
+    if (button !== 1 && !(button === 0 && (this.desktopSpaceDown || this.readingMode))) return false;
     this.desktopPan = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
     this.inputScroller().classList.add("ink-panning");
     this.capturePointer(event.pointerId);
@@ -2517,6 +2551,7 @@ export abstract class InkWritingView extends FileView {
   // -------------------------------------------------------- history stack
 
   protected undo(): void {
+    if (this.readingMode) return;
     const command = this.undoStack.pop();
     if (!command) return;
     command.undo();
@@ -2525,6 +2560,7 @@ export abstract class InkWritingView extends FileView {
   }
 
   protected redo(): void {
+    if (this.readingMode) return;
     const command = this.redoStack.pop();
     if (!command) return;
     command.redo();
@@ -2551,8 +2587,8 @@ export abstract class InkWritingView extends FileView {
   protected updateHistoryButtons(): void {
     const undo = this.toolbarRoot().querySelector<HTMLButtonElement>("[aria-label='Undo']");
     const redo = this.toolbarRoot().querySelector<HTMLButtonElement>("[aria-label='Redo']");
-    if (undo) undo.disabled = this.undoStack.length === 0;
-    if (redo) redo.disabled = this.redoStack.length === 0;
+    if (undo) undo.disabled = this.readingMode || this.undoStack.length === 0;
+    if (redo) redo.disabled = this.readingMode || this.redoStack.length === 0;
   }
 
   protected abstract renderAll(): void;
@@ -2846,6 +2882,7 @@ export abstract class InkWritingView extends FileView {
     const iconHolder = button.createSpan({ cls: "ink-button-icon" });
     setIcon(iconHolder, icon);
     button.addEventListener("click", () => {
+      if (this.readingMode) return;
       this.finishPointerInput(false);
       if (this.state.tool === tool && hasSettings) {
         this.toggleToolSettings(button);

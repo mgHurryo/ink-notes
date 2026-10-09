@@ -90,9 +90,6 @@ export class InkView extends InkWritingView {
   private pendingMergedNotebook: InkNotebook | null = null;
   private pendingMergedNotebookIsFinal = false;
   private externalRefreshPending = false;
-  /** Reading mode: view-only. Ink tools, the popover and eraser tracking are
-   *  disabled and the page restores native panning/scrolling. */
-  private readingMode = false;
   private zoomRenderTimer: number | undefined;
   /** Freeze the page's raster/layout scale while a pinch composites the whole sheet. */
   private pinchRenderZoom: number | undefined;
@@ -240,10 +237,11 @@ export class InkView extends InkWritingView {
     toggle.setAttribute("aria-pressed", String(!this.root.hasClass("ink-rail-hidden")));
     this.buildWritingSections(toolbar, start);
     const document_ = this.addToolbarSection(toolbar, "Document");
+    this.buildReadingModeButton(document_);
     this.addIconButton(document_, "plus", "Add page", (event) => this.openPageInsertMenu(event,
-      this.pageIndex, this.notebook.pages.length, (index) => this.addPage(index)), this.readingMode);
+      this.pageIndex, this.notebook.pages.length, (index) => this.addPage(index))).classList.add("ink-edit-only");
     this.addIconButton(document_, "download", "Export as PDF", () => void this.exportNotebookCopy());
-    this.addIconButton(document_, "more-horizontal", "Page options", (event) => this.openPageMenu(event));
+    this.addIconButton(document_, "more-horizontal", "Page options", (event) => this.openPageMenu(event)).classList.add("ink-edit-only");
     this.updateToolButtons();
   }
 
@@ -580,6 +578,10 @@ export class InkView extends InkWritingView {
   protected inputRect(): DOMRect { return this.pageElement.getBoundingClientRect(); }
   protected inputHost(): HTMLElement { return this.pageElement; }
   protected inputLocked(): boolean { return this.readingMode || this.flipSettling; }
+  protected onReadingModeChanged(): void {
+    this.destroySwipeStage();
+    this.touchGesture = null;
+  }
   protected pagePixelSize(): { width: number; height: number } {
     return { width: this.notebook.pageWidth, height: this.notebook.pageHeight };
   }
@@ -986,6 +988,7 @@ export class InkView extends InkWritingView {
   }
 
   private openPageMenu(event: MouseEvent): void {
+    if (this.readingMode) return;
     const menu = this.beginPageOptionsMenu(event);
     if (!menu) return;
     for (const paper of ["blank", "ruled", "grid", "dot"] as PaperStyle[]) menu.addItem((item) => item.setTitle(`Paper: ${paper}`).setChecked(this.currentPage().paper === paper).onClick(() => {
@@ -1017,6 +1020,7 @@ export class InkView extends InkWritingView {
   }
 
   private renamePage(): void {
+    if (this.readingMode) return;
     const title = window.prompt("Page title", this.currentPage().title)?.trim();
     if (!title) return;
     const page = this.currentPage();
@@ -1036,6 +1040,7 @@ export class InkView extends InkWritingView {
   }
 
   private duplicateCurrentPage(): void {
+    if (this.readingMode) return;
     this.finishPointerInput(false);
     const before = cloneNotebook(this.notebook);
     const beforePageId = this.currentPage().id;
@@ -1054,6 +1059,7 @@ export class InkView extends InkWritingView {
   }
 
   private deleteCurrentPage(): void {
+    if (this.readingMode) return;
     if (this.notebook.pages.length <= 1) return;
     this.finishPointerInput(false);
     const before = cloneNotebook(this.notebook);
@@ -1073,6 +1079,7 @@ export class InkView extends InkWritingView {
   }
 
   private moveCurrentPage(delta: number): void {
+    if (this.readingMode) return;
     const target = this.pageIndex + delta;
     if (target < 0 || target >= this.notebook.pages.length) return;
     this.finishPointerInput(false);

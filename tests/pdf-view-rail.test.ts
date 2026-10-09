@@ -191,6 +191,42 @@ afterEach(async () => {
 });
 
 describe("pdf page preview rail", () => {
+  it("switches PDF reading mode without changing navigation or writer ownership", async () => {
+    const { view, internal, sidecar } = await setup(2);
+    const host = view as unknown as { readingMode: boolean; setReadingMode(value: boolean): void;
+      addBlankPage(index: number): void; withPageUndo(change: () => boolean, label: string): void;
+      writerHeld: boolean; inputLocked(): boolean; state: { tool: string }; ensureSwipeStage(offset: number): void;
+      exportHandwrittenCopy(): Promise<void> };
+    const before = serializeSidecar(sidecar);
+    const toggle = document.querySelector<HTMLButtonElement>('[aria-label="Reading mode"]')!;
+    toggle.click();
+    expect(host.readingMode).toBe(true);
+    expect(toggle.getAttribute("aria-pressed")).toBe("true");
+    expect(document.querySelector(".ink-pdf-view")!.classList.contains("ink-reading")).toBe(true);
+    expect(host.writerHeld).toBe(true);
+    expect(host.inputLocked()).toBe(true);
+    const scroller = document.querySelector<HTMLElement>(".ink-pdf-scroller")!;
+    scroller.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true }));
+    expect(internal.noteIndex).toBe(1);
+    scroller.dispatchEvent(new KeyboardEvent("keydown", { key: "e", bubbles: true }));
+    expect(host.state.tool).toBe("pen");
+    host.ensureSwipeStage(-250);
+    expect(document.querySelector(".ink-swipe-stage")).toBeNull();
+    const exportCopy = vi.spyOn(host, "exportHandwrittenCopy").mockResolvedValue();
+    document.querySelector<HTMLButtonElement>('[aria-label="Export PDF with handwriting"]')!.click();
+    expect(exportCopy).toHaveBeenCalledOnce();
+    host.addBlankPage(1);
+    host.withPageUndo(() => true, "change the page");
+    expect(serializeSidecar(sidecar)).toBe(before);
+    toggle.click();
+    expect(host.readingMode).toBe(false);
+    expect(document.querySelector(".ink-pdf-view")!.classList.contains("ink-reading")).toBe(false);
+    expect(host.inputLocked()).toBe(false);
+    host.writerHeld = false;
+    toggle.click(); toggle.click();
+    expect(host.inputLocked()).toBe(true);
+  });
+
   it("shares PDF desktop navigation and tool shortcuts, without taking text input or read-only history", async () => {
     const { view, internal } = await setup(3);
     const scroller = document.querySelector<HTMLElement>(".ink-pdf-scroller")!;
@@ -524,7 +560,7 @@ describe("pdf page preview rail", () => {
     const labels = (selector: string) => Array.from(root.querySelectorAll(selector)).map((el) => el.getAttribute("aria-label"));
     expect(labels(".ink-toolbar-start button")).toEqual(["Pages", "Undo", "Redo"]);
     expect(labels(".ink-toolbar-section-draw button")).toEqual(["Pen", "Highlight", "Erase", "Select"]);
-    expect(labels(".ink-toolbar-section-document button")).toEqual(["Add page", "Export PDF with handwriting", "Page options"]);
+    expect(labels(".ink-toolbar-section-document button")).toEqual(["Reading mode", "Add page", "Export PDF with handwriting", "Page options"]);
     expect(root.classList.contains("ink-rail-hidden")).toBe(true);
     const toggle = document.querySelector<HTMLButtonElement>('button[aria-label="Pages"]')!;
     expect(toggle.getAttribute("aria-pressed")).toBe("false");

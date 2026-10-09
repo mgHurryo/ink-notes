@@ -87,9 +87,9 @@ let nextViewId = 1;
 const EMPTY_NOTEBOOK = createNotebook();
 
 /**
- * Handwriting view for PDF tabs. Opens in reading mode; editing unlocks only
- * after the user explicitly toggles edit mode and the sidecar passed its
- * fingerprint check. The PDF page renders with Obsidian's own pdf.js below
+ * Handwriting view for PDF tabs. Reading mode locks editing independently
+ * of sidecar fingerprint checks and writer arbitration. The PDF page renders
+ * with Obsidian's own pdf.js below
  * the shared ink tile pipeline, so strokes persist through the same
  * merge/tombstone machinery as .ink notebooks.
  *
@@ -358,9 +358,9 @@ export class PdfInkView extends InkWritingView {
   }
 
   /**
-   * The view is always in editing shape; read-only behaviour is a lock state,
-   * not a mode: blocked sidecars (fingerprint mismatch, corrupt notes file)
-   * and the single-writer arbiter gate input via editingLocked().
+   * Writer ownership survives mode changes so pending saves stay serialized.
+   * Sidecar validation and writer arbitration still gate editing independently
+   * of the user-selected reading mode.
    */
   private acquireWriter(): void {
     if (this.writerHeld || !this.canEdit()) return;
@@ -572,6 +572,7 @@ export class PdfInkView extends InkWritingView {
     this.toolbarButtons.set("indicator", indicator);
 
     const docGroup = this.addToolbarSection(toolbar, "Document");
+    this.buildReadingModeButton(docGroup);
     this.addTrackedIconButton(docGroup, "add-page", "plus", "Add page", (event) => {
       if (this.sidecar) this.openPageInsertMenu(event, this.noteIndex, this.sidecar.notePages.length,
         (index) => this.addBlankPage(index));
@@ -581,6 +582,8 @@ export class PdfInkView extends InkWritingView {
     // reads. A silently dead button is indistinguishable from a broken one.
     this.addTrackedIconButton(docGroup, "export", "download", "Export PDF with handwriting", () => void this.exportHandwrittenCopy());
     this.addTrackedIconButton(docGroup, "pages", "more-horizontal", "Page options", (event) => this.openPageMenu(event));
+    this.toolbarButtons.get("add-page")?.classList.add("ink-edit-only");
+    this.toolbarButtons.get("pages")?.classList.add("ink-edit-only");
 
     this.updateToolButtons();
     this.updateHistoryButtons();
@@ -850,7 +853,7 @@ export class PdfInkView extends InkWritingView {
   }
 
   private openPageMenu(event: MouseEvent): void {
-    if (!this.sidecar) return;
+    if (this.readingMode || !this.sidecar) return;
     const menu = this.beginPageOptionsMenu(event);
     if (!menu) return;
     const current = this.sidecar.notePages[this.noteIndex];
@@ -904,7 +907,7 @@ export class PdfInkView extends InkWritingView {
 
   /** Apply a note page sequence change, sync the worker, and record undo. */
   private withPageUndo(change: () => boolean, label: string): void {
-    if (!this.sidecar || !this.canEdit() || !this.writerHeld) {
+    if (!this.sidecar || this.editingLocked()) {
       new Notice(`Ink Notes could not ${label}: this view is read-only`);
       return;
     }
@@ -1165,7 +1168,13 @@ export class PdfInkView extends InkWritingView {
   }
 
   private editingLocked(): boolean {
-    return !this.canEdit() || !this.writerHeld;
+    return this.readingMode || !this.canEdit() || !this.writerHeld;
+  }
+
+  protected onReadingModeChanged(): void {
+    this.destroySwipeStage();
+    this.touchGesture = null;
+    this.root?.toggleClass("ink-pdf-editing", !this.readingMode);
   }
 
   protected pagePixelSize(): { width: number; height: number } {
@@ -1237,7 +1246,7 @@ export class PdfInkView extends InkWritingView {
     }
     const count = this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 0;
     const insert = neighborIndex < 0 || neighborIndex >= count;
-    if (insert && (!this.canEdit() || !this.writerHeld)) return;
+    if (insert && this.editingLocked()) return;
     const pitch = this.swipePitch();
     const note = this.sidecar?.notePages[insert ? this.noteIndex : neighborIndex] ?? null;
     const display = this.rotatedSize(note);
@@ -1351,7 +1360,7 @@ export class PdfInkView extends InkWritingView {
     const stage = this.swipeStage;
     const side = stage ? Number(stage.dataset.neighbor) - this.noteIndex : 0;
     const insert = !!stage?.dataset.insert;
-    const create = insert && this.canEdit() && this.writerHeld && Math.sign(travel) === -side && Math.abs(travel) >= this.pageInsertThreshold();
+    const create = insert && !this.editingLocked() && Math.sign(travel) === -side && Math.abs(travel) >= this.pageInsertThreshold();
     const flip = create || (!insert && delta !== 0 && side === delta);
     const from = this.swipeDragOffset;
     const to = flip ? -side * this.swipePitch() : 0;

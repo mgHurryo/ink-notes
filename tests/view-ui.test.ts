@@ -52,6 +52,37 @@ afterEach(async () => {
 });
 
 describe("reference-style editor", () => {
+  it("locks notebook mutations and closes settings in reading mode, then restores editing", () => {
+    const host = view as unknown as { notebook: ReturnType<typeof createNotebook>; readingMode: boolean;
+      inputLocked(): boolean; addPage(): void; duplicateCurrentPage(): void; deleteCurrentPage(): void; moveCurrentPage(n: number): void;
+      undo(): void; redo(): void; state: { tool: string }; onTouchStart(e: TouchEvent): void; onTouchMove(e: TouchEvent): void };
+    host.addPage();
+    button("Pen").click();
+    expect(document.querySelector(".ink-size-popover.is-open")).not.toBeNull();
+    button("Reading mode").click();
+    expect(document.querySelector(".ink-size-popover.is-open")).toBeNull();
+    expect(button("Reading mode").getAttribute("aria-pressed")).toBe("true");
+    expect(document.querySelector(".ink-notes-view")!.classList.contains("ink-reading")).toBe(true);
+    expect(host.inputLocked()).toBe(true);
+    const before = JSON.stringify(host.notebook);
+    host.addPage(); host.duplicateCurrentPage(); host.deleteCurrentPage(); host.moveCurrentPage(-1); host.undo(); host.redo();
+    button("Add page").click(); button("Page options").click(); button("Erase").click();
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    scroller.dispatchEvent(new KeyboardEvent("keydown", { key: "e", bubbles: true }));
+    scroller.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }));
+    expect(host.state.tool).toBe("pen");
+    expect(document.querySelector(".preview-menu")).toBeNull();
+    expect(JSON.stringify(host.notebook)).toBe(before);
+    button("Pages").click();
+    expect(document.querySelector(".ink-notes-view")!.classList.contains("ink-rail-hidden")).toBe(false);
+    button("Reading mode").click();
+    expect(host.inputLocked()).toBe(false);
+    button("Erase").click();
+    expect(host.state.tool).toBe("eraser");
+    host.addPage();
+    expect(host.notebook.pages).toHaveLength(3);
+  });
+
   it("keeps desktop shortcuts out of form fields and supports native button Space activation", () => {
     const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
     const host = view as unknown as { state: { tool: string }; desktopSpaceDown: boolean };
@@ -217,7 +248,7 @@ describe("reference-style editor", () => {
       .map((el) => el.getAttribute("aria-label"));
     expect(labels(".ink-toolbar-start button")).toEqual(["Pages", "Undo", "Redo"]);
     expect(labels(".ink-toolbar-section-draw button")).toEqual(["Pen", "Highlight", "Erase", "Select"]);
-    expect(labels(".ink-toolbar-section-document button")).toEqual(["Add page", "Export as PDF", "Page options"]);
+    expect(labels(".ink-toolbar-section-document button")).toEqual(["Reading mode", "Add page", "Export as PDF", "Page options"]);
   });
 
   it("toggles closed even when the host's document dismissal was registered first", () => {

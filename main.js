@@ -24247,6 +24247,8 @@ var InkWritingView = class extends import_obsidian3.FileView {
     this.devCoalescedSamples = 0;
     this.devSamplesFed = 0;
     this.devLastPointerType = null;
+    // ------------------------------------------------------------------ seams
+    this.readingMode = false;
     this.flipSettling = false;
     this.pageSwipeAnimations = [];
     this.pageSwipeRequest = null;
@@ -24364,6 +24366,7 @@ var InkWritingView = class extends import_obsidian3.FileView {
     if (stage == null ? void 0 : stage.dataset.insert) stage.toggleClass("is-ready", Math.abs(offset) >= this.pageInsertThreshold());
   }
   openPageInsertMenu(event, index, count, insert) {
+    if (this.readingMode) return;
     const menu = this.beginPageOptionsMenu(event);
     if (!menu) return;
     for (const [title, position] of [
@@ -24580,6 +24583,35 @@ var InkWritingView = class extends import_obsidian3.FileView {
     this.addToolButton(draw, "eraser", "Erase", "eraser");
     this.addToolButton(draw, "lasso-select", "Select", "lasso");
   }
+  buildReadingModeButton(parent) {
+    const button = this.addIconButton(parent, "book-open", "Reading mode", () => this.setReadingMode(!this.readingMode));
+    button.classList.add("ink-reading-toggle");
+    this.updateReadingModeButton();
+  }
+  setReadingMode(reading) {
+    var _a;
+    if (reading === this.readingMode) return;
+    this.finishPointerInput(false);
+    this.endDesktopPan();
+    this.closePageOptionsMenu();
+    (_a = this.brushPopover) == null ? void 0 : _a.close();
+    this.closeEraserPopover();
+    this.clearSelection();
+    this.readingMode = reading;
+    this.toolbarRoot().toggleClass("ink-reading", reading);
+    this.onReadingModeChanged();
+    this.updateReadingModeButton();
+    this.updateHistoryButtons();
+    this.refreshEraserCursor();
+  }
+  onReadingModeChanged() {
+  }
+  updateReadingModeButton() {
+    const button = this.toolbarRoot().querySelector(".ink-reading-toggle");
+    if (!button) return;
+    button.setAttribute("aria-pressed", String(this.readingMode));
+    button.title = this.readingMode ? "Switch to editing mode" : "Switch to reading mode";
+  }
   /** Whether the diagnostics panel wants raw point samples retained. */
   diagnosticsCaptureRawPoints() {
     return false;
@@ -24788,7 +24820,7 @@ var InkWritingView = class extends import_obsidian3.FileView {
     var _a, _b;
     if (event.pointerType !== "mouse" || this.flipSettling || this.activePointerId !== null || this.nativeMenuOpen()) return false;
     const button = (_a = event.button) != null ? _a : 0;
-    if (button !== 1 && !(button === 0 && this.desktopSpaceDown)) return false;
+    if (button !== 1 && !(button === 0 && (this.desktopSpaceDown || this.readingMode))) return false;
     this.desktopPan = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
     this.inputScroller().classList.add("ink-panning");
     this.capturePointer(event.pointerId);
@@ -26192,6 +26224,7 @@ var InkWritingView = class extends import_obsidian3.FileView {
   }
   // -------------------------------------------------------- history stack
   undo() {
+    if (this.readingMode) return;
     const command = this.undoStack.pop();
     if (!command) return;
     command.undo();
@@ -26199,6 +26232,7 @@ var InkWritingView = class extends import_obsidian3.FileView {
     this.afterCommand(command);
   }
   redo() {
+    if (this.readingMode) return;
     const command = this.redoStack.pop();
     if (!command) return;
     command.redo();
@@ -26222,8 +26256,8 @@ var InkWritingView = class extends import_obsidian3.FileView {
   updateHistoryButtons() {
     const undo = this.toolbarRoot().querySelector("[aria-label='Undo']");
     const redo = this.toolbarRoot().querySelector("[aria-label='Redo']");
-    if (undo) undo.disabled = this.undoStack.length === 0;
-    if (redo) redo.disabled = this.redoStack.length === 0;
+    if (undo) undo.disabled = this.readingMode || this.undoStack.length === 0;
+    if (redo) redo.disabled = this.readingMode || this.redoStack.length === 0;
   }
   addedStrokeCommand(pageId, original) {
     let currentId = original.id;
@@ -26487,6 +26521,7 @@ var InkWritingView = class extends import_obsidian3.FileView {
     const iconHolder = button.createSpan({ cls: "ink-button-icon" });
     (0, import_obsidian3.setIcon)(iconHolder, icon);
     button.addEventListener("click", () => {
+      if (this.readingMode) return;
       this.finishPointerInput(false);
       if (this.state.tool === tool && hasSettings) {
         this.toggleToolSettings(button);
@@ -27605,9 +27640,6 @@ var InkView = class extends InkWritingView {
     this.pendingMergedNotebook = null;
     this.pendingMergedNotebookIsFinal = false;
     this.externalRefreshPending = false;
-    /** Reading mode: view-only. Ink tools, the popover and eraser tracking are
-     *  disabled and the page restores native panning/scrolling. */
-    this.readingMode = false;
     this.pageNavigationGeneration = 0;
     this.devPanel = null;
     /** Live rail drag (pointerdown → pointerup) from the resize handle. */
@@ -27751,14 +27783,15 @@ var InkView = class extends InkWritingView {
     toggle.setAttribute("aria-pressed", String(!this.root.hasClass("ink-rail-hidden")));
     this.buildWritingSections(toolbar, start);
     const document_ = this.addToolbarSection(toolbar, "Document");
+    this.buildReadingModeButton(document_);
     this.addIconButton(document_, "plus", "Add page", (event) => this.openPageInsertMenu(
       event,
       this.pageIndex,
       this.notebook.pages.length,
       (index) => this.addPage(index)
-    ), this.readingMode);
+    )).classList.add("ink-edit-only");
     this.addIconButton(document_, "download", "Export as PDF", () => void this.exportNotebookCopy());
-    this.addIconButton(document_, "more-horizontal", "Page options", (event) => this.openPageMenu(event));
+    this.addIconButton(document_, "more-horizontal", "Page options", (event) => this.openPageMenu(event)).classList.add("ink-edit-only");
     this.updateToolButtons();
   }
   /** Vector-exports the whole notebook as a PDF next to the notebook file. */
@@ -28071,6 +28104,10 @@ var InkView = class extends InkWritingView {
   }
   inputLocked() {
     return this.readingMode || this.flipSettling;
+  }
+  onReadingModeChanged() {
+    this.destroySwipeStage();
+    this.touchGesture = null;
   }
   pagePixelSize() {
     return { width: this.notebook.pageWidth, height: this.notebook.pageHeight };
@@ -28486,6 +28523,7 @@ var InkView = class extends InkWritingView {
     });
   }
   openPageMenu(event) {
+    if (this.readingMode) return;
     const menu = this.beginPageOptionsMenu(event);
     if (!menu) return;
     for (const paper of ["blank", "ruled", "grid", "dot"]) menu.addItem((item) => item.setTitle(`Paper: ${paper}`).setChecked(this.currentPage().paper === paper).onClick(() => {
@@ -28524,6 +28562,7 @@ var InkView = class extends InkWritingView {
   }
   renamePage() {
     var _a;
+    if (this.readingMode) return;
     const title = (_a = window.prompt("Page title", this.currentPage().title)) == null ? void 0 : _a.trim();
     if (!title) return;
     const page = this.currentPage();
@@ -28547,6 +28586,7 @@ var InkView = class extends InkWritingView {
     this.scheduleSave();
   }
   duplicateCurrentPage() {
+    if (this.readingMode) return;
     this.finishPointerInput(false);
     const before = cloneNotebook(this.notebook);
     const beforePageId = this.currentPage().id;
@@ -28570,6 +28610,7 @@ var InkView = class extends InkWritingView {
     this.scheduleSave();
   }
   deleteCurrentPage() {
+    if (this.readingMode) return;
     if (this.notebook.pages.length <= 1) return;
     this.finishPointerInput(false);
     const before = cloneNotebook(this.notebook);
@@ -28595,6 +28636,7 @@ var InkView = class extends InkWritingView {
     this.scheduleSave();
   }
   moveCurrentPage(delta) {
+    if (this.readingMode) return;
     const target = this.pageIndex + delta;
     if (target < 0 || target >= this.notebook.pages.length) return;
     this.finishPointerInput(false);
@@ -29879,9 +29921,9 @@ var PdfInkView = class extends InkWritingView {
     return this.sidecar !== null && this.writeBlockedReason === null && this.file !== null;
   }
   /**
-   * The view is always in editing shape; read-only behaviour is a lock state,
-   * not a mode: blocked sidecars (fingerprint mismatch, corrupt notes file)
-   * and the single-writer arbiter gate input via editingLocked().
+   * Writer ownership survives mode changes so pending saves stay serialized.
+   * Sidecar validation and writer arbitration still gate editing independently
+   * of the user-selected reading mode.
    */
   acquireWriter() {
     if (this.writerHeld || !this.canEdit()) return;
@@ -30061,14 +30103,14 @@ var PdfInkView = class extends InkWritingView {
   }
   // -------------------------------------------------------------- toolbar
   renderToolbar(root) {
-    var _a;
+    var _a, _b, _c;
     const toolbar = root.createDiv({ cls: "ink-pdf-toolbar" });
     const start = toolbar.createDiv({ cls: "ink-toolbar-start" });
     const pagesGroup = this.addToolbarSection(start, "Pages");
     const toggle = this.addIconButton(pagesGroup, "panel-left", "Pages", () => {
-      var _a2, _b;
+      var _a2, _b2;
       const hidden = !((_a2 = this.root) == null ? void 0 : _a2.hasClass("ink-rail-hidden"));
-      (_b = this.root) == null ? void 0 : _b.toggleClass("ink-rail-hidden", hidden);
+      (_b2 = this.root) == null ? void 0 : _b2.toggleClass("ink-rail-hidden", hidden);
       toggle.setAttribute("aria-pressed", String(!hidden));
       if (!hidden) window.setTimeout(() => this.paintVisibleThumbnails(), RAIL_REVEAL_DELAY_MS);
     });
@@ -30078,6 +30120,7 @@ var PdfInkView = class extends InkWritingView {
     indicator.setText("\u2013");
     this.toolbarButtons.set("indicator", indicator);
     const docGroup = this.addToolbarSection(toolbar, "Document");
+    this.buildReadingModeButton(docGroup);
     this.addTrackedIconButton(docGroup, "add-page", "plus", "Add page", (event) => {
       if (this.sidecar) this.openPageInsertMenu(
         event,
@@ -30088,6 +30131,8 @@ var PdfInkView = class extends InkWritingView {
     });
     this.addTrackedIconButton(docGroup, "export", "download", "Export PDF with handwriting", () => void this.exportHandwrittenCopy());
     this.addTrackedIconButton(docGroup, "pages", "more-horizontal", "Page options", (event) => this.openPageMenu(event));
+    (_b = this.toolbarButtons.get("add-page")) == null ? void 0 : _b.classList.add("ink-edit-only");
+    (_c = this.toolbarButtons.get("pages")) == null ? void 0 : _c.classList.add("ink-edit-only");
     this.updateToolButtons();
     this.updateHistoryButtons();
     this.updatePageIndicator();
@@ -30336,7 +30381,7 @@ var PdfInkView = class extends InkWritingView {
     ctx.restore();
   }
   openPageMenu(event) {
-    if (!this.sidecar) return;
+    if (this.readingMode || !this.sidecar) return;
     const menu = this.beginPageOptionsMenu(event);
     if (!menu) return;
     const current = this.sidecar.notePages[this.noteIndex];
@@ -30376,7 +30421,7 @@ var PdfInkView = class extends InkWritingView {
   /** Apply a note page sequence change, sync the worker, and record undo. */
   withPageUndo(change, label) {
     var _a, _b;
-    if (!this.sidecar || !this.canEdit() || !this.writerHeld) {
+    if (!this.sidecar || this.editingLocked()) {
       new import_obsidian8.Notice(`Ink Notes could not ${label}: this view is read-only`);
       return;
     }
@@ -30604,7 +30649,13 @@ var PdfInkView = class extends InkWritingView {
     return this.editingLocked() || this.flipSettling;
   }
   editingLocked() {
-    return !this.canEdit() || !this.writerHeld;
+    return this.readingMode || !this.canEdit() || !this.writerHeld;
+  }
+  onReadingModeChanged() {
+    var _a;
+    this.destroySwipeStage();
+    this.touchGesture = null;
+    (_a = this.root) == null ? void 0 : _a.toggleClass("ink-pdf-editing", !this.readingMode);
   }
   pagePixelSize() {
     return { width: this.canvasLogicalWidth, height: this.canvasLogicalHeight };
@@ -30671,7 +30722,7 @@ var PdfInkView = class extends InkWritingView {
     }
     const count = (_d = (_c = (_a = this.sidecar) == null ? void 0 : _a.notePages.length) != null ? _c : (_b = this.pdfDoc) == null ? void 0 : _b.numPages) != null ? _d : 0;
     const insert = neighborIndex < 0 || neighborIndex >= count;
-    if (insert && (!this.canEdit() || !this.writerHeld)) return;
+    if (insert && this.editingLocked()) return;
     const pitch = this.swipePitch();
     const note = (_f = (_e = this.sidecar) == null ? void 0 : _e.notePages[insert ? this.noteIndex : neighborIndex]) != null ? _f : null;
     const display = this.rotatedSize(note);
@@ -30796,7 +30847,7 @@ var PdfInkView = class extends InkWritingView {
     const stage = this.swipeStage;
     const side = stage ? Number(stage.dataset.neighbor) - this.noteIndex : 0;
     const insert = !!(stage == null ? void 0 : stage.dataset.insert);
-    const create = insert && this.canEdit() && this.writerHeld && Math.sign(travel) === -side && Math.abs(travel) >= this.pageInsertThreshold();
+    const create = insert && !this.editingLocked() && Math.sign(travel) === -side && Math.abs(travel) >= this.pageInsertThreshold();
     const flip = create || !insert && delta !== 0 && side === delta;
     const from = this.swipeDragOffset;
     const to = flip ? -side * this.swipePitch() : 0;
