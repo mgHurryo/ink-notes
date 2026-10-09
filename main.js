@@ -27620,14 +27620,14 @@ var InkView = class extends InkWritingView {
       overflow: "hidden",
       left: `${extent.offsetLeft + page.offsetLeft - this.pageScroller.scrollLeft + side * pitch}px`,
       top: `${extent.offsetTop + page.offsetTop - this.pageScroller.scrollTop}px`,
-      width: page.style.width,
-      height: page.style.height,
+      width: `${this.pageBaseWidth}px`,
+      height: `${this.pageBaseHeight}px`,
       transform: "translateX(0px)"
     });
-    stage.style.setProperty("--ink-page-scale", String(this.zoom));
+    stage.style.setProperty("--ink-page-scale", "1");
     const canvas = stage.createEl("canvas");
     canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%";
-    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, window.devicePixelRatio || 1, this.zoom, OVERLAY_RESIZE_BUDGET);
+    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, window.devicePixelRatio || 1, 1, OVERLAY_RESIZE_BUDGET);
     canvas.width = resolution.width;
     canvas.height = resolution.height;
     const ctx = canvas.getContext("2d");
@@ -27857,6 +27857,7 @@ var InkView = class extends InkWritingView {
       notebookUpdatedAt: now
     });
     this.pageIndex = this.notebook.pages.length - 1;
+    this.resetPageView();
     this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, page.id);
     this.renderPageRail();
     this.renderPage();
@@ -27885,6 +27886,7 @@ var InkView = class extends InkWritingView {
       const index = this.notebook.pages.findIndex((page) => page.id === pageId);
       if (index < 0) return;
       this.pageIndex = index;
+      this.resetPageView();
       this.renderPageRail();
       this.renderPage();
       if (this.flipSettling) (_a = this.tiles) == null ? void 0 : _a.previewInteractiveCells(
@@ -27968,6 +27970,7 @@ var InkView = class extends InkWritingView {
     const page = clonePageAsNew(source, `${source.title} copy`, now);
     this.notebook.pages.splice(insertionIndex, 0, page);
     this.pageIndex += 1;
+    this.resetPageView();
     this.finishPageOrderChange(now, {
       type: "page-operation",
       action: "duplicate",
@@ -27990,6 +27993,7 @@ var InkView = class extends InkWritingView {
     const now = Date.now();
     this.notebook.deletedPages[deleted.id] = now;
     this.pageIndex = Math.min(this.pageIndex, this.notebook.pages.length - 1);
+    this.resetPageView();
     this.finishPageOrderChange(now, {
       type: "page-operation",
       action: "delete",
@@ -28069,8 +28073,10 @@ var InkView = class extends InkWritingView {
     next.pageOrder = next.pages.map((page) => page.id);
     next.updatedAt = now;
     next.pageOrderUpdatedAt = now;
+    const previousPageId = this.currentPage().id;
     this.notebook = next;
     this.pageIndex = Math.max(0, next.pages.findIndex((page) => page.id === selectedId));
+    if (this.currentPage().id !== previousPageId) this.resetPageView();
     this.dirtyRevision += 1;
     this.queueWorkerOperation({ type: "history-restore", notebook: cloneNotebook(this.notebook) });
   }
@@ -28145,6 +28151,23 @@ page: ${this.currentPage().id}
     this.pageExtent.style.width = displayWidth + horizontalGutter * 2 + "px";
     this.pageExtent.style.height = displayHeight + "px";
   }
+  updateZoomControls() {
+    var _a, _b, _c;
+    const readout = (_a = this.root) == null ? void 0 : _a.querySelector(".ink-zoom-value");
+    if (readout) readout.textContent = Math.round(this.zoom * 100) + "%";
+    const zoomOut = (_b = this.root) == null ? void 0 : _b.querySelector("[aria-label='Zoom out']");
+    const zoomIn = (_c = this.root) == null ? void 0 : _c.querySelector("[aria-label='Zoom in']");
+    if (zoomOut) zoomOut.disabled = this.zoom <= 0.5;
+    if (zoomIn) zoomIn.disabled = this.zoom >= 3;
+  }
+  resetPageView() {
+    this.zoom = 1;
+    if (this.pageScroller) {
+      this.pageScroller.scrollLeft = 0;
+      this.pageScroller.scrollTop = 0;
+    }
+    this.updateZoomControls();
+  }
   setZoom(value, target, anchor) {
     if (!Number.isFinite(value)) return;
     const viewport = this.pageScroller.getBoundingClientRect();
@@ -28160,12 +28183,7 @@ page: ${this.currentPage().id}
     const after = this.pageElement.getBoundingClientRect();
     this.pageScroller.scrollLeft += after.left + anchor.x * after.width - target.x;
     this.pageScroller.scrollTop += after.top + anchor.y * after.height - target.y;
-    const readout = this.root.querySelector(".ink-zoom-value");
-    if (readout) readout.textContent = Math.round(this.zoom * 100) + "%";
-    const zoomOut = this.root.querySelector("[aria-label='Zoom out']");
-    const zoomIn = this.root.querySelector("[aria-label='Zoom in']");
-    if (zoomOut) zoomOut.disabled = this.zoom <= 0.5;
-    if (zoomIn) zoomIn.disabled = this.zoom >= 3;
+    this.updateZoomControls();
     this.onViewportMotion();
   }
   onWheel(event) {
@@ -29070,7 +29088,7 @@ var PdfInkView = class extends InkWritingView {
     /** The "smart fit" zoom: width-fill for portrait pages, height-fill when
      *  width-fill would leave the page floating with vertical slack. */
     this.fitZoom = 1;
-    /** Set once the user zooms manually; until then every layout re-fits. */
+    /** Manual zoom applies only to the currently selected note page. */
     this.zoomTouched = false;
     /** Offscreen renders of the neighbouring pages for instant flips. */
     this.neighbourCache = /* @__PURE__ */ new Map();
@@ -29796,6 +29814,11 @@ var PdfInkView = class extends InkWritingView {
     if (next < 0 || next >= count) return;
     this.finishPointerInput(false);
     this.noteIndex = next;
+    this.zoomTouched = false;
+    if (this.scroller) {
+      this.scroller.scrollLeft = 0;
+      this.scroller.scrollTop = 0;
+    }
     this.updatePageIndicator();
     this.layoutPage();
     this.renderAll();
@@ -29998,7 +30021,7 @@ var PdfInkView = class extends InkWritingView {
     const display = this.rotatedSize(notePage);
     const baseWidth = Math.max(200, this.scroller.clientWidth - PDF_PAGE_PADDING * 2);
     const fit = Math.max(0.05, Math.min(1, Math.max(1, this.scroller.clientHeight - PDF_PAGE_PADDING * 2) / (baseWidth * display.height / display.width)));
-    const zoom = this.zoomTouched ? this.zoom : fit;
+    const zoom = fit;
     const width = baseWidth * zoom;
     return { width, height: width * display.height / display.width, baseWidth, zoom };
   }

@@ -86,6 +86,38 @@ describe("page touch navigation", () => {
     expect(zoomOut.disabled).toBe(true);
     expect(zoomIn.disabled).toBe(false);
   });
+
+  it("resets magnification and scroll position when opening another notebook page", async () => {
+    const { view, zoomReadout, zoomOut, zoomIn } = setup();
+    Object.assign(view, {
+      notebook: { pages: [{ id: "first" }, { id: "second" }] },
+      pageIndex: 0,
+      pageNavigationGeneration: 0,
+      viewReady: true,
+      file: null,
+      workerSession: null,
+      renderPageRail: vi.fn(),
+      renderPage: vi.fn(),
+      finishPointerInput: vi.fn(),
+      clearSaveTimers: vi.fn(),
+    });
+    Object.assign(view.pageScroller, {
+      scrollLeft: 250,
+      scrollTop: 300,
+    });
+    view.zoom = 2;
+    const navigate = (view as any).navigateToPage.bind(view) as (id: string) => Promise<void>;
+
+    await navigate("second");
+
+    expect(view.zoom).toBe(1);
+    expect(view.pageScroller.scrollLeft).toBe(0);
+    expect(view.pageScroller.scrollTop).toBe(0);
+    expect(zoomReadout.textContent).toBe("100%");
+    expect(zoomOut.disabled).toBe(false);
+    expect(zoomIn.disabled).toBe(false);
+    expect(view.renderPage).toHaveBeenCalledOnce();
+  });
   it.each([800, 340])("keeps an off-center pinch anchor under the moving midpoint at width %i", (width) => {
     const { view, point } = setup(width);
     const anchor = point(250, 420);

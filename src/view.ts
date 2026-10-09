@@ -646,14 +646,14 @@ export class InkView extends InkWritingView {
       position: "absolute", margin: "0", overflow: "hidden",
       left: `${extent.offsetLeft + page.offsetLeft - this.pageScroller.scrollLeft + side * pitch}px`,
       top: `${extent.offsetTop + page.offsetTop - this.pageScroller.scrollTop}px`,
-      width: page.style.width,
-      height: page.style.height,
+      width: `${this.pageBaseWidth}px`,
+      height: `${this.pageBaseHeight}px`,
       transform: "translateX(0px)",
     });
-    stage.style.setProperty("--ink-page-scale", String(this.zoom));
+    stage.style.setProperty("--ink-page-scale", "1");
     const canvas = stage.createEl("canvas");
     canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%";
-    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, window.devicePixelRatio || 1, this.zoom, OVERLAY_RESIZE_BUDGET);
+    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, window.devicePixelRatio || 1, 1, OVERLAY_RESIZE_BUDGET);
     canvas.width = resolution.width;
     canvas.height = resolution.height;
     const ctx = canvas.getContext("2d");
@@ -889,6 +889,7 @@ export class InkView extends InkWritingView {
     this.queueWorkerOperation({ type: "page-operation", action: "add", page: clonePage(page),
       pageOrder: [...this.notebook.pageOrder], pageOrderUpdatedAt: now, notebookUpdatedAt: now });
     this.pageIndex = this.notebook.pages.length - 1;
+    this.resetPageView();
     this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, page.id);
     this.renderPageRail();
     this.renderPage();
@@ -920,6 +921,7 @@ export class InkView extends InkWritingView {
       const index = this.notebook.pages.findIndex((page) => page.id === pageId);
       if (index < 0) return;
       this.pageIndex = index;
+      this.resetPageView();
       this.renderPageRail();
       this.renderPage();
       if (this.flipSettling) this.tiles?.previewInteractiveCells(
@@ -988,6 +990,7 @@ export class InkView extends InkWritingView {
     const page = clonePageAsNew(source, `${source.title} copy`, now);
     this.notebook.pages.splice(insertionIndex, 0, page);
     this.pageIndex += 1;
+    this.resetPageView();
     this.finishPageOrderChange(now, { type: "page-operation", action: "duplicate", page: clonePage(page),
       pageOrder: this.notebook.pages.map((candidate) => candidate.id), pageOrderUpdatedAt: now, notebookUpdatedAt: now });
     this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, page.id);
@@ -1005,6 +1008,7 @@ export class InkView extends InkWritingView {
     const now = Date.now();
     this.notebook.deletedPages[deleted.id] = now;
     this.pageIndex = Math.min(this.pageIndex, this.notebook.pages.length - 1);
+    this.resetPageView();
     this.finishPageOrderChange(now, { type: "page-operation", action: "delete", pageId: deleted.id, deletedAt: now,
       pageOrder: this.notebook.pages.map((candidate) => candidate.id), pageOrderUpdatedAt: now, notebookUpdatedAt: now });
     this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, this.currentPage().id);
@@ -1070,8 +1074,10 @@ export class InkView extends InkWritingView {
     next.pageOrder = next.pages.map((page) => page.id);
     next.updatedAt = now;
     next.pageOrderUpdatedAt = now;
+    const previousPageId = this.currentPage().id;
     this.notebook = next;
     this.pageIndex = Math.max(0, next.pages.findIndex((page) => page.id === selectedId));
+    if (this.currentPage().id !== previousPageId) this.resetPageView();
     this.dirtyRevision += 1;
     this.queueWorkerOperation({ type: "history-restore", notebook: cloneNotebook(this.notebook) });
   }
@@ -1159,6 +1165,24 @@ export class InkView extends InkWritingView {
     this.pageExtent.style.height = displayHeight + "px";
   }
 
+  private updateZoomControls(): void {
+    const readout = this.root?.querySelector<HTMLElement>(".ink-zoom-value");
+    if (readout) readout.textContent = Math.round(this.zoom * 100) + "%";
+    const zoomOut = this.root?.querySelector<HTMLButtonElement>("[aria-label='Zoom out']");
+    const zoomIn = this.root?.querySelector<HTMLButtonElement>("[aria-label='Zoom in']");
+    if (zoomOut) zoomOut.disabled = this.zoom <= 0.5;
+    if (zoomIn) zoomIn.disabled = this.zoom >= 3;
+  }
+
+  private resetPageView(): void {
+    this.zoom = 1;
+    if (this.pageScroller) {
+      this.pageScroller.scrollLeft = 0;
+      this.pageScroller.scrollTop = 0;
+    }
+    this.updateZoomControls();
+  }
+
   private setZoom(value: number, target?: { x: number; y: number }, anchor?: { x: number; y: number }): void {
     if (!Number.isFinite(value)) return;
     const viewport = this.pageScroller.getBoundingClientRect();
@@ -1174,12 +1198,7 @@ export class InkView extends InkWritingView {
     const after = this.pageElement.getBoundingClientRect();
     this.pageScroller.scrollLeft += after.left + anchor.x * after.width - target.x;
     this.pageScroller.scrollTop += after.top + anchor.y * after.height - target.y;
-    const readout = this.root.querySelector<HTMLElement>(".ink-zoom-value");
-    if (readout) readout.textContent = Math.round(this.zoom * 100) + "%";
-    const zoomOut = this.root.querySelector<HTMLButtonElement>("[aria-label='Zoom out']");
-    const zoomIn = this.root.querySelector<HTMLButtonElement>("[aria-label='Zoom in']");
-    if (zoomOut) zoomOut.disabled = this.zoom <= 0.5;
-    if (zoomIn) zoomIn.disabled = this.zoom >= 3;
+    this.updateZoomControls();
     this.onViewportMotion();
   }
 

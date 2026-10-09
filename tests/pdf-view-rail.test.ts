@@ -16,6 +16,9 @@ const resizeCallbacks: (() => void)[] = [];
 interface RailInternals {
   sidecar: PdfSidecar;
   noteIndex: number;
+  zoom: number;
+  zoomTouched: boolean;
+  fitZoom: number;
   pdfDoc: { numPages: number; getPage(n: number): Promise<unknown>; destroy(): Promise<void> } | null;
   neighbourCache: Map<number, HTMLCanvasElement>;
   thumbCache: Map<number, HTMLCanvasElement>;
@@ -235,9 +238,8 @@ describe("pdf page preview rail", () => {
   });
 
   it("prewarms and renders swipe previews at their own displayed size and fit", async () => {
-    const { view, sidecar, host } = await rasterSetup(1318, 928, 2);
+    const { view, sidecar, host } = await rasterSetup(1318, 928, 2, 2);
     // The current portrait page fits by height; the landscape neighbour fits by width.
-    host.zoomTouched = false;
     sidecar.notePages[1].width = 960;
     sidecar.notePages[1].height = 540;
     host.layoutPage();
@@ -247,6 +249,7 @@ describe("pdf page preview rail", () => {
     const cached = host.neighbourCache.get(1)!;
     expect(cached.width).toBe(2540);
     expect(cached.height).toBe(Math.round(2540 * 540 / 960));
+    expect(parseFloat(stage.style.width)).toBe(1270);
     expect(cached.width).toBe(parseFloat(stage.style.width) * 2);
     host.neighbourCache.clear();
     await host.renderSwipeStagePage(stage, 1);
@@ -276,7 +279,8 @@ describe("pdf page preview rail", () => {
     const stage = document.querySelector<HTMLElement>(".ink-swipe-stage")!;
     await host.renderSwipeStagePage(stage, 1);
     expect(render).toHaveBeenCalled();
-    expect(host.neighbourCache.get(1)?.width).toBe(2540);
+    const pageFitWidth = Math.min(1318 - 48, (928 - 48) / (841.89 / 595.28));
+    expect(host.neighbourCache.get(1)?.width).toBe(Math.round(pageFitWidth * 2));
     await view.onClose();
   });
 
@@ -293,7 +297,8 @@ describe("pdf page preview rail", () => {
     await pending;
     expect(host.neighbourCache.has(1)).toBe(false);
     await host.prewarmNeighbour(1, host.prewarmToken);
-    expect(host.neighbourCache.get(1)?.width).toBe(1704);
+    const pageFitWidth = Math.min(900 - 48, (928 - 48) / (841.89 / 595.28));
+    expect(host.neighbourCache.get(1)?.width).toBe(Math.round(pageFitWidth * 2));
     await view.onClose();
   });
 
@@ -681,6 +686,23 @@ describe("pdf page preview rail", () => {
     expect(host.pageWrap.style.visibility).toBe("");
     expect(host.flipSettling).toBe(false);
     await view.onClose();
+  });
+
+  it("clears manual zoom when navigating to another PDF page", async () => {
+    const { view, internal } = await setup(3);
+    internal.zoom = 2;
+    internal.zoomTouched = true;
+    const scroller = (view as unknown as { scroller: HTMLElement }).scroller;
+    scroller.scrollLeft = 180;
+    scroller.scrollTop = 240;
+
+    await view.navigatePages(1);
+
+    expect(internal.noteIndex).toBe(1);
+    expect(internal.zoomTouched).toBe(false);
+    expect(internal.zoom).toBe(internal.fitZoom);
+    expect(scroller.scrollLeft).toBe(0);
+    expect(scroller.scrollTop).toBe(0);
   });
 
   it("resists an unavailable neighbour and restores the page without navigation", async () => {

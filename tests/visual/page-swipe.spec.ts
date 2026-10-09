@@ -4,8 +4,10 @@ import type { InkNotebook } from "../../src/model";
 interface SwipeView {
   notebook: InkNotebook;
   pageIndex: number;
+  zoom: number;
   duplicateCurrentPage(): void;
   navigateToPage(id: string): Promise<void>;
+  setZoom(value: number): void;
   swipeDrag(offset: number): void;
   swipeSettle(delta: number): void;
   destroySwipeStage(): void;
@@ -60,6 +62,42 @@ test("a burst of real touch gestures interrupts animation and keeps every swipe"
   await expect(page.locator(".ink-page-status")).toHaveText("6 / 8");
   await expect(page.locator(".ink-swipe-stage")).toHaveCount(0);
   await expect(page.locator(".ink-page-extent")).toHaveCSS("transform", "none");
+});
+
+test("a notebook page switch resets the incoming page to 100%", async ({ page }) => {
+  await prepareRapidSwipes(page);
+  const before = await page.evaluate(() => {
+    const scope = window as unknown as RapidSwipeScope;
+    const view = scope.__inkNotesPreview.view;
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    view.setZoom(2);
+    scroller.scrollLeft = scroller.scrollWidth - scroller.clientWidth;
+    return { width: document.querySelector<HTMLElement>(".ink-page")!.style.width,
+      scrollLeft: scroller.scrollLeft };
+  });
+  expect(before.width).not.toBe("");
+  expect(before.scrollLeft).toBeGreaterThan(0);
+  await page.evaluate(() => {
+    const scope = window as unknown as RapidSwipeScope;
+    const view = scope.__inkNotesPreview.view;
+    view.swipeDrag(-180);
+    const stage = document.querySelector<HTMLElement>(".ink-swipe-stage")!;
+    (window as unknown as { zoomedPreview: { width: string; scale: string; activeWidth: string } }).zoomedPreview = {
+      width: stage.style.width,
+      scale: getComputedStyle(stage).getPropertyValue("--ink-page-scale"),
+      activeWidth: document.querySelector<HTMLElement>(".ink-page")!.style.width,
+    };
+    view.swipeSettle(1);
+    document.getAnimations().forEach((animation) => animation.finish());
+  });
+  const preview = await page.evaluate(() => (window as unknown as { zoomedPreview: { width: string; scale: string; activeWidth: string } }).zoomedPreview);
+  expect(parseFloat(preview.activeWidth)).toBeCloseTo(parseFloat(preview.width) * 2, 1);
+  expect(preview.scale).toBe("1");
+  await expect(page.locator(".ink-page-status")).toHaveText("2 / 8");
+  await expect.poll(() => page.evaluate(() => (window as unknown as RapidSwipeScope).__inkNotesPreview.view.zoom)).toBe(1);
+  await expect.poll(() => page.locator(".ink-page").evaluate((element: HTMLElement) => element.style.width))
+    .toBe(parseFloat(before.width) / 2 + "px");
+  await expect.poll(() => page.locator(".ink-page-scroller").evaluate((element: HTMLElement) => element.scrollLeft)).toBe(0);
 });
 
 test("rapid swipes coalesce across a slow Worker barrier without dropping navigation", async ({ page }) => {

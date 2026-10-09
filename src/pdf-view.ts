@@ -134,7 +134,7 @@ export class PdfInkView extends InkWritingView {
   /** The "smart fit" zoom: width-fill for portrait pages, height-fill when
    *  width-fill would leave the page floating with vertical slack. */
   private fitZoom = 1;
-  /** Set once the user zooms manually; until then every layout re-fits. */
+  /** Manual zoom applies only to the currently selected note page. */
   private zoomTouched = false;
   /** Offscreen renders of the neighbouring pages for instant flips. */
   private neighbourCache = new Map<number, HTMLCanvasElement>();
@@ -934,6 +934,13 @@ export class PdfInkView extends InkWritingView {
     if (next < 0 || next >= count) return;
     this.finishPointerInput(false);
     this.noteIndex = next;
+    // Manual zoom is local to the current page; the incoming page starts at
+    // its own default fit instead of inheriting the previous page's zoom.
+    this.zoomTouched = false;
+    if (this.scroller) {
+      this.scroller.scrollLeft = 0;
+      this.scroller.scrollTop = 0;
+    }
     this.updatePageIndicator();
     this.layoutPage();
     this.renderAll();
@@ -1180,7 +1187,7 @@ export class PdfInkView extends InkWritingView {
     const baseWidth = Math.max(200, this.scroller!.clientWidth - PDF_PAGE_PADDING * 2);
     const fit = Math.max(0.05, Math.min(1, Math.max(1, this.scroller!.clientHeight - PDF_PAGE_PADDING * 2)
       / (baseWidth * display.height / display.width)));
-    const zoom = this.zoomTouched ? this.zoom : fit;
+    const zoom = fit;
     const width = baseWidth * zoom;
     return { width, height: width * display.height / display.width, baseWidth, zoom };
   }
