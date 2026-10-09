@@ -14,7 +14,7 @@
  * notebook semantics.
  */
 
-import { FileView, Notice, setIcon } from "obsidian";
+import { FileView, Menu, Notice, setIcon } from "obsidian";
 import {
   MAX_RAW_POINT_SAMPLES,
   ModelerEngageReason,
@@ -428,7 +428,6 @@ export abstract class InkWritingView extends FileView {
   protected activeStroke: InkStroke | null = null;
   protected workerStrokePointIndex = 0;
   protected lastPoint: InkPoint | null = null;
-  protected stylusTouchInput = false;
   protected touchGesture: {
     ids: number[];
     distance: number;
@@ -553,6 +552,38 @@ export abstract class InkWritingView extends FileView {
 
   protected flipSettling = false;
   private pageSwipeAnimations: Animation[] = [];
+  private pageSwipeRequest: { target: number; count: number } | null = null;
+
+  /** Track the requested destination, including swipes made while saving/rendering. */
+  protected beginPageSwipe(target: number, count: number): () => boolean {
+    const request = { target, count };
+    this.pageSwipeRequest = request;
+    return () => this.flipSettling && this.pageSwipeRequest === request;
+  }
+
+  protected clearPageSwipeTarget(): void { this.pageSwipeRequest = null; }
+
+  /** Coalesce rapid swipes instead of replaying a backlog of animations/renders. */
+  protected async navigatePageSwipe(navigate: (index: number) => Promise<void>,
+    index: () => number, isCurrent: () => boolean): Promise<void> {
+    while (isCurrent() && this.pageSwipeRequest !== null) {
+      const target = this.pageSwipeRequest.target;
+      if (target === index()) return;
+      await navigate(target);
+      // A failed or superseded navigation must not retry indefinitely.
+      if (index() !== target) return;
+    }
+  }
+
+  protected resumePageSwipeDrag(): void {
+    if (this.touchGesture?.axis === "x") this.swipeDrag(this.touchGesture.dragX);
+  }
+
+  private finishPageSwipeAnimations(): void {
+    for (const animation of this.pageSwipeAnimations) {
+      if (animation.playState === "running" || animation.playState === "paused") animation.finish();
+    }
+  }
 
   /** Both pages share a distance, clock and easing, so the gutter stays fixed. */
   protected animatePageSwipe(elements: HTMLElement[], from: number, to: number, done: () => void): void {
@@ -602,7 +633,13 @@ export abstract class InkWritingView extends FileView {
     const fling = releaseTime - gesture.lastT < 100 && gesture.velocity * travel > 0
       && Math.abs(gesture.velocity) > 0.35 && Math.abs(travel) > 24;
     const crossed = Math.abs(travel) > width * 0.35;
-    this.swipeSettle(fling || crossed ? (travel > 0 ? -1 : 1) : 0);
+    const delta = fling || crossed ? (travel > 0 ? -1 : 1) : 0;
+    if (this.flipSettling) {
+      const request = this.pageSwipeRequest;
+      if (request) request.target = Math.max(0, Math.min(request.count - 1, request.target + delta));
+    } else {
+      this.swipeSettle(delta);
+    }
   }
 
   /** Cancels an in-flight page-flip drag (spring back, no flip). */
@@ -740,6 +777,51 @@ export abstract class InkWritingView extends FileView {
 
   // ------------------------------------------------------------------ input
 
+  private pageOptionsMenu: { menu: Menu; trigger: HTMLElement | null } | null = null;
+  private pageOptionsTriggerPressed = false;
+  private pageOptionsDismissRegistered = false;
+
+  /** Snapshot the trigger press before the host dismisses its menu on pointerdown. */
+  protected beginPageOptionsMenu(event: MouseEvent): Menu | null {
+    if (!this.pageOptionsDismissRegistered) {
+      this.pageOptionsDismissRegistered = true;
+      const doc = this.containerEl.ownerDocument;
+      const capturePress = (press: PointerEvent) => {
+        this.pageOptionsTriggerPressed = !!this.pageOptionsMenu?.trigger?.contains(press.target as Node);
+      };
+      // Window capture precedes even a host document listener installed at startup.
+      if (doc.defaultView) this.registerDomEvent(doc.defaultView, "pointerdown", capturePress, true);
+      else this.registerDomEvent(doc, "pointerdown", capturePress, true);
+      this.registerDomEvent(doc, "pointercancel", () => { this.pageOptionsTriggerPressed = false; }, true);
+      this.registerDomEvent(doc, "keydown", () => { this.pageOptionsTriggerPressed = false; }, true);
+      this.register(() => this.closePageOptionsMenu());
+    }
+    if (this.pageOptionsTriggerPressed || this.pageOptionsMenu) {
+      this.closePageOptionsMenu();
+      return null;
+    }
+    const trigger = event.currentTarget as HTMLElement | null;
+    const menu = new Menu();
+    const opened = { menu, trigger };
+    this.pageOptionsMenu = opened;
+    trigger?.setAttribute("aria-haspopup", "menu");
+    trigger?.setAttribute("aria-expanded", "true");
+    menu.onHide(() => {
+      if (this.pageOptionsMenu !== opened) return;
+      this.pageOptionsMenu = null;
+      trigger?.setAttribute("aria-expanded", "false");
+    });
+    return menu;
+  }
+
+  protected closePageOptionsMenu(): void {
+    this.pageOptionsTriggerPressed = false;
+    const opened = this.pageOptionsMenu;
+    this.pageOptionsMenu = null;
+    opened?.trigger?.setAttribute("aria-expanded", "false");
+    opened?.menu.hide();
+  }
+
   /** An Obsidian native menu (page options) is open. While it is, surface
    *  input must not swallow the outside tap that dismisses it, and must not
    *  start ink underneath it. Resolved through the view's own document so
@@ -753,7 +835,11 @@ export abstract class InkWritingView extends FileView {
     this.devLastPointerType = event.pointerType || this.devLastPointerType;
     if (this.inputLocked()) return;
     if (this.nativeMenuOpen()) return;
-    if (event.pointerType === "touch" || (source === "pointer" && event.pointerType === "pen" && this.stylusTouchInput)) return;
+    if (event.pointerType === "touch") return;
+    // Deduplicate only the contact currently owned by native stylus Touch.
+    // The next contact may have Pointer events without a classified Touch,
+    // so observing one Touch stream must not disable pen input for the view.
+    if (source === "pointer" && event.pointerType === "pen" && this.interaction?.source === "stylus-touch") return;
     this.onInputStarting();
     this.interactionGeneration += 1;
     if (this.activePointerId !== null) this.finishPointerInput(false);
@@ -1332,9 +1418,8 @@ export abstract class InkWritingView extends FileView {
     const sample = stylusTouchSample(touch, event.timeStamp);
     const interaction = this.interaction;
     if (event.type === "touchstart") {
-      // Scribble can suppress Pointer events. Once native stylus Touch support
-      // is observed, one Touch stream owns pen contacts to avoid duplicate ink.
-      this.stylusTouchInput = true;
+      // Scribble can suppress Pointer events. Native stylus Touch owns this
+      // contact, including a Pointer stream that has already started it.
       if (interaction?.source === "pointer" && interaction.pointerType === "pen") {
         const pointerId = interaction.pointerId;
         interaction.source = "stylus-touch";
@@ -1361,12 +1446,6 @@ export abstract class InkWritingView extends FileView {
   // ---------------------------------------------------------------- touch
 
   protected onTouchStart(event: TouchEvent): void {
-    if (this.flipSettling) {
-      event.stopPropagation();
-      if (event.cancelable) event.preventDefault();
-      this.touchGesture = null;
-      return;
-    }
     // A native menu owns the surface until dismissed: let its outside-tap
     // dismissal see this event instead of swallowing it (the menu otherwise
     // stayed open until one of its own items was picked).
@@ -1394,6 +1473,7 @@ export abstract class InkWritingView extends FileView {
     this.healStaleInteraction(Array.from(event.touches));
     const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus");
     if (touches.length < 1 || touches.length > 2) return;
+    if (this.flipSettling && touches.length === 2) return;
     if (this.activePointerId !== null) return;
     const [a, b] = touches;
     if (!a) return;
@@ -1478,7 +1558,15 @@ export abstract class InkWritingView extends FileView {
         gesture.lastX = a.clientX;
         gesture.lastT = now;
         gesture.dragX = totalX;
+        // A new horizontal gesture takes priority over the previous animation.
+        // The storage/render barrier still runs before changing the live page.
+        if (this.flipSettling) this.finishPageSwipeAnimations();
         this.swipeDrag(totalX);
+        return;
+      }
+      if (this.flipSettling) {
+        gesture.x = a.clientX;
+        gesture.y = a.clientY;
         return;
       }
       scroller.scrollLeft += gesture.x - a.clientX;
@@ -1487,6 +1575,7 @@ export abstract class InkWritingView extends FileView {
       gesture.y = a.clientY;
       return;
     }
+    if (this.flipSettling) return;
     if (gesture.distance < 1) {
       this.onTouchStart(event);
       return;

@@ -22266,173 +22266,6 @@ function isPaperStyle(value) {
 
 // src/pdf-export.ts
 var import_pdf_lib = __toESM(require_cjs());
-var PdfExportError = class extends Error {
-  constructor(reason, message) {
-    super(message);
-    this.reason = reason;
-    this.name = "PdfExportError";
-  }
-};
-function looksDigitallySigned(bytes) {
-  const data = new Uint8Array(bytes);
-  const marker = "/ByteRange";
-  const windowSize = 4096;
-  let tail = "";
-  for (let start = 0; start < data.length; start += windowSize - (marker.length - 1)) {
-    const chunk = data.subarray(start, Math.min(start + windowSize, data.length));
-    tail += String.fromCharCode(...chunk);
-    if (tail.includes(marker)) return true;
-    tail = tail.slice(-(marker.length - 1));
-  }
-  return false;
-}
-function inkToSvgPath(stroke, page) {
-  const points = stroke.points.map((point) => displayToPdfPoint(point.x, point.y, page));
-  return points.map((point, index) => `${index === 0 ? "M" : "L"} ${fmt(point.x)} ${fmt(page.height - point.y)}`).join(" ");
-}
-function displayToPdfPoint(nx, ny, page) {
-  const rotated = page.rotation === 90 || page.rotation === 270;
-  const displayWidth = rotated ? page.height : page.width;
-  const displayHeight = rotated ? page.width : page.height;
-  const dx = nx * displayWidth;
-  const dy = ny * displayHeight;
-  switch (page.rotation) {
-    case 90:
-      return { x: dy, y: dx };
-    case 180:
-      return { x: page.width - dx, y: dy };
-    case 270:
-      return { x: page.width - dy, y: page.height - dx };
-    default:
-      return { x: dx, y: page.height - dy };
-  }
-}
-async function exportNotebookPdf(notebook, sourceName) {
-  const output = await import_pdf_lib.PDFDocument.create();
-  output.setTitle(`${sourceName} (handwritten)`);
-  for (const page of notebook.pages) {
-    const geometry = { id: page.id, width: notebook.pageWidth, height: notebook.pageHeight, rotation: 0 };
-    const pdfPage = output.addPage([notebook.pageWidth, notebook.pageHeight]);
-    for (const stroke of page.strokes) drawStroke(pdfPage, stroke, geometry);
-  }
-  return output.save();
-}
-function notebookHasInk(notebook) {
-  return notebook.pages.some((page) => page.strokes.length > 0);
-}
-function sidecarHasInk(sidecar) {
-  return sidecar.notebook.pages.some((page) => page.strokes.length > 0);
-}
-async function exportHandwrittenPdf(sourceBytes, sidecar, sourceName) {
-  var _a, _b;
-  if (looksDigitallySigned(sourceBytes)) {
-    throw new PdfExportError("signed", "This PDF is digitally signed; exporting would invalidate the signature");
-  }
-  let source;
-  try {
-    source = await import_pdf_lib.PDFDocument.load(sourceBytes, { ignoreEncryption: false, updateMetadata: false });
-  } catch (error) {
-    if (/\bencrypted\b/i.test(String(error == null ? void 0 : error.message))) {
-      throw new PdfExportError("encrypted", "Encrypted PDFs cannot be exported with handwriting");
-    }
-    throw new PdfExportError("corrupt", `This PDF could not be read for export: ${(_a = error == null ? void 0 : error.message) != null ? _a : String(error)}`);
-  }
-  const sourcePages = source.getPages();
-  const output = await import_pdf_lib.PDFDocument.create();
-  output.setTitle(`${sourceName} (handwritten)`);
-  const strokesByPage = new Map(sidecar.notebook.pages.map((page) => [page.id, page.strokes]));
-  for (const notePage of sidecar.notePages) {
-    let page;
-    if (notePage.sourceIndex !== void 0) {
-      if (notePage.sourceIndex >= sourcePages.length) continue;
-      const [copied] = await output.copyPages(source, [notePage.sourceIndex]);
-      page = output.addPage(copied);
-    } else {
-      page = output.addPage([notePage.width, notePage.height]);
-      if (notePage.rotation !== 0) page.setRotation((0, import_pdf_lib.degrees)(notePage.rotation));
-    }
-    for (const stroke of (_b = strokesByPage.get(notePage.id)) != null ? _b : []) {
-      drawStroke(page, stroke, notePage);
-    }
-  }
-  return output.save();
-}
-function drawStroke(page, stroke, notePage) {
-  const { red, green, blue } = parseHexColor(stroke.color);
-  const color = (0, import_pdf_lib.rgb)(red, green, blue);
-  if (stroke.points.length === 1) {
-    const center = displayToPdfPoint(stroke.points[0].x, stroke.points[0].y, notePage);
-    page.drawCircle({ x: center.x, y: center.y, size: stroke.width / 2, color, opacity: stroke.opacity });
-    return;
-  }
-  page.drawSvgPath(inkToSvgPath(stroke, notePage), {
-    borderColor: color,
-    borderWidth: stroke.width,
-    borderOpacity: stroke.opacity,
-    borderLineCap: 1,
-    // round caps, matching the on-screen renderer
-    x: 0,
-    y: notePage.height
-  });
-}
-function parseHexColor(value) {
-  var _a, _b;
-  const hex = (_b = (_a = /^#?([0-9a-f]{6})$/i.exec(value.trim())) == null ? void 0 : _a[1]) != null ? _b : "1b1b1b";
-  return {
-    red: parseInt(hex.slice(0, 2), 16) / 255,
-    green: parseInt(hex.slice(2, 4), 16) / 255,
-    blue: parseInt(hex.slice(4, 6), 16) / 255
-  };
-}
-function exportPathFor(pdfPath, exists) {
-  const slash = pdfPath.lastIndexOf("/");
-  const directory = slash >= 0 ? pdfPath.slice(0, slash) : "";
-  const file = slash >= 0 ? pdfPath.slice(slash + 1) : pdfPath;
-  const dot = file.lastIndexOf(".");
-  const stem = dot > 0 ? file.slice(0, dot) : file;
-  let candidate = joinPath(directory, `${stem} (handwritten).pdf`);
-  let count = 2;
-  while (exists(candidate)) candidate = joinPath(directory, `${stem} (handwritten) ${count++}.pdf`);
-  return candidate;
-}
-function joinPath(directory, file) {
-  return directory ? `${directory}/${file}` : file;
-}
-function fmt(value) {
-  return String(Math.round(value * 100) / 100);
-}
-
-// src/ink-input.ts
-function registerDocumentPointerEndEvents(element, register, onEnd) {
-  var _a;
-  let owner = element.ownerDocument;
-  const end = (event) => onEnd(event, event.type === "pointercancel");
-  const bind = () => {
-    owner.addEventListener("pointerup", end);
-    owner.addEventListener("pointercancel", end);
-  };
-  const unbind = () => {
-    owner.removeEventListener("pointerup", end);
-    owner.removeEventListener("pointercancel", end);
-  };
-  bind();
-  const stopMigration = (_a = element.onWindowMigrated) == null ? void 0 : _a.call(element, () => {
-    if (owner === element.ownerDocument) return;
-    unbind();
-    owner = element.ownerDocument;
-    bind();
-  });
-  register(() => {
-    stopMigration == null ? void 0 : stopMigration();
-    unbind();
-  });
-}
-
-// src/ink-writing.ts
-var import_obsidian2 = require("obsidian");
-
-// src/brush-popover.ts
-var import_obsidian = require("obsidian");
 
 // src/rendering.ts
 var scaledStrokes = /* @__PURE__ */ new WeakMap();
@@ -22698,7 +22531,216 @@ function drawSmoothPath(ctx, points, width, height) {
   ctx.lineTo(last.x * width, last.y * height);
 }
 
+// src/pdf-export.ts
+var PdfExportError = class extends Error {
+  constructor(reason, message) {
+    super(message);
+    this.reason = reason;
+    this.name = "PdfExportError";
+  }
+};
+function looksDigitallySigned(bytes) {
+  const data = new Uint8Array(bytes);
+  const marker = "/ByteRange";
+  const windowSize = 4096;
+  let tail = "";
+  for (let start = 0; start < data.length; start += windowSize - (marker.length - 1)) {
+    const chunk = data.subarray(start, Math.min(start + windowSize, data.length));
+    tail += String.fromCharCode(...chunk);
+    if (tail.includes(marker)) return true;
+    tail = tail.slice(-(marker.length - 1));
+  }
+  return false;
+}
+function inkToSvgOutlinePath(stroke, page, renderWidth) {
+  const rotated = page.rotation === 90 || page.rotation === 270;
+  const displayWidth = rotated ? page.height : page.width;
+  const displayHeight = rotated ? page.width : page.height;
+  const logicalWidth = renderWidth && Number.isFinite(renderWidth) && renderWidth > 0 ? renderWidth : displayWidth;
+  const logicalHeight = Math.max(1, Math.round(logicalWidth * displayHeight / displayWidth * 64) / 64);
+  return penOutlineRings(stroke, logicalWidth, logicalHeight).map((ring) => {
+    const points = ring.map(([x, y]) => {
+      const point = displayToPdfPoint(x / logicalWidth, y / logicalHeight, page);
+      return `${fmt(point.x)} ${fmt(page.height - point.y)}`;
+    });
+    return `M ${points.join(" L ")} Z`;
+  }).join(" ");
+}
+function inkToSvgHighlighterPath(stroke, page) {
+  const map = (x, y) => {
+    const point = displayToPdfPoint(x, y, page);
+    return { x: point.x, y: page.height - point.y };
+  };
+  const first = map(stroke.points[0].x, stroke.points[0].y);
+  const commands = [`M ${fmt(first.x)} ${fmt(first.y)}`];
+  for (let index = 1; index < stroke.points.length; index++) {
+    const previous = stroke.points[index - 1];
+    const point = stroke.points[index];
+    const end = index === stroke.points.length - 1 ? point : { x: (previous.x + point.x) / 2, y: (previous.y + point.y) / 2 };
+    const control = map(previous.x, previous.y);
+    const mappedEnd = map(end.x, end.y);
+    commands.push(`Q ${fmt(control.x)} ${fmt(control.y)} ${fmt(mappedEnd.x)} ${fmt(mappedEnd.y)}`);
+  }
+  const last = map(stroke.points[stroke.points.length - 1].x, stroke.points[stroke.points.length - 1].y);
+  commands.push(`L ${fmt(last.x)} ${fmt(last.y)}`);
+  return commands.join(" ");
+}
+function displayToPdfPoint(nx, ny, page) {
+  const rotated = page.rotation === 90 || page.rotation === 270;
+  const displayWidth = rotated ? page.height : page.width;
+  const displayHeight = rotated ? page.width : page.height;
+  const dx = nx * displayWidth;
+  const dy = ny * displayHeight;
+  switch (page.rotation) {
+    case 90:
+      return { x: dy, y: dx };
+    case 180:
+      return { x: page.width - dx, y: dy };
+    case 270:
+      return { x: page.width - dy, y: page.height - dx };
+    default:
+      return { x: dx, y: page.height - dy };
+  }
+}
+async function exportNotebookPdf(notebook, sourceName, renderWidth) {
+  const output = await import_pdf_lib.PDFDocument.create();
+  output.setTitle(`${sourceName} (handwritten)`);
+  for (const page of notebook.pages) {
+    const geometry = { id: page.id, width: notebook.pageWidth, height: notebook.pageHeight, rotation: 0 };
+    const pdfPage = output.addPage([notebook.pageWidth, notebook.pageHeight]);
+    for (const stroke of page.strokes) drawStroke(pdfPage, stroke, geometry, renderWidth);
+  }
+  return output.save();
+}
+function notebookHasInk(notebook) {
+  return notebook.pages.some((page) => page.strokes.length > 0);
+}
+function sidecarHasInk(sidecar) {
+  return sidecar.notebook.pages.some((page) => page.strokes.length > 0);
+}
+async function exportHandwrittenPdf(sourceBytes, sidecar, sourceName, renderWidth) {
+  var _a, _b;
+  if (looksDigitallySigned(sourceBytes)) {
+    throw new PdfExportError("signed", "This PDF is digitally signed; exporting would invalidate the signature");
+  }
+  let source;
+  try {
+    source = await import_pdf_lib.PDFDocument.load(sourceBytes, { ignoreEncryption: false, updateMetadata: false });
+  } catch (error) {
+    if (/\bencrypted\b/i.test(String(error == null ? void 0 : error.message))) {
+      throw new PdfExportError("encrypted", "Encrypted PDFs cannot be exported with handwriting");
+    }
+    throw new PdfExportError("corrupt", `This PDF could not be read for export: ${(_a = error == null ? void 0 : error.message) != null ? _a : String(error)}`);
+  }
+  const sourcePages = source.getPages();
+  const output = await import_pdf_lib.PDFDocument.create();
+  output.setTitle(`${sourceName} (handwritten)`);
+  const strokesByPage = new Map(sidecar.notebook.pages.map((page) => [page.id, page.strokes]));
+  for (const notePage of sidecar.notePages) {
+    let page;
+    if (notePage.sourceIndex !== void 0) {
+      if (notePage.sourceIndex >= sourcePages.length) continue;
+      const [copied] = await output.copyPages(source, [notePage.sourceIndex]);
+      page = output.addPage(copied);
+    } else {
+      page = output.addPage([notePage.width, notePage.height]);
+      if (notePage.rotation !== 0) page.setRotation((0, import_pdf_lib.degrees)(notePage.rotation));
+    }
+    for (const stroke of (_b = strokesByPage.get(notePage.id)) != null ? _b : []) {
+      drawStroke(page, stroke, notePage, renderWidth);
+    }
+  }
+  return output.save();
+}
+function drawStroke(page, stroke, notePage, renderWidth) {
+  const { red, green, blue } = parseHexColor(stroke.color);
+  const color = (0, import_pdf_lib.rgb)(red, green, blue);
+  const rotated = notePage.rotation === 90 || notePage.rotation === 270;
+  const displayWidth = rotated ? notePage.height : notePage.width;
+  const logicalWidth = renderWidth && Number.isFinite(renderWidth) && renderWidth > 0 ? renderWidth : displayWidth;
+  const widthScale = displayWidth / logicalWidth;
+  if (stroke.tool !== "highlighter") {
+    page.drawSvgPath(inkToSvgOutlinePath(stroke, notePage, logicalWidth), {
+      color,
+      opacity: stroke.opacity,
+      x: 0,
+      y: notePage.height
+    });
+    return;
+  }
+  if (stroke.points.length === 1) {
+    const center = displayToPdfPoint(stroke.points[0].x, stroke.points[0].y, notePage);
+    page.drawCircle({ x: center.x, y: center.y, size: stroke.width * widthScale / 2, color, opacity: stroke.opacity });
+    return;
+  }
+  page.drawSvgPath(inkToSvgHighlighterPath(stroke, notePage), {
+    borderColor: color,
+    borderWidth: stroke.width * widthScale,
+    borderOpacity: stroke.opacity,
+    borderLineCap: 1,
+    // round caps, matching the on-screen renderer
+    x: 0,
+    y: notePage.height
+  });
+}
+function parseHexColor(value) {
+  var _a, _b;
+  const hex = (_b = (_a = /^#?([0-9a-f]{6})$/i.exec(value.trim())) == null ? void 0 : _a[1]) != null ? _b : "1b1b1b";
+  return {
+    red: parseInt(hex.slice(0, 2), 16) / 255,
+    green: parseInt(hex.slice(2, 4), 16) / 255,
+    blue: parseInt(hex.slice(4, 6), 16) / 255
+  };
+}
+function exportPathFor(pdfPath, exists) {
+  const slash = pdfPath.lastIndexOf("/");
+  const directory = slash >= 0 ? pdfPath.slice(0, slash) : "";
+  const file = slash >= 0 ? pdfPath.slice(slash + 1) : pdfPath;
+  const dot = file.lastIndexOf(".");
+  const stem = dot > 0 ? file.slice(0, dot) : file;
+  let candidate = joinPath(directory, `${stem} (handwritten).pdf`);
+  let count = 2;
+  while (exists(candidate)) candidate = joinPath(directory, `${stem} (handwritten) ${count++}.pdf`);
+  return candidate;
+}
+function joinPath(directory, file) {
+  return directory ? `${directory}/${file}` : file;
+}
+function fmt(value) {
+  return String(Math.round(value * 100) / 100);
+}
+
+// src/ink-input.ts
+function registerDocumentPointerEndEvents(element, register, onEnd) {
+  var _a;
+  let owner = element.ownerDocument;
+  const end = (event) => onEnd(event, event.type === "pointercancel");
+  const bind = () => {
+    owner.addEventListener("pointerup", end);
+    owner.addEventListener("pointercancel", end);
+  };
+  const unbind = () => {
+    owner.removeEventListener("pointerup", end);
+    owner.removeEventListener("pointercancel", end);
+  };
+  bind();
+  const stopMigration = (_a = element.onWindowMigrated) == null ? void 0 : _a.call(element, () => {
+    if (owner === element.ownerDocument) return;
+    unbind();
+    owner = element.ownerDocument;
+    bind();
+  });
+  register(() => {
+    stopMigration == null ? void 0 : stopMigration();
+    unbind();
+  });
+}
+
+// src/ink-writing.ts
+var import_obsidian2 = require("obsidian");
+
 // src/brush-popover.ts
+var import_obsidian = require("obsidian");
 var INK_COLORS = [
   { value: "#1b1b1b", label: "Black" },
   { value: "#195bff", label: "Blue" },
@@ -24029,7 +24071,6 @@ var InkWritingView = class extends import_obsidian2.FileView {
     this.activeStroke = null;
     this.workerStrokePointIndex = 0;
     this.lastPoint = null;
-    this.stylusTouchInput = false;
     this.touchGesture = null;
     /** Last input the active pointer produced; drives stale-interaction
      *  healing when the platform loses the final pointerup. */
@@ -24080,6 +24121,11 @@ var InkWritingView = class extends import_obsidian2.FileView {
     this.devLastPointerType = null;
     this.flipSettling = false;
     this.pageSwipeAnimations = [];
+    this.pageSwipeRequest = null;
+    // ------------------------------------------------------------------ input
+    this.pageOptionsMenu = null;
+    this.pageOptionsTriggerPressed = false;
+    this.pageOptionsDismissRegistered = false;
   }
   /** True while gestures must not start new input (reading mode, locks). */
   inputLocked() {
@@ -24096,6 +24142,33 @@ var InkWritingView = class extends import_obsidian2.FileView {
   /** View hook: the drag ended. delta is -1/+1 to flip (animated slide to
    *  the neighbouring page) or 0 to spring back. */
   swipeSettle(_delta) {
+  }
+  /** Track the requested destination, including swipes made while saving/rendering. */
+  beginPageSwipe(target, count) {
+    const request = { target, count };
+    this.pageSwipeRequest = request;
+    return () => this.flipSettling && this.pageSwipeRequest === request;
+  }
+  clearPageSwipeTarget() {
+    this.pageSwipeRequest = null;
+  }
+  /** Coalesce rapid swipes instead of replaying a backlog of animations/renders. */
+  async navigatePageSwipe(navigate, index, isCurrent) {
+    while (isCurrent() && this.pageSwipeRequest !== null) {
+      const target = this.pageSwipeRequest.target;
+      if (target === index()) return;
+      await navigate(target);
+      if (index() !== target) return;
+    }
+  }
+  resumePageSwipeDrag() {
+    var _a;
+    if (((_a = this.touchGesture) == null ? void 0 : _a.axis) === "x") this.swipeDrag(this.touchGesture.dragX);
+  }
+  finishPageSwipeAnimations() {
+    for (const animation of this.pageSwipeAnimations) {
+      if (animation.playState === "running" || animation.playState === "paused") animation.finish();
+    }
   }
   /** Both pages share a distance, clock and easing, so the gutter stays fixed. */
   animatePageSwipe(elements, from, to, done) {
@@ -24145,7 +24218,13 @@ var InkWritingView = class extends import_obsidian2.FileView {
     const releaseTime = typeof event.timeStamp === "number" ? event.timeStamp : gesture.lastT;
     const fling = releaseTime - gesture.lastT < 100 && gesture.velocity * travel > 0 && Math.abs(gesture.velocity) > 0.35 && Math.abs(travel) > 24;
     const crossed = Math.abs(travel) > width * 0.35;
-    this.swipeSettle(fling || crossed ? travel > 0 ? -1 : 1 : 0);
+    const delta = fling || crossed ? travel > 0 ? -1 : 1 : 0;
+    if (this.flipSettling) {
+      const request = this.pageSwipeRequest;
+      if (request) request.target = Math.max(0, Math.min(request.count - 1, request.target + delta));
+    } else {
+      this.swipeSettle(delta);
+    }
   }
   /** Cancels an in-flight page-flip drag (spring back, no flip). */
   cancelPageFlip() {
@@ -24281,7 +24360,50 @@ var InkWritingView = class extends import_obsidian2.FileView {
   /** Called at the very end of finishPointerInput. */
   afterInputFullySettled() {
   }
-  // ------------------------------------------------------------------ input
+  /** Snapshot the trigger press before the host dismisses its menu on pointerdown. */
+  beginPageOptionsMenu(event) {
+    if (!this.pageOptionsDismissRegistered) {
+      this.pageOptionsDismissRegistered = true;
+      const doc = this.containerEl.ownerDocument;
+      const capturePress = (press) => {
+        var _a, _b;
+        this.pageOptionsTriggerPressed = !!((_b = (_a = this.pageOptionsMenu) == null ? void 0 : _a.trigger) == null ? void 0 : _b.contains(press.target));
+      };
+      if (doc.defaultView) this.registerDomEvent(doc.defaultView, "pointerdown", capturePress, true);
+      else this.registerDomEvent(doc, "pointerdown", capturePress, true);
+      this.registerDomEvent(doc, "pointercancel", () => {
+        this.pageOptionsTriggerPressed = false;
+      }, true);
+      this.registerDomEvent(doc, "keydown", () => {
+        this.pageOptionsTriggerPressed = false;
+      }, true);
+      this.register(() => this.closePageOptionsMenu());
+    }
+    if (this.pageOptionsTriggerPressed || this.pageOptionsMenu) {
+      this.closePageOptionsMenu();
+      return null;
+    }
+    const trigger = event.currentTarget;
+    const menu = new import_obsidian2.Menu();
+    const opened = { menu, trigger };
+    this.pageOptionsMenu = opened;
+    trigger == null ? void 0 : trigger.setAttribute("aria-haspopup", "menu");
+    trigger == null ? void 0 : trigger.setAttribute("aria-expanded", "true");
+    menu.onHide(() => {
+      if (this.pageOptionsMenu !== opened) return;
+      this.pageOptionsMenu = null;
+      trigger == null ? void 0 : trigger.setAttribute("aria-expanded", "false");
+    });
+    return menu;
+  }
+  closePageOptionsMenu() {
+    var _a;
+    this.pageOptionsTriggerPressed = false;
+    const opened = this.pageOptionsMenu;
+    this.pageOptionsMenu = null;
+    (_a = opened == null ? void 0 : opened.trigger) == null ? void 0 : _a.setAttribute("aria-expanded", "false");
+    opened == null ? void 0 : opened.menu.hide();
+  }
   /** An Obsidian native menu (page options) is open. While it is, surface
    *  input must not swallow the outside tap that dismisses it, and must not
    *  start ink underneath it. Resolved through the view's own document so
@@ -24291,12 +24413,13 @@ var InkWritingView = class extends import_obsidian2.FileView {
     return !!((_c = (_b = (_a = this.containerEl) == null ? void 0 : _a.ownerDocument) == null ? void 0 : _b.querySelector) == null ? void 0 : _c.call(_b, ".menu"));
   }
   onPointerDown(event, source = "pointer") {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e, _f, _g;
     this.devPointerEvents += 1;
     this.devLastPointerType = event.pointerType || this.devLastPointerType;
     if (this.inputLocked()) return;
     if (this.nativeMenuOpen()) return;
-    if (event.pointerType === "touch" || source === "pointer" && event.pointerType === "pen" && this.stylusTouchInput) return;
+    if (event.pointerType === "touch") return;
+    if (source === "pointer" && event.pointerType === "pen" && ((_a = this.interaction) == null ? void 0 : _a.source) === "stylus-touch") return;
     this.onInputStarting();
     this.interactionGeneration += 1;
     if (this.activePointerId !== null) this.finishPointerInput(false);
@@ -24305,9 +24428,9 @@ var InkWritingView = class extends import_obsidian2.FileView {
     const tool = this.state.tool;
     const brush = isBrushTool(tool) ? this.brushSettings(tool) : null;
     const rect = this.inputRect();
-    (_b = (_a = this.tiles) == null ? void 0 : _a.beginInput) == null ? void 0 : _b.call(_a);
+    (_c = (_b = this.tiles) == null ? void 0 : _b.beginInput) == null ? void 0 : _c.call(_b);
     this.cancelPendingInkCommitTimer();
-    if (tool === "pen" || tool === "highlighter") (_c = this.tiles) == null ? void 0 : _c.pauseInkCommit();
+    if (tool === "pen" || tool === "highlighter") (_d = this.tiles) == null ? void 0 : _d.pauseInkCommit();
     else if (this.pendingInkStrokes.length > 0 || this.committingInkStrokes) this.materializePendingInkPreview(page);
     if (this.saveTimer !== void 0) {
       window.clearTimeout(this.saveTimer);
@@ -24367,9 +24490,9 @@ var InkWritingView = class extends import_obsidian2.FileView {
       opacity: brush.opacity,
       points: [point],
       dynamics: tool === "pen" ? {
-        taper: (_d = this.state.pen.taper) != null ? _d : 0,
-        pressure: (_e = this.state.pen.pressureGain) != null ? _e : 100,
-        speed: (_f = this.state.pen.speedGain) != null ? _f : 0,
+        taper: (_e = this.state.pen.taper) != null ? _e : 0,
+        pressure: (_f = this.state.pen.pressureGain) != null ? _f : 100,
+        speed: (_g = this.state.pen.speedGain) != null ? _g : 0,
         pressureCurve: this.state.pen.pressureCurve ? this.state.pen.pressureCurve.map((point2) => [...point2]) : void 0
       } : void 0,
       createdAt: Date.now(),
@@ -24822,7 +24945,6 @@ var InkWritingView = class extends import_obsidian2.FileView {
     const sample = stylusTouchSample(touch, event.timeStamp);
     const interaction = this.interaction;
     if (event.type === "touchstart") {
-      this.stylusTouchInput = true;
       if ((interaction == null ? void 0 : interaction.source) === "pointer" && interaction.pointerType === "pen") {
         const pointerId = interaction.pointerId;
         interaction.source = "stylus-touch";
@@ -24844,12 +24966,6 @@ var InkWritingView = class extends import_obsidian2.FileView {
   // ---------------------------------------------------------------- touch
   onTouchStart(event) {
     var _a, _b;
-    if (this.flipSettling) {
-      event.stopPropagation();
-      if (event.cancelable) event.preventDefault();
-      this.touchGesture = null;
-      return;
-    }
     if (this.nativeMenuOpen()) {
       this.touchGesture = null;
       return;
@@ -24867,6 +24983,7 @@ var InkWritingView = class extends import_obsidian2.FileView {
     this.healStaleInteraction(Array.from(event.touches));
     const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus");
     if (touches.length < 1 || touches.length > 2) return;
+    if (this.flipSettling && touches.length === 2) return;
     if (this.activePointerId !== null) return;
     const [a, b] = touches;
     if (!a) return;
@@ -24953,7 +25070,13 @@ var InkWritingView = class extends import_obsidian2.FileView {
         gesture.lastX = a.clientX;
         gesture.lastT = now;
         gesture.dragX = totalX;
+        if (this.flipSettling) this.finishPageSwipeAnimations();
         this.swipeDrag(totalX);
+        return;
+      }
+      if (this.flipSettling) {
+        gesture.x = a.clientX;
+        gesture.y = a.clientY;
         return;
       }
       scroller.scrollLeft += gesture.x - a.clientX;
@@ -24962,6 +25085,7 @@ var InkWritingView = class extends import_obsidian2.FileView {
       gesture.y = a.clientY;
       return;
     }
+    if (this.flipSettling) return;
     if (gesture.distance < 1) {
       this.onTouchStart(event);
       return;
@@ -27049,6 +27173,7 @@ var InkView = class extends InkWritingView {
   }
   async onClose() {
     var _a, _b, _c, _d;
+    this.closePageOptionsMenu();
     this.pageNavigationGeneration += 1;
     this.closeDevPanel();
     if (this.railRevealTimer !== void 0) window.clearTimeout(this.railRevealTimer);
@@ -27157,7 +27282,7 @@ var InkView = class extends InkWritingView {
       return;
     }
     try {
-      const output = await exportNotebookPdf(this.notebook, this.file.basename);
+      const output = await exportNotebookPdf(this.notebook, this.file.basename, this.canvasLogicalWidth);
       const target = exportPathFor(this.file.path, (candidate) => this.app.vault.getAbstractFileByPath(candidate) !== null);
       await this.app.vault.createBinary(target, output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength));
       new import_obsidian3.Notice(`Exported ${target}`);
@@ -27215,6 +27340,7 @@ var InkView = class extends InkWritingView {
     this.registerDomEvent(this.pageScroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchcancel", (event) => {
+      this.finishPinchRender();
       this.onStylusTouch(event);
       this.cancelPageFlip();
       this.touchGesture = null;
@@ -27380,6 +27506,7 @@ var InkView = class extends InkWritingView {
   }
   resizeCanvas() {
     if (!this.canvas || !this.pageElement) return;
+    if (this.pinchRenderZoom !== void 0) return;
     this.layoutPage();
     const rect = this.pageElement.getBoundingClientRect();
     this.canvasLogicalWidth = Math.max(1, Math.round(this.pageBaseWidth * 64) / 64);
@@ -27390,6 +27517,7 @@ var InkView = class extends InkWritingView {
     this.updateViewport(true);
   }
   updateViewport(refine) {
+    var _a;
     const page = this.pageElement.getBoundingClientRect();
     const screen = this.pageScroller.getBoundingClientRect();
     const x = Math.max(0, (screen.left - page.left) / this.zoom);
@@ -27400,8 +27528,8 @@ var InkView = class extends InkWritingView {
       width: Math.max(1, Math.min(this.canvasLogicalWidth - x, (screen.right - page.left) / this.zoom - x)),
       height: Math.max(1, Math.min(this.canvasLogicalHeight - y, (screen.bottom - page.top) / this.zoom - y))
     };
-    this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine);
-    if (refine || this.hasInkPreview()) {
+    this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * ((_a = this.pinchRenderZoom) != null ? _a : this.zoom), refine);
+    if (this.pinchRenderZoom === void 0 && (refine || this.hasInkPreview())) {
       this.resizeOverlay(this.canvas, this.ctx);
       this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
       this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
@@ -27414,6 +27542,7 @@ var InkView = class extends InkWritingView {
   }
   onViewportMotion() {
     this.updateViewport(false);
+    if (this.pinchRenderZoom !== void 0) return;
     if (this.zoomRenderTimer !== void 0) window.clearTimeout(this.zoomRenderTimer);
     this.zoomRenderTimer = window.setTimeout(() => {
       this.zoomRenderTimer = void 0;
@@ -27488,7 +27617,23 @@ var InkView = class extends InkWritingView {
   inputScroller() {
     return this.pageScroller;
   }
+  onTouchStart(event) {
+    this.finishPinchRender();
+    super.onTouchStart(event);
+  }
+  finishPinchRender() {
+    if (this.pinchRenderZoom === void 0) return;
+    this.pinchRenderZoom = void 0;
+    this.resizeCanvas();
+  }
   applyGestureZoom(value, focus, anchor) {
+    var _a, _b;
+    if (Number.isFinite(value) && value !== this.zoom && this.pinchRenderZoom === void 0) {
+      this.pinchRenderZoom = this.zoom;
+      if (this.zoomRenderTimer !== void 0) window.clearTimeout(this.zoomRenderTimer);
+      this.zoomRenderTimer = void 0;
+      (_b = (_a = this.tiles) == null ? void 0 : _a.beginInput) == null ? void 0 : _b.call(_a);
+    }
     this.setZoom(value, focus, anchor);
   }
   swipeDrag(offset) {
@@ -27537,14 +27682,14 @@ var InkView = class extends InkWritingView {
       overflow: "hidden",
       left: `${extent.offsetLeft + page.offsetLeft - this.pageScroller.scrollLeft + side * pitch}px`,
       top: `${extent.offsetTop + page.offsetTop - this.pageScroller.scrollTop}px`,
-      width: page.style.width,
-      height: page.style.height,
+      width: `${this.pageBaseWidth}px`,
+      height: `${this.pageBaseHeight}px`,
       transform: "translateX(0px)"
     });
-    stage.style.setProperty("--ink-page-scale", String(this.zoom));
+    stage.style.setProperty("--ink-page-scale", "1");
     const canvas = stage.createEl("canvas");
     canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%";
-    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, window.devicePixelRatio || 1, this.zoom, OVERLAY_RESIZE_BUDGET);
+    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, window.devicePixelRatio || 1, 1, OVERLAY_RESIZE_BUDGET);
     canvas.width = resolution.width;
     canvas.height = resolution.height;
     const ctx = canvas.getContext("2d");
@@ -27569,22 +27714,26 @@ var InkView = class extends InkWritingView {
     const flip = delta !== 0 && side === delta;
     const from = this.swipeDragOffset;
     const to = flip ? -side * this.swipePitch() : 0;
+    const isCurrent = this.beginPageSwipe(this.pageIndex + (flip ? delta : 0), this.notebook.pages.length);
     this.flipSettling = true;
     this.animatePageSwipe(stage ? [extent, stage] : [extent], from, to, () => {
-      if (!flip || !stage) {
-        this.destroySwipeStage();
-        return;
-      }
       this.cancelPageSwipeAnimations();
       extent.style.transform = "";
-      extent.style.visibility = "hidden";
-      void this.changePage(delta).finally(() => {
-        if (this.swipeStage === stage) this.destroySwipeStage();
+      if (flip && stage) extent.style.visibility = "hidden";
+      void this.navigatePageSwipe((index) => {
+        const page = this.notebook.pages[index];
+        return page ? this.navigateToPage(page.id) : Promise.resolve();
+      }, () => this.pageIndex, isCurrent).finally(() => {
+        if (isCurrent()) {
+          this.destroySwipeStage();
+          this.resumePageSwipeDrag();
+        }
       });
     });
   }
   destroySwipeStage() {
     var _a, _b;
+    this.clearPageSwipeTarget();
     this.cancelPageSwipeAnimations();
     (_a = this.swipeLayer) == null ? void 0 : _a.remove();
     (_b = this.swipeStage) == null ? void 0 : _b.remove();
@@ -27770,15 +27919,11 @@ var InkView = class extends InkWritingView {
       notebookUpdatedAt: now
     });
     this.pageIndex = this.notebook.pages.length - 1;
+    this.resetPageView();
     this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, page.id);
     this.renderPageRail();
     this.renderPage();
     this.scheduleSave();
-  }
-  async changePage(delta) {
-    const index = Math.max(0, Math.min(this.notebook.pages.length - 1, this.pageIndex + delta));
-    const page = this.notebook.pages[index];
-    if (page) await this.navigateToPage(page.id);
   }
   navigateToPage(pageId) {
     if (this.currentPage().id === pageId || !this.pageById(pageId)) return Promise.resolve();
@@ -27803,6 +27948,7 @@ var InkView = class extends InkWritingView {
       const index = this.notebook.pages.findIndex((page) => page.id === pageId);
       if (index < 0) return;
       this.pageIndex = index;
+      this.resetPageView();
       this.renderPageRail();
       this.renderPage();
       if (this.flipSettling) (_a = this.tiles) == null ? void 0 : _a.previewInteractiveCells(
@@ -27815,7 +27961,8 @@ var InkView = class extends InkWritingView {
     });
   }
   openPageMenu(event) {
-    const menu = new import_obsidian3.Menu();
+    const menu = this.beginPageOptionsMenu(event);
+    if (!menu) return;
     for (const paper of ["blank", "ruled", "grid", "dot"]) menu.addItem((item) => item.setTitle(`Paper: ${paper}`).setChecked(this.currentPage().paper === paper).onClick(() => {
       const page = this.currentPage();
       const before = page.paper;
@@ -27885,6 +28032,7 @@ var InkView = class extends InkWritingView {
     const page = clonePageAsNew(source, `${source.title} copy`, now);
     this.notebook.pages.splice(insertionIndex, 0, page);
     this.pageIndex += 1;
+    this.resetPageView();
     this.finishPageOrderChange(now, {
       type: "page-operation",
       action: "duplicate",
@@ -27907,6 +28055,7 @@ var InkView = class extends InkWritingView {
     const now = Date.now();
     this.notebook.deletedPages[deleted.id] = now;
     this.pageIndex = Math.min(this.pageIndex, this.notebook.pages.length - 1);
+    this.resetPageView();
     this.finishPageOrderChange(now, {
       type: "page-operation",
       action: "delete",
@@ -27986,8 +28135,10 @@ var InkView = class extends InkWritingView {
     next.pageOrder = next.pages.map((page) => page.id);
     next.updatedAt = now;
     next.pageOrderUpdatedAt = now;
+    const previousPageId = this.currentPage().id;
     this.notebook = next;
     this.pageIndex = Math.max(0, next.pages.findIndex((page) => page.id === selectedId));
+    if (this.currentPage().id !== previousPageId) this.resetPageView();
     this.dirtyRevision += 1;
     this.queueWorkerOperation({ type: "history-restore", notebook: cloneNotebook(this.notebook) });
   }
@@ -28040,6 +28191,7 @@ page: ${this.currentPage().id}
    *  control points. Skipped while the popover has no layout (it is built
    *  display:none and drawn when opened). */
   layoutPage() {
+    var _a;
     const style = getComputedStyle(this.pageScroller);
     const paddingLeft = parseFloat(style.paddingLeft) || 0;
     const paddingRight = parseFloat(style.paddingRight) || 0;
@@ -28051,16 +28203,36 @@ page: ${this.currentPage().id}
     this.pageBaseHeight = height;
     const displayWidth = width * this.zoom;
     const displayHeight = height * this.zoom;
+    const renderZoom = (_a = this.pinchRenderZoom) != null ? _a : this.zoom;
     this.pageElement.style.left = horizontalGutter + "px";
-    this.pageElement.style.width = displayWidth + "px";
-    this.pageElement.style.height = displayHeight + "px";
+    this.pageElement.style.width = width * renderZoom + "px";
+    this.pageElement.style.height = height * renderZoom + "px";
     if (typeof this.pageElement.style.setProperty === "function") {
-      this.pageElement.style.setProperty("--ink-page-scale", String(this.zoom));
+      this.pageElement.style.setProperty("--ink-page-scale", String(renderZoom));
     }
     this.pageElement.style.zoom = "";
-    this.pageElement.style.transform = "none";
+    this.pageElement.style.transform = this.pinchRenderZoom === void 0 ? "none" : `scale(${this.zoom / renderZoom})`;
+    this.pageElement.style.willChange = this.pinchRenderZoom === void 0 ? "" : "transform";
     this.pageExtent.style.width = displayWidth + horizontalGutter * 2 + "px";
     this.pageExtent.style.height = displayHeight + "px";
+  }
+  updateZoomControls() {
+    var _a, _b, _c;
+    const readout = (_a = this.root) == null ? void 0 : _a.querySelector(".ink-zoom-value");
+    if (readout) readout.textContent = Math.round(this.zoom * 100) + "%";
+    const zoomOut = (_b = this.root) == null ? void 0 : _b.querySelector("[aria-label='Zoom out']");
+    const zoomIn = (_c = this.root) == null ? void 0 : _c.querySelector("[aria-label='Zoom in']");
+    if (zoomOut) zoomOut.disabled = this.zoom <= 0.5;
+    if (zoomIn) zoomIn.disabled = this.zoom >= 3;
+  }
+  resetPageView() {
+    this.pinchRenderZoom = void 0;
+    this.zoom = 1;
+    if (this.pageScroller) {
+      this.pageScroller.scrollLeft = 0;
+      this.pageScroller.scrollTop = 0;
+    }
+    this.updateZoomControls();
   }
   setZoom(value, target, anchor) {
     if (!Number.isFinite(value)) return;
@@ -28072,17 +28244,12 @@ page: ${this.currentPage().id}
     if (nextZoom !== this.zoom) {
       this.zoom = nextZoom;
       this.layoutPage();
-      this.tiles.setDisplayScale(this.zoom);
+      if (this.pinchRenderZoom === void 0) this.tiles.setDisplayScale(this.zoom);
     }
     const after = this.pageElement.getBoundingClientRect();
     this.pageScroller.scrollLeft += after.left + anchor.x * after.width - target.x;
     this.pageScroller.scrollTop += after.top + anchor.y * after.height - target.y;
-    const readout = this.root.querySelector(".ink-zoom-value");
-    if (readout) readout.textContent = Math.round(this.zoom * 100) + "%";
-    const zoomOut = this.root.querySelector("[aria-label='Zoom out']");
-    const zoomIn = this.root.querySelector("[aria-label='Zoom in']");
-    if (zoomOut) zoomOut.disabled = this.zoom <= 0.5;
-    if (zoomIn) zoomIn.disabled = this.zoom >= 3;
+    this.updateZoomControls();
     this.onViewportMotion();
   }
   onWheel(event) {
@@ -28987,7 +29154,7 @@ var PdfInkView = class extends InkWritingView {
     /** The "smart fit" zoom: width-fill for portrait pages, height-fill when
      *  width-fill would leave the page floating with vertical slack. */
     this.fitZoom = 1;
-    /** Set once the user zooms manually; until then every layout re-fits. */
+    /** Manual zoom applies only to the currently selected note page. */
     this.zoomTouched = false;
     /** Offscreen renders of the neighbouring pages for instant flips. */
     this.neighbourCache = /* @__PURE__ */ new Map();
@@ -29060,6 +29227,8 @@ var PdfInkView = class extends InkWritingView {
     const observer = new ResizeObserver(() => {
       var _a;
       (_a = this.brushPopover) == null ? void 0 : _a.position();
+      this.prewarmToken += 1;
+      this.neighbourCache.clear();
       this.layoutPage();
       if (this.resizeRenderTimer !== void 0) window.clearTimeout(this.resizeRenderTimer);
       this.resizeRenderTimer = window.setTimeout(() => void this.renderPdfPage(), 100);
@@ -29069,6 +29238,7 @@ var PdfInkView = class extends InkWritingView {
   }
   async onClose() {
     var _a, _b, _c, _d, _e;
+    this.closePageOptionsMenu();
     const outcome = await this.flushSaveNow();
     if (outcome.status !== "saved") {
       new import_obsidian7.Notice(`Ink Notes kept notes for ${(_b = (_a = this.file) == null ? void 0 : _a.basename) != null ? _b : "this PDF"} in a conflict copy: ${outcome.message}`);
@@ -29437,6 +29607,11 @@ var PdfInkView = class extends InkWritingView {
     }
     const ids = pages ? pages.map((page) => page.id).join(",") : Array.from({ length: count }, (_, index) => `src${index}`).join(",");
     if (ids !== this.railBuiltIds) {
+      if (this.railBuiltIds) {
+        this.prewarmToken += 1;
+        this.neighbourCache.clear();
+        this.destroySwipeStage();
+      }
       this.rebuildRailButtons(count);
       this.railBuiltIds = ids;
     }
@@ -29542,7 +29717,7 @@ var PdfInkView = class extends InkWritingView {
     if (this.pendingThumbRenders.has(index)) return;
     const notePage = (_a = this.sidecar) == null ? void 0 : _a.notePages[index];
     const display = this.rotatedSize(notePage != null ? notePage : null);
-    const neighbour = this.neighbourCache.get(index);
+    const neighbour = (notePage == null ? void 0 : notePage.sourceIndex) !== void 0 ? this.neighbourCache.get(index) : void 0;
     if (neighbour) {
       const thumb = document.createElement("canvas");
       thumb.width = this.thumbPixelWidth();
@@ -29568,7 +29743,12 @@ var PdfInkView = class extends InkWritingView {
     const token = ((_c = this.thumbPaintTokens.get(index)) != null ? _c : 0) + 1;
     this.thumbPaintTokens.set(index, token);
     this.pendingThumbRenders.add(index);
-    void this.renderThumbnail(canvas, index, notePage, display, token).finally(() => this.pendingThumbRenders.delete(index));
+    void this.renderThumbnail(canvas, index, notePage, display, token).finally(() => {
+      var _a2;
+      if (token === this.thumbPaintTokens.get(index) && ((_a2 = this.thumbButtons.get(index)) == null ? void 0 : _a2.querySelector("canvas")) === canvas) {
+        this.pendingThumbRenders.delete(index);
+      }
+    });
   }
   thumbPixelWidth() {
     return Math.max(1, Math.round(RAIL_THUMB_WIDTH * (window.devicePixelRatio || 1)));
@@ -29576,16 +29756,20 @@ var PdfInkView = class extends InkWritingView {
   async renderThumbnail(canvas, index, notePage, display, token) {
     var _a;
     const generation = this.loadGeneration;
+    const isCurrent = () => {
+      var _a2, _b, _c;
+      return token === this.thumbPaintTokens.get(index) && generation === this.loadGeneration && ((_b = (_a2 = this.sidecar) == null ? void 0 : _a2.notePages[index]) == null ? void 0 : _b.id) === notePage.id && ((_c = this.thumbButtons.get(index)) == null ? void 0 : _c.querySelector("canvas")) === canvas;
+    };
     try {
       const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
-      if (token !== this.thumbPaintTokens.get(index) || generation !== this.loadGeneration) return;
+      if (!isCurrent()) return;
       const scale = this.thumbPixelWidth() / display.width;
       const viewport = page.getViewport({ scale });
       const thumb = document.createElement("canvas");
       thumb.width = Math.max(1, Math.round(display.width * scale));
       thumb.height = Math.max(1, Math.round(display.height * scale));
       await page.render({ canvasContext: thumb.getContext("2d"), viewport }).promise;
-      if (token !== this.thumbPaintTokens.get(index) || generation !== this.loadGeneration) return;
+      if (!isCurrent()) return;
       this.thumbCache.set(index, thumb);
       if (canvas.isConnected) this.paintThumbBitmap(canvas, thumb, index);
     } catch (error) {
@@ -29621,7 +29805,8 @@ var PdfInkView = class extends InkWritingView {
   }
   openPageMenu(event) {
     if (!this.sidecar) return;
-    const menu = new import_obsidian7.Menu();
+    const menu = this.beginPageOptionsMenu(event);
+    if (!menu) return;
     const current = this.sidecar.notePages[this.noteIndex];
     menu.addItem((item) => item.setTitle("Insert blank page after this one").setIcon("plus").onClick(() => this.withPageUndo(() => {
       var _a;
@@ -29638,7 +29823,6 @@ var PdfInkView = class extends InkWritingView {
     menu.addItem((item) => item.setTitle("Reset zoom").setDisabled(!this.zoomTouched).onClick(() => this.resetZoom()));
     menu.addItem((item) => item.setTitle("Zoom in").setDisabled(this.zoom >= PDF_ZOOM_MAX).onClick(() => this.setZoom(this.zoom * PDF_ZOOM_STEP)));
     menu.addSeparator();
-    menu.addItem((item) => item.setTitle("Export PDF with handwriting").setIcon("download").onClick(() => void this.exportHandwrittenCopy()));
     menu.addItem((item) => item.setTitle("Open with the built-in viewer").setIcon("book-open").onClick(() => void this.restoreBuiltinViewer()));
     menu.showAtMouseEvent(event);
   }
@@ -29696,6 +29880,11 @@ var PdfInkView = class extends InkWritingView {
     if (next < 0 || next >= count) return;
     this.finishPointerInput(false);
     this.noteIndex = next;
+    this.zoomTouched = false;
+    if (this.scroller) {
+      this.scroller.scrollLeft = 0;
+      this.scroller.scrollTop = 0;
+    }
     this.updatePageIndicator();
     this.layoutPage();
     this.renderAll();
@@ -29710,6 +29899,7 @@ var PdfInkView = class extends InkWritingView {
     const clamped = Math.max(this.fitZoom, Math.min(PDF_ZOOM_MAX, zoom));
     if (clamped === this.zoom) return;
     this.zoomTouched = true;
+    this.prewarmToken += 1;
     this.neighbourCache.clear();
     const scroller = this.scroller;
     const page = this.pageWrap;
@@ -29892,9 +30082,18 @@ var PdfInkView = class extends InkWritingView {
     wrap.setCssStyles({ transition: "none", transform: `translateX(${offset}px)` });
     if (this.swipeStage) this.swipeStage.setCssStyles({ transition: "none", transform: `translateX(${offset}px)` });
   }
+  /** Use the neighbour's own fit: mixed portrait/landscape pages have different zooms. */
+  swipePageSize(notePage) {
+    const display = this.rotatedSize(notePage);
+    const baseWidth = Math.max(200, this.scroller.clientWidth - PDF_PAGE_PADDING * 2);
+    const fit = Math.max(0.05, Math.min(1, Math.max(1, this.scroller.clientHeight - PDF_PAGE_PADDING * 2) / (baseWidth * display.height / display.width)));
+    const zoom = fit;
+    const width = baseWidth * zoom;
+    return { width, height: width * display.height / display.width, baseWidth, zoom };
+  }
   /** Slides the neighbouring page in beside the current one while dragging. */
   ensureSwipeStage(offset) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
     const wrap = this.pageWrap;
     const scroller = this.scroller;
     if (!wrap || !scroller) return;
@@ -29908,11 +30107,7 @@ var PdfInkView = class extends InkWritingView {
     if (neighborIndex < 0 || neighborIndex >= count) return;
     const pitch = this.swipePitch();
     const display = this.rotatedSize((_f = (_e = this.sidecar) == null ? void 0 : _e.notePages[neighborIndex]) != null ? _f : null);
-    const baseWidth = Math.max(200, scroller.clientWidth - PDF_PAGE_PADDING * 2);
-    const fit = Math.max(0.05, Math.min(1, Math.max(1, scroller.clientHeight - PDF_PAGE_PADDING * 2) / (baseWidth * display.height / display.width)));
-    const zoom = this.zoomTouched ? this.zoom : fit;
-    const width = baseWidth * zoom;
-    const height = width * display.height / display.width;
+    const { width, height, baseWidth, zoom } = this.swipePageSize((_h = (_g = this.sidecar) == null ? void 0 : _g.notePages[neighborIndex]) != null ? _h : null);
     this.swipeLayer = scroller.createDiv({ cls: "ink-swipe-layer" });
     this.swipeLayer.setCssStyles({
       left: `${scroller.scrollLeft}px`,
@@ -29948,7 +30143,7 @@ var PdfInkView = class extends InkWritingView {
     const ctx = ink.getContext("2d");
     if (ctx) {
       ctx.setTransform(ink.width / baseWidth, 0, 0, ink.height / logicalHeight, 0, 0);
-      for (const stroke of (_i = (_h = (_g = this.sidecar) == null ? void 0 : _g.notebook.pages[neighborIndex]) == null ? void 0 : _h.strokes) != null ? _i : []) {
+      for (const stroke of (_k = (_j = (_i = this.sidecar) == null ? void 0 : _i.notebook.pages[neighborIndex]) == null ? void 0 : _j.strokes) != null ? _k : []) {
         drawInkStroke(ctx, stroke, baseWidth, logicalHeight);
       }
     }
@@ -29959,8 +30154,9 @@ var PdfInkView = class extends InkWritingView {
     const canvas = stage.createEl("canvas");
     canvas.setCssStyles({ position: "absolute", inset: "0", width: "100%", height: "100%" });
     if (!notePage || notePage.sourceIndex === void 0 || !this.pdfDoc) return;
+    const resolution = canvasResolution(parseFloat(stage.style.width), parseFloat(stage.style.height), window.devicePixelRatio || 1, 1);
     const cached = this.neighbourCache.get(index);
-    if (cached) {
+    if (cached && cached.width === resolution.width && cached.height === resolution.height) {
       canvas.width = cached.width;
       canvas.height = cached.height;
       (_b = canvas.getContext("2d")) == null ? void 0 : _b.drawImage(cached, 0, 0);
@@ -29969,9 +30165,9 @@ var PdfInkView = class extends InkWritingView {
     try {
       const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
       if (!stage.isConnected) return;
-      const scale = (window.devicePixelRatio || 1) * this.zoom;
-      canvas.width = Math.max(1, Math.round(this.rotatedSize(notePage).width * scale));
-      canvas.height = Math.max(1, Math.round(this.rotatedSize(notePage).height * scale));
+      const scale = resolution.width / page.getViewport({ scale: 1 }).width;
+      canvas.width = resolution.width;
+      canvas.height = resolution.height;
       const viewport = page.getViewport({ scale });
       await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
       if (stage.isConnected && canvas.width > 0) this.neighbourCache.set(index, canvas);
@@ -30000,10 +30196,12 @@ var PdfInkView = class extends InkWritingView {
     try {
       const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
       if (token !== this.prewarmToken || this.neighbourCache.has(index)) return;
-      const scale = (window.devicePixelRatio || 1) * this.zoom;
+      const size = this.swipePageSize(notePage);
+      const resolution = canvasResolution(size.width, size.height, window.devicePixelRatio || 1, 1);
+      const scale = resolution.width / page.getViewport({ scale: 1 }).width;
       const buffer = document.createElement("canvas");
-      buffer.width = Math.max(1, Math.round(this.rotatedSize(notePage).width * scale));
-      buffer.height = Math.max(1, Math.round(this.rotatedSize(notePage).height * scale));
+      buffer.width = resolution.width;
+      buffer.height = resolution.height;
       const viewport = page.getViewport({ scale });
       await page.render({ canvasContext: buffer.getContext("2d"), viewport }).promise;
       if (token !== this.prewarmToken) return;
@@ -30016,6 +30214,7 @@ var PdfInkView = class extends InkWritingView {
     return Math.max((_b = (_a = this.scroller) == null ? void 0 : _a.clientWidth) != null ? _b : 0, (_d = (_c = this.pageWrap) == null ? void 0 : _c.offsetWidth) != null ? _d : 0) + 16;
   }
   swipeSettle(delta) {
+    var _a, _b, _c, _d;
     if (this.flipSettling) return;
     const wrap = this.pageWrap;
     if (!wrap) {
@@ -30027,24 +30226,32 @@ var PdfInkView = class extends InkWritingView {
     const flip = delta !== 0 && side === delta;
     const from = this.swipeDragOffset;
     const to = flip ? -side * this.swipePitch() : 0;
+    const isCurrent = this.beginPageSwipe(
+      this.noteIndex + (flip ? delta : 0),
+      (_d = (_c = (_a = this.sidecar) == null ? void 0 : _a.notePages.length) != null ? _c : (_b = this.pdfDoc) == null ? void 0 : _b.numPages) != null ? _d : 1
+    );
     this.flipSettling = true;
     this.animatePageSwipe(stage ? [wrap, stage] : [wrap], from, to, () => {
-      if (!flip || !stage) {
-        this.destroySwipeStage();
-        return;
-      }
       this.cancelPageSwipeAnimations();
       wrap.style.transform = "";
-      wrap.style.visibility = "hidden";
-      void this.navigatePages(delta).catch((error) => {
+      if (flip && stage) wrap.style.visibility = "hidden";
+      void this.navigatePageSwipe(
+        (index) => this.navigatePages(index - this.noteIndex),
+        () => this.noteIndex,
+        isCurrent
+      ).catch((error) => {
         this.setStatus(`Could not switch pages: ${messageOf(error)}`, true);
       }).finally(() => {
-        if (this.swipeStage === stage) this.destroySwipeStage();
+        if (isCurrent()) {
+          this.destroySwipeStage();
+          this.resumePageSwipeDrag();
+        }
       });
     });
   }
   destroySwipeStage() {
     var _a, _b;
+    this.clearPageSwipeTarget();
     this.cancelPageSwipeAnimations();
     (_a = this.swipeLayer) == null ? void 0 : _a.remove();
     (_b = this.swipeStage) == null ? void 0 : _b.remove();
@@ -30112,10 +30319,12 @@ var PdfInkView = class extends InkWritingView {
     const generation = ++this.pdfRenderGeneration;
     this.cancelPdfRender();
     const notePage = this.currentNotePage();
-    const display = this.rotatedSize(notePage);
-    const scale = (window.devicePixelRatio || 1) * this.zoom;
-    const targetWidth = Math.max(1, Math.round(display.width * scale));
-    const targetHeight = Math.max(1, Math.round(display.height * scale));
+    const { width: targetWidth, height: targetHeight } = canvasResolution(
+      this.pageBaseWidth,
+      this.pageBaseHeight,
+      window.devicePixelRatio || 1,
+      this.zoom
+    );
     canvas.setCssStyles({ width: "100%", height: "100%" });
     if (!notePage || notePage.sourceIndex === void 0 || !this.pdfDoc) {
       if (canvas.width !== targetWidth) canvas.width = targetWidth;
@@ -30129,6 +30338,7 @@ var PdfInkView = class extends InkWritingView {
     try {
       const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
       if (generation !== this.pdfRenderGeneration) return;
+      const scale = targetWidth / page.getViewport({ scale: 1 }).width;
       const viewport = page.getViewport({ scale });
       const buffer = document.createElement("canvas");
       buffer.width = targetWidth;
@@ -30294,7 +30504,7 @@ var PdfInkView = class extends InkWritingView {
     }
     try {
       const bytes = await this.app.vault.readBinary(this.file);
-      const output = await exportHandwrittenPdf(bytes, this.sidecar, this.file.basename);
+      const output = await exportHandwrittenPdf(bytes, this.sidecar, this.file.basename, this.canvasLogicalWidth);
       const target = exportPathFor(this.file.path, (candidate) => this.app.vault.getAbstractFileByPath(candidate) !== null);
       await this.app.vault.createBinary(target, output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength));
       new import_obsidian7.Notice(`Exported ${target}`);

@@ -1,4 +1,4 @@
-import { Menu, Notice, Scope, TFile, WorkspaceLeaf, setIcon } from "obsidian";
+import { Notice, Scope, TFile, WorkspaceLeaf, setIcon } from "obsidian";
 import { intervalStats } from "./diagnostics";
 import {
   InkNotebook,
@@ -94,6 +94,8 @@ export class InkView extends InkWritingView {
    *  disabled and the page restores native panning/scrolling. */
   private readingMode = false;
   private zoomRenderTimer: number | undefined;
+  /** Freeze the page's raster/layout scale while a pinch composites the whole sheet. */
+  private pinchRenderZoom: number | undefined;
   private pageNavigationGeneration = 0;
   private devPanel: HTMLElement | null = null;
   private devPanelRefreshTimer: number | undefined;
@@ -136,6 +138,7 @@ export class InkView extends InkWritingView {
   }
 
   async onClose(): Promise<void> {
+    this.closePageOptionsMenu();
     this.pageNavigationGeneration += 1;
     this.closeDevPanel();
     if (this.railRevealTimer !== undefined) window.clearTimeout(this.railRevealTimer);
@@ -248,7 +251,7 @@ export class InkView extends InkWritingView {
       return;
     }
     try {
-      const output = await exportNotebookPdf(this.notebook, this.file.basename);
+      const output = await exportNotebookPdf(this.notebook, this.file.basename, this.canvasLogicalWidth);
       const target = exportPathFor(this.file.path, (candidate) => this.app.vault.getAbstractFileByPath(candidate) !== null);
       await this.app.vault.createBinary(target, output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength) as ArrayBuffer);
       new Notice(`Exported ${target}`);
@@ -313,6 +316,7 @@ export class InkView extends InkWritingView {
     this.registerDomEvent(this.pageScroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchcancel", (event) => {
+      this.finishPinchRender();
       this.onStylusTouch(event);
       this.cancelPageFlip();
       this.touchGesture = null;
@@ -496,6 +500,7 @@ export class InkView extends InkWritingView {
 
   private resizeCanvas(): void {
     if (!this.canvas || !this.pageElement) return;
+    if (this.pinchRenderZoom !== undefined) return;
     this.layoutPage();
     const rect = this.pageElement.getBoundingClientRect();
     this.canvasLogicalWidth = Math.max(1, Math.round(this.pageBaseWidth * 64) / 64);
@@ -514,8 +519,8 @@ export class InkView extends InkWritingView {
     this.viewport = { x, y,
       width: Math.max(1, Math.min(this.canvasLogicalWidth - x, (screen.right - page.left) / this.zoom - x)),
       height: Math.max(1, Math.min(this.canvasLogicalHeight - y, (screen.bottom - page.top) / this.zoom - y)) };
-    this.tiles!.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine);
-    if (refine || this.hasInkPreview()) {
+    this.tiles!.update(this.viewport, (window.devicePixelRatio || 1) * (this.pinchRenderZoom ?? this.zoom), refine);
+    if (this.pinchRenderZoom === undefined && (refine || this.hasInkPreview())) {
       this.resizeOverlay(this.canvas, this.ctx);
       this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
       this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
@@ -529,6 +534,7 @@ export class InkView extends InkWritingView {
 
   private onViewportMotion(): void {
     this.updateViewport(false);
+    if (this.pinchRenderZoom !== undefined) return;
     if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
     this.zoomRenderTimer = window.setTimeout(() => {
       this.zoomRenderTimer = undefined;
@@ -598,7 +604,25 @@ export class InkView extends InkWritingView {
   protected performScheduledSave(): void { void this.save(); }
   protected toolbarRoot(): HTMLElement { return this.root; }
   protected inputScroller(): HTMLElement { return this.pageScroller; }
+  protected onTouchStart(event: TouchEvent): void {
+    // Commit before the base handler captures the next gesture's page anchor.
+    this.finishPinchRender();
+    super.onTouchStart(event);
+  }
+
+  private finishPinchRender(): void {
+    if (this.pinchRenderZoom === undefined) return;
+    this.pinchRenderZoom = undefined;
+    this.resizeCanvas();
+  }
+
   protected applyGestureZoom(value: number, focus: { x: number; y: number }, anchor: { x: number; y: number }): void {
+    if (Number.isFinite(value) && value !== this.zoom && this.pinchRenderZoom === undefined) {
+      this.pinchRenderZoom = this.zoom;
+      if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
+      this.zoomRenderTimer = undefined;
+      this.tiles?.beginInput?.();
+    }
     this.setZoom(value, focus, anchor);
   }
 
@@ -645,14 +669,14 @@ export class InkView extends InkWritingView {
       position: "absolute", margin: "0", overflow: "hidden",
       left: `${extent.offsetLeft + page.offsetLeft - this.pageScroller.scrollLeft + side * pitch}px`,
       top: `${extent.offsetTop + page.offsetTop - this.pageScroller.scrollTop}px`,
-      width: page.style.width,
-      height: page.style.height,
+      width: `${this.pageBaseWidth}px`,
+      height: `${this.pageBaseHeight}px`,
       transform: "translateX(0px)",
     });
-    stage.style.setProperty("--ink-page-scale", String(this.zoom));
+    stage.style.setProperty("--ink-page-scale", "1");
     const canvas = stage.createEl("canvas");
     canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%";
-    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, window.devicePixelRatio || 1, this.zoom, OVERLAY_RESIZE_BUDGET);
+    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, window.devicePixelRatio || 1, 1, OVERLAY_RESIZE_BUDGET);
     canvas.width = resolution.width;
     canvas.height = resolution.height;
     const ctx = canvas.getContext("2d");
@@ -680,20 +704,27 @@ export class InkView extends InkWritingView {
     const flip = delta !== 0 && side === delta;
     const from = this.swipeDragOffset;
     const to = flip ? -side * this.swipePitch() : 0;
+    const isCurrent = this.beginPageSwipe(this.pageIndex + (flip ? delta : 0), this.notebook.pages.length);
     this.flipSettling = true;
     this.animatePageSwipe(stage ? [extent, stage] : [extent], from, to, () => {
-      if (!flip || !stage) { this.destroySwipeStage(); return; }
       // Reset geometry before rendering, while the incoming snapshot covers it.
       this.cancelPageSwipeAnimations();
       extent.style.transform = "";
-      extent.style.visibility = "hidden";
-      void this.changePage(delta).finally(() => {
-        if (this.swipeStage === stage) this.destroySwipeStage();
+      if (flip && stage) extent.style.visibility = "hidden";
+      void this.navigatePageSwipe((index) => {
+        const page = this.notebook.pages[index];
+        return page ? this.navigateToPage(page.id) : Promise.resolve();
+      }, () => this.pageIndex, isCurrent).finally(() => {
+        if (isCurrent()) {
+          this.destroySwipeStage();
+          this.resumePageSwipeDrag();
+        }
       });
     });
   }
 
   private destroySwipeStage(): void {
+    this.clearPageSwipeTarget();
     this.cancelPageSwipeAnimations();
     this.swipeLayer?.remove();
     this.swipeStage?.remove();
@@ -881,16 +912,11 @@ export class InkView extends InkWritingView {
     this.queueWorkerOperation({ type: "page-operation", action: "add", page: clonePage(page),
       pageOrder: [...this.notebook.pageOrder], pageOrderUpdatedAt: now, notebookUpdatedAt: now });
     this.pageIndex = this.notebook.pages.length - 1;
+    this.resetPageView();
     this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, page.id);
     this.renderPageRail();
     this.renderPage();
     this.scheduleSave();
-  }
-
-  private async changePage(delta: number): Promise<void> {
-    const index = Math.max(0, Math.min(this.notebook.pages.length - 1, this.pageIndex + delta));
-    const page = this.notebook.pages[index];
-    if (page) await this.navigateToPage(page.id);
   }
 
   private navigateToPage(pageId: string): Promise<void> {
@@ -918,6 +944,7 @@ export class InkView extends InkWritingView {
       const index = this.notebook.pages.findIndex((page) => page.id === pageId);
       if (index < 0) return;
       this.pageIndex = index;
+      this.resetPageView();
       this.renderPageRail();
       this.renderPage();
       if (this.flipSettling) this.tiles?.previewInteractiveCells(
@@ -926,7 +953,8 @@ export class InkView extends InkWritingView {
   }
 
   private openPageMenu(event: MouseEvent): void {
-    const menu = new Menu();
+    const menu = this.beginPageOptionsMenu(event);
+    if (!menu) return;
     for (const paper of ["blank", "ruled", "grid", "dot"] as PaperStyle[]) menu.addItem((item) => item.setTitle(`Paper: ${paper}`).setChecked(this.currentPage().paper === paper).onClick(() => {
       const page = this.currentPage();
       const before = page.paper;
@@ -985,6 +1013,7 @@ export class InkView extends InkWritingView {
     const page = clonePageAsNew(source, `${source.title} copy`, now);
     this.notebook.pages.splice(insertionIndex, 0, page);
     this.pageIndex += 1;
+    this.resetPageView();
     this.finishPageOrderChange(now, { type: "page-operation", action: "duplicate", page: clonePage(page),
       pageOrder: this.notebook.pages.map((candidate) => candidate.id), pageOrderUpdatedAt: now, notebookUpdatedAt: now });
     this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, page.id);
@@ -1002,6 +1031,7 @@ export class InkView extends InkWritingView {
     const now = Date.now();
     this.notebook.deletedPages[deleted.id] = now;
     this.pageIndex = Math.min(this.pageIndex, this.notebook.pages.length - 1);
+    this.resetPageView();
     this.finishPageOrderChange(now, { type: "page-operation", action: "delete", pageId: deleted.id, deletedAt: now,
       pageOrder: this.notebook.pages.map((candidate) => candidate.id), pageOrderUpdatedAt: now, notebookUpdatedAt: now });
     this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, this.currentPage().id);
@@ -1067,8 +1097,10 @@ export class InkView extends InkWritingView {
     next.pageOrder = next.pages.map((page) => page.id);
     next.updatedAt = now;
     next.pageOrderUpdatedAt = now;
+    const previousPageId = this.currentPage().id;
     this.notebook = next;
     this.pageIndex = Math.max(0, next.pages.findIndex((page) => page.id === selectedId));
+    if (this.currentPage().id !== previousPageId) this.resetPageView();
     this.dirtyRevision += 1;
     this.queueWorkerOperation({ type: "history-restore", notebook: cloneNotebook(this.notebook) });
   }
@@ -1131,12 +1163,12 @@ export class InkView extends InkWritingView {
     this.pageBaseHeight = height;
     const displayWidth = width * this.zoom;
     const displayHeight = height * this.zoom;
-    // Use real layout dimensions instead of CSS zoom/transform. WebKit applies
-    // CSS zoom inconsistently to absolute descendants and hit testing, which
-    // displaced Pencil coordinates and clipped right-hand tiles on iPad.
+    const renderZoom = this.pinchRenderZoom ?? this.zoom;
+    // Keep settled writing in explicit layout units for WebKit hit testing;
+    // only the navigation gesture uses a temporary whole-page transform.
     this.pageElement.style.left = horizontalGutter + "px";
-    this.pageElement.style.width = displayWidth + "px";
-    this.pageElement.style.height = displayHeight + "px";
+    this.pageElement.style.width = width * renderZoom + "px";
+    this.pageElement.style.height = height * renderZoom + "px";
     if (typeof this.pageElement.style.setProperty === "function") {
       // The ruling is part of the page, not of the screen: the cell size is
       // exactly 32 page px scaled by zoom, so zooming reads like zooming an
@@ -1145,15 +1177,37 @@ export class InkView extends InkWritingView {
       // device pixels to still the lines while zooming; that kept the cells
       // near-constant on screen while the page box grew, so zooming visibly
       // re-flowed the ruling to a different line count.)
-      this.pageElement.style.setProperty("--ink-page-scale", String(this.zoom));
+      this.pageElement.style.setProperty("--ink-page-scale", String(renderZoom));
     }
     this.pageElement.style.zoom = "";
-    this.pageElement.style.transform = "none";
+    // Scale ink and ruling as one image during the gesture. Repainting each
+    // fractional line spacing and replacing tile densities causes shimmer.
+    this.pageElement.style.transform = this.pinchRenderZoom === undefined ? "none" : `scale(${this.zoom / renderZoom})`;
+    this.pageElement.style.willChange = this.pinchRenderZoom === undefined ? "" : "transform";
     // Keep the initial centering space inside the scrollable track. Without
     // these gutters, a capped wide-screen page loses its auto margins as soon
     // as it grows and edge pinch anchors are clamped toward the center.
     this.pageExtent.style.width = displayWidth + horizontalGutter * 2 + "px";
     this.pageExtent.style.height = displayHeight + "px";
+  }
+
+  private updateZoomControls(): void {
+    const readout = this.root?.querySelector<HTMLElement>(".ink-zoom-value");
+    if (readout) readout.textContent = Math.round(this.zoom * 100) + "%";
+    const zoomOut = this.root?.querySelector<HTMLButtonElement>("[aria-label='Zoom out']");
+    const zoomIn = this.root?.querySelector<HTMLButtonElement>("[aria-label='Zoom in']");
+    if (zoomOut) zoomOut.disabled = this.zoom <= 0.5;
+    if (zoomIn) zoomIn.disabled = this.zoom >= 3;
+  }
+
+  private resetPageView(): void {
+    this.pinchRenderZoom = undefined;
+    this.zoom = 1;
+    if (this.pageScroller) {
+      this.pageScroller.scrollLeft = 0;
+      this.pageScroller.scrollTop = 0;
+    }
+    this.updateZoomControls();
   }
 
   private setZoom(value: number, target?: { x: number; y: number }, anchor?: { x: number; y: number }): void {
@@ -1166,17 +1220,12 @@ export class InkView extends InkWritingView {
     if (nextZoom !== this.zoom) {
       this.zoom = nextZoom;
       this.layoutPage();
-      this.tiles!.setDisplayScale(this.zoom);
+      if (this.pinchRenderZoom === undefined) this.tiles!.setDisplayScale(this.zoom);
     }
     const after = this.pageElement.getBoundingClientRect();
     this.pageScroller.scrollLeft += after.left + anchor.x * after.width - target.x;
     this.pageScroller.scrollTop += after.top + anchor.y * after.height - target.y;
-    const readout = this.root.querySelector<HTMLElement>(".ink-zoom-value");
-    if (readout) readout.textContent = Math.round(this.zoom * 100) + "%";
-    const zoomOut = this.root.querySelector<HTMLButtonElement>("[aria-label='Zoom out']");
-    const zoomIn = this.root.querySelector<HTMLButtonElement>("[aria-label='Zoom in']");
-    if (zoomOut) zoomOut.disabled = this.zoom <= 0.5;
-    if (zoomIn) zoomIn.disabled = this.zoom >= 3;
+    this.updateZoomControls();
     this.onViewportMotion();
   }
 

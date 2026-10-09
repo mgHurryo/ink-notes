@@ -64,6 +64,18 @@ function touchEvent(points: number[][]) {
 }
 
 describe("page touch navigation", () => {
+  it("does not pan or pinch the live page during an asynchronous swipe handoff", () => {
+    const { view } = setup();
+    view.flipSettling = true;
+    view.onTouchStart(touchEvent([[1, 300, 400]]));
+    view.onTouchMove(touchEvent([[1, 300, 200]]));
+    expect(view.pageScroller.scrollTop).toBe(0);
+    view.onTouchStart(touchEvent([[1, 300, 200], [2, 400, 200]]));
+    view.onTouchMove(touchEvent([[1, 250, 200], [2, 450, 200]]));
+    expect(view.zoom).toBe(1);
+    expect(view.touchGesture).toBeNull();
+  });
+
   it("updates the toolbar readout and limits after gesture zoom", () => {
     const { view, zoomReadout, zoomOut, zoomIn } = setup();
     view.setZoom(3);
@@ -73,6 +85,38 @@ describe("page touch navigation", () => {
     expect(zoomReadout.textContent).toBe("50%");
     expect(zoomOut.disabled).toBe(true);
     expect(zoomIn.disabled).toBe(false);
+  });
+
+  it("resets magnification and scroll position when opening another notebook page", async () => {
+    const { view, zoomReadout, zoomOut, zoomIn } = setup();
+    Object.assign(view, {
+      notebook: { pages: [{ id: "first" }, { id: "second" }] },
+      pageIndex: 0,
+      pageNavigationGeneration: 0,
+      viewReady: true,
+      file: null,
+      workerSession: null,
+      renderPageRail: vi.fn(),
+      renderPage: vi.fn(),
+      finishPointerInput: vi.fn(),
+      clearSaveTimers: vi.fn(),
+    });
+    Object.assign(view.pageScroller, {
+      scrollLeft: 250,
+      scrollTop: 300,
+    });
+    view.zoom = 2;
+    const navigate = (view as any).navigateToPage.bind(view) as (id: string) => Promise<void>;
+
+    await navigate("second");
+
+    expect(view.zoom).toBe(1);
+    expect(view.pageScroller.scrollLeft).toBe(0);
+    expect(view.pageScroller.scrollTop).toBe(0);
+    expect(zoomReadout.textContent).toBe("100%");
+    expect(zoomOut.disabled).toBe(false);
+    expect(zoomIn.disabled).toBe(false);
+    expect(view.renderPage).toHaveBeenCalledOnce();
   });
   it.each([800, 340])("keeps an off-center pinch anchor under the moving midpoint at width %i", (width) => {
     const { view, point } = setup(width);

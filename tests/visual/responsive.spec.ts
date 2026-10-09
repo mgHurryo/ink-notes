@@ -119,6 +119,38 @@ for (const viewport of viewports) {
   });
 }
 
+test("page options toggle closed on a second press and reopen after dismissal", async ({ page }) => {
+  await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  const trigger = page.getByRole("button", { name: "Page options", exact: true });
+  const menu = page.locator(".preview-menu");
+  await trigger.click();
+  await expect(menu).toHaveCount(1);
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  // The preview menu starts at the first click position; its upper-left
+  // trigger corner remains available for the second physical press.
+  await trigger.click({ position: { x: 3, y: 3 } });
+  await expect(menu).toHaveCount(0);
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+  await expect(menu).toHaveCount(1);
+  await page.keyboard.press("Enter");
+  await expect(menu).toHaveCount(0);
+  await trigger.click();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await trigger.click();
+  await page.locator(".ink-page").click({ position: { x: 30, y: 80 } });
+  await expect(menu).toHaveCount(0);
+  await trigger.click();
+  await menu.getByRole("button", { name: "Paper: blank", exact: true }).click();
+  await expect(menu).toHaveCount(0);
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await trigger.click();
+  await expect(menu).toHaveCount(1);
+});
+
 test("page rail and brush popover are keyboard dismissible", async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 720 });
   await page.goto("/");
@@ -562,13 +594,15 @@ for (const inputMode of ["touch-only", "mixed"] as const) {
             if (sequence === "te-first") pointer("pointermove", sample);
           }
           if (sequence === "pe-first") pointer("pointerup", 16);
-          const endCanceled = touch("touchend", 16);
-          if (sequence === "te-first") pointer("pointerup", 16);
           const modelCountBeforeDuplicate = view.currentPage().strokes.length;
-          const activeAfterEnd = view.activePointerId;
-          // A duplicate Pointer stream must not create a ghost after Touch owns input.
+          // A Pointer stream overlapping the active Touch contact must not
+          // create a ghost stroke or end the Touch-owned interaction.
           pointer("pointerdown", 16);
           pointer("pointerup", 16);
+          const activeAfterDuplicate = view.activePointerId;
+          const endCanceled = touch("touchend", 16);
+          if (sequence === "te-first") pointer("pointerup", 16);
+          const activeAfterEnd = view.activePointerId;
           const canvas = view.confirmedPreviewCanvas;
           const rect = canvas.getBoundingClientRect();
           const x = Math.round((box.left + 180 - rect.left) / rect.width * canvas.width);
@@ -577,7 +611,7 @@ for (const inputMode of ["touch-only", "mixed"] as const) {
           const inkPixels = pixels.filter((value, position) => position % 4 === 3 && value > 0).length;
           const stroke = view.currentPage().strokes[index];
           results.push({ sequence, startCanceled, endCanceled, modelCountBeforeDuplicate,
-            modelCount: view.currentPage().strokes.length, activeAfterEnd,
+            modelCount: view.currentPage().strokes.length, activeAfterDuplicate, activeAfterEnd,
             points: stroke?.points.length ?? 0, pressure: stroke?.points[0]?.pressure, inkPixels });
           await new Promise((resolve) => setTimeout(resolve, 20));
         }
@@ -589,6 +623,7 @@ for (const inputMode of ["touch-only", "mixed"] as const) {
         expect(stroke.endCanceled).toBe(true);
         expect(stroke.modelCountBeforeDuplicate).toBe(index + 1);
         expect(stroke.modelCount).toBe(index + 1);
+        expect(stroke.activeAfterDuplicate).toBe(7);
         expect(stroke.activeAfterEnd).toBeNull();
         expect(stroke.points).toBeGreaterThanOrEqual(16);
         // The modeler resamples the 17-contact stroke at 180 Hz, so the
@@ -603,6 +638,86 @@ for (const inputMode of ["touch-only", "mixed"] as const) {
     }
   });
 }
+
+test("switching from Pencil Touch to the eraser accepts the first Pointer contact without panning", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 1366 });
+  await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  const result = await page.evaluate(() => {
+    type PreviewView = {
+      addPage(): void; setZoom(value: number): void;
+      currentPage(): { strokes: { points: { x: number; y: number; pressure: number }[] }[] };
+      pageElement: HTMLElement; pageScroller: HTMLElement;
+      activePointerId: number | null; touchGesture: unknown;
+      interaction: { source: string; tool: string } | null;
+    };
+    const view = (window as typeof window & { __inkNotesPreview: { view: object } }).__inkNotesPreview.view as PreviewView;
+    view.addPage();
+    view.setZoom(2);
+    const paper = view.pageElement;
+    const box = view.pageScroller.getBoundingClientRect();
+    const x = box.left + 200, y = box.top + 200;
+    let clock = 1000;
+    const pointer = (type: string, dx = 0) => {
+      const event = new PointerEvent(type, { bubbles: true, pointerId: 1, pointerType: "pen",
+        buttons: type === "pointerup" ? 0 : 1, pressure: 0.65, clientX: x + dx, clientY: y });
+      Object.defineProperty(event, "timeStamp", { value: clock += 24 });
+      paper.dispatchEvent(event);
+    };
+    const touch = (type: string, dx = 0, dy = 0, stylus = true) => {
+      const contact = new Touch({ identifier: 7, target: paper, clientX: x + dx, clientY: y + dy, force: 0.65 });
+      if (stylus) Object.defineProperty(contact, "touchType", { value: "stylus" });
+      const contacts = type === "touchend" ? [] : [contact];
+      const event = new TouchEvent(type, { bubbles: true, cancelable: true,
+        touches: contacts, targetTouches: contacts, changedTouches: [contact] });
+      Object.defineProperty(event, "timeStamp", { value: clock += 24 });
+      paper.dispatchEvent(event);
+    };
+    const tool = (name: string) => document.querySelector<HTMLButtonElement>(`button[data-tool="${name}"]`)!.click();
+    touch("touchstart");
+    for (let sample = 1; sample <= 16; sample++) touch("touchmove", sample * 5);
+    touch("touchend", 80);
+    const original = view.currentPage().strokes.map(stroke => stroke.points.map(point => ({ ...point })));
+    const before = { left: view.pageScroller.scrollLeft, top: view.pageScroller.scrollTop };
+    tool("eraser");
+    // No frame, timer or await between selecting the eraser and starting input.
+    pointer("pointerdown");
+    const erasedOnDown = view.currentPage().strokes.length === 0;
+    const eraserOwner = { ...view.interaction };
+    touch("touchstart", 0, 0, false);
+    touch("touchmove", -60, -60, false);
+    pointer("pointermove", 20);
+    const after = { left: view.pageScroller.scrollLeft, top: view.pageScroller.scrollTop };
+    const gestureDuringErase = view.touchGesture;
+    pointer("pointerup", 20);
+    touch("touchend", -60, -60, false);
+    document.querySelector<HTMLButtonElement>('button[aria-label="Undo"]')!.click();
+    const restored = view.currentPage().strokes.map(stroke => stroke.points.map(point => ({ ...point })));
+    tool("pen");
+    pointer("pointerdown", 120);
+    const penOwner = { ...view.interaction };
+    for (let sample = 1; sample <= 16; sample++) pointer("pointermove", 120 + sample * 5);
+    pointer("pointerup", 200);
+    const countAfterPen = view.currentPage().strokes.length;
+    const activeAfterPen = view.activePointerId;
+    // Real fingers still navigate once the pen contact has ended.
+    touch("touchstart", 0, 0, false);
+    touch("touchmove", 0, -60, false);
+    touch("touchend", 0, -60, false);
+    return { original, restored, erasedOnDown, eraserOwner, penOwner, before, after,
+      gestureDuringErase, countAfterPen, activeAfterPen, fingerScrollTop: view.pageScroller.scrollTop };
+  });
+  expect(result.original).toHaveLength(1);
+  expect(result.erasedOnDown).toBe(true);
+  expect(result.eraserOwner).toMatchObject({ source: "pointer", tool: "eraser" });
+  expect(result.after).toEqual(result.before);
+  expect(result.gestureDuringErase).toBeNull();
+  expect(result.restored).toEqual(result.original);
+  expect(result.penOwner).toMatchObject({ source: "pointer", tool: "pen" });
+  expect(result.countAfterPen).toBe(2);
+  expect(result.activeAfterPen).toBeNull();
+  expect(result.fingerScrollTop).toBeGreaterThan(result.after.top);
+});
 
 test("Pencil Touch handling leaves sibling text input defaults available", async ({ page }) => {
   await page.goto("/");
