@@ -642,7 +642,13 @@ export abstract class InkWritingView extends FileView {
       }
     });
     this.registerDomEvent(window, "resize", () => popover.position());
-    this.registerDomEvent(window, "scroll", () => popover.position(), true);
+    this.registerDomEvent(window, "scroll", (event) => {
+      // The panel's own scrolling must not reposition it: while a touch
+      // scroll runs, platforms report jittering rects for fixed elements and
+      // every reposition visibly nudged the panel sideways mid-scroll.
+      if (event.target && popover.root.contains(event.target as Node)) return;
+      popover.position();
+    }, true);
   }
 
   /**
@@ -2320,8 +2326,12 @@ export abstract class InkWritingView extends FileView {
     const onKey = (event: KeyboardEvent): void => {
       if (event.key === "Escape") this.closeEraserPopover();
     };
-    const onRelayout = (): void => {
-      if (this.eraserPopover === pop) place();
+    const onRelayout = (event?: Event): void => {
+      if (this.eraserPopover !== pop) return;
+      // Ignore the popover's own scrolling - same jitter rule as the brush
+      // panel; repositioning during it nudged the popover sideways.
+      if (event?.target && pop.contains(event.target as Node)) return;
+      place();
     };
     document.addEventListener("pointerdown", onOutside, true);
     document.addEventListener("keydown", onKey, true);

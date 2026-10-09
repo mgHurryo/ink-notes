@@ -262,6 +262,11 @@
 .ink-size-popover.is-pen-tool .ink-brush-settings[data-brush-tool="pen"],
 .ink-size-popover.is-highlighter-tool .ink-brush-settings[data-brush-tool="highlighter"] { display: block; }
 
+/* Pen-only dynamics (smooth, taper, pressure, curve, speed): hidden unless
+   the pen panel is showing — they rendered under the highlighter too and
+   pushed the panel body full of low-frequency sliders. */
+.ink-size-popover:not(.is-pen-tool) .ink-pen-dynamics { display: none; }
+
 .ink-brush-preview {
   position: relative;
   display: flex;

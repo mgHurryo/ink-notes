@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.8.0-beta.29 - 2026-10-10
+
+- The PDF fit fills the pane again: the 980px page-box limit and the fit-at-most-100% limit are gone, so a fullscreen pane shows the page as large as it allows - a landscape slide fills the pane width, a portrait page fills the pane height (orientation-correct contain, never width-filled across a portrait page).
+- The page-flip commit no longer teleports the old page: at the slide's end the neighbour stage already covers the page slot exactly, and the commit now only drops the covered page's transform. Re-reading layout offsets during teardown returned intermediate values on devices, which flashed the old page to the side of the incoming one before it disappeared. Both editors.
+- The preset palette works on touch: the edit editor opens on a detected double-tap (iPads never deliver dblclick), and the plus button adds exactly one preset per pick - the color picker streams input events while dragging, and adding per event stuffed the palette with the whole drag path. A pick becomes a preset when it settles (change event or a 500ms pause).
+- The highlighter panel is the highlighter panel again: pen-only dynamics (smooth, taper, pressure, curve, speed) are hidden unless the pen is active - they rendered under the highlighter too and buried its size/color/opacity under low-frequency sliders. A panel switch or open scrolls back to the top.
+- Scrolling inside a popover no longer moves the popover: repositioning during a touch scroll chased the platform's jittering fixed-element rects and nudged the panel sideways mid-scroll (brush panel and eraser mini popover).
+
 ## 0.8.0-beta.28 - 2026-10-08
 
 - Popovers follow "open where tapped, close back into it": the settings panel and the eraser mini popover now anchor to the tool button that opened them, play a short grow-out-of-the-button animation on open and shrink back into it on close. The eraser mini popover is mounted inside the themed view again (outside it every theme token resolved to nothing - the fully transparent panel), anchors to its eraser button instead of floating over the page, and re-tapping the eraser toggles it closed (the pointerdown/click race used to reopen it on every tap, which read as a flashing popover that never closed). Switching tools closes it.
