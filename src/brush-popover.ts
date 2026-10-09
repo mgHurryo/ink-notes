@@ -39,6 +39,10 @@ const LONG_PRESS_MS = 550;
  *  swatch: the next tap lands on the input and opens the system picker
  *  natively - programmatic .click() never opens it on iPad. */
 const PICKER_ARM_MS = 400;
+/** Quiet period that settles the plus picker's picked color: the platform
+ *  picker neither blurs its input nor reports close on dismissal, so the
+ *  palette joins once the adjustments stop. */
+const PICKER_SETTLE_MS = 800;
 
 /** Open/close animation length; keep in sync with the .is-open/.is-closing
  *  CSS transitions on the popovers. */
@@ -273,15 +277,18 @@ export class BrushPopoverController {
     const input = custom.createEl("input", { attr: {
       type: "color", value: settings.color, "aria-label": `${spec.label} custom color`, "data-brush-tool": spec.tool,
     } });
-    // One pick = one preset. While the platform picker is open it fires a
-    // change for EVERY swatch tapped inside it (iOS commits immediately), so
-    // settling on change/debounce stuffed the palette with every tried
-    // color. The live value only becomes the tool's color; it joins the
-    // palette exactly once, when the picker closes (blur on the input).
-    let pickedSinceBlur = false;
+    // One pick = one preset. The platform picker streams input events while
+    // adjusting and (on iOS) commits a change per swatch tapped inside it,
+    // and it neither blurs its input nor reports a close event when it is
+    // dismissed - so the palette settles on a QUIET PERIOD after the last
+    // adjustment, with blur and panel close as immediate backstops. Exactly
+    // one preset per settled pick.
+    let dirty = false;
+    let settleTimer: number | undefined;
     const flushPickedColor = (): void => {
-      if (!pickedSinceBlur) return;
-      pickedSinceBlur = false;
+      if (settleTimer !== undefined) { window.clearTimeout(settleTimer); settleTimer = undefined; }
+      if (!dirty) return;
+      dirty = false;
       const picked = input.value;
       settings.color = picked;
       const palette = this.options.palette?.();
@@ -294,12 +301,14 @@ export class BrushPopoverController {
       this.update();
     };
     input.addEventListener("input", () => {
-      pickedSinceBlur = true;
+      dirty = true;
       settings.color = input.value;
       this.updateColorSwatches(spec.tool, input.value);
       this.update();
+      if (settleTimer !== undefined) window.clearTimeout(settleTimer);
+      settleTimer = window.setTimeout(flushPickedColor, PICKER_SETTLE_MS);
     });
-    input.addEventListener("change", () => { pickedSinceBlur = true; });
+    input.addEventListener("change", () => { dirty = true; });
     input.addEventListener("blur", flushPickedColor);
     this.customPickers.push(flushPickedColor);
   }
@@ -335,13 +344,16 @@ export class BrushPopoverController {
         "data-color": value, "data-brush-tool": spec.tool, tabindex: "-1",
       } });
       picker.style.pointerEvents = "none";
+      // This slot's live preset color: the closure must follow in-place edits
+      // or the SECOND adjustment can no longer find its entry.
+      let current = value;
       let suppressClick = false;
       let armTimer: number | undefined;
       swatch.addEventListener("click", () => {
         // A finished long-press must not also select the color.
         if (suppressClick) { suppressClick = false; return; }
-        settings.color = value;
-        this.updateColorSwatches(spec.tool, value);
+        settings.color = current;
+        this.updateColorSwatches(spec.tool, current);
         this.update();
         picker.style.pointerEvents = "auto";
         if (armTimer !== undefined) window.clearTimeout(armTimer);
@@ -350,18 +362,17 @@ export class BrushPopoverController {
           picker.style.pointerEvents = "none";
         }, PICKER_ARM_MS);
       });
-      // The settled pick replaces this preset (and follows the tool's color
-      // along when it was selected). STRICTLY in-place: rebuilding the row
-      // destroys THIS input, and the platform picker is anchored to it - it
-      // then snaps shut mid-adjust and every further change event dies with
-      // the detached node (the "it closed before I could adjust, and the
-      // color never stuck" report).
-      picker.addEventListener("change", () => {
+      // The pick replaces this preset LIVE on every input event (iOS fires
+      // input per adjustment and its change/close behaviour is unreliable -
+      // beta.31/32 missed edits because they keyed off change). STRICTLY
+      // in-place: rebuilding the row destroys THIS input, and the platform
+      // picker is anchored to it - it then snaps shut mid-adjust.
+      const applyPick = (): void => {
         const palette = this.options.palette?.();
         if (!palette) return;
-        const index = palette.findIndex((entry) => entry.toLowerCase() === value.toLowerCase());
-        if (index < 0 || picker.value.toLowerCase() === value.toLowerCase()) return;
-        if (settings.color.toLowerCase() === value.toLowerCase()) settings.color = picker.value;
+        const index = palette.findIndex((entry) => entry.toLowerCase() === current.toLowerCase());
+        if (index < 0 || picker.value.toLowerCase() === current.toLowerCase()) return;
+        if (settings.color.toLowerCase() === current.toLowerCase()) settings.color = picker.value;
         palette[index] = picker.value;
         const newLabel = INK_COLORS.find((color) => color.value.toLowerCase() === picker.value.toLowerCase())?.label ?? "Custom";
         swatch.style.backgroundColor = picker.value;
@@ -369,8 +380,11 @@ export class BrushPopoverController {
         picker.dataset.color = picker.value;
         swatch.setAttribute("aria-label", `${spec.label} ${newLabel.toLowerCase()}`);
         swatch.title = `${newLabel} — double-tap to change, hold to remove`;
+        current = picker.value;
         this.update();
-      });
+      };
+      picker.addEventListener("input", applyPick);
+      picker.addEventListener("change", applyPick);
       let pressTimer: number | undefined;
       const cancelPress = (): void => {
         if (pressTimer !== undefined) { window.clearTimeout(pressTimer); pressTimer = undefined; }
@@ -380,7 +394,7 @@ export class BrushPopoverController {
         pressTimer = window.setTimeout(() => {
           pressTimer = undefined;
           suppressClick = true;
-          this.removePresetColor(spec, value);
+          this.removePresetColor(spec, current);
         }, LONG_PRESS_MS);
       });
       swatch.addEventListener("pointerup", cancelPress);
