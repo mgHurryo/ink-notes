@@ -10,7 +10,7 @@ import { PdfTabTakeover } from "../src/pdf-takeover";
 import type { TFile, WorkspaceLeaf } from "obsidian";
 
 const FINGERPRINT = { sha256: "a".repeat(64), byteLength: 100 };
-const rasterViews = new Set<PdfInkView>();
+const views = new Set<PdfInkView>();
 const resizeCallbacks: (() => void)[] = [];
 
 interface RailInternals {
@@ -64,6 +64,7 @@ async function setup(sourcePageCount = 3) {
   };
   const workers = { createSession: vi.fn(() => session) } as unknown as InkWorkerService;
   const view = new PdfInkView({} as WorkspaceLeaf);
+  views.add(view);
   view.configure({
     store: store as unknown as PdfSidecarStore,
     workers,
@@ -110,7 +111,6 @@ interface RasterInternals extends RailInternals {
 
 async function rasterSetup(width: number, height: number, dpr: number, zoom = 1) {
   const context = await setup(3);
-  rasterViews.add(context.view);
   const host = context.view as unknown as RasterInternals;
   Object.defineProperties(host.scroller, { clientWidth: { value: width, configurable: true }, clientHeight: { value: height } });
   vi.stubGlobal("devicePixelRatio", dpr);
@@ -180,8 +180,12 @@ beforeEach(() => {
 });
 
 afterEach(async () => {
-  for (const view of rasterViews) await view.onClose();
-  rasterViews.clear();
+  // The host normally unloads every view; do so before restoring Canvas mocks.
+  for (const view of views) {
+    await view.onClose();
+    (view as unknown as { cleanups: (() => void)[] }).cleanups.forEach((cleanup) => cleanup());
+  }
+  views.clear();
   vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
