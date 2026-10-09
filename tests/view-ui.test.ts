@@ -113,13 +113,16 @@ describe("reference-style editor", () => {
     // The pinned popover header carries the live size readout.
     expect(document.querySelector(".ink-popover-title")?.textContent).toBe("Pen settings · 5.5 px");
     const color = document.querySelector<HTMLInputElement>('input[aria-label="Pen custom color"]')!;
-    // While the picker drags (input events), nothing is added: one pick must
-    // become exactly one preset, never the whole drag path.
+    // While the platform picker is open nothing joins the palette: iOS fires
+    // a change for EVERY swatch tapped inside it, so settling on change/
+    // debounce stuffed the palette with every tried color.
     color.value = "#abcdef";
     color.dispatchEvent(new Event("input"));
-    expect(document.querySelector('.ink-color-swatch[data-brush-tool="pen"][data-color="#abcdef"]')).toBeNull();
-    // The pick settles (change): one swatch is added and selected.
     color.dispatchEvent(new Event("change"));
+    expect(document.querySelector('.ink-color-swatch[data-brush-tool="pen"][data-color="#abcdef"]')).toBeNull();
+    // The picker closes (blur on the input): exactly one preset is added and
+    // selected.
+    color.dispatchEvent(new Event("blur"));
     const added = document.querySelector<HTMLElement>('.ink-color-swatch[data-brush-tool="pen"][data-color="#abcdef"]');
     expect(added?.getAttribute("aria-pressed")).toBe("true");
   });
@@ -177,6 +180,9 @@ describe("reference-style editor", () => {
     const edited = document.querySelector<HTMLElement>('.ink-color-swatch[data-brush-tool="pen"][data-color="#123456"]');
     expect(edited?.getAttribute("aria-pressed")).toBe("true");
     expect(button("Pen blue")).toBeNull();
+    // In-place update: the picker input itself must survive the change, or
+    // the platform picker anchored to it snaps shut mid-adjust.
+    expect(picker.isConnected).toBe(true);
   });
   it("removes a preset on hold, never the last one", () => {
     vi.useFakeTimers();

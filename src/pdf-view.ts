@@ -1140,7 +1140,6 @@ export class PdfInkView extends InkWritingView {
   }
 
   private swipeStage: HTMLElement | null = null;
-  private swipeStageTimer: number | undefined;
   /** True while a decided flip is animating/committing; a trailing
    *  touchcancel must not spring it back (double-settle = the flash). */
   private flipSettling = false;
@@ -1148,6 +1147,7 @@ export class PdfInkView extends InkWritingView {
   protected swipeDrag(offset: number): void {
     const wrap = this.pageWrap;
     if (!wrap) return;
+    this.swipeDragOffset = offset;
     this.ensureSwipeStage(offset);
     wrap.setCssStyles({ transition: "none", transform: `translateX(${offset}px)` });
     if (this.swipeStage) this.swipeStage.setCssStyles({ transition: "none", transform: `translateX(${offset}px)` });
@@ -1245,60 +1245,56 @@ export class PdfInkView extends InkWritingView {
     }
   }
 
+  /** Last drag offset; settle animations continue from it. */
+  private swipeDragOffset = 0;
+
+  /** Continues a transform from `from` to `to` via the Web Animations API:
+   *  unlike a CSS transition it starts deterministically (no re-style edge
+   *  cases inside touch handlers) and onfinish is a reliable commit point. */
+  private animateTransformX(el: HTMLElement, from: number, to: number, done?: () => void): void {
+    el.setCssStyles({ transition: "none", transform: `translateX(${from}px)` });
+    if (from === to || typeof el.animate !== "function") {
+      el.setCssStyles({ transform: `translateX(${to}px)` });
+      done?.();
+      return;
+    }
+    const animation = el.animate(
+      [{ transform: `translateX(${from}px)` }, { transform: `translateX(${to}px)` }],
+      { duration: 160, easing: "ease-out" });
+    animation.onfinish = () => {
+      el.setCssStyles({ transform: `translateX(${to}px)` });
+      done?.();
+    };
+    animation.oncancel = () => done?.();
+  }
+
   protected swipeSettle(delta: number): void {
     const wrap = this.pageWrap;
     if (!wrap) { this.destroySwipeStage(); return; }
-    if (!delta || !this.swipeStage) {
-      // A decided flip is never spring-backed: a trailing touchcancel (or a
-      // duplicated settle) used to slide the stage back beside the incoming
-      // page and destroy it there - the old page flashed beside the new one.
-      if (this.flipSettling) return;
-      wrap.setCssStyles({ transition: "transform 160ms ease-out", transform: "translateX(0px)" });
-      if (this.swipeStage) this.swipeStage.setCssStyles({ transition: "transform 160ms ease-out", transform: "translateX(0px)" });
-      if (this.swipeStageTimer === undefined) {
-        this.swipeStageTimer = window.setTimeout(() => { this.swipeStageTimer = undefined; this.destroySwipeStage(); }, 200);
-      }
+    const stage = this.swipeStage;
+    const from = this.swipeDragOffset;
+    this.swipeDragOffset = 0;
+    if (!delta || !stage) {
+      // Spring back: both pages glide home from where the finger left them.
+      this.animateTransformX(wrap, from, 0);
+      if (stage) this.animateTransformX(stage, from, 0, () => this.destroySwipeStage());
       return;
     }
     if (this.flipSettling) return;
     this.flipSettling = true;
-    // The neighbour page slides all the way INTO the page slot while the
-    // current page slides out; the stage then keeps covering the slot until
-    // the real page has rendered underneath, so the old canvas never flashes.
-    const side = Number(this.swipeStage.dataset.neighbor) - this.noteIndex;
+    // The slide continues from the release point INTO the slot; the stage
+    // keeps covering the slot until the real page has rendered underneath.
+    const side = Number(stage.dataset.neighbor) - this.noteIndex;
     const width = wrap.offsetWidth;
-    // The stage sits one width PLUS the dynamic gutter away from the page;
-    // the settle target must cover the same distance or the stage visibly
-    // snaps the last few pixels when it takes over the slot.
     const gap = Math.max(12, Math.round(wrap.offsetLeft));
-    wrap.setCssStyles({ transition: "transform 160ms ease-out", transform: `translateX(${-delta * width}px)` });
-    this.swipeStage.setCssStyles({ transition: "transform 160ms ease-out", transform: `translateX(${-side * (width + gap)}px)` });
-    // Commit only when the slide has actually finished - a fixed timer cut
-    // the animation short on busy frames, snapping the second page in
-    // mid-slide ("flips halfway, then it just appears").
-    let committed = false;
-    const commit = (): void => {
-      if (committed || !this.swipeStage) return;
-      committed = true;
+    this.animateTransformX(wrap, from, -delta * width);
+    this.animateTransformX(stage, from, -side * (width + gap), () => {
       this.flipSettling = false;
-      // At the animation end the stage sits exactly on the page slot, so
-      // only the page's own transform drops (invisible underneath the
-      // stage). The stage itself never re-positions here: reading fresh
-      // offsets mid-teardown handed back intermediate values on devices and
-      // teleported the old page visibly to the side before it disappeared.
-      wrap.setCssStyles({ transition: "none", transform: "none" });
       void this.navigatePages(delta).finally(() => this.destroySwipeStage());
-    };
-    // Listen on the STAGE: it carries no transition-firing descendants, so
-    // its transitionend can never be a bubbled foreign one (a wrap listener
-    // fired early and committed mid-slide on devices).
-    this.swipeStage.addEventListener("transitionend", commit, { once: true });
-    if (this.swipeStageTimer !== undefined) window.clearTimeout(this.swipeStageTimer);
-    this.swipeStageTimer = window.setTimeout(commit, 280);
+    });
   }
 
   private destroySwipeStage(): void {
-    if (this.swipeStageTimer !== undefined) { window.clearTimeout(this.swipeStageTimer); this.swipeStageTimer = undefined; }
     this.swipeStage?.remove();
     this.swipeStage = null;
     this.flipSettling = false;
