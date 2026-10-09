@@ -94,6 +94,8 @@ export class InkView extends InkWritingView {
    *  disabled and the page restores native panning/scrolling. */
   private readingMode = false;
   private zoomRenderTimer: number | undefined;
+  /** Freeze the page's raster/layout scale while a pinch composites the whole sheet. */
+  private pinchRenderZoom: number | undefined;
   private pageNavigationGeneration = 0;
   private devPanel: HTMLElement | null = null;
   private devPanelRefreshTimer: number | undefined;
@@ -314,6 +316,7 @@ export class InkView extends InkWritingView {
     this.registerDomEvent(this.pageScroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchcancel", (event) => {
+      this.finishPinchRender();
       this.onStylusTouch(event);
       this.cancelPageFlip();
       this.touchGesture = null;
@@ -497,6 +500,7 @@ export class InkView extends InkWritingView {
 
   private resizeCanvas(): void {
     if (!this.canvas || !this.pageElement) return;
+    if (this.pinchRenderZoom !== undefined) return;
     this.layoutPage();
     const rect = this.pageElement.getBoundingClientRect();
     this.canvasLogicalWidth = Math.max(1, Math.round(this.pageBaseWidth * 64) / 64);
@@ -515,8 +519,8 @@ export class InkView extends InkWritingView {
     this.viewport = { x, y,
       width: Math.max(1, Math.min(this.canvasLogicalWidth - x, (screen.right - page.left) / this.zoom - x)),
       height: Math.max(1, Math.min(this.canvasLogicalHeight - y, (screen.bottom - page.top) / this.zoom - y)) };
-    this.tiles!.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine);
-    if (refine || this.hasInkPreview()) {
+    this.tiles!.update(this.viewport, (window.devicePixelRatio || 1) * (this.pinchRenderZoom ?? this.zoom), refine);
+    if (this.pinchRenderZoom === undefined && (refine || this.hasInkPreview())) {
       this.resizeOverlay(this.canvas, this.ctx);
       this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
       this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
@@ -530,6 +534,7 @@ export class InkView extends InkWritingView {
 
   private onViewportMotion(): void {
     this.updateViewport(false);
+    if (this.pinchRenderZoom !== undefined) return;
     if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
     this.zoomRenderTimer = window.setTimeout(() => {
       this.zoomRenderTimer = undefined;
@@ -599,7 +604,25 @@ export class InkView extends InkWritingView {
   protected performScheduledSave(): void { void this.save(); }
   protected toolbarRoot(): HTMLElement { return this.root; }
   protected inputScroller(): HTMLElement { return this.pageScroller; }
+  protected onTouchStart(event: TouchEvent): void {
+    // Commit before the base handler captures the next gesture's page anchor.
+    this.finishPinchRender();
+    super.onTouchStart(event);
+  }
+
+  private finishPinchRender(): void {
+    if (this.pinchRenderZoom === undefined) return;
+    this.pinchRenderZoom = undefined;
+    this.resizeCanvas();
+  }
+
   protected applyGestureZoom(value: number, focus: { x: number; y: number }, anchor: { x: number; y: number }): void {
+    if (Number.isFinite(value) && value !== this.zoom && this.pinchRenderZoom === undefined) {
+      this.pinchRenderZoom = this.zoom;
+      if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
+      this.zoomRenderTimer = undefined;
+      this.tiles?.beginInput?.();
+    }
     this.setZoom(value, focus, anchor);
   }
 
@@ -1140,12 +1163,12 @@ export class InkView extends InkWritingView {
     this.pageBaseHeight = height;
     const displayWidth = width * this.zoom;
     const displayHeight = height * this.zoom;
-    // Use real layout dimensions instead of CSS zoom/transform. WebKit applies
-    // CSS zoom inconsistently to absolute descendants and hit testing, which
-    // displaced Pencil coordinates and clipped right-hand tiles on iPad.
+    const renderZoom = this.pinchRenderZoom ?? this.zoom;
+    // Keep settled writing in explicit layout units for WebKit hit testing;
+    // only the navigation gesture uses a temporary whole-page transform.
     this.pageElement.style.left = horizontalGutter + "px";
-    this.pageElement.style.width = displayWidth + "px";
-    this.pageElement.style.height = displayHeight + "px";
+    this.pageElement.style.width = width * renderZoom + "px";
+    this.pageElement.style.height = height * renderZoom + "px";
     if (typeof this.pageElement.style.setProperty === "function") {
       // The ruling is part of the page, not of the screen: the cell size is
       // exactly 32 page px scaled by zoom, so zooming reads like zooming an
@@ -1154,10 +1177,13 @@ export class InkView extends InkWritingView {
       // device pixels to still the lines while zooming; that kept the cells
       // near-constant on screen while the page box grew, so zooming visibly
       // re-flowed the ruling to a different line count.)
-      this.pageElement.style.setProperty("--ink-page-scale", String(this.zoom));
+      this.pageElement.style.setProperty("--ink-page-scale", String(renderZoom));
     }
     this.pageElement.style.zoom = "";
-    this.pageElement.style.transform = "none";
+    // Scale ink and ruling as one image during the gesture. Repainting each
+    // fractional line spacing and replacing tile densities causes shimmer.
+    this.pageElement.style.transform = this.pinchRenderZoom === undefined ? "none" : `scale(${this.zoom / renderZoom})`;
+    this.pageElement.style.willChange = this.pinchRenderZoom === undefined ? "" : "transform";
     // Keep the initial centering space inside the scrollable track. Without
     // these gutters, a capped wide-screen page loses its auto margins as soon
     // as it grows and edge pinch anchors are clamped toward the center.
@@ -1175,6 +1201,7 @@ export class InkView extends InkWritingView {
   }
 
   private resetPageView(): void {
+    this.pinchRenderZoom = undefined;
     this.zoom = 1;
     if (this.pageScroller) {
       this.pageScroller.scrollLeft = 0;
@@ -1193,7 +1220,7 @@ export class InkView extends InkWritingView {
     if (nextZoom !== this.zoom) {
       this.zoom = nextZoom;
       this.layoutPage();
-      this.tiles!.setDisplayScale(this.zoom);
+      if (this.pinchRenderZoom === undefined) this.tiles!.setDisplayScale(this.zoom);
     }
     const after = this.pageElement.getBoundingClientRect();
     this.pageScroller.scrollLeft += after.left + anchor.x * after.width - target.x;

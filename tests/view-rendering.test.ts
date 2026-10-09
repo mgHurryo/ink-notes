@@ -312,6 +312,32 @@ it("debounces expensive zoom rasterization while updating the displayed scale im
   expect(v.updateViewport).toHaveBeenLastCalledWith(true);
 });
 
+it("keeps pinch raster density fixed and defers refinement even when fingers pause", () => {
+  const v = view();
+  v.pageElement = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 800 * v.zoom, height: 1000 * v.zoom }) };
+  v.pageScroller = { clientWidth: 800, clientHeight: 600, scrollLeft: 0, scrollTop: 0,
+    getBoundingClientRect: () => ({ left: 0, top: 0, right: 800, bottom: 600 }) };
+  v.layoutPage = vi.fn();
+  v.hasInkPreview = vi.fn(() => false);
+  v.tiles.beginInput = vi.fn();
+  v.zoomRenderTimer = 42;
+
+  v.applyGestureZoom(1.37, { x: 400, y: 300 }, { x: 0.5, y: 0.3 });
+  v.applyGestureZoom(1.57, { x: 400, y: 300 }, { x: 0.5, y: 0.3 });
+
+  expect(v.pinchRenderZoom).toBe(1);
+  expect(v.tiles.beginInput).toHaveBeenCalledOnce();
+  expect(v.tiles.setDisplayScale).not.toHaveBeenCalled();
+  expect(v.tiles.update).toHaveBeenLastCalledWith(expect.any(Object), 1, false);
+  expect(window.clearTimeout).toHaveBeenCalledWith(42);
+  expect(window.setTimeout).not.toHaveBeenCalled();
+  v.resizeCanvas = vi.fn();
+  v.finishPinchRender();
+  v.finishPinchRender();
+  expect(v.pinchRenderZoom).toBeUndefined();
+  expect(v.resizeCanvas).toHaveBeenCalledOnce();
+});
+
 it("uses explicit scaled layout without CSS zoom or transform", () => {
   const v = view();
   v.zoom = 2;

@@ -27340,6 +27340,7 @@ var InkView = class extends InkWritingView {
     this.registerDomEvent(this.pageScroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchcancel", (event) => {
+      this.finishPinchRender();
       this.onStylusTouch(event);
       this.cancelPageFlip();
       this.touchGesture = null;
@@ -27505,6 +27506,7 @@ var InkView = class extends InkWritingView {
   }
   resizeCanvas() {
     if (!this.canvas || !this.pageElement) return;
+    if (this.pinchRenderZoom !== void 0) return;
     this.layoutPage();
     const rect = this.pageElement.getBoundingClientRect();
     this.canvasLogicalWidth = Math.max(1, Math.round(this.pageBaseWidth * 64) / 64);
@@ -27515,6 +27517,7 @@ var InkView = class extends InkWritingView {
     this.updateViewport(true);
   }
   updateViewport(refine) {
+    var _a;
     const page = this.pageElement.getBoundingClientRect();
     const screen = this.pageScroller.getBoundingClientRect();
     const x = Math.max(0, (screen.left - page.left) / this.zoom);
@@ -27525,8 +27528,8 @@ var InkView = class extends InkWritingView {
       width: Math.max(1, Math.min(this.canvasLogicalWidth - x, (screen.right - page.left) / this.zoom - x)),
       height: Math.max(1, Math.min(this.canvasLogicalHeight - y, (screen.bottom - page.top) / this.zoom - y))
     };
-    this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine);
-    if (refine || this.hasInkPreview()) {
+    this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * ((_a = this.pinchRenderZoom) != null ? _a : this.zoom), refine);
+    if (this.pinchRenderZoom === void 0 && (refine || this.hasInkPreview())) {
       this.resizeOverlay(this.canvas, this.ctx);
       this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
       this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
@@ -27539,6 +27542,7 @@ var InkView = class extends InkWritingView {
   }
   onViewportMotion() {
     this.updateViewport(false);
+    if (this.pinchRenderZoom !== void 0) return;
     if (this.zoomRenderTimer !== void 0) window.clearTimeout(this.zoomRenderTimer);
     this.zoomRenderTimer = window.setTimeout(() => {
       this.zoomRenderTimer = void 0;
@@ -27613,7 +27617,23 @@ var InkView = class extends InkWritingView {
   inputScroller() {
     return this.pageScroller;
   }
+  onTouchStart(event) {
+    this.finishPinchRender();
+    super.onTouchStart(event);
+  }
+  finishPinchRender() {
+    if (this.pinchRenderZoom === void 0) return;
+    this.pinchRenderZoom = void 0;
+    this.resizeCanvas();
+  }
   applyGestureZoom(value, focus, anchor) {
+    var _a, _b;
+    if (Number.isFinite(value) && value !== this.zoom && this.pinchRenderZoom === void 0) {
+      this.pinchRenderZoom = this.zoom;
+      if (this.zoomRenderTimer !== void 0) window.clearTimeout(this.zoomRenderTimer);
+      this.zoomRenderTimer = void 0;
+      (_b = (_a = this.tiles) == null ? void 0 : _a.beginInput) == null ? void 0 : _b.call(_a);
+    }
     this.setZoom(value, focus, anchor);
   }
   swipeDrag(offset) {
@@ -28171,6 +28191,7 @@ page: ${this.currentPage().id}
    *  control points. Skipped while the popover has no layout (it is built
    *  display:none and drawn when opened). */
   layoutPage() {
+    var _a;
     const style = getComputedStyle(this.pageScroller);
     const paddingLeft = parseFloat(style.paddingLeft) || 0;
     const paddingRight = parseFloat(style.paddingRight) || 0;
@@ -28182,14 +28203,16 @@ page: ${this.currentPage().id}
     this.pageBaseHeight = height;
     const displayWidth = width * this.zoom;
     const displayHeight = height * this.zoom;
+    const renderZoom = (_a = this.pinchRenderZoom) != null ? _a : this.zoom;
     this.pageElement.style.left = horizontalGutter + "px";
-    this.pageElement.style.width = displayWidth + "px";
-    this.pageElement.style.height = displayHeight + "px";
+    this.pageElement.style.width = width * renderZoom + "px";
+    this.pageElement.style.height = height * renderZoom + "px";
     if (typeof this.pageElement.style.setProperty === "function") {
-      this.pageElement.style.setProperty("--ink-page-scale", String(this.zoom));
+      this.pageElement.style.setProperty("--ink-page-scale", String(renderZoom));
     }
     this.pageElement.style.zoom = "";
-    this.pageElement.style.transform = "none";
+    this.pageElement.style.transform = this.pinchRenderZoom === void 0 ? "none" : `scale(${this.zoom / renderZoom})`;
+    this.pageElement.style.willChange = this.pinchRenderZoom === void 0 ? "" : "transform";
     this.pageExtent.style.width = displayWidth + horizontalGutter * 2 + "px";
     this.pageExtent.style.height = displayHeight + "px";
   }
@@ -28203,6 +28226,7 @@ page: ${this.currentPage().id}
     if (zoomIn) zoomIn.disabled = this.zoom >= 3;
   }
   resetPageView() {
+    this.pinchRenderZoom = void 0;
     this.zoom = 1;
     if (this.pageScroller) {
       this.pageScroller.scrollLeft = 0;
@@ -28220,7 +28244,7 @@ page: ${this.currentPage().id}
     if (nextZoom !== this.zoom) {
       this.zoom = nextZoom;
       this.layoutPage();
-      this.tiles.setDisplayScale(this.zoom);
+      if (this.pinchRenderZoom === void 0) this.tiles.setDisplayScale(this.zoom);
     }
     const after = this.pageElement.getBoundingClientRect();
     this.pageScroller.scrollLeft += after.left + anchor.x * after.width - target.x;
