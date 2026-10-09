@@ -1,4 +1,4 @@
-import { Menu, Notice, Scope, TFile, WorkspaceLeaf, setIcon } from "obsidian";
+import { Notice, Scope, TFile, WorkspaceLeaf, setIcon } from "obsidian";
 import { intervalStats } from "./diagnostics";
 import {
   InkNotebook,
@@ -136,6 +136,7 @@ export class InkView extends InkWritingView {
   }
 
   async onClose(): Promise<void> {
+    this.closePageOptionsMenu();
     this.pageNavigationGeneration += 1;
     this.closeDevPanel();
     if (this.railRevealTimer !== undefined) window.clearTimeout(this.railRevealTimer);
@@ -927,7 +928,8 @@ export class InkView extends InkWritingView {
   }
 
   private openPageMenu(event: MouseEvent): void {
-    const menu = new Menu();
+    const menu = this.beginPageOptionsMenu(event);
+    if (!menu) return;
     for (const paper of ["blank", "ruled", "grid", "dot"] as PaperStyle[]) menu.addItem((item) => item.setTitle(`Paper: ${paper}`).setChecked(this.currentPage().paper === paper).onClick(() => {
       const page = this.currentPage();
       const before = page.paper;

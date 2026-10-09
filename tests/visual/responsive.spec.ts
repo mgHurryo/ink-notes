@@ -119,6 +119,38 @@ for (const viewport of viewports) {
   });
 }
 
+test("page options toggle closed on a second press and reopen after dismissal", async ({ page }) => {
+  await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  const trigger = page.getByRole("button", { name: "Page options", exact: true });
+  const menu = page.locator(".preview-menu");
+  await trigger.click();
+  await expect(menu).toHaveCount(1);
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  // The preview menu starts at the first click position; its upper-left
+  // trigger corner remains available for the second physical press.
+  await trigger.click({ position: { x: 3, y: 3 } });
+  await expect(menu).toHaveCount(0);
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await trigger.focus();
+  await page.keyboard.press("Enter");
+  await expect(menu).toHaveCount(1);
+  await page.keyboard.press("Enter");
+  await expect(menu).toHaveCount(0);
+  await trigger.click();
+  await page.keyboard.press("Escape");
+  await expect(menu).toHaveCount(0);
+  await trigger.click();
+  await page.locator(".ink-page").click({ position: { x: 30, y: 80 } });
+  await expect(menu).toHaveCount(0);
+  await trigger.click();
+  await menu.getByRole("button", { name: "Paper: blank", exact: true }).click();
+  await expect(menu).toHaveCount(0);
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await trigger.click();
+  await expect(menu).toHaveCount(1);
+});
+
 test("page rail and brush popover are keyboard dismissible", async ({ page }) => {
   await page.setViewportSize({ width: 360, height: 720 });
   await page.goto("/");

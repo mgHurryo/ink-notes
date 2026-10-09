@@ -184,6 +184,33 @@ afterEach(async () => {
 });
 
 describe("pdf page preview rail", () => {
+  it("toggles the PDF three-dot menu instead of reopening after native dismissal", async () => {
+    const { view } = await setup();
+    try {
+      const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="Page options"]')!;
+      const tap = () => {
+        trigger.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+        trigger.click();
+      };
+      tap();
+      expect(document.querySelector(".preview-menu")).not.toBeNull();
+      tap();
+      expect(document.querySelector(".preview-menu")).toBeNull();
+      trigger.click();
+      expect(document.querySelector(".preview-menu")).not.toBeNull();
+      trigger.click();
+      expect(document.querySelector(".preview-menu")).toBeNull();
+      tap();
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+      tap();
+      expect(document.querySelector(".preview-menu")).not.toBeNull();
+      await view.onClose();
+      expect(document.querySelector(".preview-menu")).toBeNull();
+    } finally {
+      await view.onClose();
+    }
+  });
+
   it.each([[1318, 1, 1, 1270], [1318, 2, 1, 2540], [390, 3, 1, 1026], [800, 2, 2, 3008]])(
     "renders the visible PDF at display density (pane %ipx, DPR %i, zoom %i)",
     async (width, dpr, zoom, expectedWidth) => {

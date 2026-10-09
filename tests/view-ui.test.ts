@@ -14,6 +14,7 @@ import type { InkPage, InkStroke } from "../src/model";
 import { defaultToolState } from "../src/tool-state";
 import type { NotebookStore } from "../src/storage";
 import type { WorkspaceLeaf } from "obsidian";
+import { Menu } from "obsidian";
 
 const button = (label: string) => document.querySelector<HTMLButtonElement>('button[aria-label="' + label + '"]')!;
 /** iPads deliver no dblclick for touch; the preset editor opens on two taps. */
@@ -51,6 +52,73 @@ afterEach(async () => {
 });
 
 describe("reference-style editor", () => {
+  it("toggles closed even when the host's document dismissal was registered first", () => {
+    let opened: Menu | undefined;
+    const show = Menu.prototype.showAtMouseEvent;
+    vi.spyOn(Menu.prototype, "showAtMouseEvent").mockImplementation(function (this: Menu, event) {
+      opened = this;
+      return show.call(this, event);
+    });
+    const dismiss = () => opened?.hide();
+    document.addEventListener("pointerdown", dismiss, true);
+    try {
+      const trigger = button("Page options");
+      trigger.click();
+      trigger.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+      trigger.click();
+      expect(document.querySelector(".preview-menu")).toBeNull();
+    } finally {
+      document.removeEventListener("pointerdown", dismiss, true);
+    }
+  });
+
+  it("does not let a stale hide callback clear the replacement menu's state", () => {
+    const callbacks: (() => void)[] = [];
+    vi.spyOn(Menu.prototype, "onHide").mockImplementation((callback) => { callbacks.push(callback); });
+    const trigger = button("Page options");
+    trigger.click();
+    trigger.click();
+    trigger.click();
+    callbacks[0]();
+    expect(trigger.getAttribute("aria-expanded")).toBe("true");
+    expect(document.querySelector(".preview-menu")).not.toBeNull();
+    trigger.click();
+    expect(document.querySelector(".preview-menu")).toBeNull();
+  });
+
+  it("toggles page options through native pointer dismissal, outside taps and Escape", () => {
+    const trigger = button("Page options");
+    const tap = () => {
+      trigger.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+      trigger.click();
+    };
+    tap();
+    const first = document.querySelector(".preview-menu");
+    expect(first).not.toBeNull();
+    tap();
+    expect(document.querySelector(".preview-menu")).toBeNull();
+    tap();
+    expect(document.querySelector(".preview-menu")).not.toBe(first);
+    document.body.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    expect(document.querySelector(".preview-menu")).toBeNull();
+    tap();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(document.querySelector(".preview-menu")).toBeNull();
+    tap();
+    expect(document.querySelector(".preview-menu")).not.toBeNull();
+  });
+
+  it("toggles page options with click-only activation and closes them with the view", async () => {
+    const trigger = button("Page options");
+    trigger.click();
+    expect(document.querySelector(".preview-menu")).not.toBeNull();
+    trigger.click();
+    expect(document.querySelector(".preview-menu")).toBeNull();
+    trigger.click();
+    await view.onClose();
+    expect(document.querySelector(".preview-menu")).toBeNull();
+  });
+
   it.each([null, 7])("cancels native touchstart and empty touchend defaults during pointer %s", (pointerId) => {
     const paper = document.querySelector<HTMLElement>(".ink-page")!;
     const internal = view as unknown as { activePointerId: number | null; touchGesture: unknown };

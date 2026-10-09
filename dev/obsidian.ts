@@ -57,26 +57,48 @@ export function setIcon(element: HTMLElement, name: string) {
   if (icon) element.append(createElement(icon));
 }
 export class Menu {
+  private static visible: Menu | null = null;
+  private hideCallbacks: (() => void)[] = [];
+  private dismissCleanup: (() => void) | null = null;
   element = document.createElement("div");
-  constructor() { this.element.className = "preview-menu"; }
+  constructor() { this.element.className = "preview-menu menu"; }
   addItem(build: (item: any) => void) {
     const button = document.createElement("button");
     const item = {
       setTitle: (title: string) => { button.textContent = title; return item; },
       setChecked: (checked: boolean) => { button.setAttribute("aria-pressed", String(checked)); return item; },
       setDisabled: (disabled: boolean) => { button.disabled = disabled; return item; },
-      onClick: (callback: () => void) => { button.onclick = () => { callback(); this.element.remove(); }; return item; },
+      setIcon: (icon: string) => { button.dataset.icon = icon; return item; },
+      onClick: (callback: () => void) => { button.onclick = () => { this.hide(); callback(); }; return item; },
     };
     build(item); this.element.append(button); return this;
   }
   addSeparator() { this.element.append(document.createElement("hr")); }
+  onHide(callback: () => void) { this.hideCallbacks.push(callback); }
+  hide() {
+    const wasOpen = this.element.isConnected || Menu.visible === this;
+    this.element.remove();
+    this.dismissCleanup?.();
+    this.dismissCleanup = null;
+    if (Menu.visible === this) Menu.visible = null;
+    if (wasOpen) this.hideCallbacks.forEach((callback) => callback());
+    return this;
+  }
   showAtMouseEvent(event: MouseEvent) {
-    document.querySelector(".preview-menu")?.remove();
+    Menu.visible?.hide();
+    Menu.visible = this;
     document.body.append(this.element);
     this.element.style.left = Math.min(event.clientX, innerWidth - 200) + "px";
     this.element.style.top = event.clientY + "px";
-    const close = (e: PointerEvent) => { if (!this.element.contains(e.target as Node)) { this.element.remove(); document.removeEventListener("pointerdown", close); } };
-    document.addEventListener("pointerdown", close);
+    const close = (e: PointerEvent) => { if (!this.element.contains(e.target as Node)) this.hide(); };
+    const escape = (e: KeyboardEvent) => { if (e.key === "Escape") this.hide(); };
+    document.addEventListener("pointerdown", close, true);
+    document.addEventListener("keydown", escape);
+    this.dismissCleanup = () => {
+      document.removeEventListener("pointerdown", close, true);
+      document.removeEventListener("keydown", escape);
+    };
+    return this;
   }
 }
 export class Notice { constructor(message: string) { console.warn(message); } }

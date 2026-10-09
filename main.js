@@ -24081,6 +24081,10 @@ var InkWritingView = class extends import_obsidian2.FileView {
     this.flipSettling = false;
     this.pageSwipeAnimations = [];
     this.pageSwipeRequest = null;
+    // ------------------------------------------------------------------ input
+    this.pageOptionsMenu = null;
+    this.pageOptionsTriggerPressed = false;
+    this.pageOptionsDismissRegistered = false;
   }
   /** True while gestures must not start new input (reading mode, locks). */
   inputLocked() {
@@ -24315,7 +24319,50 @@ var InkWritingView = class extends import_obsidian2.FileView {
   /** Called at the very end of finishPointerInput. */
   afterInputFullySettled() {
   }
-  // ------------------------------------------------------------------ input
+  /** Snapshot the trigger press before the host dismisses its menu on pointerdown. */
+  beginPageOptionsMenu(event) {
+    if (!this.pageOptionsDismissRegistered) {
+      this.pageOptionsDismissRegistered = true;
+      const doc = this.containerEl.ownerDocument;
+      const capturePress = (press) => {
+        var _a, _b;
+        this.pageOptionsTriggerPressed = !!((_b = (_a = this.pageOptionsMenu) == null ? void 0 : _a.trigger) == null ? void 0 : _b.contains(press.target));
+      };
+      if (doc.defaultView) this.registerDomEvent(doc.defaultView, "pointerdown", capturePress, true);
+      else this.registerDomEvent(doc, "pointerdown", capturePress, true);
+      this.registerDomEvent(doc, "pointercancel", () => {
+        this.pageOptionsTriggerPressed = false;
+      }, true);
+      this.registerDomEvent(doc, "keydown", () => {
+        this.pageOptionsTriggerPressed = false;
+      }, true);
+      this.register(() => this.closePageOptionsMenu());
+    }
+    if (this.pageOptionsTriggerPressed || this.pageOptionsMenu) {
+      this.closePageOptionsMenu();
+      return null;
+    }
+    const trigger = event.currentTarget;
+    const menu = new import_obsidian2.Menu();
+    const opened = { menu, trigger };
+    this.pageOptionsMenu = opened;
+    trigger == null ? void 0 : trigger.setAttribute("aria-haspopup", "menu");
+    trigger == null ? void 0 : trigger.setAttribute("aria-expanded", "true");
+    menu.onHide(() => {
+      if (this.pageOptionsMenu !== opened) return;
+      this.pageOptionsMenu = null;
+      trigger == null ? void 0 : trigger.setAttribute("aria-expanded", "false");
+    });
+    return menu;
+  }
+  closePageOptionsMenu() {
+    var _a;
+    this.pageOptionsTriggerPressed = false;
+    const opened = this.pageOptionsMenu;
+    this.pageOptionsMenu = null;
+    (_a = opened == null ? void 0 : opened.trigger) == null ? void 0 : _a.setAttribute("aria-expanded", "false");
+    opened == null ? void 0 : opened.menu.hide();
+  }
   /** An Obsidian native menu (page options) is open. While it is, surface
    *  input must not swallow the outside tap that dismisses it, and must not
    *  start ink underneath it. Resolved through the view's own document so
@@ -27085,6 +27132,7 @@ var InkView = class extends InkWritingView {
   }
   async onClose() {
     var _a, _b, _c, _d;
+    this.closePageOptionsMenu();
     this.pageNavigationGeneration += 1;
     this.closeDevPanel();
     if (this.railRevealTimer !== void 0) window.clearTimeout(this.railRevealTimer);
@@ -27850,7 +27898,8 @@ var InkView = class extends InkWritingView {
     });
   }
   openPageMenu(event) {
-    const menu = new import_obsidian3.Menu();
+    const menu = this.beginPageOptionsMenu(event);
+    if (!menu) return;
     for (const paper of ["blank", "ruled", "grid", "dot"]) menu.addItem((item) => item.setTitle(`Paper: ${paper}`).setChecked(this.currentPage().paper === paper).onClick(() => {
       const page = this.currentPage();
       const before = page.paper;
@@ -29106,6 +29155,7 @@ var PdfInkView = class extends InkWritingView {
   }
   async onClose() {
     var _a, _b, _c, _d, _e;
+    this.closePageOptionsMenu();
     const outcome = await this.flushSaveNow();
     if (outcome.status !== "saved") {
       new import_obsidian7.Notice(`Ink Notes kept notes for ${(_b = (_a = this.file) == null ? void 0 : _a.basename) != null ? _b : "this PDF"} in a conflict copy: ${outcome.message}`);
@@ -29672,7 +29722,8 @@ var PdfInkView = class extends InkWritingView {
   }
   openPageMenu(event) {
     if (!this.sidecar) return;
-    const menu = new import_obsidian7.Menu();
+    const menu = this.beginPageOptionsMenu(event);
+    if (!menu) return;
     const current = this.sidecar.notePages[this.noteIndex];
     menu.addItem((item) => item.setTitle("Insert blank page after this one").setIcon("plus").onClick(() => this.withPageUndo(() => {
       var _a;

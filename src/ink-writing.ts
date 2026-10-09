@@ -14,7 +14,7 @@
  * notebook semantics.
  */
 
-import { FileView, Notice, setIcon } from "obsidian";
+import { FileView, Menu, Notice, setIcon } from "obsidian";
 import {
   MAX_RAW_POINT_SAMPLES,
   ModelerEngageReason,
@@ -777,6 +777,51 @@ export abstract class InkWritingView extends FileView {
   protected afterInputFullySettled(): void {}
 
   // ------------------------------------------------------------------ input
+
+  private pageOptionsMenu: { menu: Menu; trigger: HTMLElement | null } | null = null;
+  private pageOptionsTriggerPressed = false;
+  private pageOptionsDismissRegistered = false;
+
+  /** Snapshot the trigger press before the host dismisses its menu on pointerdown. */
+  protected beginPageOptionsMenu(event: MouseEvent): Menu | null {
+    if (!this.pageOptionsDismissRegistered) {
+      this.pageOptionsDismissRegistered = true;
+      const doc = this.containerEl.ownerDocument;
+      const capturePress = (press: PointerEvent) => {
+        this.pageOptionsTriggerPressed = !!this.pageOptionsMenu?.trigger?.contains(press.target as Node);
+      };
+      // Window capture precedes even a host document listener installed at startup.
+      if (doc.defaultView) this.registerDomEvent(doc.defaultView, "pointerdown", capturePress, true);
+      else this.registerDomEvent(doc, "pointerdown", capturePress, true);
+      this.registerDomEvent(doc, "pointercancel", () => { this.pageOptionsTriggerPressed = false; }, true);
+      this.registerDomEvent(doc, "keydown", () => { this.pageOptionsTriggerPressed = false; }, true);
+      this.register(() => this.closePageOptionsMenu());
+    }
+    if (this.pageOptionsTriggerPressed || this.pageOptionsMenu) {
+      this.closePageOptionsMenu();
+      return null;
+    }
+    const trigger = event.currentTarget as HTMLElement | null;
+    const menu = new Menu();
+    const opened = { menu, trigger };
+    this.pageOptionsMenu = opened;
+    trigger?.setAttribute("aria-haspopup", "menu");
+    trigger?.setAttribute("aria-expanded", "true");
+    menu.onHide(() => {
+      if (this.pageOptionsMenu !== opened) return;
+      this.pageOptionsMenu = null;
+      trigger?.setAttribute("aria-expanded", "false");
+    });
+    return menu;
+  }
+
+  protected closePageOptionsMenu(): void {
+    this.pageOptionsTriggerPressed = false;
+    const opened = this.pageOptionsMenu;
+    this.pageOptionsMenu = null;
+    opened?.trigger?.setAttribute("aria-expanded", "false");
+    opened?.menu.hide();
+  }
 
   /** An Obsidian native menu (page options) is open. While it is, surface
    *  input must not swallow the outside tap that dismisses it, and must not

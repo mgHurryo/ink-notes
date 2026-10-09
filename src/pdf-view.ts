@@ -1,4 +1,4 @@
-import { App, Menu, Notice, Scope, SuggestModal, TFile, WorkspaceLeaf, loadPdfJs, setIcon } from "obsidian";
+import { App, Notice, Scope, SuggestModal, TFile, WorkspaceLeaf, loadPdfJs, setIcon } from "obsidian";
 import { InkNotebook, InkPage, InkTool, createNotebook } from "./model";
 import { canvasResolution, drawInkStroke, scaledStroke } from "./rendering";
 import { registerDocumentPointerEndEvents } from "./ink-input";
@@ -232,6 +232,7 @@ export class PdfInkView extends InkWritingView {
   }
 
   async onClose(): Promise<void> {
+    this.closePageOptionsMenu();
     const outcome = await this.flushSaveNow();
     if (outcome.status !== "saved") {
       new Notice(`Ink Notes kept notes for ${this.file?.basename ?? "this PDF"} in a conflict copy: ${outcome.message}`);
@@ -844,7 +845,8 @@ export class PdfInkView extends InkWritingView {
 
   private openPageMenu(event: MouseEvent): void {
     if (!this.sidecar) return;
-    const menu = new Menu();
+    const menu = this.beginPageOptionsMenu(event);
+    if (!menu) return;
     const current = this.sidecar.notePages[this.noteIndex];
     menu.addItem((item) => item.setTitle("Insert blank page after this one").setIcon("plus")
       .onClick(() => this.withPageUndo(() => insertBlankNotePage(this.sidecar!, current?.id ?? null) !== null, "insert a blank page")));
