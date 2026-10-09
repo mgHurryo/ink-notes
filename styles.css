@@ -515,6 +515,32 @@
 }
 
 .ink-swipe-stage { position: absolute; pointer-events: none; }
+.ink-notebook-picker-actions,
+.ink-notebook-result,
+.ink-notebook-name-actions { display: flex; align-items: center; gap: 12px; }
+.ink-notebook-picker-actions { justify-content: space-between; padding: 12px; border-bottom: 1px solid var(--background-modifier-border); }
+.ink-notebook-result-name { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.ink-notebook-result-path { color: var(--text-muted); font-size: 12px; }
+:is(.ink-notebook-create, .ink-notebook-rename) {
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  flex: 0 0 44px;
+  padding: 0;
+}
+:is(.ink-notebook-create, .ink-notebook-rename) svg { display: block; width: 20px; height: 20px; }
+.ink-notebook-name-form { display: grid; gap: 16px; }
+.ink-notebook-name-form label { display: grid; gap: 8px; }
+.ink-notebook-name-form input { width: 100%; }
+.ink-notebook-name-error { color: var(--text-error); overflow-wrap: anywhere; }
+.ink-notebook-name-error:empty { display: none; }
+.ink-notebook-name-actions { justify-content: flex-end; }
+.ink-notebook-name-actions button { min-height: 44px; }
+:is(.ink-notebook-picker, .ink-notebook-name-modal) button:focus-visible {
+  outline: 2px solid var(--interactive-accent);
+  outline-offset: 2px;
+}
 .ink-page-insert-hint {
   position: absolute;
   top: 50%;

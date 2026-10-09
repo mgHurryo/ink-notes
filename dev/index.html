@@ -21,6 +21,15 @@
     .preview-menu { position: fixed; z-index: 1100; width: 180px; padding: 6px; background: var(--background-secondary); border: 1px solid var(--background-modifier-border); border-radius: 8px; color: var(--text-normal); font: 13px system-ui; }
     .preview-menu button { display: block; padding: 10px; width: 100%; border: 0; color: inherit; background: transparent; text-align: left; cursor: pointer; }
     .preview-menu button:hover, .preview-menu button[aria-pressed="true"] { background: var(--background-modifier-hover); }
+    .preview-modal-container { position: fixed; inset: 0; z-index: 1200; display: grid; place-items: center; background: #0008; padding: 16px; }
+    .preview-modal { width: min(520px, 100%); max-height: calc(100dvh - 32px); overflow: auto; background: var(--background-secondary); color: var(--text-normal); border: 1px solid var(--background-modifier-border); border-radius: 8px; font: 14px system-ui; }
+    .preview-modal > h2 { margin: 0; padding: 16px; font-size: 18px; }
+    .preview-modal > h2:empty { display: none; }
+    .preview-modal > div { padding: 16px; }
+    .preview-modal input { box-sizing: border-box; padding: 10px; color: inherit; background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: 4px; font: inherit; }
+    .preview-modal input[placeholder] { width: 100%; margin-bottom: 12px; }
+    .preview-modal button { color: inherit; background: var(--background-primary); border: 1px solid var(--background-modifier-border); border-radius: 4px; }
+    .preview-modal .suggestion-item { padding: 4px 0; cursor: pointer; }
   </style>
 </head>
 <body><div id="host"><div hidden></div><main></main></div><script src="/preview.js"></script></body>

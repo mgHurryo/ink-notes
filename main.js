@@ -22028,10 +22028,134 @@ __export(main_exports, {
   default: () => InkNotesPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian9 = require("obsidian");
+var import_obsidian10 = require("obsidian");
+
+// src/notebook-modal.ts
+var import_obsidian = require("obsidian");
+var NotebookSuggestModal = class extends import_obsidian.SuggestModal {
+  constructor(app, files, select, create, rename) {
+    super(app);
+    this.files = files;
+    this.select = select;
+    this.create = create;
+    this.rename = rename;
+    this.actions = null;
+    this.setPlaceholder("Search Ink notebooks");
+    this.emptyStateText = "No notebooks found";
+  }
+  onOpen() {
+    super.onOpen();
+    this.modalEl.addClass("ink-notebook-picker");
+    this.actions = this.modalEl.createDiv({ cls: "ink-notebook-picker-actions" });
+    this.modalEl.prepend(this.actions);
+    this.actions.createEl("span", { text: "Ink notebooks" });
+    const button = this.actions.createEl("button", { cls: "ink-notebook-create", attr: {
+      type: "button",
+      title: "Create Ink notebook",
+      "aria-label": "Create Ink notebook"
+    } });
+    (0, import_obsidian.setIcon)(button.createSpan({ attr: { "aria-hidden": "true" } }), "plus");
+    button.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+    });
+    button.addEventListener("click", () => {
+      this.close();
+      new NotebookNameModal(this.app, "Create Ink notebook", "Ink Notebook", "Create", this.create).open();
+    });
+  }
+  onClose() {
+    var _a;
+    (_a = this.actions) == null ? void 0 : _a.remove();
+    this.actions = null;
+    super.onClose();
+  }
+  getSuggestions(query) {
+    const search = query.trim().toLowerCase();
+    return this.files.filter((file) => !search || file.path.toLowerCase().includes(search));
+  }
+  renderSuggestion(file, el) {
+    el.addClass("ink-notebook-result");
+    const name = el.createDiv({ cls: "ink-notebook-result-name" });
+    name.createDiv({ text: file.basename });
+    name.createDiv({ text: file.path, cls: "ink-notebook-result-path" });
+    const rename = el.createEl("button", { cls: "ink-notebook-rename", attr: {
+      type: "button",
+      title: "Rename notebook",
+      "aria-label": `Rename ${file.basename}`
+    } });
+    (0, import_obsidian.setIcon)(rename.createSpan({ attr: { "aria-hidden": "true" } }), "pencil");
+    rename.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+    });
+    rename.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.close();
+      new NotebookNameModal(
+        this.app,
+        "Rename Ink notebook",
+        file.basename,
+        "Rename",
+        (title) => this.rename(file, title)
+      ).open();
+    });
+  }
+  onChooseSuggestion(file, event) {
+    var _a, _b;
+    if ((_b = (_a = event.target) == null ? void 0 : _a.closest) == null ? void 0 : _b.call(_a, "button")) return;
+    this.select(file);
+  }
+};
+var NotebookNameModal = class extends import_obsidian.Modal {
+  constructor(app, heading, initialName, action, submitName) {
+    super(app);
+    this.heading = heading;
+    this.initialName = initialName;
+    this.action = action;
+    this.submitName = submitName;
+  }
+  onOpen() {
+    this.setTitle(this.heading);
+    this.modalEl.addClass("ink-notebook-name-modal");
+    const form = this.contentEl.createEl("form", { cls: "ink-notebook-name-form" });
+    const label = form.createEl("label", { text: "Notebook name" });
+    const input = label.createEl("input", { attr: { type: "text", required: "", maxlength: "80" } });
+    input.value = this.initialName;
+    const error = form.createDiv({ cls: "ink-notebook-name-error", attr: { role: "alert" } });
+    const actions = form.createDiv({ cls: "ink-notebook-name-actions" });
+    const cancel = actions.createEl("button", { text: "Cancel", attr: { type: "button" } });
+    const submit = actions.createEl("button", { text: this.action, cls: "mod-cta", attr: { type: "submit" } });
+    cancel.addEventListener("click", () => this.close());
+    let pending = false;
+    form.addEventListener("submit", (event) => {
+      event.preventDefault();
+      if (pending) return;
+      const title = input.value.trim();
+      if (!title || title.length > 80 || /[\\/:*?"<>|#^\[\]]/.test(title) || /\.$/.test(title)) {
+        error.setText("Enter a valid notebook name without path or reserved characters.");
+        input.focus();
+        return;
+      }
+      pending = true;
+      input.disabled = cancel.disabled = submit.disabled = true;
+      error.setText("");
+      void this.submitName(title).then(() => this.close()).catch((reason) => {
+        error.setText(`Could not ${this.action.toLowerCase()} notebook: ${reason instanceof Error ? reason.message : String(reason)}`);
+      }).finally(() => {
+        pending = false;
+        input.disabled = cancel.disabled = submit.disabled = false;
+      });
+    });
+    input.focus();
+    input.select();
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
 
 // src/view.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 
 // src/diagnostics.ts
 function intervalStats(intervals) {
@@ -22737,10 +22861,10 @@ function registerDocumentPointerEndEvents(element, register, onEnd) {
 }
 
 // src/ink-writing.ts
-var import_obsidian2 = require("obsidian");
+var import_obsidian3 = require("obsidian");
 
 // src/brush-popover.ts
-var import_obsidian = require("obsidian");
+var import_obsidian2 = require("obsidian");
 var INK_COLORS = [
   { value: "#1b1b1b", label: "Black" },
   { value: "#195bff", label: "Blue" },
@@ -22903,7 +23027,7 @@ var BrushPopoverController = class {
     const swatches = control.createDiv({ cls: "ink-color-swatches" });
     this.buildSwatches(swatches, spec);
     const custom = control.createEl("label", { cls: "ink-custom-color", attr: { title: "Add a preset color" } });
-    (0, import_obsidian.setIcon)(custom.createSpan({ cls: "ink-button-icon" }), "plus");
+    (0, import_obsidian2.setIcon)(custom.createSpan({ cls: "ink-button-icon" }), "plus");
     const input = custom.createEl("input", { attr: {
       type: "color",
       value: settings.color,
@@ -23046,7 +23170,7 @@ var BrushPopoverController = class {
     if (settings.color.toLowerCase() === removed.toLowerCase()) settings.color = (_c = palette[0]) != null ? _c : removed;
     this.buildSwatchesInto(spec);
     this.update();
-    new import_obsidian.Notice("Preset color removed");
+    new import_obsidian2.Notice("Preset color removed");
   }
   updateColorSwatches(tool, color) {
     this.root.querySelectorAll(`.ink-color-swatch[data-brush-tool="${tool}"]`).forEach((swatch) => {
@@ -23082,11 +23206,11 @@ var BrushPopoverController = class {
       }
     });
     const curveIcon = curveToggle.createSpan({ cls: "ink-button-icon" });
-    (0, import_obsidian.setIcon)(curveIcon, this.curveOpen ? "chevron-up" : "chevron-down");
+    (0, import_obsidian2.setIcon)(curveIcon, this.curveOpen ? "chevron-up" : "chevron-down");
     curveToggle.addEventListener("click", () => {
       this.curveOpen = !this.curveOpen;
       curveToggle.setAttribute("aria-expanded", String(this.curveOpen));
-      (0, import_obsidian.setIcon)(curveIcon, this.curveOpen ? "chevron-up" : "chevron-down");
+      (0, import_obsidian2.setIcon)(curveIcon, this.curveOpen ? "chevron-up" : "chevron-down");
       curveBody.style.display = this.curveOpen ? "" : "none";
       if (this.curveOpen) requestAnimationFrame(() => this.drawPressureCurve(settings));
     });
@@ -24031,7 +24155,7 @@ function isPointerCaptureError(error) {
   const name = error.name;
   return name === "NotFoundError" || name === "InvalidStateError";
 }
-var InkWritingView = class extends import_obsidian2.FileView {
+var InkWritingView = class extends import_obsidian3.FileView {
   constructor() {
     super(...arguments);
     /** Defaults come from the persistence module so saved settings restore
@@ -24163,7 +24287,7 @@ var InkWritingView = class extends import_obsidian2.FileView {
       button.setAttribute("title", label);
       button.setAttribute("aria-pressed", String(this.zoomLocked));
       button.replaceChildren();
-      (0, import_obsidian2.setIcon)(button, this.zoomLocked ? "lock-keyhole" : "lock-keyhole-open");
+      (0, import_obsidian3.setIcon)(button, this.zoomLocked ? "lock-keyhole" : "lock-keyhole-open");
     }
   }
   showZoomHud() {
@@ -24230,7 +24354,7 @@ var InkWritingView = class extends import_obsidian2.FileView {
     stage.dataset.insert = "true";
     const hint = stage.createDiv({ cls: "ink-page-insert-hint", attr: { "aria-hidden": "true" } });
     hint.style[side < 0 ? "right" : "left"] = "24px";
-    (0, import_obsidian2.setIcon)(hint, "plus");
+    (0, import_obsidian3.setIcon)(hint, "plus");
   }
   updatePageInsertPreview(stage, offset) {
     if (stage == null ? void 0 : stage.dataset.insert) stage.toggleClass("is-ready", Math.abs(offset) >= this.pageInsertThreshold());
@@ -24491,7 +24615,7 @@ var InkWritingView = class extends import_obsidian2.FileView {
       return null;
     }
     this.closePageOptionsMenu();
-    const menu = new import_obsidian2.Menu();
+    const menu = new import_obsidian3.Menu();
     const opened = { menu, trigger };
     this.pageOptionsMenu = opened;
     trigger == null ? void 0 : trigger.setAttribute("aria-haspopup", "menu");
@@ -25999,7 +26123,7 @@ var InkWritingView = class extends import_obsidian2.FileView {
     this.workerSession = null;
     if (this.workerFallbackReported || ((_d = this.workers) == null ? void 0 : _d.isDisabled())) return;
     this.workerFallbackReported = true;
-    new import_obsidian2.Notice(`Ink Notes background processing is unavailable; using reduced-performance mode: ${error instanceof Error ? error.message : String(error)}`);
+    new import_obsidian3.Notice(`Ink Notes background processing is unavailable; using reduced-performance mode: ${error instanceof Error ? error.message : String(error)}`);
   }
   // --------------------------------------------------------------- brushes
   brushSettings(tool) {
@@ -26028,7 +26152,7 @@ var InkWritingView = class extends import_obsidian2.FileView {
     const modes = pop.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
     for (const [mode, label, shortLabel, iconName] of [["stroke", "Stroke eraser", "Stroke", "eraser"], ["circle", "Circle eraser", "Circle", "circle"], ["square", "Square eraser", "Square", "square"]]) {
       const modeButton = modes.createEl("button", { cls: "ink-eraser-mode", attr: { type: "button", role: "radio", title: label, "aria-label": label, "aria-checked": String(this.state.eraserMode === mode), "data-eraser-mode": mode } });
-      (0, import_obsidian2.setIcon)(modeButton.createSpan({ cls: "ink-button-icon" }), iconName);
+      (0, import_obsidian3.setIcon)(modeButton.createSpan({ cls: "ink-button-icon" }), iconName);
       modeButton.createSpan({ cls: "ink-eraser-mode-label", text: shortLabel });
       modeButton.addEventListener("click", () => {
         this.state.eraserMode = mode;
@@ -26116,7 +26240,7 @@ var InkWritingView = class extends import_obsidian2.FileView {
     const button = parent.createEl("button", { cls: "ink-icon-button", attr: { type: "button", title: label, "aria-label": label } });
     button.disabled = disabled;
     const iconHolder = button.createSpan({ cls: "ink-button-icon" });
-    (0, import_obsidian2.setIcon)(iconHolder, icon);
+    (0, import_obsidian3.setIcon)(iconHolder, icon);
     button.addEventListener("click", callback);
     return button;
   }
@@ -26131,7 +26255,7 @@ var InkWritingView = class extends import_obsidian2.FileView {
       ...hasSettings ? { "aria-haspopup": "dialog", "aria-expanded": "false" } : {}
     } });
     const iconHolder = button.createSpan({ cls: "ink-button-icon" });
-    (0, import_obsidian2.setIcon)(iconHolder, icon);
+    (0, import_obsidian3.setIcon)(iconHolder, icon);
     button.addEventListener("click", () => {
       var _a, _b;
       this.finishPointerInput(false);
@@ -27261,7 +27385,7 @@ var InkView = class extends InkWritingView {
     this.store = store;
     this.workers = workers;
     if (toolState) this.useSharedToolState(toolState);
-    this.scope = new import_obsidian3.Scope(this.app.scope);
+    this.scope = new import_obsidian4.Scope(this.app.scope);
     this.scope.register(["Mod"], "z", () => {
       this.undo();
       return false;
@@ -27414,16 +27538,16 @@ var InkView = class extends InkWritingView {
   async exportNotebookCopy() {
     if (!this.file) return;
     if (!notebookHasInk(this.notebook)) {
-      new import_obsidian3.Notice("This notebook has no handwriting to export yet");
+      new import_obsidian4.Notice("This notebook has no handwriting to export yet");
       return;
     }
     try {
       const output = await exportNotebookPdf(this.notebook, this.file.basename, this.canvasLogicalWidth);
       const target = exportPathFor(this.file.path, (candidate) => this.app.vault.getAbstractFileByPath(candidate) !== null);
       await this.app.vault.createBinary(target, output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength));
-      new import_obsidian3.Notice(`Exported ${target}`);
+      new import_obsidian4.Notice(`Exported ${target}`);
     } catch (error) {
-      new import_obsidian3.Notice(`Export failed: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian4.Notice(`Export failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   activeToolButton() {
@@ -27735,7 +27859,7 @@ var InkView = class extends InkWritingView {
     this.refreshCurrentPageThumbnail();
     if (this.externalRefreshPending && this.pendingInkStrokes.length === 0) {
       this.externalRefreshPending = false;
-      void this.reloadFromDisk().catch((error) => new import_obsidian3.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
+      void this.reloadFromDisk().catch((error) => new import_obsidian4.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
     }
   }
   afterCommand(command) {
@@ -28046,7 +28170,7 @@ var InkView = class extends InkWritingView {
     };
     const text = JSON.stringify(report, null, 2);
     if (toClipboard) {
-      void navigator.clipboard.writeText(text).then(() => new import_obsidian3.Notice("Ink diagnostics copied to the clipboard.")).catch((error) => new import_obsidian3.Notice(`Ink Notes could not copy diagnostics: ${error instanceof Error ? error.message : String(error)}`));
+      void navigator.clipboard.writeText(text).then(() => new import_obsidian4.Notice("Ink diagnostics copied to the clipboard.")).catch((error) => new import_obsidian4.Notice(`Ink Notes could not copy diagnostics: ${error instanceof Error ? error.message : String(error)}`));
       return;
     }
     const blob = new Blob([text], { type: "application/json" });
@@ -28056,7 +28180,7 @@ var InkView = class extends InkWritingView {
     anchor.download = `ink-diagnostics-${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}.json`;
     anchor.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
-    new import_obsidian3.Notice(`Exported ${report.strokes.length} stroke records.`);
+    new import_obsidian4.Notice(`Exported ${report.strokes.length} stroke records.`);
   }
   // ------------------------------------------------------------ page tools
   addPage(index = this.notebook.pages.length) {
@@ -28121,7 +28245,7 @@ var InkView = class extends InkWritingView {
         (window.devicePixelRatio || 1) * this.zoom
       );
     })().catch((error) => {
-      new import_obsidian3.Notice(`Ink Notes could not switch pages: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian4.Notice(`Ink Notes could not switch pages: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
   openPageMenu(event) {
@@ -28341,9 +28465,9 @@ page: ${this.currentPage().id}
 \`\`\``;
     try {
       await navigator.clipboard.writeText(syntax);
-      new import_obsidian3.Notice("Copied Ink page embed syntax");
+      new import_obsidian4.Notice("Copied Ink page embed syntax");
     } catch (error) {
-      new import_obsidian3.Notice(`Could not copy embed syntax: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian4.Notice(`Could not copy embed syntax: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   /**
@@ -28447,7 +28571,7 @@ page: ${this.currentPage().id}
     if (this.activeSave === saving) this.activeSave = null;
   }
   reportSaveFailure(file, error) {
-    new import_obsidian3.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
+    new import_obsidian4.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
   }
   async performSave(file) {
     this.syncing = true;
@@ -28460,7 +28584,7 @@ page: ${this.currentPage().id}
           this.savedRevision = Math.max(this.savedRevision, result.revision);
           if (result.merged && this.file === file) this.receiveMergedNotebook(result.merged);
         } catch (error) {
-          new import_obsidian3.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
+          new import_obsidian4.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
           break;
         }
       } while (this.saveRequested || this.dirtyRevision > this.savedRevision);
@@ -28468,7 +28592,7 @@ page: ${this.currentPage().id}
       this.syncing = false;
       if (this.externalRefreshPending && this.activePointerId === null) {
         this.externalRefreshPending = false;
-        void this.reloadFromDisk().catch((error) => new import_obsidian3.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
+        void this.reloadFromDisk().catch((error) => new import_obsidian4.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
       }
       if (this.dirtyRevision > this.savedRevision && this.saveRequested) this.scheduleSave();
     }
@@ -28651,7 +28775,7 @@ function recordsEqual(left, right) {
 }
 
 // src/storage.ts
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 var INK_EXTENSION = "ink";
 var INK_FOLDER = "Ink Notes";
 var NotebookFormatError = class extends Error {
@@ -28726,7 +28850,7 @@ var NotebookStore = class {
   observe(onChange) {
     const timers = /* @__PURE__ */ new Map();
     const handler = (file) => {
-      if (!(file instanceof import_obsidian4.TFile) || file.extension !== INK_EXTENSION || !file.path.startsWith(`${INK_FOLDER}/`)) return;
+      if (!(file instanceof import_obsidian5.TFile) || file.extension !== INK_EXTENSION || !file.path.startsWith(`${INK_FOLDER}/`)) return;
       const expected = this.selfWrites.get(file.path);
       const notify = () => {
         timers.delete(file.path);
@@ -28763,7 +28887,7 @@ function serialize(notebook) {
 }
 
 // src/embed.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 
 // src/embed-spec.ts
 function parseInkEmbed(source) {
@@ -28792,7 +28916,7 @@ function createInkEmbedProcessor(app, open) {
     context.addChild(new InkEmbedChild(app, el, spec, open));
   };
 }
-var InkEmbedChild = class extends import_obsidian5.MarkdownRenderChild {
+var InkEmbedChild = class extends import_obsidian6.MarkdownRenderChild {
   constructor(app, container, spec, open) {
     super(container);
     this.app = app;
@@ -28804,7 +28928,7 @@ var InkEmbedChild = class extends import_obsidian5.MarkdownRenderChild {
   onload() {
     this.unloaded = false;
     this.registerEvent(this.app.vault.on("modify", (file) => {
-      if (file instanceof import_obsidian5.TFile && file.path === this.spec.path) this.requestRender();
+      if (file instanceof import_obsidian6.TFile && file.path === this.spec.path) this.requestRender();
     }));
     this.requestRender();
   }
@@ -28821,7 +28945,7 @@ var InkEmbedChild = class extends import_obsidian5.MarkdownRenderChild {
     const el = this.containerEl;
     el.addClass("ink-embed");
     const file = this.app.vault.getAbstractFileByPath(this.spec.path);
-    if (!(file instanceof import_obsidian5.TFile)) {
+    if (!(file instanceof import_obsidian6.TFile)) {
       this.renderError(revision, new Error(`Ink notebook not found: ${this.spec.path}`));
       return;
     }
@@ -28844,10 +28968,10 @@ var InkEmbedChild = class extends import_obsidian5.MarkdownRenderChild {
     const canvas = frame.createEl("canvas", { attr: { "aria-label": `Ink preview: ${page.title}` } });
     drawPage(canvas, notebook, page);
     const button = next.createEl("button", { cls: "ink-embed-open", attr: { type: "button", "aria-label": "Open Ink notebook" } });
-    (0, import_obsidian5.setIcon)(button, "external-link");
+    (0, import_obsidian6.setIcon)(button, "external-link");
     button.createSpan({ text: "Open notebook" });
     button.addEventListener("click", () => {
-      void this.open(file, page.id).catch((error) => new import_obsidian5.Notice(`Ink Notes could not open ${file.path}: ${error instanceof Error ? error.message : String(error)}`));
+      void this.open(file, page.id).catch((error) => new import_obsidian6.Notice(`Ink Notes could not open ${file.path}: ${error instanceof Error ? error.message : String(error)}`));
     });
     if (!this.isCurrent(revision)) return;
     el.replaceChildren(...Array.from(next.childNodes));
@@ -28874,7 +28998,7 @@ function renderError(el, error) {
 }
 
 // src/pdf-view.ts
-var import_obsidian7 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 
 // src/pdf-sidecar.ts
 var PDF_SIDECAR_FORMAT = 1;
@@ -29156,14 +29280,14 @@ function finitePositive2(value, fallback) {
 }
 
 // src/pdf-store.ts
-var import_obsidian6 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 var PdfSidecarStore = class {
   constructor(app) {
     this.vault = app.vault;
   }
   sidecarFileFor(pdfPath) {
     const file = this.vault.getAbstractFileByPath(sidecarPathFor(pdfPath));
-    return file instanceof import_obsidian6.TFile && file.name.endsWith(`.${PDF_SIDECAR_EXTENSION}`) ? file : null;
+    return file instanceof import_obsidian7.TFile && file.name.endsWith(`.${PDF_SIDECAR_EXTENSION}`) ? file : null;
   }
   /**
    * Create the empty sidecar for a PDF if it does not exist yet. Opening a
@@ -29347,7 +29471,7 @@ var PdfInkView = class extends InkWritingView {
     this.swipeLayer = null;
     /** Last drag offset; settle animations continue from it. */
     this.swipeDragOffset = 0;
-    this.scope = new import_obsidian7.Scope(this.app.scope);
+    this.scope = new import_obsidian8.Scope(this.app.scope);
     this.scope.register(["Mod"], "z", () => this.undo());
     this.scope.register(["Mod", "Shift"], "z", () => this.redo());
   }
@@ -29409,7 +29533,7 @@ var PdfInkView = class extends InkWritingView {
     this.closePageOptionsMenu();
     const outcome = await this.flushSaveNow();
     if (outcome.status !== "saved") {
-      new import_obsidian7.Notice(`Ink Notes kept notes for ${(_b = (_a = this.file) == null ? void 0 : _a.basename) != null ? _b : "this PDF"} in a conflict copy: ${outcome.message}`);
+      new import_obsidian8.Notice(`Ink Notes kept notes for ${(_b = (_a = this.file) == null ? void 0 : _a.basename) != null ? _b : "this PDF"} in a conflict copy: ${outcome.message}`);
     }
     this.releaseWriter();
     this.loadGeneration += 1;
@@ -29457,7 +29581,7 @@ var PdfInkView = class extends InkWritingView {
     if (generation !== this.loadGeneration) return;
     let pdfjs;
     try {
-      pdfjs = await (0, import_obsidian7.loadPdfJs)();
+      pdfjs = await (0, import_obsidian8.loadPdfJs)();
     } catch (error) {
       if (generation !== this.loadGeneration) return;
       this.setStatus(`Could not load the PDF renderer: ${messageOf(error)}`, true);
@@ -29544,7 +29668,7 @@ var PdfInkView = class extends InkWritingView {
   async restoreBuiltinViewer() {
     const outcome = await this.flushSaveNow();
     if (outcome.status === "failed") {
-      new import_obsidian7.Notice(`Save failed, staying in the handwriting view: ${outcome.message}`);
+      new import_obsidian8.Notice(`Save failed, staying in the handwriting view: ${outcome.message}`);
       return;
     }
     if (!this.file) return;
@@ -29612,11 +29736,11 @@ var PdfInkView = class extends InkWritingView {
           const migrated = this.store.sidecarFileFor(file.path);
           if (migrated) await this.writeSidecar(migrated, serializeSidecar(sidecar), sidecar);
           this.attachSidecar(sidecar, serializeSidecar(sidecar), migrated != null ? migrated : recovered);
-          new import_obsidian7.Notice(`Restored handwriting notes from ${recovered.name}`);
+          new import_obsidian8.Notice(`Restored handwriting notes from ${recovered.name}`);
           return;
         }
       } catch (error) {
-        new import_obsidian7.Notice(`Recovered notes stayed at ${recovered.path}: ${messageOf(error)}`);
+        new import_obsidian8.Notice(`Recovered notes stayed at ${recovered.path}: ${messageOf(error)}`);
         this.attachSidecar(sidecar, serializeSidecar(sidecar), recovered);
         return;
       }
@@ -29659,7 +29783,7 @@ var PdfInkView = class extends InkWritingView {
         this.renderAll();
         void this.renderPdfPage();
       } catch (error) {
-        new import_obsidian7.Notice(`Could not restore the selected notes file: ${messageOf(error)}`);
+        new import_obsidian8.Notice(`Could not restore the selected notes file: ${messageOf(error)}`);
       }
     }).open();
   }
@@ -30022,14 +30146,14 @@ var PdfInkView = class extends InkWritingView {
   withPageUndo(change, label) {
     var _a, _b;
     if (!this.sidecar || !this.canEdit() || !this.writerHeld) {
-      new import_obsidian7.Notice(`Ink Notes could not ${label}: this view is read-only`);
+      new import_obsidian8.Notice(`Ink Notes could not ${label}: this view is read-only`);
       return;
     }
     this.finishPointerInput(false);
     const before = serializeSidecar(this.sidecar);
     const beforePageId = (_a = this.sidecar.notePages[this.noteIndex]) == null ? void 0 : _a.id;
     if (!change()) {
-      new import_obsidian7.Notice(`Ink Notes could not ${label}: source PDF pages are permanent`);
+      new import_obsidian8.Notice(`Ink Notes could not ${label}: source PDF pages are permanent`);
       return;
     }
     const after = serializeSidecar(this.sidecar);
@@ -30057,7 +30181,7 @@ var PdfInkView = class extends InkWritingView {
       this.renderAll();
       void this.renderPdfPage();
     } catch (error) {
-      new import_obsidian7.Notice(`Ink Notes could not restore the previous page state: ${messageOf(error)}`);
+      new import_obsidian8.Notice(`Ink Notes could not restore the previous page state: ${messageOf(error)}`);
     }
   }
   markSidecarChanged() {
@@ -30704,7 +30828,7 @@ var PdfInkView = class extends InkWritingView {
       await this.app.vault.create(conflictPath, serializeSidecar(sidecar));
       this.sidecarRaw = diskRaw;
       this.dirty = false;
-      new import_obsidian7.Notice(`Ink Notes kept your notes in ${conflictPath}`);
+      new import_obsidian8.Notice(`Ink Notes kept your notes in ${conflictPath}`);
       return { status: "conflict", message: reason };
     } catch (error) {
       return { status: "failed", message: `${reason}; writing the conflict copy failed: ${messageOf(error)}` };
@@ -30714,12 +30838,12 @@ var PdfInkView = class extends InkWritingView {
   async exportHandwrittenCopy() {
     if (!this.file || !this.sidecar) return;
     if (!sidecarHasInk(this.sidecar)) {
-      new import_obsidian7.Notice("This PDF has no handwriting to export yet");
+      new import_obsidian8.Notice("This PDF has no handwriting to export yet");
       return;
     }
     const outcome = await this.flushSaveNow();
     if (outcome.status === "failed") {
-      new import_obsidian7.Notice(`Export cancelled: could not save notes (${outcome.message})`);
+      new import_obsidian8.Notice(`Export cancelled: could not save notes (${outcome.message})`);
       return;
     }
     try {
@@ -30727,20 +30851,20 @@ var PdfInkView = class extends InkWritingView {
       const output = await exportHandwrittenPdf(bytes, this.sidecar, this.file.basename, this.canvasLogicalWidth);
       const target = exportPathFor(this.file.path, (candidate) => this.app.vault.getAbstractFileByPath(candidate) !== null);
       await this.app.vault.createBinary(target, output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength));
-      new import_obsidian7.Notice(`Exported ${target}`);
+      new import_obsidian8.Notice(`Exported ${target}`);
     } catch (error) {
       if (error instanceof PdfExportError) {
-        new import_obsidian7.Notice(`Export failed: ${error.message}. Your notes are untouched.`);
+        new import_obsidian8.Notice(`Export failed: ${error.message}. Your notes are untouched.`);
         return;
       }
-      new import_obsidian7.Notice(`Export failed: ${messageOf(error)}`);
+      new import_obsidian8.Notice(`Export failed: ${messageOf(error)}`);
     }
   }
 };
 function messageOf(error) {
   return error instanceof Error ? error.message : String(error);
 }
-var RecoveryChoiceModal = class extends import_obsidian7.SuggestModal {
+var RecoveryChoiceModal = class extends import_obsidian8.SuggestModal {
   constructor(app, candidates, choose) {
     super(app);
     this.candidates = candidates;
@@ -30801,7 +30925,7 @@ function around1(obj, method, createWrapper) {
 }
 
 // src/pdf-takeover.ts
-var import_obsidian8 = require("obsidian");
+var import_obsidian9 = require("obsidian");
 var PDF_VIEW_ENHANCER_PLUGIN_IDS = ["pdf-plus"];
 function pdfTakeoverReplacement(viewState, gate, viewType) {
   var _a;
@@ -30822,7 +30946,7 @@ var PdfTabTakeover = class {
   get installed() {
     return this.uninstaller !== null;
   }
-  install(target = import_obsidian8.WorkspaceLeaf.prototype) {
+  install(target = import_obsidian9.WorkspaceLeaf.prototype) {
     if (this.uninstaller) return;
     const takeover = this;
     this.inert = false;
@@ -30867,7 +30991,7 @@ var PdfTabTakeover = class {
 var DEFAULT_SETTINGS = {
   takeOverPdfTabs: true
 };
-var InkNotesPlugin = class extends import_obsidian9.Plugin {
+var InkNotesPlugin = class extends import_obsidian10.Plugin {
   constructor() {
     super(...arguments);
     this.config = { ...DEFAULT_SETTINGS };
@@ -30890,7 +31014,7 @@ var InkNotesPlugin = class extends import_obsidian9.Plugin {
       scheduleSave: (state) => this.toolStateSaver.schedule(state)
     };
     this.store = new NotebookStore(this.app);
-    this.workers = new InkWorkerService((message) => new import_obsidian9.Notice(message));
+    this.workers = new InkWorkerService((message) => new import_obsidian10.Notice(message));
     this.register(() => this.workers.dispose());
     this.registerView(VIEW_TYPE_INK, (leaf) => this.createView(leaf));
     this.registerExtensions([INK_EXTENSION], VIEW_TYPE_INK);
@@ -30980,7 +31104,7 @@ var InkNotesPlugin = class extends import_obsidian9.Plugin {
       }),
       isPdfFile: (path) => {
         const file = this.app.vault.getAbstractFileByPath(path);
-        return file instanceof import_obsidian9.TFile && file.extension === "pdf";
+        return file instanceof import_obsidian10.TFile && file.extension === "pdf";
       }
     }), VIEW_TYPE_PDF_INK);
     this.registerView(VIEW_TYPE_PDF_INK, (leaf) => {
@@ -30992,14 +31116,14 @@ var InkNotesPlugin = class extends import_obsidian9.Plugin {
       this.takeover.install();
       this.register(() => this.takeover.uninstall());
       this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
-        if (file instanceof import_obsidian9.TFile && file.extension === "pdf") {
+        if (file instanceof import_obsidian10.TFile && file.extension === "pdf") {
           void this.pdfStore.migrateForRename(file.path, oldPath).catch(() => {
           });
         }
       }));
       this.registerEvent(this.app.vault.on("modify", (file) => {
         var _a;
-        if (!(file instanceof import_obsidian9.TFile) || ((_a = file.parent) == null ? void 0 : _a.path) !== PDF_INK_FOLDER || !file.name.endsWith(`.${PDF_SIDECAR_EXTENSION}`)) return;
+        if (!(file instanceof import_obsidian10.TFile) || ((_a = file.parent) == null ? void 0 : _a.path) !== PDF_INK_FOLDER || !file.name.endsWith(`.${PDF_SIDECAR_EXTENSION}`)) return;
         for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_PDF_INK)) {
           if (leaf.view instanceof PdfInkView) void leaf.view.reloadExternalSidecar(file.path);
         }
@@ -31021,7 +31145,7 @@ var InkNotesPlugin = class extends import_obsidian9.Plugin {
     this.toolState.eraserMode = stored.eraserMode;
     this.toolState.eraserSize = stored.eraserSize;
     return this.saveData({ takeOverPdfTabs: this.config.takeOverPdfTabs, toolState: stored }).catch((error) => {
-      new import_obsidian9.Notice(`Ink Notes could not save tool settings: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian10.Notice(`Ink Notes could not save tool settings: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
   /** Persists the plugin settings together with the latest tool settings. */
@@ -31035,14 +31159,20 @@ var InkNotesPlugin = class extends import_obsidian9.Plugin {
   }
   async openNotebook() {
     const files = await this.store.list();
-    if (files.length === 0) {
-      await this.createNotebook();
-      return;
-    }
-    new NotebookSuggestModal(this.app, files, (file) => this.runAsync(this.openFile(file), `open ${file.path}`)).open();
+    new NotebookSuggestModal(
+      this.app,
+      files,
+      (file) => this.runAsync(this.openFile(file), `open ${file.path}`),
+      (title) => this.createNotebook(title),
+      async (file, title) => {
+        const parent = file.path.slice(0, file.path.lastIndexOf("/") + 1);
+        const path = `${parent}${title}.${INK_EXTENSION}`;
+        if (path !== file.path) await this.app.fileManager.renameFile(file, path);
+      }
+    ).open();
   }
-  async createNotebook() {
-    const file = await this.store.create("Ink Notebook");
+  async createNotebook(title = "Ink Notebook") {
+    const file = await this.store.create(title);
     await this.openFile(file);
   }
   async openFile(file, pageId) {
@@ -31051,7 +31181,7 @@ var InkNotesPlugin = class extends import_obsidian9.Plugin {
     if (pageId && leaf.view instanceof InkView) leaf.view.revealPage(pageId);
   }
   runAsync(action, operation) {
-    void action.catch((error) => new import_obsidian9.Notice(`Ink Notes could not ${operation}: ${error instanceof Error ? error.message : String(error)}`));
+    void action.catch((error) => new import_obsidian10.Notice(`Ink Notes could not ${operation}: ${error instanceof Error ? error.message : String(error)}`));
   }
   queueRefresh(file) {
     const existing = this.refreshTimers.get(file.path);
@@ -31076,13 +31206,13 @@ var InkNotesPlugin = class extends import_obsidian9.Plugin {
         }
       } while (this.pendingRefresh.has(file.path));
     } catch (error) {
-      new import_obsidian9.Notice(`Ink Notes could not reload ${file.path}: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian10.Notice(`Ink Notes could not reload ${file.path}: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       this.refreshing.delete(file.path);
     }
   }
 };
-var InkSettingTab = class extends import_obsidian9.PluginSettingTab {
+var InkSettingTab = class extends import_obsidian10.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -31124,23 +31254,6 @@ var InkSettingTab = class extends import_obsidian9.PluginSettingTab {
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_INK)) {
       if (leaf.view instanceof InkView) run(leaf.view);
     }
-  }
-};
-var NotebookSuggestModal = class extends import_obsidian9.SuggestModal {
-  constructor(app, files, select) {
-    super(app);
-    this.files = files;
-    this.select = select;
-  }
-  getSuggestions(query) {
-    const search = query.trim().toLowerCase();
-    return this.files.filter((file) => !search || file.path.toLowerCase().includes(search));
-  }
-  renderSuggestion(file, el) {
-    el.setText(file.path);
-  }
-  onChooseSuggestion(file) {
-    this.select(file);
   }
 };
 /*! Bundled license information:
