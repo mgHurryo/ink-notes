@@ -841,11 +841,30 @@ export class PdfInkView extends InkWritingView {
         .onClick(() => this.withPageUndo(() => deleteBlankNotePage(this.sidecar!, current.id), "delete the blank page")));
     }
     menu.addSeparator();
+    // The notebook menu has had zoom entries forever; the PDF view had none,
+    // so a manual pinch left no way back to the fit (the manual zoom latches
+    // until the document changes - which read as "the fit is huge").
+    menu.addItem((item) => item.setTitle("Zoom out").setDisabled(this.zoom <= this.fitZoom)
+      .onClick(() => this.setZoom(this.zoom / PDF_ZOOM_STEP)));
+    menu.addItem((item) => item.setTitle("Reset zoom").setDisabled(!this.zoomTouched)
+      .onClick(() => this.resetZoom()));
+    menu.addItem((item) => item.setTitle("Zoom in").setDisabled(this.zoom >= PDF_ZOOM_MAX)
+      .onClick(() => this.setZoom(this.zoom * PDF_ZOOM_STEP)));
+    menu.addSeparator();
     menu.addItem((item) => item.setTitle("Export PDF with handwriting").setIcon("download")
       .onClick(() => void this.exportHandwrittenCopy()));
     menu.addItem((item) => item.setTitle("Open with the built-in viewer").setIcon("book-open")
       .onClick(() => void this.restoreBuiltinViewer()));
     menu.showAtMouseEvent(event);
+  }
+
+  /** Back to the fit: clears the manual-zoom latch so layout re-fits. */
+  private resetZoom(): void {
+    this.zoomTouched = false;
+    // Neighbour previews carry the old scale; re-rendering refills them.
+    this.neighbourCache.clear();
+    this.layoutPage();
+    this.schedulePdfRender();
   }
 
   // ------------------------------------------------------------- page ops
@@ -971,7 +990,8 @@ export class PdfInkView extends InkWritingView {
     const contentHeight = Math.max(1, this.scroller.clientHeight - PDF_PAGE_PADDING * 2);
     this.fitZoom = Math.max(0.05, Math.min(
       this.pageBaseWidth / Math.max(1, display.width),
-      contentHeight / Math.max(1, display.height)));
+      contentHeight / Math.max(1, display.height),
+      PDF_ZOOM_MAX));
     if (!this.zoomTouched) this.zoom = this.fitZoom;
     this.pageWrap.setCssStyles({
       width: `${this.pageBaseWidth * this.zoom}px`,
