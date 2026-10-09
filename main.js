@@ -22750,6 +22750,9 @@ var BrushPopoverController = class {
   constructor(parent, options) {
     this.parent = parent;
     this.toolButtons = /* @__PURE__ */ new Map();
+    /** Pending plus-picker settles; flushed when the panel closes in case the
+     *  platform picker never blurs its input. */
+    this.customPickers = [];
     this.openState = false;
     this.curveOpen = false;
     this.dragIndex = -1;
@@ -22864,13 +22867,11 @@ var BrushPopoverController = class {
       "aria-label": `${spec.label} custom color`,
       "data-brush-tool": spec.tool
     } });
-    let addTimer;
+    let pickedSinceBlur = false;
     const flushPickedColor = () => {
       var _a, _b;
-      if (addTimer !== void 0) {
-        window.clearTimeout(addTimer);
-        addTimer = void 0;
-      }
+      if (!pickedSinceBlur) return;
+      pickedSinceBlur = false;
       const picked = input.value;
       settings.color = picked;
       const palette = (_b = (_a = this.options).palette) == null ? void 0 : _b.call(_a);
@@ -22883,13 +22884,16 @@ var BrushPopoverController = class {
       this.update();
     };
     input.addEventListener("input", () => {
+      pickedSinceBlur = true;
       settings.color = input.value;
       this.updateColorSwatches(spec.tool, input.value);
       this.update();
-      if (addTimer !== void 0) window.clearTimeout(addTimer);
-      addTimer = window.setTimeout(flushPickedColor, 500);
     });
-    input.addEventListener("change", flushPickedColor);
+    input.addEventListener("change", () => {
+      pickedSinceBlur = true;
+    });
+    input.addEventListener("blur", flushPickedColor);
+    this.customPickers.push(flushPickedColor);
   }
   /** Rebuilds the swatch row from the live palette (after add/edit/remove). */
   buildSwatchesInto(spec) {
@@ -22941,19 +22945,19 @@ var BrushPopoverController = class {
         }, PICKER_ARM_MS);
       });
       picker.addEventListener("change", () => {
-        var _a2, _b2;
-        picker.style.pointerEvents = "none";
-        if (armTimer !== void 0) {
-          window.clearTimeout(armTimer);
-          armTimer = void 0;
-        }
+        var _a2, _b2, _c2, _d2;
         const palette2 = (_b2 = (_a2 = this.options).palette) == null ? void 0 : _b2.call(_a2);
         if (!palette2) return;
         const index = palette2.findIndex((entry) => entry.toLowerCase() === value.toLowerCase());
         if (index < 0 || picker.value.toLowerCase() === value.toLowerCase()) return;
         if (settings.color.toLowerCase() === value.toLowerCase()) settings.color = picker.value;
         palette2[index] = picker.value;
-        this.buildSwatchesInto(spec);
+        const newLabel = (_d2 = (_c2 = INK_COLORS.find((color) => color.value.toLowerCase() === picker.value.toLowerCase())) == null ? void 0 : _c2.label) != null ? _d2 : "Custom";
+        swatch.style.backgroundColor = picker.value;
+        swatch.dataset.color = picker.value;
+        picker.dataset.color = picker.value;
+        swatch.setAttribute("aria-label", `${spec.label} ${newLabel.toLowerCase()}`);
+        swatch.title = `${newLabel} \u2014 double-tap to change, hold to remove`;
         this.update();
       });
       let pressTimer;
@@ -23134,6 +23138,7 @@ var BrushPopoverController = class {
   close() {
     if (!this.openState) return;
     this.openState = false;
+    for (const flush of this.customPickers) flush();
     this.root.setAttribute("aria-hidden", "true");
     closeAnchoredPopover(this.root, () => void 0);
   }
@@ -26937,6 +26942,8 @@ var InkView = class extends InkWritingView {
     /** True while a decided flip is animating/committing; a trailing
      *  touchcancel must not spring it back (double-settle = the flash). */
     this.flipSettling = false;
+    /** Last drag offset; settle animations continue from it. */
+    this.swipeDragOffset = 0;
     this.store = store;
     this.workers = workers;
     if (toolState) this.useSharedToolState(toolState);
@@ -27422,6 +27429,7 @@ var InkView = class extends InkWritingView {
   swipeDrag(offset) {
     const extent = this.pageExtent;
     if (!extent) return;
+    this.swipeDragOffset = offset;
     this.ensureSwipeStage(offset);
     extent.style.transition = "none";
     extent.style.transform = `translateX(${offset}px)`;
@@ -27469,54 +27477,55 @@ var InkView = class extends InkWritingView {
     }
     this.swipeStage = stage;
   }
+  /** Continues a transform from `from` to `to` via the Web Animations API
+   *  (deterministic start, reliable onfinish - see the PDF view). */
+  animateTransformX(el, from, to, done) {
+    el.style.transition = "none";
+    el.style.transform = `translateX(${from}px)`;
+    if (from === to || typeof el.animate !== "function") {
+      el.style.transform = `translateX(${to}px)`;
+      done == null ? void 0 : done();
+      return;
+    }
+    const animation = el.animate(
+      [{ transform: `translateX(${from}px)` }, { transform: `translateX(${to}px)` }],
+      { duration: 160, easing: "ease-out" }
+    );
+    animation.onfinish = () => {
+      el.style.transform = `translateX(${to}px)`;
+      done == null ? void 0 : done();
+    };
+    animation.oncancel = () => done == null ? void 0 : done();
+  }
   swipeSettle(delta) {
     const extent = this.pageExtent;
     if (!extent) {
       this.destroySwipeStage();
       return;
     }
-    if (!delta || !this.swipeStage) {
-      if (this.flipSettling) return;
-      extent.style.transition = "transform 160ms ease-out";
-      extent.style.transform = "translateX(0px)";
-      if (this.swipeStage) {
-        this.swipeStage.style.transition = "transform 160ms ease-out";
-        this.swipeStage.style.transform = "translateX(0px)";
-      }
-      if (this.swipeStageTimer === void 0) {
-        this.swipeStageTimer = window.setTimeout(() => {
-          this.swipeStageTimer = void 0;
-          this.destroySwipeStage();
-        }, 200);
-      }
+    const stage = this.swipeStage;
+    const from = this.swipeDragOffset;
+    this.swipeDragOffset = 0;
+    if (!delta || !stage) {
+      this.animateTransformX(extent, from, 0);
+      if (stage) this.animateTransformX(stage, from, 0, () => this.destroySwipeStage());
       return;
     }
     if (this.flipSettling) return;
     this.flipSettling = true;
-    const side = Number(this.swipeStage.dataset.neighbor) - this.pageIndex;
+    const side = Number(stage.dataset.neighbor) - this.pageIndex;
     const page = this.pageElement;
     const width = page.offsetWidth;
     const gap = Math.max(12, Math.round(page.offsetLeft));
-    extent.style.transition = "transform 160ms ease-out";
-    extent.style.transform = `translateX(${-delta * width}px)`;
-    this.swipeStage.style.transition = "transform 160ms ease-out";
-    this.swipeStage.style.transform = `translateX(${-side * (width + gap)}px)`;
-    let committed = false;
-    const commit = () => {
-      if (committed || !this.swipeStage) return;
-      committed = true;
+    this.animateTransformX(extent, from, -delta * width);
+    this.animateTransformX(stage, from, -side * (width + gap), () => {
       this.flipSettling = false;
-      extent.style.transition = "none";
-      extent.style.transform = "none";
       this.changePage(delta);
       this.swipeStageTimer = window.setTimeout(() => {
         this.swipeStageTimer = void 0;
         this.destroySwipeStage();
       }, 650);
-    };
-    this.swipeStage.addEventListener("transitionend", commit, { once: true });
-    if (this.swipeStageTimer !== void 0) window.clearTimeout(this.swipeStageTimer);
-    this.swipeStageTimer = window.setTimeout(commit, 280);
+    });
   }
   destroySwipeStage() {
     var _a;
@@ -28939,6 +28948,8 @@ var PdfInkView = class extends InkWritingView {
     /** True while a decided flip is animating/committing; a trailing
      *  touchcancel must not spring it back (double-settle = the flash). */
     this.flipSettling = false;
+    /** Last drag offset; settle animations continue from it. */
+    this.swipeDragOffset = 0;
     this.scope = new import_obsidian7.Scope(this.app.scope);
     this.scope.register(["Mod"], "z", () => this.undo());
     this.scope.register(["Mod", "Shift"], "z", () => this.redo());
@@ -29804,6 +29815,7 @@ var PdfInkView = class extends InkWritingView {
   swipeDrag(offset) {
     const wrap = this.pageWrap;
     if (!wrap) return;
+    this.swipeDragOffset = offset;
     this.ensureSwipeStage(offset);
     wrap.setCssStyles({ transition: "none", transform: `translateX(${offset}px)` });
     if (this.swipeStage) this.swipeStage.setCssStyles({ transition: "none", transform: `translateX(${offset}px)` });
@@ -29899,49 +29911,53 @@ var PdfInkView = class extends InkWritingView {
     } catch (e) {
     }
   }
+  /** Continues a transform from `from` to `to` via the Web Animations API:
+   *  unlike a CSS transition it starts deterministically (no re-style edge
+   *  cases inside touch handlers) and onfinish is a reliable commit point. */
+  animateTransformX(el, from, to, done) {
+    el.setCssStyles({ transition: "none", transform: `translateX(${from}px)` });
+    if (from === to || typeof el.animate !== "function") {
+      el.setCssStyles({ transform: `translateX(${to}px)` });
+      done == null ? void 0 : done();
+      return;
+    }
+    const animation = el.animate(
+      [{ transform: `translateX(${from}px)` }, { transform: `translateX(${to}px)` }],
+      { duration: 160, easing: "ease-out" }
+    );
+    animation.onfinish = () => {
+      el.setCssStyles({ transform: `translateX(${to}px)` });
+      done == null ? void 0 : done();
+    };
+    animation.oncancel = () => done == null ? void 0 : done();
+  }
   swipeSettle(delta) {
     const wrap = this.pageWrap;
     if (!wrap) {
       this.destroySwipeStage();
       return;
     }
-    if (!delta || !this.swipeStage) {
-      if (this.flipSettling) return;
-      wrap.setCssStyles({ transition: "transform 160ms ease-out", transform: "translateX(0px)" });
-      if (this.swipeStage) this.swipeStage.setCssStyles({ transition: "transform 160ms ease-out", transform: "translateX(0px)" });
-      if (this.swipeStageTimer === void 0) {
-        this.swipeStageTimer = window.setTimeout(() => {
-          this.swipeStageTimer = void 0;
-          this.destroySwipeStage();
-        }, 200);
-      }
+    const stage = this.swipeStage;
+    const from = this.swipeDragOffset;
+    this.swipeDragOffset = 0;
+    if (!delta || !stage) {
+      this.animateTransformX(wrap, from, 0);
+      if (stage) this.animateTransformX(stage, from, 0, () => this.destroySwipeStage());
       return;
     }
     if (this.flipSettling) return;
     this.flipSettling = true;
-    const side = Number(this.swipeStage.dataset.neighbor) - this.noteIndex;
+    const side = Number(stage.dataset.neighbor) - this.noteIndex;
     const width = wrap.offsetWidth;
     const gap = Math.max(12, Math.round(wrap.offsetLeft));
-    wrap.setCssStyles({ transition: "transform 160ms ease-out", transform: `translateX(${-delta * width}px)` });
-    this.swipeStage.setCssStyles({ transition: "transform 160ms ease-out", transform: `translateX(${-side * (width + gap)}px)` });
-    let committed = false;
-    const commit = () => {
-      if (committed || !this.swipeStage) return;
-      committed = true;
+    this.animateTransformX(wrap, from, -delta * width);
+    this.animateTransformX(stage, from, -side * (width + gap), () => {
       this.flipSettling = false;
-      wrap.setCssStyles({ transition: "none", transform: "none" });
       void this.navigatePages(delta).finally(() => this.destroySwipeStage());
-    };
-    this.swipeStage.addEventListener("transitionend", commit, { once: true });
-    if (this.swipeStageTimer !== void 0) window.clearTimeout(this.swipeStageTimer);
-    this.swipeStageTimer = window.setTimeout(commit, 280);
+    });
   }
   destroySwipeStage() {
     var _a;
-    if (this.swipeStageTimer !== void 0) {
-      window.clearTimeout(this.swipeStageTimer);
-      this.swipeStageTimer = void 0;
-    }
     (_a = this.swipeStage) == null ? void 0 : _a.remove();
     this.swipeStage = null;
     this.flipSettling = false;

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0-beta.32 - 2026-10-10
+
+- The page-flip settle now CONTINUES the slide from the exact release point - flips glide into the slot, rejected flips glide home - driven by the Web Animations API with the commit on animation finish. The previous transition/timer chain was what devices delayed (the freeze mid-slide with both pages visible that then self-recovered). Both editors.
+- Double-tapping a preset swatch no longer has the color picker yanked away mid-adjust: the settled pick now updates the swatch strictly in place - the previous rebuild destroyed the very input the platform picker is anchored to, closing it immediately and discarding every further adjustment.
+- The plus button adds exactly one preset per picker session: the platform picker fires a change for every swatch tapped inside it, so the palette received every tried color at once. The live value becomes the tool color while adjusting; it joins the palette once, when the picker closes.
+
 ## 0.8.0-beta.31 - 2026-10-10
 
 - The PDF page is pane-sized again: beta.29's fit formula mixed its units (the page box is already pane-wide at zoom 1, and the formula scaled by paneWidth/pageWidth a second time), blowing every page ~1.4x past the pane - cut off right and bottom - with Reset recomputing the same broken value. A landscape page now fits the pane width at zoom 1; a portrait page fits the pane height. Zoom out / Reset zoom / Zoom in stay in the page-options menu.

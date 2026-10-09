@@ -609,6 +609,7 @@ export class InkView extends InkWritingView {
   protected swipeDrag(offset: number): void {
     const extent = this.pageExtent;
     if (!extent) return;
+    this.swipeDragOffset = offset;
     this.ensureSwipeStage(offset);
     extent.style.transition = "none";
     extent.style.transform = `translateX(${offset}px)`;
@@ -660,57 +661,55 @@ export class InkView extends InkWritingView {
     this.swipeStage = stage;
   }
 
+  /** Last drag offset; settle animations continue from it. */
+  private swipeDragOffset = 0;
+
+  /** Continues a transform from `from` to `to` via the Web Animations API
+   *  (deterministic start, reliable onfinish - see the PDF view). */
+  private animateTransformX(el: HTMLElement, from: number, to: number, done?: () => void): void {
+    el.style.transition = "none";
+    el.style.transform = `translateX(${from}px)`;
+    if (from === to || typeof el.animate !== "function") {
+      el.style.transform = `translateX(${to}px)`;
+      done?.();
+      return;
+    }
+    const animation = el.animate(
+      [{ transform: `translateX(${from}px)` }, { transform: `translateX(${to}px)` }],
+      { duration: 160, easing: "ease-out" });
+    animation.onfinish = () => {
+      el.style.transform = `translateX(${to}px)`;
+      done?.();
+    };
+    animation.oncancel = () => done?.();
+  }
+
   protected swipeSettle(delta: number): void {
     const extent = this.pageExtent;
     if (!extent) { this.destroySwipeStage(); return; }
-    if (!delta || !this.swipeStage) {
-      // A decided flip is never spring-backed (see the PDF view): a trailing
-      // touchcancel used to slide the stage back beside the incoming page.
-      if (this.flipSettling) return;
-      extent.style.transition = "transform 160ms ease-out";
-      extent.style.transform = "translateX(0px)";
-      if (this.swipeStage) {
-        this.swipeStage.style.transition = "transform 160ms ease-out";
-        this.swipeStage.style.transform = "translateX(0px)";
-      }
-      if (this.swipeStageTimer === undefined) {
-        this.swipeStageTimer = window.setTimeout(() => { this.swipeStageTimer = undefined; this.destroySwipeStage(); }, 200);
-      }
+    const stage = this.swipeStage;
+    const from = this.swipeDragOffset;
+    this.swipeDragOffset = 0;
+    if (!delta || !stage) {
+      // Spring back: the dragged-out page glides home from the release point.
+      this.animateTransformX(extent, from, 0);
+      if (stage) this.animateTransformX(stage, from, 0, () => this.destroySwipeStage());
       return;
     }
     if (this.flipSettling) return;
     this.flipSettling = true;
-    // Same gallery geometry as the PDF view: the neighbour slides into the
-    // page slot and covers it until the real page renders underneath.
-    const side = Number(this.swipeStage.dataset.neighbor) - this.pageIndex;
+    // The slide continues from the release point INTO the slot; the stage
+    // covers the swap while changePage swaps the content in place.
+    const side = Number(stage.dataset.neighbor) - this.pageIndex;
     const page = this.pageElement;
     const width = page.offsetWidth;
     const gap = Math.max(12, Math.round(page.offsetLeft));
-    extent.style.transition = "transform 160ms ease-out";
-    extent.style.transform = `translateX(${-delta * width}px)`;
-    this.swipeStage.style.transition = "transform 160ms ease-out";
-    this.swipeStage.style.transform = `translateX(${-side * (width + gap)}px)`;
-    // Commit only when the slide has actually finished (see the PDF view).
-    let committed = false;
-    const commit = (): void => {
-      if (committed || !this.swipeStage) return;
-      committed = true;
+    this.animateTransformX(extent, from, -delta * width);
+    this.animateTransformX(stage, from, -side * (width + gap), () => {
       this.flipSettling = false;
-      // At the animation end the stage sits exactly on the page slot, so
-      // only the extent's transform drops (invisible underneath the stage).
-      // The stage itself never re-positions here: fresh offset reads during
-      // teardown returned intermediate values on devices and teleported the
-      // old page visibly aside before it disappeared.
-      extent.style.transition = "none";
-      extent.style.transform = "none";
       this.changePage(delta);
       this.swipeStageTimer = window.setTimeout(() => { this.swipeStageTimer = undefined; this.destroySwipeStage(); }, 650);
-    };
-    // Listen on the STAGE (no transition-firing descendants - see the PDF
-    // view): a wrap listener committed mid-slide on devices.
-    this.swipeStage.addEventListener("transitionend", commit, { once: true });
-    if (this.swipeStageTimer !== undefined) window.clearTimeout(this.swipeStageTimer);
-    this.swipeStageTimer = window.setTimeout(commit, 280);
+    });
   }
 
   private destroySwipeStage(): void {
