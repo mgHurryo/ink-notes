@@ -960,13 +960,18 @@ export class PdfInkView extends InkWritingView {
   private layoutPage(): void {
     if (!this.scroller || !this.pageWrap) return;
     const display = this.rotatedSize(this.currentNotePage());
-    this.pageBaseWidth = Math.min(980, Math.max(200, this.scroller.clientWidth - PDF_PAGE_PADDING * 2)) || 700;
+    this.pageBaseWidth = Math.max(200, this.scroller.clientWidth - PDF_PAGE_PADDING * 2) || 700;
     this.pageBaseHeight = this.pageBaseWidth * display.height / display.width;
-    // Smart fit (contain): the whole page is always visible and the tighter
-    // axis sits flush - portrait pages fill the height (no vertical scroll
-    // for a tall Word page), landscape pages fill the width edge to edge.
+    // Fit = contain without caps: the tight axis sits flush (a landscape
+    // slide fills the pane width, a portrait page fills the pane height -
+    // never width-filled across a portrait page), and the page is as large
+    // as the pane allows. The old rule read as "small page floating in the
+    // middle" only because of its two caps: the 980px page-box limit and the
+    // fitZoom <= 1 limit, which together held a fullscreen pane to half size.
     const contentHeight = Math.max(1, this.scroller.clientHeight - PDF_PAGE_PADDING * 2);
-    this.fitZoom = Math.min(1, contentHeight / this.pageBaseHeight);
+    this.fitZoom = Math.max(0.05, Math.min(
+      this.pageBaseWidth / Math.max(1, display.width),
+      contentHeight / Math.max(1, display.height)));
     if (!this.zoomTouched) this.zoom = this.fitZoom;
     this.pageWrap.setCssStyles({
       width: `${this.pageBaseWidth * this.zoom}px`,
@@ -1248,8 +1253,11 @@ export class PdfInkView extends InkWritingView {
     const commit = (): void => {
       if (committed || !this.swipeStage) return;
       committed = true;
-      const stage = this.swipeStage;
-      stage.setCssStyles({ transition: "none", left: `${wrap.offsetLeft}px`, transform: "none" });
+      // At the animation end the stage sits exactly on the page slot, so
+      // only the page's own transform drops (invisible underneath the
+      // stage). The stage itself never re-positions here: reading fresh
+      // offsets mid-teardown handed back intermediate values on devices and
+      // teleported the old page visibly to the side before it disappeared.
       wrap.setCssStyles({ transition: "none", transform: "none" });
       void this.navigatePages(delta).finally(() => this.destroySwipeStage());
     };

@@ -16,6 +16,11 @@ import type { NotebookStore } from "../src/storage";
 import type { WorkspaceLeaf } from "obsidian";
 
 const button = (label: string) => document.querySelector<HTMLButtonElement>('button[aria-label="' + label + '"]')!;
+/** iPads deliver no dblclick for touch; the preset editor opens on two taps. */
+const doubleTap = (el: HTMLElement): void => {
+  el.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+  el.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+};
 // An opened popover keeps a requestAnimationFrame in flight; jsdom runs it
 // on a timer that can fire after afterEach's restoreAllMocks(), hitting
 // jsdom's unimplemented HTMLCanvasElement.getContext and printing
@@ -108,10 +113,13 @@ describe("reference-style editor", () => {
     // The pinned popover header carries the live size readout.
     expect(document.querySelector(".ink-popover-title")?.textContent).toBe("Pen settings · 5.5 px");
     const color = document.querySelector<HTMLInputElement>('input[aria-label="Pen custom color"]')!;
+    // While the picker drags (input events), nothing is added: one pick must
+    // become exactly one preset, never the whole drag path.
     color.value = "#abcdef";
     color.dispatchEvent(new Event("input"));
-    // A picked custom color becomes a preset swatch (via the plus) and is
-    // selected immediately.
+    expect(document.querySelector('.ink-color-swatch[data-brush-tool="pen"][data-color="#abcdef"]')).toBeNull();
+    // The pick settles (change): one swatch is added and selected.
+    color.dispatchEvent(new Event("change"));
     const added = document.querySelector<HTMLElement>('.ink-color-swatch[data-brush-tool="pen"][data-color="#abcdef"]');
     expect(added?.getAttribute("aria-pressed")).toBe("true");
   });
@@ -143,12 +151,23 @@ describe("reference-style editor", () => {
     expect(document.activeElement).toBe(
       document.querySelector<HTMLInputElement>('input[aria-label="Highlighter size"]'));
   });
+  it("wraps pen dynamics away from the highlighter and resets scroll on a panel switch", async () => {
+    button("Pen").click();   // pen panel opens (pen starts active)
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    const dynamics = document.querySelector<HTMLElement>(".ink-pen-dynamics");
+    expect(dynamics).not.toBeNull();
+    expect(dynamics!.querySelector('input[aria-label="Smooth"]')).not.toBeNull();
+    const body = document.querySelector<HTMLElement>(".ink-popover-body")!;
+    body.scrollTop = 120;
+    button("Highlight").click(); // panel switch must land at the top
+    expect(body.scrollTop).toBe(0);
+  });
   it("hints and applies double-click editing on a preset swatch", async () => {
     button("Pen").click();
     const blue = button("Pen blue");
     expect(blue.getAttribute("title")).toContain("double-click to edit");
     blue.click(); // select it first
-    blue.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    doubleTap(blue);
     await new Promise((resolve) => setTimeout(resolve, 30)); // editor open's rAF
     const editor = document.querySelector<HTMLElement>(".ink-preset-editor.is-open")!;
     expect(editor).not.toBeNull();
@@ -169,14 +188,14 @@ describe("reference-style editor", () => {
     button("Pen").click();
     for (let removed = 0; removed < 4; removed++) {
       const swatch = document.querySelectorAll<HTMLElement>('.ink-color-swatch[data-brush-tool="pen"]')[0];
-      swatch.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+      doubleTap(swatch);
       await new Promise((resolve) => setTimeout(resolve, 30)); // editor open's rAF
       const editor = document.querySelector<HTMLElement>(".ink-preset-editor.is-open")!;
       (editor.querySelector('button[aria-label="Remove preset color"]') as HTMLButtonElement).click();
     }
     expect(document.querySelectorAll('.ink-color-swatch[data-brush-tool="pen"]').length).toBe(1);
     const last = document.querySelector<HTMLElement>('.ink-color-swatch[data-brush-tool="pen"]')!;
-    last.dispatchEvent(new MouseEvent("dblclick", { bubbles: true }));
+    doubleTap(last);
     await new Promise((resolve) => setTimeout(resolve, 30)); // editor open's rAF
     const remove = document.querySelector<HTMLButtonElement>('.ink-preset-editor.is-open button[aria-label="Remove preset color"]')!;
     expect(remove.disabled).toBe(true);
