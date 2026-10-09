@@ -22708,6 +22708,8 @@ var INK_COLORS = [
 ];
 var PRESET_PALETTE_MIN = 1;
 var PRESET_PALETTE_MAX = 10;
+var DOUBLE_TAP_MS = 350;
+var LONG_PRESS_MS = 550;
 var POPOVER_TRANSITION_MS = 150;
 function placePopover(pop, anchor, margin = 12) {
   const anchorRect = anchor.getBoundingClientRect();
@@ -22748,9 +22750,10 @@ var BrushPopoverController = class {
   constructor(parent, options) {
     this.parent = parent;
     this.toolButtons = /* @__PURE__ */ new Map();
-    /** Per-swatch palette editor (double-click); at most one at a time. */
-    this.presetEditor = null;
-    this.presetEditorClose = null;
+    /** True while the off-screen picker above is open for a preset edit; the
+     *  tap-outside dismissal holds off, because the platform picker sheet sits
+     *  outside this popover's DOM. */
+    this.pickingColor = false;
     this.openState = false;
     this.curveOpen = false;
     this.dragIndex = -1;
@@ -22771,6 +22774,10 @@ var BrushPopoverController = class {
     }
     const body = this.root.createDiv({ cls: "ink-popover-body" });
     this.body = body;
+    this.presetColorInput = this.root.createEl("input", {
+      cls: "ink-hidden-color-input",
+      attr: { type: "color", "aria-hidden": "true", tabindex: "-1" }
+    });
     for (const spec of options.tools) this.buildToolPanel(body, spec);
     (_a = options.buildExtras) == null ? void 0 : _a.call(options, body, {
       addRange: (parent2, name, min, max, step, value, onChange) => this.addRange(parent2, name, min, max, step, value, onChange)
@@ -22907,107 +22914,98 @@ var BrushPopoverController = class {
       const label = (_e = (_d = INK_COLORS.find((color) => color.value.toLowerCase() === value.toLowerCase())) == null ? void 0 : _d.label) != null ? _e : "Custom";
       const swatch = swatches.createEl("button", { cls: "ink-color-swatch", attr: {
         type: "button",
-        title: `${label} \u2014 double-click to edit this preset`,
+        title: `${label} \u2014 double-tap to change, hold to remove`,
         "aria-label": `${spec.label} ${label.toLowerCase()}`,
         "aria-pressed": String(settings.color.toLowerCase() === value.toLowerCase()),
         "data-color": value,
         "data-brush-tool": spec.tool
       } });
       swatch.style.backgroundColor = value;
+      let suppressClick = false;
       swatch.addEventListener("click", () => {
+        if (suppressClick) {
+          suppressClick = false;
+          return;
+        }
         settings.color = value;
         this.updateColorSwatches(spec.tool, value);
         this.update();
       });
       let lastTapAt = 0;
+      let pressTimer;
+      const cancelPress = () => {
+        if (pressTimer !== void 0) {
+          window.clearTimeout(pressTimer);
+          pressTimer = void 0;
+        }
+      };
       swatch.addEventListener("pointerdown", () => {
         const now = Date.now();
-        if (now - lastTapAt <= 350) {
+        if (now - lastTapAt <= DOUBLE_TAP_MS) {
           lastTapAt = 0;
-          this.openPresetEditor(spec, value, swatch);
+          cancelPress();
+          this.editPresetColor(spec, value);
           return;
         }
         lastTapAt = now;
+        cancelPress();
+        pressTimer = window.setTimeout(() => {
+          pressTimer = void 0;
+          suppressClick = true;
+          this.removePresetColor(spec, value);
+        }, LONG_PRESS_MS);
       });
+      swatch.addEventListener("pointerup", cancelPress);
+      swatch.addEventListener("pointercancel", cancelPress);
+      swatch.addEventListener("pointerleave", cancelPress);
     }
   }
-  findSwatch(spec, value) {
-    let found = null;
-    this.root.querySelectorAll(`.ink-color-swatch[data-brush-tool="${spec.tool}"]`).forEach((candidate) => {
-      var _a;
-      if (!found && ((_a = candidate.dataset.color) == null ? void 0 : _a.toLowerCase()) === value.toLowerCase()) found = candidate;
-    });
-    return found;
-  }
   /**
-   * Double-click a preset swatch to edit that palette entry: a mini popover
-   * at the swatch with a color input and Remove (disabled at the one-swatch
-   * minimum). Edits mutate the shared palette array; update() carries them to
-   * the view's persistence.
+   * Re-colors one palette entry straight in the system picker: the shared
+   * off-screen input is pointed at the swatch's color and opened inside the
+   * tap's gesture; the settled change replaces the preset (and follows the
+   * tool's color along if it was selected).
    */
-  openPresetEditor(spec, value, anchor) {
+  editPresetColor(spec, value) {
     var _a, _b;
     const palette = (_b = (_a = this.options).palette) == null ? void 0 : _b.call(_a);
     if (!palette) return;
     const index = palette.findIndex((entry) => entry.toLowerCase() === value.toLowerCase());
     if (index < 0) return;
-    this.closePresetEditor();
-    const pop = this.parent.createDiv({ cls: "ink-preset-editor", attr: { role: "dialog", "aria-label": "Preset color" } });
-    const header = pop.createDiv({ cls: "ink-range-header" });
-    header.createSpan({ cls: "ink-size-popover-title", text: "Preset color" });
-    const hex = header.createSpan({ cls: "ink-control-value", text: palette[index] });
-    const input = pop.createEl("input", { attr: { type: "color", value: palette[index], "aria-label": "Preset color value" } });
-    const actions = pop.createDiv({ cls: "ink-curve-actions" });
-    const remove = actions.createEl("button", { text: "Remove", attr: { type: "button", "aria-label": "Remove preset color" } });
-    remove.disabled = palette.length <= PRESET_PALETTE_MIN;
-    const settings = this.options.getSettings(spec.tool);
-    input.addEventListener("input", () => {
-      if (palette[index].toLowerCase() === settings.color.toLowerCase()) settings.color = input.value;
-      palette[index] = input.value;
-      hex.textContent = input.value;
+    const input = this.presetColorInput;
+    input.value = palette[index];
+    this.pickingColor = true;
+    const settled = () => {
+      input.removeEventListener("change", settled);
+      this.pickingColor = false;
+      const currentIndex = palette.findIndex((entry) => entry.toLowerCase() === value.toLowerCase());
+      if (currentIndex < 0 || input.value.toLowerCase() === value.toLowerCase()) return;
+      const settings = this.options.getSettings(spec.tool);
+      if (settings.color.toLowerCase() === value.toLowerCase()) settings.color = input.value;
+      palette[currentIndex] = input.value;
       this.buildSwatchesInto(spec);
       this.update();
-    });
-    remove.addEventListener("click", () => {
-      var _a2;
-      const [removed] = palette.splice(index, 1);
-      if (settings.color.toLowerCase() === removed.toLowerCase()) settings.color = (_a2 = palette[0]) != null ? _a2 : removed;
-      this.buildSwatchesInto(spec);
-      this.update();
-      this.closePresetEditor();
-    });
-    this.presetEditor = pop;
-    const onOutside = (event) => {
-      const target = event.target;
-      if (target && pop.contains(target)) return;
-      this.closePresetEditor();
     };
-    const onKey = (event) => {
-      if (event.key === "Escape") this.closePresetEditor();
-    };
-    document.addEventListener("pointerdown", onOutside, true);
-    document.addEventListener("keydown", onKey, true);
-    this.presetEditorClose = () => {
-      document.removeEventListener("pointerdown", onOutside, true);
-      document.removeEventListener("keydown", onKey, true);
-    };
-    pop.style.visibility = "hidden";
-    window.requestAnimationFrame(() => {
-      var _a2;
-      if (this.presetEditor !== pop) return;
-      placePopover(pop, (_a2 = this.findSwatch(spec, palette[index])) != null ? _a2 : anchor, 8);
-      pop.style.visibility = "";
-      pop.addClass("is-open");
-    });
+    input.addEventListener("change", settled);
+    input.click();
   }
-  closePresetEditor() {
-    var _a;
-    const pop = this.presetEditor;
-    if (!pop) return;
-    this.presetEditor = null;
-    (_a = this.presetEditorClose) == null ? void 0 : _a.call(this);
-    this.presetEditorClose = null;
-    closeAnchoredPopover(pop, () => pop.remove());
+  /** Deletes one palette entry outright (the one-swatch minimum holds). */
+  removePresetColor(spec, value) {
+    var _a, _b, _c;
+    const palette = (_b = (_a = this.options).palette) == null ? void 0 : _b.call(_a);
+    if (!palette || palette.length <= PRESET_PALETTE_MIN) return;
+    const index = palette.findIndex((entry) => entry.toLowerCase() === value.toLowerCase());
+    if (index < 0) return;
+    const [removed] = palette.splice(index, 1);
+    const settings = this.options.getSettings(spec.tool);
+    if (settings.color.toLowerCase() === removed.toLowerCase()) settings.color = (_c = palette[0]) != null ? _c : removed;
+    this.buildSwatchesInto(spec);
+    this.update();
+    new import_obsidian.Notice("Preset color removed");
+  }
+  /** True while a preset's system picker is open; tap-outside must wait. */
+  isPickingColor() {
+    return this.pickingColor;
   }
   updateColorSwatches(tool, color) {
     this.root.querySelectorAll(`.ink-color-swatch[data-brush-tool="${tool}"]`).forEach((swatch) => {
@@ -23154,7 +23152,6 @@ var BrushPopoverController = class {
     if (!this.openState) return;
     this.openState = false;
     this.root.setAttribute("aria-hidden", "true");
-    this.closePresetEditor();
     closeAnchoredPopover(this.root, () => void 0);
   }
   /**
@@ -24180,6 +24177,7 @@ var InkWritingView = class extends import_obsidian2.FileView {
       const target = event.target;
       if (target && ((_a = target.closest) == null ? void 0 : _a.call(target, ".ink-tool-button"))) return;
       if (target && popover.root.contains(target)) return;
+      if (popover.isPickingColor()) return;
       popover.close();
     });
     this.registerDomEvent(document, "keydown", (event) => {
@@ -25720,6 +25718,9 @@ var InkWritingView = class extends import_obsidian2.FileView {
     const host = (_a = this.contentEl) != null ? _a : this.containerEl;
     if (!(host == null ? void 0 : host.createDiv)) return;
     const pop = host.createDiv({ cls: "ink-eraser-popover", attr: { role: "dialog", "aria-label": "Eraser settings" } });
+    for (const type of ["touchstart", "touchmove", "pointerdown"]) {
+      pop.addEventListener(type, (event) => event.stopPropagation());
+    }
     pop.createDiv({ cls: "ink-size-popover-title", text: "Eraser" });
     const modes = pop.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
     for (const [mode, label, shortLabel, iconName] of [["stroke", "Stroke eraser", "Stroke", "eraser"], ["circle", "Circle eraser", "Circle", "circle"], ["square", "Square eraser", "Square", "square"]]) {
@@ -25731,12 +25732,14 @@ var InkWritingView = class extends import_obsidian2.FileView {
         modes.querySelectorAll(".ink-eraser-mode").forEach((candidate) => {
           candidate.setAttribute("aria-checked", String(candidate.dataset.eraserMode === mode));
         });
+        syncSizeVisibility();
         this.refreshEraserCursor();
         this.scheduleToolStateSave();
       });
     }
-    pop.createDiv({ cls: "ink-settings-label", text: "Size" });
-    const range = pop.createEl("input", { attr: { type: "range", "aria-label": "Eraser size" } });
+    const sizeRow = pop.createDiv({ cls: "ink-eraser-size-row" });
+    sizeRow.createDiv({ cls: "ink-settings-label", text: "Size" });
+    const range = sizeRow.createEl("input", { attr: { type: "range", "aria-label": "Eraser size" } });
     range.min = "8";
     range.max = "160";
     range.step = "2";
@@ -25746,6 +25749,10 @@ var InkWritingView = class extends import_obsidian2.FileView {
       this.refreshEraserCursor();
       this.scheduleToolStateSave();
     });
+    const syncSizeVisibility = () => {
+      sizeRow.style.display = this.state.eraserMode === "stroke" ? "none" : "";
+    };
+    syncSizeVisibility();
     this.eraserPopover = pop;
     const place = () => {
       const target = anchor != null ? anchor : this.activeSettingsAnchor();
@@ -29557,9 +29564,20 @@ var PdfInkView = class extends InkWritingView {
       menu.addItem((item) => item.setTitle("Delete blank page").setIcon("trash-2").onClick(() => this.withPageUndo(() => deleteBlankNotePage(this.sidecar, current.id), "delete the blank page")));
     }
     menu.addSeparator();
+    menu.addItem((item) => item.setTitle("Zoom out").setDisabled(this.zoom <= this.fitZoom).onClick(() => this.setZoom(this.zoom / PDF_ZOOM_STEP)));
+    menu.addItem((item) => item.setTitle("Reset zoom").setDisabled(!this.zoomTouched).onClick(() => this.resetZoom()));
+    menu.addItem((item) => item.setTitle("Zoom in").setDisabled(this.zoom >= PDF_ZOOM_MAX).onClick(() => this.setZoom(this.zoom * PDF_ZOOM_STEP)));
+    menu.addSeparator();
     menu.addItem((item) => item.setTitle("Export PDF with handwriting").setIcon("download").onClick(() => void this.exportHandwrittenCopy()));
     menu.addItem((item) => item.setTitle("Open with the built-in viewer").setIcon("book-open").onClick(() => void this.restoreBuiltinViewer()));
     menu.showAtMouseEvent(event);
+  }
+  /** Back to the fit: clears the manual-zoom latch so layout re-fits. */
+  resetZoom() {
+    this.zoomTouched = false;
+    this.neighbourCache.clear();
+    this.layoutPage();
+    this.schedulePdfRender();
   }
   // ------------------------------------------------------------- page ops
   /** Apply a note page sequence change, sync the worker, and record undo. */
@@ -29664,7 +29682,8 @@ var PdfInkView = class extends InkWritingView {
     const contentHeight = Math.max(1, this.scroller.clientHeight - PDF_PAGE_PADDING * 2);
     this.fitZoom = Math.max(0.05, Math.min(
       this.pageBaseWidth / Math.max(1, display.width),
-      contentHeight / Math.max(1, display.height)
+      contentHeight / Math.max(1, display.height),
+      PDF_ZOOM_MAX
     ));
     if (!this.zoomTouched) this.zoom = this.fitZoom;
     this.pageWrap.setCssStyles({

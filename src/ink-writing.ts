@@ -633,6 +633,9 @@ export abstract class InkWritingView extends FileView {
       // tool must not close the popover first (it rebuilds for that tool).
       if (target && target.closest?.(".ink-tool-button")) return;
       if (target && popover.root.contains(target)) return;
+      // A preset's system color picker sheet lives outside this DOM; taps on
+      // it must not close the panel the swatch belongs to.
+      if (popover.isPickingColor()) return;
       popover.close();
     });
     this.registerDomEvent(document, "keydown", (event) => {
@@ -2274,6 +2277,12 @@ export abstract class InkWritingView extends FileView {
     // which only resolve inside the themed view. Hung on the container it
     // rendered with a fully transparent background and unthemed borders.
     const pop = host.createDiv({ cls: "ink-eraser-popover", attr: { role: "dialog", "aria-label": "Eraser settings" } });
+    // Menu priority over workspace gestures, exactly like the brush panel:
+    // without the shield, a slider drag reached the app chrome and dragged
+    // the sidebars out.
+    for (const type of ["touchstart", "touchmove", "pointerdown"] as const) {
+      pop.addEventListener(type, (event) => event.stopPropagation());
+    }
     pop.createDiv({ cls: "ink-size-popover-title", text: "Eraser" });
     const modes = pop.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
     for (const [mode, label, shortLabel, iconName] of [["stroke", "Stroke eraser", "Stroke", "eraser"], ["circle", "Circle eraser", "Circle", "circle"], ["square", "Square eraser", "Square", "square"]] as const) {
@@ -2285,12 +2294,14 @@ export abstract class InkWritingView extends FileView {
         modes.querySelectorAll<HTMLElement>(".ink-eraser-mode").forEach((candidate) => {
           candidate.setAttribute("aria-checked", String(candidate.dataset.eraserMode === mode));
         });
+        syncSizeVisibility();
         this.refreshEraserCursor();
         this.scheduleToolStateSave();
       });
     }
-    pop.createDiv({ cls: "ink-settings-label", text: "Size" });
-    const range = pop.createEl("input", { attr: { type: "range", "aria-label": "Eraser size" } });
+    const sizeRow = pop.createDiv({ cls: "ink-eraser-size-row" });
+    sizeRow.createDiv({ cls: "ink-settings-label", text: "Size" });
+    const range = sizeRow.createEl("input", { attr: { type: "range", "aria-label": "Eraser size" } });
     range.min = "8";
     range.max = "160";
     range.step = "2";
@@ -2300,6 +2311,12 @@ export abstract class InkWritingView extends FileView {
       this.refreshEraserCursor();
       this.scheduleToolStateSave();
     });
+    // The stroke eraser ignores the size (fixed hit radius) - offer the
+    // slider only for the shapes that use it.
+    const syncSizeVisibility = (): void => {
+      sizeRow.style.display = this.state.eraserMode === "stroke" ? "none" : "";
+    };
+    syncSizeVisibility();
     this.eraserPopover = pop;
     const place = (): void => {
       const target = anchor ?? this.activeSettingsAnchor();

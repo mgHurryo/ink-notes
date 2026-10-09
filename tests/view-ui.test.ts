@@ -162,43 +162,56 @@ describe("reference-style editor", () => {
     button("Highlight").click(); // panel switch must land at the top
     expect(body.scrollTop).toBe(0);
   });
-  it("hints and applies double-click editing on a preset swatch", async () => {
+  it("re-colors a preset straight in the system picker on double-tap", async () => {
     button("Pen").click();
     const blue = button("Pen blue");
-    expect(blue.getAttribute("title")).toContain("double-click to edit");
+    expect(blue.getAttribute("title")).toContain("double-tap to change");
     blue.click(); // select it first
+    const input = document.querySelector<HTMLInputElement>(".ink-hidden-color-input")!;
+    const click = vi.spyOn(input, "click").mockImplementation(() => undefined);
     doubleTap(blue);
-    await new Promise((resolve) => setTimeout(resolve, 30)); // editor open's rAF
-    const editor = document.querySelector<HTMLElement>(".ink-preset-editor.is-open")!;
-    expect(editor).not.toBeNull();
-    const value = editor.querySelector<HTMLInputElement>('input[aria-label="Preset color value"]')!;
-    expect(value.value.toLowerCase()).toBe("#195bff");
-    // Editing the selected preset follows the tool's color along.
-    value.value = "#123456";
-    value.dispatchEvent(new Event("input"));
+    // The shared off-screen picker was pointed at this swatch and opened.
+    expect(click).toHaveBeenCalled();
+    expect(input.value.toLowerCase()).toBe("#195bff");
+    // The settled pick replaces the preset and follows the selected color.
+    input.value = "#123456";
+    input.dispatchEvent(new Event("change"));
     const edited = document.querySelector<HTMLElement>('.ink-color-swatch[data-brush-tool="pen"][data-color="#123456"]');
     expect(edited?.getAttribute("aria-pressed")).toBe("true");
-    const remove = editor.querySelector<HTMLButtonElement>('button[aria-label="Remove preset color"]')!;
-    expect(remove.disabled).toBe(false);
-    remove.click();
-    expect(document.querySelector('.ink-color-swatch[data-brush-tool="pen"][data-color="#123456"]')).toBeNull();
-    expect(document.querySelectorAll('.ink-color-swatch[data-brush-tool="pen"]').length).toBe(4);
+    expect(button("Pen blue")).toBeNull();
   });
-  it("never removes the last preset swatch", async () => {
-    button("Pen").click();
-    for (let removed = 0; removed < 4; removed++) {
-      const swatch = document.querySelectorAll<HTMLElement>('.ink-color-swatch[data-brush-tool="pen"]')[0];
-      doubleTap(swatch);
-      await new Promise((resolve) => setTimeout(resolve, 30)); // editor open's rAF
-      const editor = document.querySelector<HTMLElement>(".ink-preset-editor.is-open")!;
-      (editor.querySelector('button[aria-label="Remove preset color"]') as HTMLButtonElement).click();
+  it("removes a preset on hold, never the last one", () => {
+    vi.useFakeTimers();
+    try {
+      button("Pen").click();
+      const hold = () => {
+        document.querySelectorAll<HTMLElement>('.ink-color-swatch[data-brush-tool="pen"]')[0]
+          .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+        vi.advanceTimersByTime(600);
+      };
+      hold(); hold(); hold(); hold();
+      expect(document.querySelectorAll('.ink-color-swatch[data-brush-tool="pen"]').length).toBe(1);
+      hold();
+      expect(document.querySelectorAll('.ink-color-swatch[data-brush-tool="pen"]').length).toBe(1);
+    } finally {
+      vi.useRealTimers();
     }
-    expect(document.querySelectorAll('.ink-color-swatch[data-brush-tool="pen"]').length).toBe(1);
-    const last = document.querySelector<HTMLElement>('.ink-color-swatch[data-brush-tool="pen"]')!;
-    doubleTap(last);
-    await new Promise((resolve) => setTimeout(resolve, 30)); // editor open's rAF
-    const remove = document.querySelector<HTMLButtonElement>('.ink-preset-editor.is-open button[aria-label="Remove preset color"]')!;
-    expect(remove.disabled).toBe(true);
+  });
+  it("does not select the color when a hold removed the preset", () => {
+    vi.useFakeTimers();
+    try {
+      button("Pen").click();
+      const swatch = document.querySelectorAll<HTMLElement>('.ink-color-swatch[data-brush-tool="pen"]')[1];
+      swatch.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+      vi.advanceTimersByTime(600);
+      swatch.click(); // the click after the hold must not re-select
+      // The tool color is unchanged - still whatever was selected before the
+      // hold, never the removed preset.
+      const pressed = document.querySelector<HTMLElement>('.ink-color-swatch[data-brush-tool="pen"][aria-pressed="true"]');
+      expect(pressed?.getAttribute("data-color")).toBe("#1b1b1b");
+    } finally {
+      vi.useRealTimers();
+    }
   });
   it("schedules a shared-settings save when popover and eraser controls change", () => {
     const scheduleSave = vi.fn();
@@ -227,8 +240,12 @@ describe("reference-style editor", () => {
     const strokeMode = popover.querySelector<HTMLElement>('[data-eraser-mode="stroke"]')!;
     expect(strokeMode.getAttribute("aria-checked")).toBe("true");
     expect(document.querySelector(".ink-eraser-reference-point")).not.toBeNull();
+    // The stroke eraser ignores the size - the slider hides for it.
+    const sizeRow = document.querySelector<HTMLElement>(".ink-eraser-size-row")!;
+    expect(sizeRow.style.display).toBe("none");
     button("Circle eraser").click();
     expect(strokeMode.getAttribute("aria-checked")).toBe("false");
+    expect(sizeRow.style.display).toBe("");
     size.value = "48";
     size.dispatchEvent(new Event("input"));
     const cursor = document.querySelector<HTMLElement>(".ink-eraser-cursor")!;

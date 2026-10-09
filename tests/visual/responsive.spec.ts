@@ -257,7 +257,9 @@ test("eraser reference follows hover and refreshes with local settings", async (
   const settings = page.getByRole("dialog", { name: "Eraser settings" });
   const size = page.getByRole("slider", { name: "Eraser size" });
   await expect(settings).toBeVisible();
-  await expect(size).toBeVisible();
+  // The stroke eraser ignores the size (fixed hit radius): the slider only
+  // exists for the shape erasers.
+  await expect(size).toBeHidden();
 
   await page.getByRole("radio", { name: "Circle eraser" }).click();
   await expect(size).toBeVisible();

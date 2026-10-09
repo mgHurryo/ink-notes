@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.8.0-beta.30 - 2026-10-10
+
+- The preset palette lost its intermediate editor: a double-tap on a swatch re-colors that preset straight in the system picker, and a 550ms hold deletes the preset outright (the one-swatch minimum holds; a notice confirms). Tapping the platform picker sheet can no longer close the panel mid-edit - the tap-outside dismissal waits while a picker session is open.
+- The PDF page-options menu gains Zoom out / Reset zoom / Zoom in. A manual pinch latches until the document changes, and without an entry point back to the fit that read as "the fit itself is huge"; Reset clears the latch and re-fits. The fit is also defensively capped at the pinch maximum.
+- The eraser mini popover gets the brush panel's gesture shield: a slider drag no longer reaches the app chrome (which dragged the sidebars out). The size slider hides in stroke mode, where the hit radius is fixed and the slider does nothing.
+
 ## 0.8.0-beta.29 - 2026-10-10
 
 - The PDF fit fills the pane again: the 980px page-box limit and the fit-at-most-100% limit are gone, so a fullscreen pane shows the page as large as it allows - a landscape slide fills the pane width, a portrait page fills the pane height (orientation-correct contain, never width-filled across a portrait page).
