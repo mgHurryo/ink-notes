@@ -22266,173 +22266,6 @@ function isPaperStyle(value) {
 
 // src/pdf-export.ts
 var import_pdf_lib = __toESM(require_cjs());
-var PdfExportError = class extends Error {
-  constructor(reason, message) {
-    super(message);
-    this.reason = reason;
-    this.name = "PdfExportError";
-  }
-};
-function looksDigitallySigned(bytes) {
-  const data = new Uint8Array(bytes);
-  const marker = "/ByteRange";
-  const windowSize = 4096;
-  let tail = "";
-  for (let start = 0; start < data.length; start += windowSize - (marker.length - 1)) {
-    const chunk = data.subarray(start, Math.min(start + windowSize, data.length));
-    tail += String.fromCharCode(...chunk);
-    if (tail.includes(marker)) return true;
-    tail = tail.slice(-(marker.length - 1));
-  }
-  return false;
-}
-function inkToSvgPath(stroke, page) {
-  const points = stroke.points.map((point) => displayToPdfPoint(point.x, point.y, page));
-  return points.map((point, index) => `${index === 0 ? "M" : "L"} ${fmt(point.x)} ${fmt(page.height - point.y)}`).join(" ");
-}
-function displayToPdfPoint(nx, ny, page) {
-  const rotated = page.rotation === 90 || page.rotation === 270;
-  const displayWidth = rotated ? page.height : page.width;
-  const displayHeight = rotated ? page.width : page.height;
-  const dx = nx * displayWidth;
-  const dy = ny * displayHeight;
-  switch (page.rotation) {
-    case 90:
-      return { x: dy, y: dx };
-    case 180:
-      return { x: page.width - dx, y: dy };
-    case 270:
-      return { x: page.width - dy, y: page.height - dx };
-    default:
-      return { x: dx, y: page.height - dy };
-  }
-}
-async function exportNotebookPdf(notebook, sourceName) {
-  const output = await import_pdf_lib.PDFDocument.create();
-  output.setTitle(`${sourceName} (handwritten)`);
-  for (const page of notebook.pages) {
-    const geometry = { id: page.id, width: notebook.pageWidth, height: notebook.pageHeight, rotation: 0 };
-    const pdfPage = output.addPage([notebook.pageWidth, notebook.pageHeight]);
-    for (const stroke of page.strokes) drawStroke(pdfPage, stroke, geometry);
-  }
-  return output.save();
-}
-function notebookHasInk(notebook) {
-  return notebook.pages.some((page) => page.strokes.length > 0);
-}
-function sidecarHasInk(sidecar) {
-  return sidecar.notebook.pages.some((page) => page.strokes.length > 0);
-}
-async function exportHandwrittenPdf(sourceBytes, sidecar, sourceName) {
-  var _a, _b;
-  if (looksDigitallySigned(sourceBytes)) {
-    throw new PdfExportError("signed", "This PDF is digitally signed; exporting would invalidate the signature");
-  }
-  let source;
-  try {
-    source = await import_pdf_lib.PDFDocument.load(sourceBytes, { ignoreEncryption: false, updateMetadata: false });
-  } catch (error) {
-    if (/\bencrypted\b/i.test(String(error == null ? void 0 : error.message))) {
-      throw new PdfExportError("encrypted", "Encrypted PDFs cannot be exported with handwriting");
-    }
-    throw new PdfExportError("corrupt", `This PDF could not be read for export: ${(_a = error == null ? void 0 : error.message) != null ? _a : String(error)}`);
-  }
-  const sourcePages = source.getPages();
-  const output = await import_pdf_lib.PDFDocument.create();
-  output.setTitle(`${sourceName} (handwritten)`);
-  const strokesByPage = new Map(sidecar.notebook.pages.map((page) => [page.id, page.strokes]));
-  for (const notePage of sidecar.notePages) {
-    let page;
-    if (notePage.sourceIndex !== void 0) {
-      if (notePage.sourceIndex >= sourcePages.length) continue;
-      const [copied] = await output.copyPages(source, [notePage.sourceIndex]);
-      page = output.addPage(copied);
-    } else {
-      page = output.addPage([notePage.width, notePage.height]);
-      if (notePage.rotation !== 0) page.setRotation((0, import_pdf_lib.degrees)(notePage.rotation));
-    }
-    for (const stroke of (_b = strokesByPage.get(notePage.id)) != null ? _b : []) {
-      drawStroke(page, stroke, notePage);
-    }
-  }
-  return output.save();
-}
-function drawStroke(page, stroke, notePage) {
-  const { red, green, blue } = parseHexColor(stroke.color);
-  const color = (0, import_pdf_lib.rgb)(red, green, blue);
-  if (stroke.points.length === 1) {
-    const center = displayToPdfPoint(stroke.points[0].x, stroke.points[0].y, notePage);
-    page.drawCircle({ x: center.x, y: center.y, size: stroke.width / 2, color, opacity: stroke.opacity });
-    return;
-  }
-  page.drawSvgPath(inkToSvgPath(stroke, notePage), {
-    borderColor: color,
-    borderWidth: stroke.width,
-    borderOpacity: stroke.opacity,
-    borderLineCap: 1,
-    // round caps, matching the on-screen renderer
-    x: 0,
-    y: notePage.height
-  });
-}
-function parseHexColor(value) {
-  var _a, _b;
-  const hex = (_b = (_a = /^#?([0-9a-f]{6})$/i.exec(value.trim())) == null ? void 0 : _a[1]) != null ? _b : "1b1b1b";
-  return {
-    red: parseInt(hex.slice(0, 2), 16) / 255,
-    green: parseInt(hex.slice(2, 4), 16) / 255,
-    blue: parseInt(hex.slice(4, 6), 16) / 255
-  };
-}
-function exportPathFor(pdfPath, exists) {
-  const slash = pdfPath.lastIndexOf("/");
-  const directory = slash >= 0 ? pdfPath.slice(0, slash) : "";
-  const file = slash >= 0 ? pdfPath.slice(slash + 1) : pdfPath;
-  const dot = file.lastIndexOf(".");
-  const stem = dot > 0 ? file.slice(0, dot) : file;
-  let candidate = joinPath(directory, `${stem} (handwritten).pdf`);
-  let count = 2;
-  while (exists(candidate)) candidate = joinPath(directory, `${stem} (handwritten) ${count++}.pdf`);
-  return candidate;
-}
-function joinPath(directory, file) {
-  return directory ? `${directory}/${file}` : file;
-}
-function fmt(value) {
-  return String(Math.round(value * 100) / 100);
-}
-
-// src/ink-input.ts
-function registerDocumentPointerEndEvents(element, register, onEnd) {
-  var _a;
-  let owner = element.ownerDocument;
-  const end = (event) => onEnd(event, event.type === "pointercancel");
-  const bind = () => {
-    owner.addEventListener("pointerup", end);
-    owner.addEventListener("pointercancel", end);
-  };
-  const unbind = () => {
-    owner.removeEventListener("pointerup", end);
-    owner.removeEventListener("pointercancel", end);
-  };
-  bind();
-  const stopMigration = (_a = element.onWindowMigrated) == null ? void 0 : _a.call(element, () => {
-    if (owner === element.ownerDocument) return;
-    unbind();
-    owner = element.ownerDocument;
-    bind();
-  });
-  register(() => {
-    stopMigration == null ? void 0 : stopMigration();
-    unbind();
-  });
-}
-
-// src/ink-writing.ts
-var import_obsidian2 = require("obsidian");
-
-// src/brush-popover.ts
-var import_obsidian = require("obsidian");
 
 // src/rendering.ts
 var scaledStrokes = /* @__PURE__ */ new WeakMap();
@@ -22698,7 +22531,216 @@ function drawSmoothPath(ctx, points, width, height) {
   ctx.lineTo(last.x * width, last.y * height);
 }
 
+// src/pdf-export.ts
+var PdfExportError = class extends Error {
+  constructor(reason, message) {
+    super(message);
+    this.reason = reason;
+    this.name = "PdfExportError";
+  }
+};
+function looksDigitallySigned(bytes) {
+  const data = new Uint8Array(bytes);
+  const marker = "/ByteRange";
+  const windowSize = 4096;
+  let tail = "";
+  for (let start = 0; start < data.length; start += windowSize - (marker.length - 1)) {
+    const chunk = data.subarray(start, Math.min(start + windowSize, data.length));
+    tail += String.fromCharCode(...chunk);
+    if (tail.includes(marker)) return true;
+    tail = tail.slice(-(marker.length - 1));
+  }
+  return false;
+}
+function inkToSvgOutlinePath(stroke, page, renderWidth) {
+  const rotated = page.rotation === 90 || page.rotation === 270;
+  const displayWidth = rotated ? page.height : page.width;
+  const displayHeight = rotated ? page.width : page.height;
+  const logicalWidth = renderWidth && Number.isFinite(renderWidth) && renderWidth > 0 ? renderWidth : displayWidth;
+  const logicalHeight = Math.max(1, Math.round(logicalWidth * displayHeight / displayWidth * 64) / 64);
+  return penOutlineRings(stroke, logicalWidth, logicalHeight).map((ring) => {
+    const points = ring.map(([x, y]) => {
+      const point = displayToPdfPoint(x / logicalWidth, y / logicalHeight, page);
+      return `${fmt(point.x)} ${fmt(page.height - point.y)}`;
+    });
+    return `M ${points.join(" L ")} Z`;
+  }).join(" ");
+}
+function inkToSvgHighlighterPath(stroke, page) {
+  const map = (x, y) => {
+    const point = displayToPdfPoint(x, y, page);
+    return { x: point.x, y: page.height - point.y };
+  };
+  const first = map(stroke.points[0].x, stroke.points[0].y);
+  const commands = [`M ${fmt(first.x)} ${fmt(first.y)}`];
+  for (let index = 1; index < stroke.points.length; index++) {
+    const previous = stroke.points[index - 1];
+    const point = stroke.points[index];
+    const end = index === stroke.points.length - 1 ? point : { x: (previous.x + point.x) / 2, y: (previous.y + point.y) / 2 };
+    const control = map(previous.x, previous.y);
+    const mappedEnd = map(end.x, end.y);
+    commands.push(`Q ${fmt(control.x)} ${fmt(control.y)} ${fmt(mappedEnd.x)} ${fmt(mappedEnd.y)}`);
+  }
+  const last = map(stroke.points[stroke.points.length - 1].x, stroke.points[stroke.points.length - 1].y);
+  commands.push(`L ${fmt(last.x)} ${fmt(last.y)}`);
+  return commands.join(" ");
+}
+function displayToPdfPoint(nx, ny, page) {
+  const rotated = page.rotation === 90 || page.rotation === 270;
+  const displayWidth = rotated ? page.height : page.width;
+  const displayHeight = rotated ? page.width : page.height;
+  const dx = nx * displayWidth;
+  const dy = ny * displayHeight;
+  switch (page.rotation) {
+    case 90:
+      return { x: dy, y: dx };
+    case 180:
+      return { x: page.width - dx, y: dy };
+    case 270:
+      return { x: page.width - dy, y: page.height - dx };
+    default:
+      return { x: dx, y: page.height - dy };
+  }
+}
+async function exportNotebookPdf(notebook, sourceName, renderWidth) {
+  const output = await import_pdf_lib.PDFDocument.create();
+  output.setTitle(`${sourceName} (handwritten)`);
+  for (const page of notebook.pages) {
+    const geometry = { id: page.id, width: notebook.pageWidth, height: notebook.pageHeight, rotation: 0 };
+    const pdfPage = output.addPage([notebook.pageWidth, notebook.pageHeight]);
+    for (const stroke of page.strokes) drawStroke(pdfPage, stroke, geometry, renderWidth);
+  }
+  return output.save();
+}
+function notebookHasInk(notebook) {
+  return notebook.pages.some((page) => page.strokes.length > 0);
+}
+function sidecarHasInk(sidecar) {
+  return sidecar.notebook.pages.some((page) => page.strokes.length > 0);
+}
+async function exportHandwrittenPdf(sourceBytes, sidecar, sourceName, renderWidth) {
+  var _a, _b;
+  if (looksDigitallySigned(sourceBytes)) {
+    throw new PdfExportError("signed", "This PDF is digitally signed; exporting would invalidate the signature");
+  }
+  let source;
+  try {
+    source = await import_pdf_lib.PDFDocument.load(sourceBytes, { ignoreEncryption: false, updateMetadata: false });
+  } catch (error) {
+    if (/\bencrypted\b/i.test(String(error == null ? void 0 : error.message))) {
+      throw new PdfExportError("encrypted", "Encrypted PDFs cannot be exported with handwriting");
+    }
+    throw new PdfExportError("corrupt", `This PDF could not be read for export: ${(_a = error == null ? void 0 : error.message) != null ? _a : String(error)}`);
+  }
+  const sourcePages = source.getPages();
+  const output = await import_pdf_lib.PDFDocument.create();
+  output.setTitle(`${sourceName} (handwritten)`);
+  const strokesByPage = new Map(sidecar.notebook.pages.map((page) => [page.id, page.strokes]));
+  for (const notePage of sidecar.notePages) {
+    let page;
+    if (notePage.sourceIndex !== void 0) {
+      if (notePage.sourceIndex >= sourcePages.length) continue;
+      const [copied] = await output.copyPages(source, [notePage.sourceIndex]);
+      page = output.addPage(copied);
+    } else {
+      page = output.addPage([notePage.width, notePage.height]);
+      if (notePage.rotation !== 0) page.setRotation((0, import_pdf_lib.degrees)(notePage.rotation));
+    }
+    for (const stroke of (_b = strokesByPage.get(notePage.id)) != null ? _b : []) {
+      drawStroke(page, stroke, notePage, renderWidth);
+    }
+  }
+  return output.save();
+}
+function drawStroke(page, stroke, notePage, renderWidth) {
+  const { red, green, blue } = parseHexColor(stroke.color);
+  const color = (0, import_pdf_lib.rgb)(red, green, blue);
+  const rotated = notePage.rotation === 90 || notePage.rotation === 270;
+  const displayWidth = rotated ? notePage.height : notePage.width;
+  const logicalWidth = renderWidth && Number.isFinite(renderWidth) && renderWidth > 0 ? renderWidth : displayWidth;
+  const widthScale = displayWidth / logicalWidth;
+  if (stroke.tool !== "highlighter") {
+    page.drawSvgPath(inkToSvgOutlinePath(stroke, notePage, logicalWidth), {
+      color,
+      opacity: stroke.opacity,
+      x: 0,
+      y: notePage.height
+    });
+    return;
+  }
+  if (stroke.points.length === 1) {
+    const center = displayToPdfPoint(stroke.points[0].x, stroke.points[0].y, notePage);
+    page.drawCircle({ x: center.x, y: center.y, size: stroke.width * widthScale / 2, color, opacity: stroke.opacity });
+    return;
+  }
+  page.drawSvgPath(inkToSvgHighlighterPath(stroke, notePage), {
+    borderColor: color,
+    borderWidth: stroke.width * widthScale,
+    borderOpacity: stroke.opacity,
+    borderLineCap: 1,
+    // round caps, matching the on-screen renderer
+    x: 0,
+    y: notePage.height
+  });
+}
+function parseHexColor(value) {
+  var _a, _b;
+  const hex = (_b = (_a = /^#?([0-9a-f]{6})$/i.exec(value.trim())) == null ? void 0 : _a[1]) != null ? _b : "1b1b1b";
+  return {
+    red: parseInt(hex.slice(0, 2), 16) / 255,
+    green: parseInt(hex.slice(2, 4), 16) / 255,
+    blue: parseInt(hex.slice(4, 6), 16) / 255
+  };
+}
+function exportPathFor(pdfPath, exists) {
+  const slash = pdfPath.lastIndexOf("/");
+  const directory = slash >= 0 ? pdfPath.slice(0, slash) : "";
+  const file = slash >= 0 ? pdfPath.slice(slash + 1) : pdfPath;
+  const dot = file.lastIndexOf(".");
+  const stem = dot > 0 ? file.slice(0, dot) : file;
+  let candidate = joinPath(directory, `${stem} (handwritten).pdf`);
+  let count = 2;
+  while (exists(candidate)) candidate = joinPath(directory, `${stem} (handwritten) ${count++}.pdf`);
+  return candidate;
+}
+function joinPath(directory, file) {
+  return directory ? `${directory}/${file}` : file;
+}
+function fmt(value) {
+  return String(Math.round(value * 100) / 100);
+}
+
+// src/ink-input.ts
+function registerDocumentPointerEndEvents(element, register, onEnd) {
+  var _a;
+  let owner = element.ownerDocument;
+  const end = (event) => onEnd(event, event.type === "pointercancel");
+  const bind = () => {
+    owner.addEventListener("pointerup", end);
+    owner.addEventListener("pointercancel", end);
+  };
+  const unbind = () => {
+    owner.removeEventListener("pointerup", end);
+    owner.removeEventListener("pointercancel", end);
+  };
+  bind();
+  const stopMigration = (_a = element.onWindowMigrated) == null ? void 0 : _a.call(element, () => {
+    if (owner === element.ownerDocument) return;
+    unbind();
+    owner = element.ownerDocument;
+    bind();
+  });
+  register(() => {
+    stopMigration == null ? void 0 : stopMigration();
+    unbind();
+  });
+}
+
+// src/ink-writing.ts
+var import_obsidian2 = require("obsidian");
+
 // src/brush-popover.ts
+var import_obsidian = require("obsidian");
 var INK_COLORS = [
   { value: "#1b1b1b", label: "Black" },
   { value: "#195bff", label: "Blue" },
@@ -27240,7 +27282,7 @@ var InkView = class extends InkWritingView {
       return;
     }
     try {
-      const output = await exportNotebookPdf(this.notebook, this.file.basename);
+      const output = await exportNotebookPdf(this.notebook, this.file.basename, this.canvasLogicalWidth);
       const target = exportPathFor(this.file.path, (candidate) => this.app.vault.getAbstractFileByPath(candidate) !== null);
       await this.app.vault.createBinary(target, output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength));
       new import_obsidian3.Notice(`Exported ${target}`);
@@ -30438,7 +30480,7 @@ var PdfInkView = class extends InkWritingView {
     }
     try {
       const bytes = await this.app.vault.readBinary(this.file);
-      const output = await exportHandwrittenPdf(bytes, this.sidecar, this.file.basename);
+      const output = await exportHandwrittenPdf(bytes, this.sidecar, this.file.basename, this.canvasLogicalWidth);
       const target = exportPathFor(this.file.path, (candidate) => this.app.vault.getAbstractFileByPath(candidate) !== null);
       await this.app.vault.createBinary(target, output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength));
       new import_obsidian7.Notice(`Exported ${target}`);

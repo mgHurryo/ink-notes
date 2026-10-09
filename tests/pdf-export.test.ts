@@ -9,6 +9,7 @@ import {
   displayToPdfPoint,
   exportHandwrittenPdf,
   exportPathFor,
+  inkToSvgOutlinePath,
   inkToSvgPath,
   looksDigitallySigned,
   parseHexColor,
@@ -102,6 +103,26 @@ describe("displayToPdfPoint", () => {
     expect(firstSvgY).toBeCloseTo(0.3 * 841.89, 1);
   });
 
+  it("exports pressure and taper as the shared renderer's closed vector outline", () => {
+    const base = {
+      ...stroke("p", "s"),
+      tool: "pen" as const,
+      points: [
+        { x: 0.1, y: 0.3, pressure: 0.2, t: 1 },
+        { x: 0.3, y: 0.3, pressure: 0.4, t: 20 },
+        { x: 0.6, y: 0.3, pressure: 0.9, t: 40 },
+        { x: 0.9, y: 0.3, pressure: 0.6, t: 60 },
+      ],
+      dynamics: { pressure: 100, taper: 80, speed: 0 },
+    };
+    const path = inkToSvgOutlinePath(base, page, 700);
+    const uniform = inkToSvgOutlinePath({ ...base, dynamics: { pressure: 0, taper: 0, speed: 0 } }, page, 700);
+
+    expect(path).toContain(" Z");
+    expect(path.match(/M /g)?.length).toBeGreaterThan(1);
+    expect(path).not.toBe(uniform);
+  });
+
   it("parses colors and falls back to ink black on garbage", () => {
     expect(parseHexColor("#ff0000")).toEqual({ red: 1, green: 0, blue: 0 });
     expect(parseHexColor("nonsense")).toEqual(parseHexColor("#1b1b1b"));
@@ -137,6 +158,24 @@ describe("exportHandwrittenPdf", () => {
     const output = await exportHandwrittenPdf(toArrayBuffer(source), sidecarWithInk(source), "lecture");
     const alphas = collectAlphas(await PDFDocument.load(output));
     expect(alphas).toContain(0.4);
+  });
+
+  it("writes pressure-sensitive pen outlines as vector fills", async () => {
+    const source = await buildSourcePdf();
+    const sidecar = sidecarWithInk(source);
+    sidecar.notebook.pages[0].strokes[0] = {
+      ...sidecar.notebook.pages[0].strokes[0],
+      tool: "pen",
+      dynamics: { pressure: 100, taper: 80 },
+      points: [
+        { x: 0.1, y: 0.3, pressure: 0.2, t: 1 },
+        { x: 0.4, y: 0.31, pressure: 0.8, t: 20 },
+        { x: 0.9, y: 0.3, pressure: 0.5, t: 40 },
+      ],
+    };
+
+    const output = await exportHandwrittenPdf(toArrayBuffer(source), sidecar, "lecture", 700);
+    expect((await PDFDocument.load(output)).getPageCount()).toBe(2);
   });
 
   it("rejects encrypted PDFs explicitly", async () => {

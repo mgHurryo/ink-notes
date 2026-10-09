@@ -1607,7 +1607,7 @@ export class PdfInkView extends InkWritingView {
     }
     try {
       const bytes = await this.app.vault.readBinary(this.file);
-      const output = await exportHandwrittenPdf(bytes, this.sidecar, this.file.basename);
+      const output = await exportHandwrittenPdf(bytes, this.sidecar, this.file.basename, this.canvasLogicalWidth);
       const target = exportPathFor(this.file.path, (candidate) => this.app.vault.getAbstractFileByPath(candidate) !== null);
       await this.app.vault.createBinary(target, output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength) as ArrayBuffer);
       new Notice(`Exported ${target}`);
