@@ -755,16 +755,16 @@ export abstract class InkWritingView extends FileView {
     this.sharedToolSettings?.scheduleSave(this.state);
   }
 
-  /** The writing tools plus history - the shared middle of every toolbar. */
-  protected buildWritingSections(toolbar: HTMLElement): void {
+  /** Shared drawing tools in the centre, with history next to page navigation. */
+  protected buildWritingSections(toolbar: HTMLElement, historyParent: HTMLElement): void {
+    const history = this.addToolbarSection(historyParent, "History");
+    this.addIconButton(history, "undo-2", "Undo", () => this.undo(), this.undoStack.length === 0);
+    this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
     const draw = this.addToolbarSection(toolbar, "Draw");
     this.addToolButton(draw, "pen-line", "Pen", "pen");
     this.addToolButton(draw, "highlighter", "Highlight", "highlighter");
     this.addToolButton(draw, "eraser", "Erase", "eraser");
     this.addToolButton(draw, "lasso-select", "Select", "lasso");
-    const history = this.addToolbarSection(toolbar, "History");
-    this.addIconButton(history, "undo-2", "Undo", () => this.undo(), this.undoStack.length === 0);
-    this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
   }
   /** Whether the diagnostics panel wants raw point samples retained. */
   protected diagnosticsCaptureRawPoints(): boolean { return false; }

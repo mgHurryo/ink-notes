@@ -8,7 +8,7 @@ const viewports = [
   { width: 720, height: 900 },
   { width: 1280, height: 720 },
 ];
-const primaryTools = ["Pages", "Pen", "Highlight", "Erase", "Select", "Undo", "Redo", "Page options"];
+const primaryTools = ["Pages", "Undo", "Redo", "Pen", "Highlight", "Erase", "Select", "Export as PDF", "Page options"];
 
 const themes = {
   light: {
@@ -46,10 +46,10 @@ for (const viewport of viewports) {
     await page.goto("/");
     const toolbar = page.getByRole("toolbar", { name: "Ink tools" });
     await expect(toolbar).toBeVisible();
-    if (viewport.width > 380) {
+    if (viewport.width > 660) {
       await expect(toolbar).toHaveCSS("height", "56px");
     } else {
-      // Nine 44px targets wrap to a second row at this width.
+      // Keep edge controls together and drawing centred on a second row.
       expect(parseFloat(await toolbar.evaluate((el) => getComputedStyle(el).height))).toBeGreaterThanOrEqual(56);
     }
     const boxes = [];
@@ -75,6 +75,17 @@ for (const viewport of viewports) {
       const ordered = row.sort((left, right) => left.x - right.x);
       for (let index = 1; index < ordered.length; index++) expect(ordered[index].x + 0.5).toBeGreaterThanOrEqual(ordered[index - 1].x + ordered[index - 1].width);
     }
+    const positions = await toolbar.evaluate((element) => {
+      const rect = element.getBoundingClientRect();
+      const start = element.querySelector<HTMLElement>(".ink-toolbar-start")!.getBoundingClientRect();
+      const draw = element.querySelector<HTMLElement>(".ink-toolbar-section-draw")!.getBoundingClientRect();
+      const end = element.querySelector<HTMLElement>(".ink-toolbar-section-document")!.getBoundingClientRect();
+      return { startGap: start.left - rect.left, endGap: rect.right - end.right,
+        centreDrift: Math.abs((draw.left + draw.right - rect.left - rect.right) / 2) };
+    });
+    expect(positions.startGap).toBeLessThanOrEqual(8);
+    expect(positions.endGap).toBeLessThanOrEqual(8);
+    expect(positions.centreDrift).toBeLessThanOrEqual(1);
     const metrics = await page.locator(".ink-notes-view").evaluate((root) => ({
       overflow: root.scrollWidth > root.clientWidth,
       toolbarOverflow: root.querySelector(".ink-toolbar")!.scrollWidth > root.querySelector(".ink-toolbar")!.clientWidth,

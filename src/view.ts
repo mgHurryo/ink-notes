@@ -225,7 +225,8 @@ export class InkView extends InkWritingView {
   private renderToolbar(): void {
     const toolbar = this.root.querySelector<HTMLElement>(".ink-toolbar")!;
     toolbar.empty();
-    const navigation = this.addToolbarSection(toolbar, "Pages");
+    const start = toolbar.createDiv({ cls: "ink-toolbar-start" });
+    const navigation = this.addToolbarSection(start, "Pages");
     const toggle = this.addIconButton(navigation, "panel-left", "Pages", () => {
       const hidden = !this.root.hasClass("ink-rail-hidden");
       this.root.toggleClass("ink-rail-hidden", hidden);
@@ -236,10 +237,10 @@ export class InkView extends InkWritingView {
       if (!hidden) this.scheduleRailThumbnailRefresh();
     });
     toggle.setAttribute("aria-pressed", String(!this.root.hasClass("ink-rail-hidden")));
-    this.buildWritingSections(toolbar);
+    this.buildWritingSections(toolbar, start);
     const document_ = this.addToolbarSection(toolbar, "Document");
-    this.addIconButton(document_, "more-horizontal", "Page options", (event) => this.openPageMenu(event));
     this.addIconButton(document_, "download", "Export as PDF", () => void this.exportNotebookCopy());
+    this.addIconButton(document_, "more-horizontal", "Page options", (event) => this.openPageMenu(event));
     this.updateToolButtons();
   }
 

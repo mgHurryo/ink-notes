@@ -52,6 +52,15 @@ afterEach(async () => {
 });
 
 describe("reference-style editor", () => {
+  it("orders navigation and history on the left, drawing centrally, and export before options", () => {
+    const toolbar = document.querySelector<HTMLElement>(".ink-toolbar")!;
+    const labels = (selector: string) => Array.from(toolbar.querySelectorAll(selector))
+      .map((el) => el.getAttribute("aria-label"));
+    expect(labels(".ink-toolbar-start button")).toEqual(["Pages", "Undo", "Redo"]);
+    expect(labels(".ink-toolbar-section-draw button")).toEqual(["Pen", "Highlight", "Erase", "Select"]);
+    expect(labels(".ink-toolbar-section-document button")).toEqual(["Export as PDF", "Page options"]);
+  });
+
   it("toggles closed even when the host's document dismissal was registered first", () => {
     let opened: Menu | undefined;
     const show = Menu.prototype.showAtMouseEvent;

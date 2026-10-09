@@ -553,7 +553,8 @@ export class PdfInkView extends InkWritingView {
   private renderToolbar(root: HTMLElement): void {
     const toolbar = root.createDiv({ cls: "ink-pdf-toolbar" });
 
-    const pagesGroup = this.addToolbarSection(toolbar, "Pages");
+    const start = toolbar.createDiv({ cls: "ink-toolbar-start" });
+    const pagesGroup = this.addToolbarSection(start, "Pages");
     const toggle = this.addIconButton(pagesGroup, "panel-left", "Pages", () => {
       const hidden = !this.root?.hasClass("ink-rail-hidden");
       this.root?.toggleClass("ink-rail-hidden", hidden);
@@ -563,18 +564,17 @@ export class PdfInkView extends InkWritingView {
       if (!hidden) window.setTimeout(() => this.paintVisibleThumbnails(), RAIL_REVEAL_DELAY_MS);
     });
     toggle.setAttribute("aria-pressed", String(!this.root?.hasClass("ink-rail-hidden")));
-    const indicator = pagesGroup.createDiv({ cls: "ink-pdf-page-indicator" });
+    this.buildWritingSections(toolbar, start);
+    const indicator = start.createDiv({ cls: "ink-pdf-page-indicator" });
     indicator.setText("–");
     this.toolbarButtons.set("indicator", indicator);
-
-    this.buildWritingSections(toolbar);
 
     const docGroup = this.addToolbarSection(toolbar, "Document");
     // Menu and export respond regardless of the writer lock: the menu's
     // mutating items fail with a notice when read-only, and export only
     // reads. A silently dead button is indistinguishable from a broken one.
-    this.addTrackedIconButton(docGroup, "pages", "more-horizontal", "Page options", (event) => this.openPageMenu(event));
     this.addTrackedIconButton(docGroup, "export", "download", "Export PDF with handwriting", () => void this.exportHandwrittenCopy());
+    this.addTrackedIconButton(docGroup, "pages", "more-horizontal", "Page options", (event) => this.openPageMenu(event));
 
     this.updateToolButtons();
     this.updateHistoryButtons();

@@ -747,13 +747,13 @@
 }
 
 @container ink-editor (min-width: 1000px) {
-  .ink-toolbar :is(.ink-icon-button, .ink-tool-button):not([aria-label="Page options"]) {
+  .ink-toolbar .ink-tool-button {
     flex-basis: auto;
     width: auto;
     padding-inline: 10px;
     gap: 6px;
   }
-  .ink-toolbar :is(.ink-icon-button, .ink-tool-button):not([aria-label="Page options"]) .ink-button-text { display: inline; }
+  .ink-toolbar .ink-tool-button .ink-button-text { display: inline; }
 }
 
 @container ink-editor (max-width: 760px) {
@@ -919,6 +919,7 @@
 
 .ink-pdf-view {
   display: flex;
+  container: ink-editor / inline-size;
   flex-direction: column;
   height: 100%;
   padding: 0;
@@ -955,6 +956,37 @@
   padding: 5px 8px;
   background: var(--ink-panel);
   border-bottom: 1px solid var(--ink-border);
+}
+
+:is(.ink-toolbar, .ink-pdf-toolbar) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+}
+
+.ink-toolbar-start { display: flex; align-items: center; justify-self: start; }
+:is(.ink-toolbar, .ink-pdf-toolbar) > .ink-toolbar-section-draw {
+  justify-self: center;
+  margin: 0;
+  border: 0;
+}
+:is(.ink-toolbar, .ink-pdf-toolbar) > .ink-toolbar-section-document {
+  justify-self: end;
+  margin: 0;
+  border: 0;
+}
+
+@container ink-editor (max-width: 660px) {
+  :is(.ink-toolbar, .ink-pdf-toolbar) {
+    grid-template-columns: 1fr auto;
+    grid-template-rows: auto auto;
+    flex-basis: auto;
+    height: auto;
+    gap: 2px;
+    overflow: visible;
+  }
+  .ink-toolbar-start { grid-column: 1; grid-row: 1; }
+  :is(.ink-toolbar, .ink-pdf-toolbar) > .ink-toolbar-section-document { grid-column: 2; grid-row: 1; }
+  :is(.ink-toolbar, .ink-pdf-toolbar) > .ink-toolbar-section-draw { grid-column: 1 / -1; grid-row: 2; }
 }
 
 .ink-pdf-toolbar-group {

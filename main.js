@@ -24336,16 +24336,16 @@ var InkWritingView = class extends import_obsidian2.FileView {
     var _a;
     (_a = this.sharedToolSettings) == null ? void 0 : _a.scheduleSave(this.state);
   }
-  /** The writing tools plus history - the shared middle of every toolbar. */
-  buildWritingSections(toolbar) {
+  /** Shared drawing tools in the centre, with history next to page navigation. */
+  buildWritingSections(toolbar, historyParent) {
+    const history = this.addToolbarSection(historyParent, "History");
+    this.addIconButton(history, "undo-2", "Undo", () => this.undo(), this.undoStack.length === 0);
+    this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
     const draw = this.addToolbarSection(toolbar, "Draw");
     this.addToolButton(draw, "pen-line", "Pen", "pen");
     this.addToolButton(draw, "highlighter", "Highlight", "highlighter");
     this.addToolButton(draw, "eraser", "Erase", "eraser");
     this.addToolButton(draw, "lasso-select", "Select", "lasso");
-    const history = this.addToolbarSection(toolbar, "History");
-    this.addIconButton(history, "undo-2", "Undo", () => this.undo(), this.undoStack.length === 0);
-    this.addIconButton(history, "redo-2", "Redo", () => this.redo(), this.redoStack.length === 0);
   }
   /** Whether the diagnostics panel wants raw point samples retained. */
   diagnosticsCaptureRawPoints() {
@@ -27259,7 +27259,8 @@ var InkView = class extends InkWritingView {
   renderToolbar() {
     const toolbar = this.root.querySelector(".ink-toolbar");
     toolbar.empty();
-    const navigation = this.addToolbarSection(toolbar, "Pages");
+    const start = toolbar.createDiv({ cls: "ink-toolbar-start" });
+    const navigation = this.addToolbarSection(start, "Pages");
     const toggle = this.addIconButton(navigation, "panel-left", "Pages", () => {
       const hidden = !this.root.hasClass("ink-rail-hidden");
       this.root.toggleClass("ink-rail-hidden", hidden);
@@ -27268,10 +27269,10 @@ var InkView = class extends InkWritingView {
       if (!hidden) this.scheduleRailThumbnailRefresh();
     });
     toggle.setAttribute("aria-pressed", String(!this.root.hasClass("ink-rail-hidden")));
-    this.buildWritingSections(toolbar);
+    this.buildWritingSections(toolbar, start);
     const document_ = this.addToolbarSection(toolbar, "Document");
-    this.addIconButton(document_, "more-horizontal", "Page options", (event) => this.openPageMenu(event));
     this.addIconButton(document_, "download", "Export as PDF", () => void this.exportNotebookCopy());
+    this.addIconButton(document_, "more-horizontal", "Page options", (event) => this.openPageMenu(event));
     this.updateToolButtons();
   }
   /** Vector-exports the whole notebook as a PDF next to the notebook file. */
@@ -29540,7 +29541,8 @@ var PdfInkView = class extends InkWritingView {
   renderToolbar(root) {
     var _a;
     const toolbar = root.createDiv({ cls: "ink-pdf-toolbar" });
-    const pagesGroup = this.addToolbarSection(toolbar, "Pages");
+    const start = toolbar.createDiv({ cls: "ink-toolbar-start" });
+    const pagesGroup = this.addToolbarSection(start, "Pages");
     const toggle = this.addIconButton(pagesGroup, "panel-left", "Pages", () => {
       var _a2, _b;
       const hidden = !((_a2 = this.root) == null ? void 0 : _a2.hasClass("ink-rail-hidden"));
@@ -29549,13 +29551,13 @@ var PdfInkView = class extends InkWritingView {
       if (!hidden) window.setTimeout(() => this.paintVisibleThumbnails(), RAIL_REVEAL_DELAY_MS);
     });
     toggle.setAttribute("aria-pressed", String(!((_a = this.root) == null ? void 0 : _a.hasClass("ink-rail-hidden"))));
-    const indicator = pagesGroup.createDiv({ cls: "ink-pdf-page-indicator" });
+    this.buildWritingSections(toolbar, start);
+    const indicator = start.createDiv({ cls: "ink-pdf-page-indicator" });
     indicator.setText("\u2013");
     this.toolbarButtons.set("indicator", indicator);
-    this.buildWritingSections(toolbar);
     const docGroup = this.addToolbarSection(toolbar, "Document");
-    this.addTrackedIconButton(docGroup, "pages", "more-horizontal", "Page options", (event) => this.openPageMenu(event));
     this.addTrackedIconButton(docGroup, "export", "download", "Export PDF with handwriting", () => void this.exportHandwrittenCopy());
+    this.addTrackedIconButton(docGroup, "pages", "more-horizontal", "Page options", (event) => this.openPageMenu(event));
     this.updateToolButtons();
     this.updateHistoryButtons();
     this.updatePageIndicator();

@@ -382,6 +382,10 @@ describe("pdf page preview rail", () => {
   it("starts collapsed and toggles from the toolbar Pages button", async () => {
     const { view } = await setup(3);
     const root = document.querySelector<HTMLElement>(".ink-pdf-view")!;
+    const labels = (selector: string) => Array.from(root.querySelectorAll(selector)).map((el) => el.getAttribute("aria-label"));
+    expect(labels(".ink-toolbar-start button")).toEqual(["Pages", "Undo", "Redo"]);
+    expect(labels(".ink-toolbar-section-draw button")).toEqual(["Pen", "Highlight", "Erase", "Select"]);
+    expect(labels(".ink-toolbar-section-document button")).toEqual(["Export PDF with handwriting", "Page options"]);
     expect(root.classList.contains("ink-rail-hidden")).toBe(true);
     const toggle = document.querySelector<HTMLButtonElement>('button[aria-label="Pages"]')!;
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
