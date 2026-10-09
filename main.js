@@ -24029,7 +24029,6 @@ var InkWritingView = class extends import_obsidian2.FileView {
     this.activeStroke = null;
     this.workerStrokePointIndex = 0;
     this.lastPoint = null;
-    this.stylusTouchInput = false;
     this.touchGesture = null;
     /** Last input the active pointer produced; drives stale-interaction
      *  healing when the platform loses the final pointerup. */
@@ -24372,12 +24371,13 @@ var InkWritingView = class extends import_obsidian2.FileView {
     return !!((_c = (_b = (_a = this.containerEl) == null ? void 0 : _a.ownerDocument) == null ? void 0 : _b.querySelector) == null ? void 0 : _c.call(_b, ".menu"));
   }
   onPointerDown(event, source = "pointer") {
-    var _a, _b, _c, _d, _e, _f;
+    var _a, _b, _c, _d, _e, _f, _g;
     this.devPointerEvents += 1;
     this.devLastPointerType = event.pointerType || this.devLastPointerType;
     if (this.inputLocked()) return;
     if (this.nativeMenuOpen()) return;
-    if (event.pointerType === "touch" || source === "pointer" && event.pointerType === "pen" && this.stylusTouchInput) return;
+    if (event.pointerType === "touch") return;
+    if (source === "pointer" && event.pointerType === "pen" && ((_a = this.interaction) == null ? void 0 : _a.source) === "stylus-touch") return;
     this.onInputStarting();
     this.interactionGeneration += 1;
     if (this.activePointerId !== null) this.finishPointerInput(false);
@@ -24386,9 +24386,9 @@ var InkWritingView = class extends import_obsidian2.FileView {
     const tool = this.state.tool;
     const brush = isBrushTool(tool) ? this.brushSettings(tool) : null;
     const rect = this.inputRect();
-    (_b = (_a = this.tiles) == null ? void 0 : _a.beginInput) == null ? void 0 : _b.call(_a);
+    (_c = (_b = this.tiles) == null ? void 0 : _b.beginInput) == null ? void 0 : _c.call(_b);
     this.cancelPendingInkCommitTimer();
-    if (tool === "pen" || tool === "highlighter") (_c = this.tiles) == null ? void 0 : _c.pauseInkCommit();
+    if (tool === "pen" || tool === "highlighter") (_d = this.tiles) == null ? void 0 : _d.pauseInkCommit();
     else if (this.pendingInkStrokes.length > 0 || this.committingInkStrokes) this.materializePendingInkPreview(page);
     if (this.saveTimer !== void 0) {
       window.clearTimeout(this.saveTimer);
@@ -24448,9 +24448,9 @@ var InkWritingView = class extends import_obsidian2.FileView {
       opacity: brush.opacity,
       points: [point],
       dynamics: tool === "pen" ? {
-        taper: (_d = this.state.pen.taper) != null ? _d : 0,
-        pressure: (_e = this.state.pen.pressureGain) != null ? _e : 100,
-        speed: (_f = this.state.pen.speedGain) != null ? _f : 0,
+        taper: (_e = this.state.pen.taper) != null ? _e : 0,
+        pressure: (_f = this.state.pen.pressureGain) != null ? _f : 100,
+        speed: (_g = this.state.pen.speedGain) != null ? _g : 0,
         pressureCurve: this.state.pen.pressureCurve ? this.state.pen.pressureCurve.map((point2) => [...point2]) : void 0
       } : void 0,
       createdAt: Date.now(),
@@ -24903,7 +24903,6 @@ var InkWritingView = class extends import_obsidian2.FileView {
     const sample = stylusTouchSample(touch, event.timeStamp);
     const interaction = this.interaction;
     if (event.type === "touchstart") {
-      this.stylusTouchInput = true;
       if ((interaction == null ? void 0 : interaction.source) === "pointer" && interaction.pointerType === "pen") {
         const pointerId = interaction.pointerId;
         interaction.source = "stylus-touch";

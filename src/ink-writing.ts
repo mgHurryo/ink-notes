@@ -428,7 +428,6 @@ export abstract class InkWritingView extends FileView {
   protected activeStroke: InkStroke | null = null;
   protected workerStrokePointIndex = 0;
   protected lastPoint: InkPoint | null = null;
-  protected stylusTouchInput = false;
   protected touchGesture: {
     ids: number[];
     distance: number;
@@ -836,7 +835,11 @@ export abstract class InkWritingView extends FileView {
     this.devLastPointerType = event.pointerType || this.devLastPointerType;
     if (this.inputLocked()) return;
     if (this.nativeMenuOpen()) return;
-    if (event.pointerType === "touch" || (source === "pointer" && event.pointerType === "pen" && this.stylusTouchInput)) return;
+    if (event.pointerType === "touch") return;
+    // Deduplicate only the contact currently owned by native stylus Touch.
+    // The next contact may have Pointer events without a classified Touch,
+    // so observing one Touch stream must not disable pen input for the view.
+    if (source === "pointer" && event.pointerType === "pen" && this.interaction?.source === "stylus-touch") return;
     this.onInputStarting();
     this.interactionGeneration += 1;
     if (this.activePointerId !== null) this.finishPointerInput(false);
@@ -1415,9 +1418,8 @@ export abstract class InkWritingView extends FileView {
     const sample = stylusTouchSample(touch, event.timeStamp);
     const interaction = this.interaction;
     if (event.type === "touchstart") {
-      // Scribble can suppress Pointer events. Once native stylus Touch support
-      // is observed, one Touch stream owns pen contacts to avoid duplicate ink.
-      this.stylusTouchInput = true;
+      // Scribble can suppress Pointer events. Native stylus Touch owns this
+      // contact, including a Pointer stream that has already started it.
       if (interaction?.source === "pointer" && interaction.pointerType === "pen") {
         const pointerId = interaction.pointerId;
         interaction.source = "stylus-touch";

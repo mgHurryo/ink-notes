@@ -12,8 +12,8 @@ import type { WorkspaceLeaf } from "obsidian";
 interface DrawingView {
   activePointerId: number | null;
   activeStroke: InkStroke | null;
-  interaction: { source: "pointer" | "stylus-touch"; pointerType: string } | null;
-  stylusTouchInput: boolean;
+  interaction: { source: "pointer" | "stylus-touch"; pointerType: string; tool: string } | null;
+  touchGesture: unknown;
   selectedStrokeIds: Set<string>;
   cleanups: (() => void)[];
   currentPage(): InkPage;
@@ -208,16 +208,61 @@ describe("stylus touch input ownership", () => {
     expect(drawing.activePointerId).toBeNull();
   });
 
-  it("ignores a delayed native Pencil down after Touch has already completed", () => {
+  it("accepts a new native Pencil contact after Touch has completed", () => {
     dispatchTouch("touchstart", [touch()]);
     dispatchTouch("touchend", [touch(7, { clientX: 420 })], []);
     const strokes = drawing.currentPage().strokes.slice();
     dispatchPointer("pointerdown");
+    expect(drawing.interaction?.source).toBe("pointer");
     dispatchPointer("pointermove", { clientX: 600 });
     dispatchPointer("pointerup", { clientX: 650 });
-    expect(drawing.currentPage().strokes).toEqual(strokes);
+    expect(drawing.currentPage().strokes).toHaveLength(2);
+    expect(drawing.currentPage().strokes[0]).toEqual(strokes[0]);
+    expect(drawing.currentPage().strokes[1].points.at(-1)?.x).toBeCloseTo(0.6875);
     expect(drawing.activePointerId).toBeNull();
     expect(drawing.interaction).toBeNull();
+  });
+
+  it.each(["touchend", "touchcancel", "tool-switch"])("accepts immediate eraser and pen contacts after %s", (ending) => {
+    dispatchTouch("touchstart", [touch()]);
+    if (ending !== "tool-switch") {
+      dispatchTouch(ending, [touch()], []);
+      expect(drawing.activePointerId).toBeNull();
+    }
+    clickButton("Erase");
+    dispatchPointer("pointerdown");
+    const companion = touch(7, { touchType: undefined });
+    dispatchTouch("touchstart", [companion]);
+    dispatchTouch("touchmove", [{ ...companion, clientY: 290 }]);
+    expect(drawing.interaction).toMatchObject({ source: "pointer", tool: "eraser" });
+    expect(drawing.touchGesture).toBeNull();
+    expect(scroller.scrollTop).toBe(0);
+    expect(drawing.currentPage().strokes).toHaveLength(0);
+    dispatchPointer("pointerup");
+    dispatchTouch("touchend", [companion], []);
+    clickButton("Pen");
+    dispatchPointer("pointerdown");
+    expect(drawing.interaction).toMatchObject({ source: "pointer", tool: "pen" });
+    dispatchPointer("pointerup");
+    expect(drawing.currentPage().strokes).toHaveLength(1);
+    expect(drawing.activePointerId).toBeNull();
+  });
+
+  it.each(["pointer-first", "touch-first"])("deduplicates overlapping %s streams per contact", (order) => {
+    if (order === "pointer-first") dispatchPointer("pointerdown");
+    dispatchTouch("touchstart", [touch(20)]);
+    if (order === "touch-first") dispatchPointer("pointerdown");
+    expect(drawing.currentPage().strokes).toHaveLength(1);
+    expect(drawing.interaction?.source).toBe("stylus-touch");
+    dispatchPointer("pointermove");
+    dispatchPointer("pointerup");
+    expect(drawing.activePointerId).toBe(20);
+    dispatchTouch("touchend", [touch(20)], []);
+    expect(drawing.activePointerId).toBeNull();
+    // A subsequent pointer-only contact is new, even with a reused pointer id.
+    dispatchPointer("pointerdown");
+    dispatchPointer("pointerup");
+    expect(drawing.currentPage().strokes).toHaveLength(2);
   });
 
   it("finalizes a stylus cancellation once and admits the next Touch stroke", () => {
@@ -249,7 +294,7 @@ describe("stylus touch input ownership", () => {
     dispatchPointer("pointerup", { pointerType: "touch", pressure: 1 });
     expect(drawing.currentPage().strokes).toEqual([]);
     expect(drawing.activePointerId).toBeNull();
-    expect(drawing.stylusTouchInput).toBe(false);
+    expect(drawing.interaction).toBeNull();
   });
 
   it("ignores stylus touches that begin outside the paper", () => {
@@ -261,7 +306,7 @@ describe("stylus touch input ownership", () => {
     dispatchTouch("touchend", [outside], [], margin);
     expect(drawing.currentPage().strokes).toEqual([]);
     expect(drawing.activePointerId).toBeNull();
-    expect(drawing.stylusTouchInput).toBe(false);
+    expect(drawing.interaction).toBeNull();
   });
 
   it("does not finish stylus ink when only a finger ends", () => {
@@ -423,7 +468,7 @@ describe("stylus touch input ownership", () => {
     expect(drawing.currentPage().strokes).toHaveLength(1);
     expect(drawing.currentPage().strokes[0].points.length).toBeGreaterThanOrEqual(3);
     expect(drawing.currentPage().strokes[0].points.at(-1)?.x).toBeCloseTo(0.4);
-    expect(drawing.stylusTouchInput).toBe(false);
+    expect(drawing.interaction).toBeNull();
     expect(drawing.activePointerId).toBeNull();
   });
 
