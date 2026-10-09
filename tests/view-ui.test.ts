@@ -52,6 +52,205 @@ afterEach(async () => {
 });
 
 describe("reference-style editor", () => {
+  it("locks notebook mutations and closes settings in reading mode, then restores editing", () => {
+    const host = view as unknown as { notebook: ReturnType<typeof createNotebook>; readingMode: boolean;
+      inputLocked(): boolean; addPage(): void; duplicateCurrentPage(): void; deleteCurrentPage(): void; moveCurrentPage(n: number): void;
+      undo(): void; redo(): void; state: { tool: string }; onTouchStart(e: TouchEvent): void; onTouchMove(e: TouchEvent): void };
+    host.addPage();
+    button("Pen").click();
+    expect(document.querySelector(".ink-size-popover.is-open")).not.toBeNull();
+    button("Reading mode").click();
+    expect(document.querySelector(".ink-size-popover.is-open")).toBeNull();
+    expect(button("Reading mode").getAttribute("aria-pressed")).toBe("true");
+    expect(document.querySelector(".ink-notes-view")!.classList.contains("ink-reading")).toBe(true);
+    expect(host.inputLocked()).toBe(true);
+    const before = JSON.stringify(host.notebook);
+    host.addPage(); host.duplicateCurrentPage(); host.deleteCurrentPage(); host.moveCurrentPage(-1); host.undo(); host.redo();
+    button("Add page").click(); button("Page options").click(); button("Erase").click();
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    scroller.dispatchEvent(new KeyboardEvent("keydown", { key: "e", bubbles: true }));
+    scroller.dispatchEvent(new KeyboardEvent("keydown", { key: "z", ctrlKey: true, bubbles: true }));
+    expect(host.state.tool).toBe("pen");
+    expect(document.querySelector(".preview-menu")).toBeNull();
+    expect(JSON.stringify(host.notebook)).toBe(before);
+    button("Pages").click();
+    expect(document.querySelector(".ink-notes-view")!.classList.contains("ink-rail-hidden")).toBe(false);
+    button("Reading mode").click();
+    expect(host.inputLocked()).toBe(false);
+    button("Erase").click();
+    expect(host.state.tool).toBe("eraser");
+    host.addPage();
+    expect(host.notebook.pages).toHaveLength(3);
+  });
+
+  it("keeps desktop shortcuts out of form fields and supports native button Space activation", () => {
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    const host = view as unknown as { state: { tool: string }; desktopSpaceDown: boolean };
+    const input = document.querySelector(".ink-notes-view")!.createEl("input");
+    input.focus();
+    const typing = new KeyboardEvent("keydown", { key: "e", bubbles: true, cancelable: true });
+    input.dispatchEvent(typing);
+    expect(typing.defaultPrevented).toBe(false);
+    expect(host.state.tool).toBe("pen");
+    const buttonSpace = new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true });
+    button("Pages").dispatchEvent(buttonSpace);
+    expect(buttonSpace.defaultPrevented).toBe(false);
+    scroller.focus();
+    scroller.dispatchEvent(new KeyboardEvent("keydown", { key: " ", code: "Space", bubbles: true, cancelable: true }));
+    expect(host.desktopSpaceDown).toBe(true);
+    window.dispatchEvent(new Event("blur"));
+    expect(host.desktopSpaceDown).toBe(false);
+    expect(scroller.classList.contains("ink-pan-ready")).toBe(false);
+  });
+
+  it("normalizes line/page wheel zoom, preserves scrolling and honors the zoom lock", () => {
+    const host = view as unknown as { zoom: number; zoomLocked: boolean; desktopZoom(f: number, target?: unknown): void };
+    const zoom = vi.spyOn(host, "desktopZoom");
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    Object.defineProperty(scroller, "clientHeight", { value: 600 });
+    const wheel = (deltaY: number, deltaMode = 0, ctrlKey = true) => {
+      const event = new WheelEvent("wheel", { deltaY, deltaMode, ctrlKey, bubbles: true, cancelable: true });
+      scroller.dispatchEvent(event); return event;
+    };
+    expect(wheel(30, 0, false).defaultPrevented).toBe(false);
+    expect(zoom).not.toHaveBeenCalled();
+    wheel(-1, 1);
+    expect(zoom).toHaveBeenLastCalledWith(Math.exp(16 * 0.004), { x: 0, y: 0 });
+    host.zoomLocked = true;
+    const before = host.zoom;
+    expect(wheel(-1, 2).defaultPrevented).toBe(true);
+    expect(host.zoom).toBe(before);
+  });
+
+  it.each([
+    ["Add page before current", 1], ["Add page after current", 2],
+    ["Add page before first", 0], ["Add page after last", 3],
+  ])("inserts and selects a blank page with %s, with undo and redo", (label, index) => {
+    const host = view as unknown as { notebook: ReturnType<typeof createNotebook>; pageIndex: number; addPage(): void };
+    host.addPage(); host.addPage(); host.pageIndex = 1;
+    const previous = host.notebook.pages.map((page) => page.id);
+    button("Add page").click();
+    Array.from(document.querySelectorAll<HTMLButtonElement>(".preview-menu button"))
+      .find((item) => item.textContent === label)!.click();
+    const added = host.notebook.pages[index];
+    expect(host.pageIndex).toBe(index);
+    expect(added).toMatchObject({ paper: "blank", strokes: [] });
+    expect(host.notebook.pageOrder).toEqual(host.notebook.pages.map((page) => page.id));
+    expect(host.notebook.pages.filter((page) => page.id !== added.id).map((page) => page.id)).toEqual(previous);
+    button("Undo").click();
+    expect(host.notebook.pages.map((page) => page.id)).toEqual(previous);
+    expect(host.pageIndex).toBe(1);
+    button("Redo").click();
+    expect(host.pageIndex).toBe(index);
+    expect(host.notebook.pages[index].strokes).toEqual([]);
+  });
+
+  it("switches between the plus and options menus and toggles plus closed", () => {
+    button("Page options").click();
+    button("Add page").click();
+    expect(document.querySelectorAll(".preview-menu")).toHaveLength(1);
+    expect(button("Page options").getAttribute("aria-expanded")).toBe("false");
+    expect(document.querySelector(".preview-menu")!.textContent).toContain("Add page before first");
+    button("Add page").dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    button("Add page").click();
+    expect(document.querySelector(".preview-menu")).toBeNull();
+  });
+
+  it("creates once after a deliberate boundary release, and cancels short or interrupted drags", async () => {
+    const host = view as unknown as { notebook: ReturnType<typeof createNotebook>; pageIndex: number; pageScroller: HTMLElement;
+      onTouchStart(e: TouchEvent): void; onTouchMove(e: TouchEvent): void; cancelPageFlip(): void; flipSettling: boolean };
+    Object.defineProperties(host.pageScroller, { clientWidth: { value: 800 }, clientHeight: { value: 700 } });
+    const touch = (x?: number) => ({ touches: x === undefined ? [] : [{ identifier: 1, clientX: x, clientY: 200 }],
+      timeStamp: 100, cancelable: true, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as TouchEvent);
+    const drag = (distance: number) => { host.onTouchStart(touch(400)); host.onTouchMove(touch(400 + distance)); };
+    const original = host.notebook.pages[0].id;
+    drag(80); host.onTouchStart(touch());
+    await vi.waitFor(() => expect(host.flipSettling).toBe(false));
+    expect(host.notebook.pages).toHaveLength(1);
+    drag(250);
+    expect(document.querySelector(".ink-swipe-stage")!.classList.contains("is-ready")).toBe(true);
+    host.cancelPageFlip(); host.onTouchStart(touch());
+    await vi.waitFor(() => expect(host.flipSettling).toBe(false));
+    expect(host.notebook.pages).toHaveLength(1);
+    drag(250); host.onTouchStart(touch()); host.onTouchStart(touch());
+    expect(host.notebook.pages).toHaveLength(2);
+    expect(host.pageIndex).toBe(0);
+    expect(host.notebook.pages[1].id).toBe(original);
+    expect(host.notebook.pages[0].paper).toBe("blank");
+  });
+
+  it("shows pinch magnification, keeps it while held, and hides within one second of release", () => {
+    vi.useFakeTimers();
+    try {
+      const host = view as unknown as { onTouchStart(e: TouchEvent): void; onTouchMove(e: TouchEvent): void };
+      const touch = (points: number[][]) => ({ touches: points.map(([identifier, clientX, clientY]) => ({ identifier, clientX, clientY })),
+        cancelable: true, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as TouchEvent);
+      host.onTouchStart(touch([[1, 200, 300], [2, 300, 300]]));
+      host.onTouchMove(touch([[1, 150, 300], [2, 350, 300]]));
+      const hud = document.querySelector<HTMLElement>(".ink-zoom-hud")!;
+      expect(hud.textContent).toContain("200%");
+      expect(hud.getAttribute("aria-hidden")).toBe("false");
+      vi.advanceTimersByTime(1500);
+      expect(hud.classList.contains("is-visible")).toBe(true);
+      host.onTouchStart(touch([]));
+      vi.advanceTimersByTime(849);
+      expect(hud.classList.contains("is-visible")).toBe(true);
+      vi.advanceTimersByTime(1);
+      expect(hud.getAttribute("aria-hidden")).toBe("true");
+      expect(button("Lock zoom").getAttribute("tabindex")).toBe("-1");
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("locks menu and wheel zoom, shows attempted pinches, and unlocks without a distance jump", () => {
+    const host = view as unknown as { zoom: number; zoomLocked: boolean; touchGesture: { zoom: number; distance: number };
+      onTouchStart(e: TouchEvent): void; onTouchMove(e: TouchEvent): void; onWheel(e: WheelEvent): void };
+    const touch = (points: number[][]) => ({ touches: points.map(([identifier, clientX, clientY]) => ({ identifier, clientX, clientY })),
+      cancelable: true, preventDefault: vi.fn(), stopPropagation: vi.fn() } as unknown as TouchEvent);
+    host.onTouchStart(touch([[1, 200, 300], [2, 300, 300]]));
+    host.onTouchMove(touch([[1, 150, 300], [2, 350, 300]]));
+    button("Lock zoom").click();
+    expect(host.zoomLocked).toBe(true);
+    expect(button("Unlock zoom").getAttribute("aria-pressed")).toBe("true");
+    host.onTouchMove(touch([[1, 100, 300], [2, 400, 300]]));
+    expect(host.zoom).toBe(2);
+    host.onWheel({ ctrlKey: true, deltaY: -10, preventDefault: vi.fn() } as unknown as WheelEvent);
+    expect(host.zoom).toBe(2);
+    button("Page options").click();
+    const menuButtons = Array.from(document.querySelectorAll<HTMLButtonElement>(".preview-menu button"));
+    expect(menuButtons.filter((item) => ["Zoom out", "Reset zoom", "Zoom in"].includes(item.textContent!))
+      .every((item) => item.disabled)).toBe(true);
+    button("Page options").click();
+    button("Unlock zoom").click();
+    expect(host.touchGesture.distance).toBe(300);
+    const companion = touch([[1, 100, 300], [2, 400, 300], [3, 300, 100]]);
+    Object.assign(companion.touches[2], { target: button("Lock zoom") });
+    host.onTouchMove(companion);
+    expect(host.touchGesture.distance).toBe(300);
+    host.onTouchMove(touch([[1, 100, 300], [2, 400, 300]]));
+    expect(host.zoom).toBe(2);
+    host.onTouchMove(touch([[1, 85, 300], [2, 415, 300]]));
+    expect(host.zoom).toBeCloseTo(2.2);
+    host.onTouchStart(touch([]));
+  });
+
+  it("cleans up the readout's pending hide on view close", async () => {
+    const host = view as unknown as { onTouchStart(e: TouchEvent): void };
+    host.onTouchStart({ touches: [{ identifier: 1, clientX: 200, clientY: 300 }, { identifier: 2, clientX: 300, clientY: 300 }],
+      preventDefault: vi.fn() } as unknown as TouchEvent);
+    host.onTouchStart({ touches: [], preventDefault: vi.fn() } as unknown as TouchEvent);
+    await view.onClose();
+    expect(document.querySelector(".ink-zoom-hud")).toBeNull();
+  });
+
+  it("orders navigation and history on the left, drawing centrally, and export before options", () => {
+    const toolbar = document.querySelector<HTMLElement>(".ink-toolbar")!;
+    const labels = (selector: string) => Array.from(toolbar.querySelectorAll(selector))
+      .map((el) => el.getAttribute("aria-label"));
+    expect(labels(".ink-toolbar-start button")).toEqual(["Pages", "Undo", "Redo"]);
+    expect(labels(".ink-toolbar-section-draw button")).toEqual(["Pen", "Highlight", "Erase", "Select"]);
+    expect(labels(".ink-toolbar-section-document button")).toEqual(["Reading mode", "Add page", "Export as PDF", "Page options"]);
+  });
+
   it("toggles closed even when the host's document dismissal was registered first", () => {
     let opened: Menu | undefined;
     const show = Menu.prototype.showAtMouseEvent;

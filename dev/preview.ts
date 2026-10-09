@@ -6,6 +6,7 @@ import type { NotebookStore } from "../src/storage";
 import { InkWorkerService } from "../src/worker-service";
 import { drawInkStroke } from "../src/rendering";
 import { TFile } from "obsidian";
+import { NotebookSuggestModal } from "../src/notebook-modal";
 import type { WorkspaceLeaf } from "obsidian";
 
 type RendererComparisonMode = "pen" | "highlighter" | "stroke-eraser" | "circle-eraser" | "square-eraser" | "lasso";
@@ -154,6 +155,18 @@ void (async () => {
     compared: number; different: number; inkPixels: number; expectedInkPixels: number; totalPixels: number }> } })
     .__inkNotesPreview = { view, compareRenderer };
   document.documentElement.dataset.inkReady = "true";
+  if (new URLSearchParams(location.search).has("notebooks")) {
+    const files = new URLSearchParams(location.search).has("empty") ? [] : ["Class notes", "Sketchbook"].map((name) =>
+      Object.assign(new TFile(), { path: `Ink Notes/${name}.ink`, basename: name, extension: "ink" }));
+    const openPicker = () => new NotebookSuggestModal({} as never, files,
+      (file) => { document.documentElement.dataset.openedNotebook = file.path; },
+      async (title) => {
+        files.push(Object.assign(new TFile(), { path: `Ink Notes/${title}.ink`, basename: title, extension: "ink" }));
+        document.documentElement.dataset.openedNotebook = files[files.length - 1].path;
+      }, async (file, title) => { file.basename = title; file.path = `Ink Notes/${title}.ink`; }).open();
+    (window as unknown as { openNotebookPicker(): void }).openNotebookPicker = openPicker;
+    openPicker();
+  }
 })();
 
 // Keep a real Markdown processor fixture in the browser preview. It is placed

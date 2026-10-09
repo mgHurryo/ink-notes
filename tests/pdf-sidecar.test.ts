@@ -7,6 +7,7 @@ import {
   createSidecar,
   deleteBlankNotePage,
   insertBlankNotePage,
+  insertBlankNotePageAt,
   isSourcePageId,
   mergeSidecars,
   moveBlankNotePage,
@@ -25,6 +26,17 @@ const SOURCE_PAGES = [
 function makeSidecar(): PdfSidecar {
   return createSidecar("docs/lecture.pdf", { sha256: "a".repeat(64), byteLength: 1234 }, SOURCE_PAGES);
 }
+
+it("prepends a blank with the first PDF page's rotated geometry and aligned ink order", () => {
+  const sidecar = makeSidecar();
+  sidecar.notePages[0].rotation = 90;
+  const original = sidecar.notePages.map((page) => ({ ...page }));
+  const id = insertBlankNotePageAt(sidecar, 0);
+  expect(sidecar.notePages[0]).toEqual({ id, width: 595.28, height: 841.89, rotation: 90 });
+  expect(sidecar.notePages.slice(1)).toEqual(original);
+  expect(sidecar.notebook.pages.map((page) => page.id)).toEqual(sidecar.notebook.pageOrder);
+  expect(sidecar.notebook.pageOrder).toEqual(sidecar.notePages.map((page) => page.id));
+});
 
 function stroke(pageId: string, id: string): InkStroke {
   return {

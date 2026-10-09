@@ -313,6 +313,11 @@ function compareNotePageOrder(left: PdfSidecarNotePage[], right: PdfSidecarNoteP
  */
 export function insertBlankNotePage(sidecar: PdfSidecar, afterId: string | null): string {
   const index = afterId === null ? sidecar.notePages.length : sidecar.notePages.findIndex((notePage) => notePage.id === afterId) + 1;
+  return insertBlankNotePageAt(sidecar, index);
+}
+
+/** Insert at a note sequence position, including before the first source page. */
+export function insertBlankNotePageAt(sidecar: PdfSidecar, index: number): string {
   const clamped = Math.max(0, Math.min(index, sidecar.notePages.length));
   const neighbor = sidecar.notePages[Math.max(0, Math.min(clamped, sidecar.notePages.length) - 1)] ?? sidecar.notePages[0];
   const geometry = neighbor

@@ -12,7 +12,7 @@ import {
   PdfSidecarNotePage,
   PdfSourcePageGeometry,
   deleteBlankNotePage,
-  insertBlankNotePage,
+  insertBlankNotePageAt,
   mergeSidecars,
   moveBlankNotePage,
   normalizeSidecar,
@@ -87,9 +87,9 @@ let nextViewId = 1;
 const EMPTY_NOTEBOOK = createNotebook();
 
 /**
- * Handwriting view for PDF tabs. Opens in reading mode; editing unlocks only
- * after the user explicitly toggles edit mode and the sidecar passed its
- * fingerprint check. The PDF page renders with Obsidian's own pdf.js below
+ * Handwriting view for PDF tabs. Reading mode locks editing independently
+ * of sidecar fingerprint checks and writer arbitration. The PDF page renders
+ * with Obsidian's own pdf.js below
  * the shared ink tile pipeline, so strokes persist through the same
  * merge/tombstone machinery as .ink notebooks.
  *
@@ -167,8 +167,6 @@ export class PdfInkView extends InkWritingView {
   constructor(leaf: WorkspaceLeaf) {
     super(leaf);
     this.scope = new Scope(this.app.scope);
-    this.scope.register(["Mod"], "z", () => this.undo());
-    this.scope.register(["Mod", "Shift"], "z", () => this.redo());
   }
 
   /** Wired by the plugin right after construction. */
@@ -203,15 +201,18 @@ export class PdfInkView extends InkWritingView {
     this.buildPageRail(body);
     const scroller = body.createDiv({ cls: "ink-pdf-scroller" });
     this.scroller = scroller;
+    this.buildZoomHud(body);
     this.pageWrap = scroller.createDiv({ cls: "ink-pdf-page-wrap" });
     this.pdfCanvas = this.pageWrap.createEl("canvas", { cls: "ink-pdf-canvas" });
     this.buildInkHost();
+    this.registerDesktopInput();
     this.viewReady = true;
     this.registerDomEvent(scroller, "scroll", () => this.onViewportMotion(), { passive: true });
     this.registerDomEvent(scroller, "touchstart", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(scroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
     this.registerDomEvent(scroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(scroller, "touchcancel", (event) => {
+      this.scheduleZoomHudHide();
       this.onStylusTouch(event);
       this.cancelPageFlip();
       this.touchGesture = null;
@@ -232,6 +233,7 @@ export class PdfInkView extends InkWritingView {
   }
 
   async onClose(): Promise<void> {
+    this.disposeZoomHud();
     this.closePageOptionsMenu();
     const outcome = await this.flushSaveNow();
     if (outcome.status !== "saved") {
@@ -356,9 +358,9 @@ export class PdfInkView extends InkWritingView {
   }
 
   /**
-   * The view is always in editing shape; read-only behaviour is a lock state,
-   * not a mode: blocked sidecars (fingerprint mismatch, corrupt notes file)
-   * and the single-writer arbiter gate input via editingLocked().
+   * Writer ownership survives mode changes so pending saves stay serialized.
+   * Sidecar validation and writer arbitration still gate editing independently
+   * of the user-selected reading mode.
    */
   private acquireWriter(): void {
     if (this.writerHeld || !this.canEdit()) return;
@@ -553,7 +555,8 @@ export class PdfInkView extends InkWritingView {
   private renderToolbar(root: HTMLElement): void {
     const toolbar = root.createDiv({ cls: "ink-pdf-toolbar" });
 
-    const pagesGroup = this.addToolbarSection(toolbar, "Pages");
+    const start = toolbar.createDiv({ cls: "ink-toolbar-start" });
+    const pagesGroup = this.addToolbarSection(start, "Pages");
     const toggle = this.addIconButton(pagesGroup, "panel-left", "Pages", () => {
       const hidden = !this.root?.hasClass("ink-rail-hidden");
       this.root?.toggleClass("ink-rail-hidden", hidden);
@@ -563,18 +566,24 @@ export class PdfInkView extends InkWritingView {
       if (!hidden) window.setTimeout(() => this.paintVisibleThumbnails(), RAIL_REVEAL_DELAY_MS);
     });
     toggle.setAttribute("aria-pressed", String(!this.root?.hasClass("ink-rail-hidden")));
-    const indicator = pagesGroup.createDiv({ cls: "ink-pdf-page-indicator" });
+    this.buildWritingSections(toolbar, start);
+    const indicator = start.createDiv({ cls: "ink-pdf-page-indicator" });
     indicator.setText("–");
     this.toolbarButtons.set("indicator", indicator);
 
-    this.buildWritingSections(toolbar);
-
     const docGroup = this.addToolbarSection(toolbar, "Document");
+    this.buildReadingModeButton(docGroup);
+    this.addTrackedIconButton(docGroup, "add-page", "plus", "Add page", (event) => {
+      if (this.sidecar) this.openPageInsertMenu(event, this.noteIndex, this.sidecar.notePages.length,
+        (index) => this.addBlankPage(index));
+    });
     // Menu and export respond regardless of the writer lock: the menu's
     // mutating items fail with a notice when read-only, and export only
     // reads. A silently dead button is indistinguishable from a broken one.
-    this.addTrackedIconButton(docGroup, "pages", "more-horizontal", "Page options", (event) => this.openPageMenu(event));
     this.addTrackedIconButton(docGroup, "export", "download", "Export PDF with handwriting", () => void this.exportHandwrittenCopy());
+    this.addTrackedIconButton(docGroup, "pages", "more-horizontal", "Page options", (event) => this.openPageMenu(event));
+    this.toolbarButtons.get("add-page")?.classList.add("ink-edit-only");
+    this.toolbarButtons.get("pages")?.classList.add("ink-edit-only");
 
     this.updateToolButtons();
     this.updateHistoryButtons();
@@ -844,12 +853,10 @@ export class PdfInkView extends InkWritingView {
   }
 
   private openPageMenu(event: MouseEvent): void {
-    if (!this.sidecar) return;
+    if (this.readingMode || !this.sidecar) return;
     const menu = this.beginPageOptionsMenu(event);
     if (!menu) return;
     const current = this.sidecar.notePages[this.noteIndex];
-    menu.addItem((item) => item.setTitle("Insert blank page after this one").setIcon("plus")
-      .onClick(() => this.withPageUndo(() => insertBlankNotePage(this.sidecar!, current?.id ?? null) !== null, "insert a blank page")));
     if (current && current.sourceIndex === undefined) {
       menu.addItem((item) => item.setTitle("Move blank page left").setIcon("arrow-left")
         .onClick(() => this.withPageUndo(() => moveBlankNotePage(this.sidecar!, current.id, this.noteIndex - 1), "move the blank page")));
@@ -863,11 +870,11 @@ export class PdfInkView extends InkWritingView {
     // The notebook menu has had zoom entries forever; the PDF view had none,
     // so a manual pinch left no way back to the fit (the manual zoom latches
     // until the document changes - which read as "the fit is huge").
-    menu.addItem((item) => item.setTitle("Zoom out").setDisabled(this.zoom <= this.fitZoom)
+    menu.addItem((item) => item.setTitle("Zoom out").setDisabled(this.zoomLocked || this.zoom <= this.fitZoom)
       .onClick(() => this.setZoom(this.zoom / PDF_ZOOM_STEP)));
-    menu.addItem((item) => item.setTitle("Reset zoom").setDisabled(!this.zoomTouched)
+    menu.addItem((item) => item.setTitle("Reset zoom").setDisabled(this.zoomLocked || !this.zoomTouched)
       .onClick(() => this.resetZoom()));
-    menu.addItem((item) => item.setTitle("Zoom in").setDisabled(this.zoom >= PDF_ZOOM_MAX)
+    menu.addItem((item) => item.setTitle("Zoom in").setDisabled(this.zoomLocked || this.zoom >= PDF_ZOOM_MAX)
       .onClick(() => this.setZoom(this.zoom * PDF_ZOOM_STEP)));
     menu.addSeparator();
     menu.addItem((item) => item.setTitle("Open with the built-in viewer").setIcon("book-open")
@@ -877,6 +884,7 @@ export class PdfInkView extends InkWritingView {
 
   /** Back to the fit: clears the manual-zoom latch so layout re-fits. */
   private resetZoom(): void {
+    if (this.zoomLocked) return;
     this.zoomTouched = false;
     // Neighbour previews carry the old scale; re-rendering refills them.
     this.neighbourCache.clear();
@@ -886,30 +894,50 @@ export class PdfInkView extends InkWritingView {
 
   // ------------------------------------------------------------- page ops
 
+  private addBlankPage(index: number): void {
+    this.destroySwipeStage();
+    this.withPageUndo(() => {
+      const id = insertBlankNotePageAt(this.sidecar!, index);
+      this.noteIndex = this.sidecar!.notePages.findIndex((page) => page.id === id);
+      this.zoomTouched = this.zoomLocked;
+      if (this.scroller) this.scroller.scrollLeft = this.scroller.scrollTop = 0;
+      return true;
+    }, "insert a blank page");
+  }
+
   /** Apply a note page sequence change, sync the worker, and record undo. */
   private withPageUndo(change: () => boolean, label: string): void {
-    if (!this.sidecar) return;
+    if (!this.sidecar || this.editingLocked()) {
+      new Notice(`Ink Notes could not ${label}: this view is read-only`);
+      return;
+    }
+    this.finishPointerInput(false);
     const before = serializeSidecar(this.sidecar);
+    const beforePageId = this.sidecar.notePages[this.noteIndex]?.id;
     if (!change()) {
       new Notice(`Ink Notes could not ${label}: source PDF pages are permanent`);
       return;
     }
     const after = serializeSidecar(this.sidecar);
+    const afterPageId = this.sidecar.notePages[this.noteIndex]?.id;
     this.markSidecarChanged();
     this.syncNotebookToWorker();
     this.layoutPage();
     this.renderAll();
     void this.renderPdfPage();
     this.pushCommand({
-      undo: () => this.restoreSidecarSnapshot(before),
-      redo: () => this.restoreSidecarSnapshot(after),
+      undo: () => this.restoreSidecarSnapshot(before, beforePageId),
+      redo: () => this.restoreSidecarSnapshot(after, afterPageId),
     });
   }
 
-  private restoreSidecarSnapshot(snapshot: string): void {
+  private restoreSidecarSnapshot(snapshot: string, pageId?: string): void {
     if (!this.sidecar) return;
+    this.destroySwipeStage();
     try {
       this.sidecar = normalizeSidecar(JSON.parse(snapshot));
+      const selected = this.sidecar.notePages.findIndex((page) => page.id === pageId);
+      this.noteIndex = selected < 0 ? Math.min(this.noteIndex, this.sidecar.notePages.length - 1) : selected;
       this.markSidecarChanged();
       this.syncNotebookToWorker();
       this.layoutPage();
@@ -934,9 +962,7 @@ export class PdfInkView extends InkWritingView {
     if (next < 0 || next >= count) return;
     this.finishPointerInput(false);
     this.noteIndex = next;
-    // Manual zoom is local to the current page; the incoming page starts at
-    // its own default fit instead of inheriting the previous page's zoom.
-    this.zoomTouched = false;
+    this.zoomTouched = this.zoomLocked;
     if (this.scroller) {
       this.scroller.scrollLeft = 0;
       this.scroller.scrollTop = 0;
@@ -951,6 +977,7 @@ export class PdfInkView extends InkWritingView {
   }
 
   private setZoom(zoom: number, target?: { x: number; y: number }, anchor?: { x: number; y: number }): void {
+    if (this.zoomLocked || !Number.isFinite(zoom)) return;
     const clamped = Math.max(this.fitZoom, Math.min(PDF_ZOOM_MAX, zoom));
     if (clamped === this.zoom) return;
     this.zoomTouched = true;
@@ -1006,6 +1033,7 @@ export class PdfInkView extends InkWritingView {
 
   private layoutPage(): void {
     if (!this.scroller || !this.pageWrap) return;
+    const lockedLevel = this.zoomLocked ? this.zoomLevel() : null;
     const display = this.rotatedSize(this.currentNotePage());
     this.pageBaseWidth = Math.max(200, this.scroller.clientWidth - PDF_PAGE_PADDING * 2) || 700;
     this.pageBaseHeight = this.pageBaseWidth * display.height / display.width;
@@ -1018,7 +1046,9 @@ export class PdfInkView extends InkWritingView {
     // broken value.
     const contentHeight = Math.max(1, this.scroller.clientHeight - PDF_PAGE_PADDING * 2);
     this.fitZoom = Math.max(0.05, Math.min(1, contentHeight / this.pageBaseHeight));
-    if (!this.zoomTouched) this.zoom = this.fitZoom;
+    if (lockedLevel !== null) this.zoom = this.fitZoom * lockedLevel;
+    else if (!this.zoomTouched) this.zoom = this.fitZoom;
+    this.updateZoomHud();
     this.pageWrap.setCssStyles({
       width: `${this.pageBaseWidth * this.zoom}px`,
       height: `${this.pageBaseHeight * this.zoom}px`,
@@ -1096,7 +1126,6 @@ export class PdfInkView extends InkWritingView {
       this.eraserPointerInside = false;
       this.refreshEraserCursor();
     });
-    host.addEventListener("wheel", (event) => this.onWheel(event as WheelEvent), { passive: false });
     // Shared with the notebook editor: catches the stroke end when iPadOS
     // interrupts a Pencil (system gesture, haptic tick) or the pen lifts
     // outside an uncaptured host - otherwise the stroke stays preview-only
@@ -1107,11 +1136,14 @@ export class PdfInkView extends InkWritingView {
     });
   }
 
-  private onWheel(event: WheelEvent): void {
-    if (!event.ctrlKey && !event.metaKey) return;
-    event.preventDefault();
-    this.setZoom(this.zoom * (event.deltaY < 0 ? PDF_ZOOM_STEP : 1 / PDF_ZOOM_STEP), { x: event.clientX, y: event.clientY });
+  protected desktopNavigate(destination: "previous" | "next" | "first" | "last"): void {
+    const count = this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 1;
+    const next = destination === "first" ? 0 : destination === "last" ? count - 1
+      : this.noteIndex + (destination === "next" ? 1 : -1);
+    void this.navigatePages(next - this.noteIndex).catch((error) => this.setStatus(`Could not switch pages: ${messageOf(error)}`, true));
   }
+  protected desktopZoom(factor: number, target?: { x: number; y: number }): void { this.setZoom(this.zoom * factor, target); }
+  protected desktopResetZoom(): void { this.resetZoom(); }
 
   // ------------------------------------------------------ writing-layer seams
 
@@ -1136,7 +1168,13 @@ export class PdfInkView extends InkWritingView {
   }
 
   private editingLocked(): boolean {
-    return !this.canEdit() || !this.writerHeld;
+    return this.readingMode || !this.canEdit() || !this.writerHeld;
+  }
+
+  protected onReadingModeChanged(): void {
+    this.destroySwipeStage();
+    this.touchGesture = null;
+    this.root?.toggleClass("ink-pdf-editing", !this.readingMode);
   }
 
   protected pagePixelSize(): { width: number; height: number } {
@@ -1163,6 +1201,8 @@ export class PdfInkView extends InkWritingView {
 
   protected toolbarRoot(): HTMLElement { return this.root!; }
   protected inputScroller(): HTMLElement { return this.scroller!; }
+  protected zoomLevel(): number { return this.zoom / this.fitZoom; }
+  protected onZoomLockChanged(): void { this.zoomTouched = true; }
   protected applyGestureZoom(value: number, focus: { x: number; y: number }, anchor: { x: number; y: number }): void {
     this.setZoom(value, focus, anchor);
   }
@@ -1174,6 +1214,7 @@ export class PdfInkView extends InkWritingView {
     const wrap = this.pageWrap;
     if (!wrap || this.flipSettling) return;
     this.ensureSwipeStage(offset);
+    this.updatePageInsertPreview(this.swipeStage, offset);
     const pitch = this.swipePitch();
     offset = this.swipeStage ? Math.max(-pitch, Math.min(pitch, offset)) : offset / (1 + Math.abs(offset) / 80);
     this.swipeDragOffset = offset;
@@ -1187,7 +1228,7 @@ export class PdfInkView extends InkWritingView {
     const baseWidth = Math.max(200, this.scroller!.clientWidth - PDF_PAGE_PADDING * 2);
     const fit = Math.max(0.05, Math.min(1, Math.max(1, this.scroller!.clientHeight - PDF_PAGE_PADDING * 2)
       / (baseWidth * display.height / display.width)));
-    const zoom = fit;
+    const zoom = this.zoomLocked ? fit * this.zoomLevel() : fit;
     const width = baseWidth * zoom;
     return { width, height: width * display.height / display.width, baseWidth, zoom };
   }
@@ -1204,10 +1245,12 @@ export class PdfInkView extends InkWritingView {
       this.destroySwipeStage();
     }
     const count = this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 0;
-    if (neighborIndex < 0 || neighborIndex >= count) return;
+    const insert = neighborIndex < 0 || neighborIndex >= count;
+    if (insert && this.editingLocked()) return;
     const pitch = this.swipePitch();
-    const display = this.rotatedSize(this.sidecar?.notePages[neighborIndex] ?? null);
-    const { width, height, baseWidth, zoom } = this.swipePageSize(this.sidecar?.notePages[neighborIndex] ?? null);
+    const note = this.sidecar?.notePages[insert ? this.noteIndex : neighborIndex] ?? null;
+    const display = this.rotatedSize(note);
+    const { width, height, baseWidth, zoom } = this.swipePageSize(note);
     this.swipeLayer = scroller.createDiv({ cls: "ink-swipe-layer" });
     this.swipeLayer.setCssStyles({ left: `${scroller.scrollLeft}px`, top: `${scroller.scrollTop}px`,
       width: `${scroller.clientWidth}px`, height: `${scroller.clientHeight}px`, right: "auto", bottom: "auto" });
@@ -1223,6 +1266,7 @@ export class PdfInkView extends InkWritingView {
       transform: "translateX(0px)",
     });
     this.swipeStage = stage;
+    if (insert) { this.showPageInsertPreview(stage, side); return; }
     void this.renderSwipeStagePage(stage, neighborIndex);
     const ink = stage.createEl("canvas");
     ink.style.cssText = "position:absolute;inset:0;width:100%;height:100%";
@@ -1309,21 +1353,30 @@ export class PdfInkView extends InkWritingView {
     return Math.max(this.scroller?.clientWidth ?? 0, this.pageWrap?.offsetWidth ?? 0) + 16;
   }
 
-  protected swipeSettle(delta: number): void {
+  protected swipeSettle(delta: number, travel = 0): void {
     if (this.flipSettling) return;
     const wrap = this.pageWrap;
     if (!wrap) { this.destroySwipeStage(); return; }
     const stage = this.swipeStage;
     const side = stage ? Number(stage.dataset.neighbor) - this.noteIndex : 0;
-    const flip = delta !== 0 && side === delta;
+    const insert = !!stage?.dataset.insert;
+    const create = insert && !this.editingLocked() && Math.sign(travel) === -side && Math.abs(travel) >= this.pageInsertThreshold();
+    const flip = create || (!insert && delta !== 0 && side === delta);
     const from = this.swipeDragOffset;
     const to = flip ? -side * this.swipePitch() : 0;
     const isCurrent = this.beginPageSwipe(this.noteIndex + (flip ? delta : 0),
       this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 1);
     this.flipSettling = true;
     this.animatePageSwipe(stage ? [wrap, stage] : [wrap], from, to, () => {
+      if (!isCurrent()) return;
       this.cancelPageSwipeAnimations();
       wrap.style.transform = "";
+      if (create) {
+        this.addBlankPage(side < 0 ? 0 : this.sidecar!.notePages.length);
+        this.destroySwipeStage();
+        this.resumePageSwipeDrag();
+        return;
+      }
       if (flip && stage) wrap.style.visibility = "hidden";
       void this.navigatePageSwipe((index) => this.navigatePages(index - this.noteIndex),
         () => this.noteIndex, isCurrent).catch((error) => {
