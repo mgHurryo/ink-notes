@@ -687,18 +687,11 @@ export class InkView extends InkWritingView {
     const commit = (): void => {
       if (committed || !this.swipeStage) return;
       committed = true;
-      // The stage keeps covering the page slot until the real page rendered
-      // underneath; re-sync it to the live geometry so a transient relayout
-      // after changePage can never show it (or the page) squashed.
-      const stage = this.swipeStage;
-      if (stage) {
-        stage.style.transition = "none";
-        stage.style.left = `${extent.offsetLeft + page.offsetLeft}px`;
-        stage.style.top = `${extent.offsetTop + page.offsetTop}px`;
-        stage.style.width = `${page.offsetWidth}px`;
-        stage.style.height = `${page.offsetHeight}px`;
-        stage.style.transform = "none";
-      }
+      // At the animation end the stage sits exactly on the page slot, so
+      // only the extent's transform drops (invisible underneath the stage).
+      // The stage itself never re-positions here: fresh offset reads during
+      // teardown returned intermediate values on devices and teleported the
+      // old page visibly aside before it disappeared.
       extent.style.transition = "none";
       extent.style.transform = "none";
       this.changePage(delta);

@@ -150,6 +150,9 @@ export class BrushPopoverController {
   private openState = false;
   private curveOpen = false;
   private dragIndex = -1;
+  /** The tool whose panel was last shown; a switch resets the shared scroll
+   *  container so the shorter panel is not left scrolled out of view. */
+  private visiblePanel: InkTool | null = null;
 
   constructor(private readonly parent: HTMLElement, options: BrushPopoverControllerOptions) {
     this.options = options;
@@ -169,6 +172,7 @@ export class BrushPopoverController {
         : this.attachShield(this.root, type);
     }
     const body = this.root.createDiv({ cls: "ink-popover-body" });
+    this.body = body;
     for (const spec of options.tools) this.buildToolPanel(body, spec);
     options.buildExtras?.(body, {
       addRange: (parent, name, min, max, step, value, onChange) => this.addRange(parent, name, min, max, step, value, onChange),
@@ -213,25 +217,29 @@ export class BrushPopoverController {
       this.update();
     });
     if (spec.tool !== "pen") return;
+    // Pen-only dynamics live in one wrapper that the stylesheet hides unless
+    // the pen panel is showing: they rendered under the highlighter too,
+    // pushing the panel body full of low-frequency sliders.
+    const dynamics = body.createDiv({ cls: "ink-pen-dynamics" });
     // 0 keeps ink direct (raw samples, no modeling); 1..100 is the stroke
     // modeler strength. Sparse low-rate devices also auto-engage at 0.
     // No update() here: smooth has no visual control state, but the change
     // must still reach the view (persisted settings).
-    this.addRange(body, "Smooth", 0, 100, 1, settings.smooth ?? 0, (value) => {
+    this.addRange(dynamics, "Smooth", 0, 100, 1, settings.smooth ?? 0, (value) => {
       settings.smooth = value;
       this.options.onControlsChanged?.();
     });
     // Dynamics sliders re-render the sample-stroke preview on change.
-    this.addRange(body, "Taper", 0, 100, 1, settings.taper ?? 0, (value) => {
+    this.addRange(dynamics, "Taper", 0, 100, 1, settings.taper ?? 0, (value) => {
       settings.taper = value;
       this.update();
     });
-    this.addRange(body, "Pressure", 0, 100, 1, settings.pressureGain ?? 100, (value) => {
+    this.addRange(dynamics, "Pressure", 0, 100, 1, settings.pressureGain ?? 100, (value) => {
       settings.pressureGain = value;
       this.update();
     });
-    this.buildPressureCurveEditor(body, settings);
-    this.addRange(body, "Speed width", 0, 100, 1, settings.speedGain ?? 0, (value: number) => {
+    this.buildPressureCurveEditor(dynamics, settings);
+    this.addRange(dynamics, "Speed width", 0, 100, 1, settings.speedGain ?? 0, (value: number) => {
       settings.speedGain = value;
       this.update();
     });
@@ -259,17 +267,35 @@ export class BrushPopoverController {
     const input = custom.createEl("input", { attr: {
       type: "color", value: settings.color, "aria-label": `${spec.label} custom color`, "data-brush-tool": spec.tool,
     } });
-    input.addEventListener("input", () => {
-      settings.color = input.value;
+    // One pick = one preset. The picker streams input events while the user
+    // drags; adding on every event stuffed the palette with the whole drag
+    // path (a dozen near-identical swatches). The color becomes a preset only
+    // when the pick settles: on change, or after a 500ms pause.
+    let addTimer: number | undefined;
+    const flushPickedColor = (): void => {
+      if (addTimer !== undefined) {
+        window.clearTimeout(addTimer);
+        addTimer = undefined;
+      }
+      const picked = input.value;
+      settings.color = picked;
       const palette = this.options.palette?.();
-      if (palette && !palette.some((entry) => entry.toLowerCase() === input.value.toLowerCase()) && palette.length < PRESET_PALETTE_MAX) {
-        palette.push(input.value);
+      if (palette && !palette.some((entry) => entry.toLowerCase() === picked.toLowerCase()) && palette.length < PRESET_PALETTE_MAX) {
+        palette.push(picked);
         this.buildSwatchesInto(spec);
         custom.title = palette.length >= PRESET_PALETTE_MAX ? "Custom color (palette is full)" : "Add a preset color";
       }
+      this.updateColorSwatches(spec.tool, picked);
+      this.update();
+    };
+    input.addEventListener("input", () => {
+      settings.color = input.value;
       this.updateColorSwatches(spec.tool, input.value);
       this.update();
+      if (addTimer !== undefined) window.clearTimeout(addTimer);
+      addTimer = window.setTimeout(flushPickedColor, 500);
     });
+    input.addEventListener("change", flushPickedColor);
   }
 
   /** Rebuilds the swatch row from the live palette (after add/edit/remove). */
@@ -296,7 +322,18 @@ export class BrushPopoverController {
         this.updateColorSwatches(spec.tool, value);
         this.update();
       });
-      swatch.addEventListener("dblclick", () => this.openPresetEditor(spec, value, swatch));
+      // iPads deliver no dblclick event for touch, so the double-tap that
+      // opens the preset editor is detected here - two taps within 350ms.
+      let lastTapAt = 0;
+      swatch.addEventListener("pointerdown", () => {
+        const now = Date.now();
+        if (now - lastTapAt <= 350) {
+          lastTapAt = 0;
+          this.openPresetEditor(spec, value, swatch);
+          return;
+        }
+        lastTapAt = now;
+      });
     }
   }
 
@@ -521,6 +558,7 @@ export class BrushPopoverController {
     window.requestAnimationFrame(() => {
       this.position();
       this.update();
+      this.body.scrollTop = 0;
       this.focusSizeSlider();
     });
   }
@@ -565,6 +603,13 @@ export class BrushPopoverController {
   /** Re-syncs every control, the title and the canvases from settings. */
   update(): void {
     const active = this.options.activeTool();
+    if (active !== this.visiblePanel) {
+      this.visiblePanel = active;
+      // Panels share one scroll container: without this, switching from the
+      // long pen panel left the highlighter panel scrolled past its
+      // high-frequency controls.
+      this.body.scrollTop = 0;
+    }
     for (const spec of this.options.tools) {
       const settings = this.options.getSettings(spec.tool);
       const panel = this.root.querySelector<HTMLElement>(`.ink-brush-settings[data-brush-tool="${spec.tool}"]`);
