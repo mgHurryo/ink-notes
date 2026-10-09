@@ -29437,6 +29437,11 @@ var PdfInkView = class extends InkWritingView {
     }
     const ids = pages ? pages.map((page) => page.id).join(",") : Array.from({ length: count }, (_, index) => `src${index}`).join(",");
     if (ids !== this.railBuiltIds) {
+      if (this.railBuiltIds) {
+        this.prewarmToken += 1;
+        this.neighbourCache.clear();
+        this.destroySwipeStage();
+      }
       this.rebuildRailButtons(count);
       this.railBuiltIds = ids;
     }
@@ -29542,7 +29547,7 @@ var PdfInkView = class extends InkWritingView {
     if (this.pendingThumbRenders.has(index)) return;
     const notePage = (_a = this.sidecar) == null ? void 0 : _a.notePages[index];
     const display = this.rotatedSize(notePage != null ? notePage : null);
-    const neighbour = this.neighbourCache.get(index);
+    const neighbour = (notePage == null ? void 0 : notePage.sourceIndex) !== void 0 ? this.neighbourCache.get(index) : void 0;
     if (neighbour) {
       const thumb = document.createElement("canvas");
       thumb.width = this.thumbPixelWidth();
@@ -29568,7 +29573,12 @@ var PdfInkView = class extends InkWritingView {
     const token = ((_c = this.thumbPaintTokens.get(index)) != null ? _c : 0) + 1;
     this.thumbPaintTokens.set(index, token);
     this.pendingThumbRenders.add(index);
-    void this.renderThumbnail(canvas, index, notePage, display, token).finally(() => this.pendingThumbRenders.delete(index));
+    void this.renderThumbnail(canvas, index, notePage, display, token).finally(() => {
+      var _a2;
+      if (token === this.thumbPaintTokens.get(index) && ((_a2 = this.thumbButtons.get(index)) == null ? void 0 : _a2.querySelector("canvas")) === canvas) {
+        this.pendingThumbRenders.delete(index);
+      }
+    });
   }
   thumbPixelWidth() {
     return Math.max(1, Math.round(RAIL_THUMB_WIDTH * (window.devicePixelRatio || 1)));
@@ -29576,16 +29586,20 @@ var PdfInkView = class extends InkWritingView {
   async renderThumbnail(canvas, index, notePage, display, token) {
     var _a;
     const generation = this.loadGeneration;
+    const isCurrent = () => {
+      var _a2, _b, _c;
+      return token === this.thumbPaintTokens.get(index) && generation === this.loadGeneration && ((_b = (_a2 = this.sidecar) == null ? void 0 : _a2.notePages[index]) == null ? void 0 : _b.id) === notePage.id && ((_c = this.thumbButtons.get(index)) == null ? void 0 : _c.querySelector("canvas")) === canvas;
+    };
     try {
       const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
-      if (token !== this.thumbPaintTokens.get(index) || generation !== this.loadGeneration) return;
+      if (!isCurrent()) return;
       const scale = this.thumbPixelWidth() / display.width;
       const viewport = page.getViewport({ scale });
       const thumb = document.createElement("canvas");
       thumb.width = Math.max(1, Math.round(display.width * scale));
       thumb.height = Math.max(1, Math.round(display.height * scale));
       await page.render({ canvasContext: thumb.getContext("2d"), viewport }).promise;
-      if (token !== this.thumbPaintTokens.get(index) || generation !== this.loadGeneration) return;
+      if (!isCurrent()) return;
       this.thumbCache.set(index, thumb);
       if (canvas.isConnected) this.paintThumbBitmap(canvas, thumb, index);
     } catch (error) {

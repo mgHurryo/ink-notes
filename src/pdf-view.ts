@@ -636,6 +636,12 @@ export class PdfInkView extends InkWritingView {
       ? pages.map((page) => page.id).join(",")
       : Array.from({ length: count }, (_, index) => `src${index}`).join(",");
     if (ids !== this.railBuiltIds) {
+      if (this.railBuiltIds) {
+        // Index-based rasters and prewarms belong to the previous page order.
+        this.prewarmToken += 1;
+        this.neighbourCache.clear();
+        this.destroySwipeStage();
+      }
       this.rebuildRailButtons(count);
       this.railBuiltIds = ids;
     }
@@ -655,7 +661,7 @@ export class PdfInkView extends InkWritingView {
     if (!thumbs) return;
     thumbs.empty();
     this.thumbButtons.clear();
-    // Indexes shift with the rebuild, so cached bitmaps keyed by index die too.
+    // Indexes shift with the rebuild, so cached thumbnails die too.
     this.invalidateThumbnails();
     const pages = this.sidecar?.notePages;
     for (let index = 0; index < count; index++) {
@@ -744,7 +750,7 @@ export class PdfInkView extends InkWritingView {
     if (this.pendingThumbRenders.has(index)) return;
     const notePage = this.sidecar?.notePages[index];
     const display = this.rotatedSize(notePage ?? null);
-    const neighbour = this.neighbourCache.get(index);
+    const neighbour = notePage?.sourceIndex !== undefined ? this.neighbourCache.get(index) : undefined;
     if (neighbour) {
       const thumb = document.createElement("canvas");
       thumb.width = this.thumbPixelWidth();
@@ -769,7 +775,12 @@ export class PdfInkView extends InkWritingView {
     this.thumbPaintTokens.set(index, token);
     this.pendingThumbRenders.add(index);
     void this.renderThumbnail(canvas, index, notePage, display, token)
-      .finally(() => this.pendingThumbRenders.delete(index));
+      .finally(() => {
+        if (token === this.thumbPaintTokens.get(index)
+          && this.thumbButtons.get(index)?.querySelector("canvas") === canvas) {
+          this.pendingThumbRenders.delete(index);
+        }
+      });
   }
 
   private thumbPixelWidth(): number {
@@ -779,16 +790,20 @@ export class PdfInkView extends InkWritingView {
   private async renderThumbnail(canvas: HTMLCanvasElement, index: number,
     notePage: PdfSidecarNotePage, display: { width: number; height: number }, token: number): Promise<void> {
     const generation = this.loadGeneration;
+    const isCurrent = () => token === this.thumbPaintTokens.get(index)
+      && generation === this.loadGeneration
+      && this.sidecar?.notePages[index]?.id === notePage.id
+      && this.thumbButtons.get(index)?.querySelector("canvas") === canvas;
     try {
       const page = await this.pdfDoc!.getPage(notePage.sourceIndex! + 1);
-      if (token !== this.thumbPaintTokens.get(index) || generation !== this.loadGeneration) return;
+      if (!isCurrent()) return;
       const scale = this.thumbPixelWidth() / display.width;
       const viewport = page.getViewport({ scale });
       const thumb = document.createElement("canvas");
       thumb.width = Math.max(1, Math.round(display.width * scale));
       thumb.height = Math.max(1, Math.round(display.height * scale));
       await page.render({ canvasContext: thumb.getContext("2d")!, viewport }).promise;
-      if (token !== this.thumbPaintTokens.get(index) || generation !== this.loadGeneration) return;
+      if (!isCurrent()) return;
       this.thumbCache.set(index, thumb);
       if (canvas.isConnected) this.paintThumbBitmap(canvas, thumb, index);
     } catch (error) {

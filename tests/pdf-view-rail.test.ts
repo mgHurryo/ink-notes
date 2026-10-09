@@ -22,6 +22,9 @@ interface RailInternals {
   refreshPageRail(): void;
   paintThumbnail(index: number): void;
   paintVisibleThumbnails(): void;
+  withPageUndo(change: () => boolean, label: string): void;
+  prewarmNeighbours(): void;
+  pendingThumbRenders: Set<number>;
 }
 
 /** Minimal pdf.js document stub: getPage(n) hands out a page whose render
@@ -30,7 +33,7 @@ function fakePdfDoc(pageCount: number) {
   const renderedPages: number[] = [];
   const getPage = vi.fn(async (pageNumber: number) => ({
     getViewport: ({ scale }: { scale: number }) => ({ width: 595.28 * scale, height: 841.89 * scale }),
-    render: vi.fn(async () => { renderedPages.push(pageNumber); }),
+    render: vi.fn(() => { renderedPages.push(pageNumber); return { promise: Promise.resolve() }; }),
   }));
   return { renderedPages, getPage, doc: { numPages: pageCount, getPage, destroy: async () => undefined } };
 }
@@ -186,6 +189,77 @@ describe("pdf page preview rail", () => {
     internal.paintThumbnail(3);
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(fakeDoc.getPage.mock.calls.map((call) => call[0])).toEqual([1, 2, 3]);
+    await view.onClose();
+  });
+
+  it("immediately paints an inserted blank instead of a prewarmed PDF at its old index", async () => {
+    const { view, internal, sidecar } = await setupExpanded(3);
+    internal.renderAll();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const oldPdf = document.createElement("canvas");
+    oldPdf.width = 595; oldPdf.height = 842;
+    internal.neighbourCache.set(1, oldPdf);
+    const drawImage = vi.fn(), fillRect = vi.fn();
+    const ctx = new Proxy({ drawImage, fillRect }, {
+      get: (target, key) => Reflect.get(target, key) ?? vi.fn(), set: () => true,
+    });
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
+    internal.withPageUndo(() => insertBlankNotePage(sidecar, sourcePageId(0)) !== null, "insert a blank page");
+    expect(sidecar.notePages[1].sourceIndex).toBeUndefined();
+    expect(internal.neighbourCache.has(1)).toBe(false);
+    expect(fillRect).toHaveBeenCalledWith(0, 0, 120, Math.round(120 * 841.89 / 595.28));
+    expect(drawImage.mock.calls.some(([bitmap]) => bitmap === oldPdf)).toBe(false);
+    expect(internal.thumbCache.has(1)).toBe(true);
+    await view.onClose();
+  });
+
+  it("does not let a prewarm started before insertion populate the blank index", async () => {
+    const { view, internal, sidecar, fakeDoc } = await setupExpanded(3);
+    internal.renderAll();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    let finish!: () => void;
+    const pending = new Promise<void>((resolve) => { finish = resolve; });
+    const render = vi.fn(() => ({ promise: pending }));
+    fakeDoc.getPage.mockResolvedValueOnce({
+      getViewport: ({ scale }: { scale: number }) => ({ width: 595.28 * scale, height: 841.89 * scale }), render,
+    });
+    internal.prewarmNeighbours();
+    await Promise.resolve();
+    expect(render).toHaveBeenCalledOnce();
+    internal.withPageUndo(() => insertBlankNotePage(sidecar, sourcePageId(0)) !== null, "insert a blank page");
+    finish();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(internal.neighbourCache.has(1)).toBe(false);
+    expect(internal.thumbCache.has(1)).toBe(true);
+    await view.onClose();
+  });
+
+  it("discards a late thumbnail for an old page without clearing the replacement's pending render", async () => {
+    const { view, internal, sidecar, fakeDoc } = await setupExpanded(3);
+    let finishOld!: () => void, finishNew!: () => void;
+    const oldPaint = new Promise<void>((resolve) => { finishOld = resolve; });
+    const newPaint = new Promise<void>((resolve) => { finishNew = resolve; });
+    let inserted = false;
+    fakeDoc.getPage.mockImplementation(async (pageNumber) => ({
+      getViewport: ({ scale }: { scale: number }) => ({ width: 595.28 * scale, height: 841.89 * scale }),
+      render: vi.fn(() => ({ promise: pageNumber === 3 ? oldPaint
+        : inserted && pageNumber === 2 ? newPaint : Promise.resolve() })),
+    }));
+    internal.noteIndex = 1;
+    internal.renderAll();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(internal.pendingThumbRenders.has(2)).toBe(true);
+    inserted = true;
+    internal.withPageUndo(() => insertBlankNotePage(sidecar, sourcePageId(0)) !== null, "insert a blank page");
+    await Promise.resolve();
+    finishOld();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(internal.thumbCache.has(2)).toBe(false);
+    expect(internal.pendingThumbRenders.has(2)).toBe(true);
+    finishNew();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(internal.thumbCache.has(2)).toBe(true);
+    expect(internal.pendingThumbRenders.has(2)).toBe(false);
     await view.onClose();
   });
 
