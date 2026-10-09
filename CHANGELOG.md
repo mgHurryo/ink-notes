@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.8.0-beta.31 - 2026-10-10
+
+- The PDF page is pane-sized again: beta.29's fit formula mixed its units (the page box is already pane-wide at zoom 1, and the formula scaled by paneWidth/pageWidth a second time), blowing every page ~1.4x past the pane - cut off right and bottom - with Reset recomputing the same broken value. A landscape page now fits the pane width at zoom 1; a portrait page fits the pane height. Zoom out / Reset zoom / Zoom in stay in the page-options menu.
+- The page-flip flash is attacked at its remaining root: a trailing touchcancel (or duplicated settle) could spring an already-decided flip back, sliding the neighbour stage beside the incoming page and destroying it there. A decided flip now never springs back, and the commit listens on the stage's own transitionend instead of the page's (which can receive bubbled foreign transitions). Both editors.
+- The preset palette picker is per-swatch and native again: a tap on a swatch selects the color and arms that swatch's own color input; the next tap lands on the real input and opens the system picker (programmatic .click() never opened it on iPad - the beta.30 regression). Hold still deletes the preset.
+- Switching to the eraser closes the brush panel instead of stranding an empty shell whose pinned sample stroke stayed on screen.
+
 ## 0.8.0-beta.30 - 2026-10-10
 
 - The preset palette lost its intermediate editor: a double-tap on a swatch re-colors that preset straight in the system picker, and a 550ms hold deletes the preset outright (the one-swatch minimum holds; a notice confirms). Tapping the platform picker sheet can no longer close the panel mid-edit - the tap-outside dismissal waits while a picker session is open.
