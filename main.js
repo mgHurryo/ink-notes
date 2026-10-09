@@ -22754,6 +22754,9 @@ var BrushPopoverController = class {
     this.openState = false;
     this.curveOpen = false;
     this.dragIndex = -1;
+    /** The tool whose panel was last shown; a switch resets the shared scroll
+     *  container so the shorter panel is not left scrolled out of view. */
+    this.visiblePanel = null;
     var _a;
     this.options = options;
     this.root = parent.createDiv({
@@ -22767,6 +22770,7 @@ var BrushPopoverController = class {
       options.registerCleanup ? options.registerCleanup(this.attachShield(this.root, type)) : this.attachShield(this.root, type);
     }
     const body = this.root.createDiv({ cls: "ink-popover-body" });
+    this.body = body;
     for (const spec of options.tools) this.buildToolPanel(body, spec);
     (_a = options.buildExtras) == null ? void 0 : _a.call(options, body, {
       addRange: (parent2, name, min, max, step, value, onChange) => this.addRange(parent2, name, min, max, step, value, onChange)
@@ -22820,21 +22824,22 @@ var BrushPopoverController = class {
       this.update();
     });
     if (spec.tool !== "pen") return;
-    this.addRange(body, "Smooth", 0, 100, 1, (_a = settings.smooth) != null ? _a : 0, (value) => {
+    const dynamics = body.createDiv({ cls: "ink-pen-dynamics" });
+    this.addRange(dynamics, "Smooth", 0, 100, 1, (_a = settings.smooth) != null ? _a : 0, (value) => {
       var _a2, _b2;
       settings.smooth = value;
       (_b2 = (_a2 = this.options).onControlsChanged) == null ? void 0 : _b2.call(_a2);
     });
-    this.addRange(body, "Taper", 0, 100, 1, (_b = settings.taper) != null ? _b : 0, (value) => {
+    this.addRange(dynamics, "Taper", 0, 100, 1, (_b = settings.taper) != null ? _b : 0, (value) => {
       settings.taper = value;
       this.update();
     });
-    this.addRange(body, "Pressure", 0, 100, 1, (_c = settings.pressureGain) != null ? _c : 100, (value) => {
+    this.addRange(dynamics, "Pressure", 0, 100, 1, (_c = settings.pressureGain) != null ? _c : 100, (value) => {
       settings.pressureGain = value;
       this.update();
     });
-    this.buildPressureCurveEditor(body, settings);
-    this.addRange(body, "Speed width", 0, 100, 1, (_d = settings.speedGain) != null ? _d : 0, (value) => {
+    this.buildPressureCurveEditor(dynamics, settings);
+    this.addRange(dynamics, "Speed width", 0, 100, 1, (_d = settings.speedGain) != null ? _d : 0, (value) => {
       settings.speedGain = value;
       this.update();
     });
@@ -22860,18 +22865,32 @@ var BrushPopoverController = class {
       "aria-label": `${spec.label} custom color`,
       "data-brush-tool": spec.tool
     } });
-    input.addEventListener("input", () => {
+    let addTimer;
+    const flushPickedColor = () => {
       var _a, _b;
-      settings.color = input.value;
+      if (addTimer !== void 0) {
+        window.clearTimeout(addTimer);
+        addTimer = void 0;
+      }
+      const picked = input.value;
+      settings.color = picked;
       const palette = (_b = (_a = this.options).palette) == null ? void 0 : _b.call(_a);
-      if (palette && !palette.some((entry) => entry.toLowerCase() === input.value.toLowerCase()) && palette.length < PRESET_PALETTE_MAX) {
-        palette.push(input.value);
+      if (palette && !palette.some((entry) => entry.toLowerCase() === picked.toLowerCase()) && palette.length < PRESET_PALETTE_MAX) {
+        palette.push(picked);
         this.buildSwatchesInto(spec);
         custom.title = palette.length >= PRESET_PALETTE_MAX ? "Custom color (palette is full)" : "Add a preset color";
       }
+      this.updateColorSwatches(spec.tool, picked);
+      this.update();
+    };
+    input.addEventListener("input", () => {
+      settings.color = input.value;
       this.updateColorSwatches(spec.tool, input.value);
       this.update();
+      if (addTimer !== void 0) window.clearTimeout(addTimer);
+      addTimer = window.setTimeout(flushPickedColor, 500);
     });
+    input.addEventListener("change", flushPickedColor);
   }
   /** Rebuilds the swatch row from the live palette (after add/edit/remove). */
   buildSwatchesInto(spec) {
@@ -22900,7 +22919,16 @@ var BrushPopoverController = class {
         this.updateColorSwatches(spec.tool, value);
         this.update();
       });
-      swatch.addEventListener("dblclick", () => this.openPresetEditor(spec, value, swatch));
+      let lastTapAt = 0;
+      swatch.addEventListener("pointerdown", () => {
+        const now = Date.now();
+        if (now - lastTapAt <= 350) {
+          lastTapAt = 0;
+          this.openPresetEditor(spec, value, swatch);
+          return;
+        }
+        lastTapAt = now;
+      });
     }
   }
   findSwatch(spec, value) {
@@ -23118,6 +23146,7 @@ var BrushPopoverController = class {
     window.requestAnimationFrame(() => {
       this.position();
       this.update();
+      this.body.scrollTop = 0;
       this.focusSizeSlider();
     });
   }
@@ -23156,6 +23185,10 @@ var BrushPopoverController = class {
   update() {
     var _a, _b, _c, _d;
     const active = this.options.activeTool();
+    if (active !== this.visiblePanel) {
+      this.visiblePanel = active;
+      this.body.scrollTop = 0;
+    }
     for (const spec of this.options.tools) {
       const settings = this.options.getSettings(spec.tool);
       const panel = this.root.querySelector(`.ink-brush-settings[data-brush-tool="${spec.tool}"]`);
@@ -24157,7 +24190,10 @@ var InkWritingView = class extends import_obsidian2.FileView {
       }
     });
     this.registerDomEvent(window, "resize", () => popover.position());
-    this.registerDomEvent(window, "scroll", () => popover.position(), true);
+    this.registerDomEvent(window, "scroll", (event) => {
+      if (event.target && popover.root.contains(event.target)) return;
+      popover.position();
+    }, true);
   }
   /**
    * Adopts the plugin's shared persisted settings: pen and highlighter brush
@@ -25732,8 +25768,10 @@ var InkWritingView = class extends import_obsidian2.FileView {
     const onKey = (event) => {
       if (event.key === "Escape") this.closeEraserPopover();
     };
-    const onRelayout = () => {
-      if (this.eraserPopover === pop) place();
+    const onRelayout = (event) => {
+      if (this.eraserPopover !== pop) return;
+      if ((event == null ? void 0 : event.target) && pop.contains(event.target)) return;
+      place();
     };
     document.addEventListener("pointerdown", onOutside, true);
     document.addEventListener("keydown", onKey, true);
@@ -27471,15 +27509,6 @@ var InkView = class extends InkWritingView {
     const commit = () => {
       if (committed || !this.swipeStage) return;
       committed = true;
-      const stage = this.swipeStage;
-      if (stage) {
-        stage.style.transition = "none";
-        stage.style.left = `${extent.offsetLeft + page.offsetLeft}px`;
-        stage.style.top = `${extent.offsetTop + page.offsetTop}px`;
-        stage.style.width = `${page.offsetWidth}px`;
-        stage.style.height = `${page.offsetHeight}px`;
-        stage.style.transform = "none";
-      }
       extent.style.transition = "none";
       extent.style.transform = "none";
       this.changePage(delta);
@@ -29630,10 +29659,13 @@ var PdfInkView = class extends InkWritingView {
     var _a, _b, _c;
     if (!this.scroller || !this.pageWrap) return;
     const display = this.rotatedSize(this.currentNotePage());
-    this.pageBaseWidth = Math.min(980, Math.max(200, this.scroller.clientWidth - PDF_PAGE_PADDING * 2)) || 700;
+    this.pageBaseWidth = Math.max(200, this.scroller.clientWidth - PDF_PAGE_PADDING * 2) || 700;
     this.pageBaseHeight = this.pageBaseWidth * display.height / display.width;
     const contentHeight = Math.max(1, this.scroller.clientHeight - PDF_PAGE_PADDING * 2);
-    this.fitZoom = Math.min(1, contentHeight / this.pageBaseHeight);
+    this.fitZoom = Math.max(0.05, Math.min(
+      this.pageBaseWidth / Math.max(1, display.width),
+      contentHeight / Math.max(1, display.height)
+    ));
     if (!this.zoomTouched) this.zoom = this.fitZoom;
     this.pageWrap.setCssStyles({
       width: `${this.pageBaseWidth * this.zoom}px`,
@@ -29884,8 +29916,6 @@ var PdfInkView = class extends InkWritingView {
     const commit = () => {
       if (committed || !this.swipeStage) return;
       committed = true;
-      const stage = this.swipeStage;
-      stage.setCssStyles({ transition: "none", left: `${wrap.offsetLeft}px`, transform: "none" });
       wrap.setCssStyles({ transition: "none", transform: "none" });
       void this.navigatePages(delta).finally(() => this.destroySwipeStage());
     };
