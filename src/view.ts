@@ -91,6 +91,8 @@ export class InkView extends InkWritingView {
   private pendingMergedNotebookIsFinal = false;
   private externalRefreshPending = false;
   private zoomRenderTimer: number | undefined;
+  /** Debounces desktop wheel/keyboard zoom before committing a new tile raster. */
+  private desktopZoomTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
   /** Freeze the page's raster/layout scale while a pinch composites the whole sheet. */
   private pinchRenderZoom: number | undefined;
   private pageNavigationGeneration = 0;
@@ -144,6 +146,7 @@ export class InkView extends InkWritingView {
     if (this.renderFrame !== null) window.cancelAnimationFrame(this.renderFrame);
     this.renderFrame = null;
     if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
+    if (this.desktopZoomTimer !== undefined) globalThis.clearTimeout(this.desktopZoomTimer);
     this.finishPointerInput(false);
     this.cancelPendingInkCommitTimer();
     this.clearSaveTimers();
@@ -589,6 +592,7 @@ export class InkView extends InkWritingView {
     this.dirtyRevision += 1;
   }
   protected onInputStarting(): void {
+    this.finishPinchRender();
     this.pageNavigationGeneration += 1;
   }
   protected afterInputFullySettled(): void {
@@ -613,13 +617,34 @@ export class InkView extends InkWritingView {
   protected onZoomLockChanged(): void { this.finishPinchRender(); this.updateZoomControls(); }
 
   protected desktopNavigate(destination: "previous" | "next" | "first" | "last"): void {
+    if (destination === "previous" || destination === "next") {
+      if (this.queuePageSwipeDelta(destination === "next" ? 1 : -1)) return;
+    }
     const index = destination === "first" ? 0 : destination === "last" ? this.notebook.pages.length - 1
       : this.pageIndex + (destination === "next" ? 1 : -1);
+    if (this.queuePageSwipeTarget(index)) return;
     const page = this.notebook.pages[index];
     if (page) void this.navigateToPage(page.id);
   }
-  protected desktopZoom(factor: number, target?: { x: number; y: number }): void { this.setZoom(this.zoom * factor, target); }
-  protected desktopResetZoom(): void { this.setZoom(1); }
+  protected desktopZoom(factor: number, target?: { x: number; y: number }): void {
+    if (this.zoomLocked) return;
+    if (this.pinchRenderZoom === undefined) {
+      this.pinchRenderZoom = this.zoom;
+      if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
+      this.zoomRenderTimer = undefined;
+      this.tiles?.beginInput?.();
+    }
+    this.setZoom(this.zoom * factor, target);
+    if (this.desktopZoomTimer !== undefined) globalThis.clearTimeout(this.desktopZoomTimer);
+    this.desktopZoomTimer = globalThis.setTimeout(() => {
+      this.desktopZoomTimer = undefined;
+      this.finishPinchRender();
+    }, 180);
+  }
+  protected desktopResetZoom(): void {
+    if (this.zoomLocked) return;
+    this.desktopZoom(1 / this.zoom);
+  }
   protected onTouchStart(event: TouchEvent): void {
     // Commit before the base handler captures the next gesture's page anchor.
     this.finishPinchRender();
@@ -627,6 +652,8 @@ export class InkView extends InkWritingView {
   }
 
   private finishPinchRender(): void {
+    if (this.desktopZoomTimer !== undefined) globalThis.clearTimeout(this.desktopZoomTimer);
+    this.desktopZoomTimer = undefined;
     if (this.pinchRenderZoom === undefined) return;
     this.pinchRenderZoom = undefined;
     this.resizeCanvas();
@@ -1243,6 +1270,8 @@ export class InkView extends InkWritingView {
   }
 
   private resetPageView(): void {
+    if (this.desktopZoomTimer !== undefined) globalThis.clearTimeout(this.desktopZoomTimer);
+    this.desktopZoomTimer = undefined;
     this.pinchRenderZoom = undefined;
     if (!this.zoomLocked) this.zoom = 1;
     if (this.pageScroller) {

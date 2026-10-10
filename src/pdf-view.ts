@@ -162,6 +162,8 @@ export class PdfInkView extends InkWritingView {
   private editRevision = 0;
   private activeSave: Promise<SaveOutcome> | null = null;
   private zoomTimer: number | undefined;
+  private desktopZoomTimer: number | undefined;
+  private desktopRenderDensity: number | undefined;
   private pendingRecoveryCandidates: TFile[] | null = null;
 
   constructor(leaf: WorkspaceLeaf) {
@@ -253,6 +255,7 @@ export class PdfInkView extends InkWritingView {
     this.clearSaveTimers();
     if (this.renderFrame !== null) window.cancelAnimationFrame(this.renderFrame);
     if (this.zoomTimer !== undefined) window.clearTimeout(this.zoomTimer);
+    this.finishDesktopZoom(false);
     this.tiles?.dispose();
     this.tiles = null;
     this.workerSession?.dispose();
@@ -1003,6 +1006,7 @@ export class PdfInkView extends InkWritingView {
   }
 
   async navigatePages(delta: number): Promise<void> {
+    this.finishDesktopZoom(false);
     const count = this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 1;
     const next = this.noteIndex + delta;
     if (next < 0 || next >= count) return;
@@ -1046,7 +1050,7 @@ export class PdfInkView extends InkWritingView {
     const before = page.getBoundingClientRect();
     anchor ??= { x: (target.x - before.left) / before.width, y: (target.y - before.top) / before.height };
     this.zoom = clamped;
-    this.layoutPage();
+    this.layoutPage(this.desktopRenderDensity === undefined);
     const after = page.getBoundingClientRect();
     scroller.scrollLeft += after.left + anchor.x * after.width - target.x;
     scroller.scrollTop += after.top + anchor.y * after.height - target.y;
@@ -1077,7 +1081,7 @@ export class PdfInkView extends InkWritingView {
     return { width: rotated ? page.height : page.width, height: rotated ? page.width : page.height };
   }
 
-  private layoutPage(): void {
+  private layoutPage(refine = true): void {
     if (!this.scroller || !this.pageWrap) return;
     const lockedLevel = this.zoomLocked ? this.zoomLevel() : null;
     const display = this.rotatedSize(this.currentNotePage());
@@ -1109,7 +1113,7 @@ export class PdfInkView extends InkWritingView {
     this.tiles?.setDisplayScale(this.zoom);
     const page = this.sidecar?.notebook.pages[this.noteIndex];
     if (page) this.tiles?.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight);
-    this.updateViewport(true);
+    this.updateViewport(refine);
   }
 
   private updateViewport(refine: boolean): void {
@@ -1123,7 +1127,8 @@ export class PdfInkView extends InkWritingView {
       width: Math.max(1, Math.min(this.canvasLogicalWidth - x, (screenRect.right - pageRect.left) / this.zoom - x)),
       height: Math.max(1, Math.min(this.canvasLogicalHeight - y, (screenRect.bottom - pageRect.top) / this.zoom - y)),
     };
-    this.tiles?.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine);
+    this.tiles?.update(this.viewport, this.desktopRenderDensity ?? (window.devicePixelRatio || 1) * this.zoom,
+      refine && this.desktopRenderDensity === undefined);
     this.resizeSelectionCanvas();
     this.resizePreview();
     this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
@@ -1132,6 +1137,7 @@ export class PdfInkView extends InkWritingView {
 
   private onViewportMotion(): void {
     this.updateViewport(false);
+    if (this.desktopRenderDensity !== undefined) return;
     if (this.zoomTimer !== undefined) window.clearTimeout(this.zoomTimer);
     this.zoomTimer = window.setTimeout(() => this.updateViewport(true), 100);
   }
@@ -1183,12 +1189,34 @@ export class PdfInkView extends InkWritingView {
   }
 
   protected desktopNavigate(destination: "previous" | "next" | "first" | "last"): void {
+    if (destination === "previous" || destination === "next") {
+      if (this.queuePageSwipeDelta(destination === "next" ? 1 : -1)) return;
+    }
     const count = this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 1;
     const next = destination === "first" ? 0 : destination === "last" ? count - 1
       : this.noteIndex + (destination === "next" ? 1 : -1);
+    if (this.queuePageSwipeTarget(next)) return;
     void this.navigatePages(next - this.noteIndex).catch((error) => this.setStatus(`Could not switch pages: ${messageOf(error)}`, true));
   }
-  protected desktopZoom(factor: number, target?: { x: number; y: number }): void { this.setZoom(this.zoom * factor, target); }
+  protected desktopZoom(factor: number, target?: { x: number; y: number }): void {
+    if (this.zoomLocked) return;
+    if (this.desktopRenderDensity === undefined) {
+      this.desktopRenderDensity = (window.devicePixelRatio || 1) * this.zoom;
+      if (this.zoomTimer !== undefined) window.clearTimeout(this.zoomTimer);
+      this.zoomTimer = undefined;
+      this.tiles?.beginInput();
+    }
+    this.setZoom(this.zoom * factor, target);
+    if (this.desktopZoomTimer !== undefined) window.clearTimeout(this.desktopZoomTimer);
+    this.desktopZoomTimer = window.setTimeout(() => this.finishDesktopZoom(), 180);
+  }
+  private finishDesktopZoom(refine = true): void {
+    if (this.desktopZoomTimer !== undefined) window.clearTimeout(this.desktopZoomTimer);
+    this.desktopZoomTimer = undefined;
+    if (this.desktopRenderDensity === undefined) return;
+    this.desktopRenderDensity = undefined;
+    if (refine) this.updateViewport(true);
+  }
   protected desktopResetZoom(): void { this.resetZoom(); }
 
   // ------------------------------------------------------ writing-layer seams
@@ -1246,10 +1274,12 @@ export class PdfInkView extends InkWritingView {
     this.layoutPage();
   }
 
+  protected onInputStarting(): void { this.finishDesktopZoom(); }
+
   protected toolbarRoot(): HTMLElement { return this.root!; }
   protected inputScroller(): HTMLElement { return this.scroller!; }
   protected zoomLevel(): number { return this.zoom / this.fitZoom; }
-  protected onZoomLockChanged(): void { this.zoomTouched = true; }
+  protected onZoomLockChanged(): void { this.finishDesktopZoom(); this.zoomTouched = true; }
   protected applyGestureZoom(value: number, focus: { x: number; y: number }, anchor: { x: number; y: number }): void {
     this.setZoom(value, focus, anchor);
   }
@@ -1568,6 +1598,7 @@ export class PdfInkView extends InkWritingView {
   }
 
   private resetViewState(): void {
+    this.finishDesktopZoom(false);
     this.destroySwipeStage();
     this.cancelPdfRender();
     this.finishPointerInput(false);

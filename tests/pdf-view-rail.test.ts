@@ -496,6 +496,45 @@ describe("pdf page preview rail", () => {
     await view.onClose();
   });
 
+  it("coalesces mouse and trackpad navigation during a slow PDF handoff", async () => {
+    const { view, internal, host, release } = await delayedSwipeSetup();
+    const desktop = view as any;
+    desktop.readingMode = true;
+    vi.spyOn(desktop, "capturePointer").mockImplementation(() => undefined);
+    vi.spyOn(desktop, "releasePointer").mockImplementation(() => undefined);
+    const mouse = { pointerType: "mouse", pointerId: 22, button: 0,
+      clientX: 400, clientY: 300, preventDefault: vi.fn() };
+    desktop.onPointerDown(mouse);
+    desktop.onPointerMove({ ...mouse, clientX: -200 });
+    desktop.onPointerUp({ ...mouse, clientX: -200 });
+    desktop.onWheel({ deltaMode: 0, deltaX: 120, deltaY: 0, preventDefault: vi.fn() });
+    expect(host.flipSettling).toBe(true);
+    release();
+    await vi.waitFor(() => expect(host.flipSettling).toBe(false));
+    expect(internal.noteIndex).toBe(3);
+  });
+
+  it("keeps PDF ink at one density throughout a desktop zoom burst", async () => {
+    const { view, host } = await rasterSetup(1280, 800, 2);
+    const desktop = view as any;
+    const update = vi.spyOn(desktop.tiles, "update");
+    vi.useFakeTimers();
+    try {
+      desktop.desktopZoom(1.1, { x: 400, y: 300 });
+      vi.advanceTimersByTime(120);
+      desktop.desktopZoom(1.1, { x: 400, y: 300 });
+      const density = desktop.desktopRenderDensity;
+      expect(density).toBe(2);
+      desktop.onViewportMotion();
+      expect(update.mock.calls.every((call: any[]) => call[1] === density && call[2] === false)).toBe(true);
+      vi.advanceTimersByTime(179);
+      expect(desktop.desktopRenderDensity).toBe(density);
+      vi.advanceTimersByTime(1);
+      expect(desktop.desktopRenderDensity).toBeUndefined();
+      expect(update).toHaveBeenLastCalledWith(expect.any(Object), 2 * host.zoom, true);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("clamps each rapid swipe at the page edge before reversing", async () => {
     const { view, internal, host, release } = await delayedSwipeSetup(4);
     for (const delta of [1, 1, 1, 1, 1, -1]) rapidSwipe(host, delta);

@@ -24385,6 +24385,17 @@ var InkWritingView = class extends import_obsidian3.FileView {
     this.pageSwipeRequest = request;
     return () => this.flipSettling && this.pageSwipeRequest === request;
   }
+  /** Coalesce desktop navigation into the in-flight swipe handoff. */
+  queuePageSwipeTarget(target) {
+    const request = this.pageSwipeRequest;
+    if (!this.flipSettling || !request) return false;
+    request.target = Math.max(0, Math.min(request.count - 1, target));
+    return true;
+  }
+  queuePageSwipeDelta(delta) {
+    const request = this.pageSwipeRequest;
+    return request ? this.queuePageSwipeTarget(request.target + delta) : false;
+  }
   clearPageSwipeTarget() {
     this.pageSwipeRequest = null;
   }
@@ -24398,8 +24409,9 @@ var InkWritingView = class extends import_obsidian3.FileView {
     }
   }
   resumePageSwipeDrag() {
-    var _a;
+    var _a, _b;
     if (((_a = this.touchGesture) == null ? void 0 : _a.axis) === "x") this.swipeDrag(this.touchGesture.dragX);
+    else if (((_b = this.desktopPan) == null ? void 0 : _b.mode) === "swipe") this.swipeDrag(this.desktopPan.x - this.desktopPan.startX);
   }
   finishPageSwipeAnimations() {
     for (const animation of this.pageSwipeAnimations) {
@@ -24456,8 +24468,7 @@ var InkWritingView = class extends import_obsidian3.FileView {
     const crossed = Math.abs(travel) > width * 0.35;
     const delta = fling || crossed ? travel > 0 ? -1 : 1 : 0;
     if (this.flipSettling) {
-      const request = this.pageSwipeRequest;
-      if (request) request.target = Math.max(0, Math.min(request.count - 1, request.target + delta));
+      this.queuePageSwipeDelta(delta);
     } else {
       this.swipeSettle(delta, travel);
     }
@@ -24726,7 +24737,7 @@ var InkWritingView = class extends import_obsidian3.FileView {
     for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
       this.registerDomEvent(doc, type, (event) => {
         var _a;
-        if (((_a = this.desktopPan) == null ? void 0 : _a.pointerId) === event.pointerId) this.endDesktopPan();
+        if (((_a = this.desktopPan) == null ? void 0 : _a.pointerId) === event.pointerId) this.endDesktopPan(type === "pointerup");
       }, true);
     }
     const reset = () => {
@@ -24818,29 +24829,44 @@ var InkWritingView = class extends import_obsidian3.FileView {
   }
   beginDesktopPan(event) {
     var _a, _b;
-    if (event.pointerType !== "mouse" || this.flipSettling || this.activePointerId !== null || this.nativeMenuOpen()) return false;
+    if (event.pointerType !== "mouse" || this.activePointerId !== null || this.nativeMenuOpen()) return false;
     const button = (_a = event.button) != null ? _a : 0;
     if (button !== 1 && !(button === 0 && (this.desktopSpaceDown || this.readingMode))) return false;
-    this.desktopPan = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+    this.desktopPan = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+      startX: event.clientX,
+      startY: event.clientY,
+      mode: null
+    };
     this.inputScroller().classList.add("ink-panning");
     this.capturePointer(event.pointerId);
     (_b = event.preventDefault) == null ? void 0 : _b.call(event);
     return true;
   }
-  endDesktopPan() {
+  endDesktopPan(commit = false) {
     var _a;
     const pan = this.desktopPan;
     this.desktopPan = null;
     (_a = this.inputScroller()) == null ? void 0 : _a.classList.remove("ink-panning");
+    if ((pan == null ? void 0 : pan.mode) === "swipe") {
+      const travel = pan.x - pan.startX;
+      const threshold = this.inputScroller().clientWidth * 0.35;
+      const delta = commit && Math.abs(travel) >= threshold ? travel > 0 ? -1 : 1 : 0;
+      if (delta !== 0 && !this.queuePageSwipeDelta(delta)) this.swipeSettle(delta, travel);
+      else if (delta === 0 && !this.flipSettling) this.swipeSettle(0, travel);
+    }
     if (pan) this.releasePointer(pan.pointerId);
   }
   onWheel(event) {
-    if (this.nativeMenuOpen() || this.activePointerId !== null || this.desktopPan || this.flipSettling) return;
+    if (this.nativeMenuOpen() || this.activePointerId !== null || this.desktopPan) return;
     const scroller = this.inputScroller();
     const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? scroller.clientHeight : 1;
     const x = event.deltaX * unit, y = event.deltaY * unit;
     if (event.ctrlKey || event.metaKey) {
       event.preventDefault();
+      if (this.flipSettling) return;
       this.desktopZoom(Math.exp(-Math.max(-100, Math.min(100, y)) * 4e-3), { x: event.clientX, y: event.clientY });
       this.showZoomHud();
       this.scheduleZoomHudHide();
@@ -24859,18 +24885,23 @@ var InkWritingView = class extends import_obsidian3.FileView {
       this.desktopWheelFlipped = false;
     }, 180);
     event.preventDefault();
-    const before = scroller.scrollLeft;
-    scroller.scrollLeft += x;
-    if (Math.abs(scroller.scrollLeft - before) > 0.5) {
-      this.desktopWheelTravel = 0;
-      return;
+    if (!this.flipSettling) {
+      const before = scroller.scrollLeft;
+      scroller.scrollLeft += x;
+      if (Math.abs(scroller.scrollLeft - before) > 0.5) {
+        this.desktopWheelTravel = 0;
+        return;
+      }
     }
     if (this.desktopWheelFlipped) return;
     if (Math.sign(this.desktopWheelTravel) !== Math.sign(x)) this.desktopWheelTravel = 0;
     this.desktopWheelTravel += x;
     if (Math.abs(this.desktopWheelTravel) >= 100) {
       this.desktopWheelFlipped = true;
-      this.desktopNavigate(x > 0 ? "next" : "previous");
+      const delta = x > 0 ? 1 : -1;
+      if (this.queuePageSwipeDelta(delta)) return;
+      this.swipeDrag(-delta * 24);
+      this.swipeSettle(delta);
     }
   }
   onPointerDown(event, source = "pointer") {
@@ -24992,10 +25023,36 @@ var InkWritingView = class extends import_obsidian3.FileView {
     if (event.pointerType === "touch") return;
     if (((_a = this.desktopPan) == null ? void 0 : _a.pointerId) === event.pointerId) {
       const scroller = this.inputScroller();
-      scroller.scrollLeft -= event.clientX - this.desktopPan.x;
-      scroller.scrollTop -= event.clientY - this.desktopPan.y;
-      this.desktopPan.x = event.clientX;
-      this.desktopPan.y = event.clientY;
+      const pan = this.desktopPan;
+      const dx = event.clientX - pan.x;
+      const dy = event.clientY - pan.y;
+      const totalX = event.clientX - pan.startX;
+      const totalY = event.clientY - pan.startY;
+      if (pan.mode === null && Math.max(Math.abs(totalX), Math.abs(totalY)) > 10) {
+        const scrollableX = scroller.scrollWidth > scroller.clientWidth + 4;
+        let flipAllowed = !scrollableX;
+        if (scrollableX) {
+          const atLeft = scroller.scrollLeft <= 2;
+          const atRight = scroller.scrollLeft >= scroller.scrollWidth - scroller.clientWidth - 2;
+          flipAllowed = totalX > 0 && atLeft || totalX < 0 && atRight;
+        }
+        pan.mode = Math.abs(totalX) > Math.abs(totalY) * 1.5 && flipAllowed ? "swipe" : "pan";
+      }
+      if (pan.mode === "swipe") {
+        if (this.flipSettling) this.finishPageSwipeAnimations();
+        this.swipeDrag(totalX);
+      } else if (!this.flipSettling) {
+        const before = scroller.scrollLeft;
+        scroller.scrollLeft -= dx;
+        scroller.scrollTop -= dy;
+        if (pan.mode === "pan" && dx !== 0 && Math.abs(totalX) > Math.abs(totalY) * 1.5 && Math.abs(scroller.scrollLeft - before) < 0.5) {
+          pan.mode = "swipe";
+          pan.startX = pan.x;
+          this.swipeDrag(dx);
+        }
+      }
+      pan.x = event.clientX;
+      pan.y = event.clientY;
       (_b = event.preventDefault) == null ? void 0 : _b.call(event);
       return;
     }
@@ -25036,7 +25093,7 @@ var InkWritingView = class extends import_obsidian3.FileView {
     var _a, _b, _c;
     this.devPointerEvents += 1;
     if (((_a = this.desktopPan) == null ? void 0 : _a.pointerId) === event.pointerId) {
-      this.endDesktopPan();
+      this.endDesktopPan(true);
       return;
     }
     if (this.activePointerId !== event.pointerId || ((_c = (_b = this.interaction) == null ? void 0 : _b.source) != null ? _c : "pointer") !== source) return;
@@ -27099,7 +27156,7 @@ var TileRenderer = class {
       generation,
       (_b = job.priority) != null ? _b : "visible"
     ).then((result) => {
-      var _a2;
+      var _a2, _b2, _c;
       if (this.pendingTiles.get(key) === generation) this.pendingTiles.delete(key);
       if (this.disposed || generation !== this.renderGeneration || result.pageId !== job.state.page.id || result.cell !== job.cell) {
         result.bitmap.close();
@@ -27113,7 +27170,9 @@ var TileRenderer = class {
       }
       const tile = this.tileFromBitmap(job, result);
       this.cacheTile(tile);
-      if (job.state === this.active && this.visible.has(job.cell)) this.attach(tile);
+      if (job.state === this.active && this.visible.has(job.cell)) {
+        this.attach((_c = (_b2 = this.get(job.state, job.cell, this.density)) != null ? _b2 : this.fallback(job.state, job.cell)) != null ? _c : tile);
+      }
       this.evict();
       this.schedule();
     }).catch((error) => {
@@ -27693,6 +27752,7 @@ var InkView = class extends InkWritingView {
     if (this.renderFrame !== null) window.cancelAnimationFrame(this.renderFrame);
     this.renderFrame = null;
     if (this.zoomRenderTimer !== void 0) window.clearTimeout(this.zoomRenderTimer);
+    if (this.desktopZoomTimer !== void 0) globalThis.clearTimeout(this.desktopZoomTimer);
     this.finishPointerInput(false);
     this.cancelPendingInkCommitTimer();
     this.clearSaveTimers();
@@ -28116,6 +28176,7 @@ var InkView = class extends InkWritingView {
     this.dirtyRevision += 1;
   }
   onInputStarting() {
+    this.finishPinchRender();
     this.pageNavigationGeneration += 1;
   }
   afterInputFullySettled() {
@@ -28146,21 +28207,41 @@ var InkView = class extends InkWritingView {
     this.updateZoomControls();
   }
   desktopNavigate(destination) {
+    if (destination === "previous" || destination === "next") {
+      if (this.queuePageSwipeDelta(destination === "next" ? 1 : -1)) return;
+    }
     const index = destination === "first" ? 0 : destination === "last" ? this.notebook.pages.length - 1 : this.pageIndex + (destination === "next" ? 1 : -1);
+    if (this.queuePageSwipeTarget(index)) return;
     const page = this.notebook.pages[index];
     if (page) void this.navigateToPage(page.id);
   }
   desktopZoom(factor, target) {
+    var _a, _b;
+    if (this.zoomLocked) return;
+    if (this.pinchRenderZoom === void 0) {
+      this.pinchRenderZoom = this.zoom;
+      if (this.zoomRenderTimer !== void 0) window.clearTimeout(this.zoomRenderTimer);
+      this.zoomRenderTimer = void 0;
+      (_b = (_a = this.tiles) == null ? void 0 : _a.beginInput) == null ? void 0 : _b.call(_a);
+    }
     this.setZoom(this.zoom * factor, target);
+    if (this.desktopZoomTimer !== void 0) globalThis.clearTimeout(this.desktopZoomTimer);
+    this.desktopZoomTimer = globalThis.setTimeout(() => {
+      this.desktopZoomTimer = void 0;
+      this.finishPinchRender();
+    }, 180);
   }
   desktopResetZoom() {
-    this.setZoom(1);
+    if (this.zoomLocked) return;
+    this.desktopZoom(1 / this.zoom);
   }
   onTouchStart(event) {
     this.finishPinchRender();
     super.onTouchStart(event);
   }
   finishPinchRender() {
+    if (this.desktopZoomTimer !== void 0) globalThis.clearTimeout(this.desktopZoomTimer);
+    this.desktopZoomTimer = void 0;
     if (this.pinchRenderZoom === void 0) return;
     this.pinchRenderZoom = void 0;
     this.resizeCanvas();
@@ -28795,6 +28876,8 @@ page: ${this.currentPage().id}
     if (zoomIn) zoomIn.disabled = this.zoomLocked || this.zoom >= 3;
   }
   resetPageView() {
+    if (this.desktopZoomTimer !== void 0) globalThis.clearTimeout(this.desktopZoomTimer);
+    this.desktopZoomTimer = void 0;
     this.pinchRenderZoom = void 0;
     if (!this.zoomLocked) this.zoom = 1;
     if (this.pageScroller) {
@@ -29825,6 +29908,7 @@ var PdfInkView = class extends InkWritingView {
     this.clearSaveTimers();
     if (this.renderFrame !== null) window.cancelAnimationFrame(this.renderFrame);
     if (this.zoomTimer !== void 0) window.clearTimeout(this.zoomTimer);
+    this.finishDesktopZoom(false);
     (_a = this.tiles) == null ? void 0 : _a.dispose();
     this.tiles = null;
     (_b = this.workerSession) == null ? void 0 : _b.dispose();
@@ -30517,6 +30601,7 @@ var PdfInkView = class extends InkWritingView {
   }
   async navigatePages(delta) {
     var _a, _b, _c, _d, _e;
+    this.finishDesktopZoom(false);
     const count = (_d = (_c = (_a = this.sidecar) == null ? void 0 : _a.notePages.length) != null ? _c : (_b = this.pdfDoc) == null ? void 0 : _b.numPages) != null ? _d : 1;
     const next = this.noteIndex + delta;
     if (next < 0 || next >= count) return;
@@ -30557,7 +30642,7 @@ var PdfInkView = class extends InkWritingView {
     const before = page.getBoundingClientRect();
     anchor != null ? anchor : anchor = { x: (target.x - before.left) / before.width, y: (target.y - before.top) / before.height };
     this.zoom = clamped;
-    this.layoutPage();
+    this.layoutPage(this.desktopRenderDensity === void 0);
     const after = page.getBoundingClientRect();
     scroller.scrollLeft += after.left + anchor.x * after.width - target.x;
     scroller.scrollTop += after.top + anchor.y * after.height - target.y;
@@ -30581,7 +30666,7 @@ var PdfInkView = class extends InkWritingView {
     const rotated = page.rotation === 90 || page.rotation === 270;
     return { width: rotated ? page.height : page.width, height: rotated ? page.width : page.height };
   }
-  layoutPage() {
+  layoutPage(refine = true) {
     var _a, _b, _c;
     if (!this.scroller || !this.pageWrap) return;
     const lockedLevel = this.zoomLocked ? this.zoomLevel() : null;
@@ -30602,10 +30687,10 @@ var PdfInkView = class extends InkWritingView {
     (_a = this.tiles) == null ? void 0 : _a.setDisplayScale(this.zoom);
     const page = (_b = this.sidecar) == null ? void 0 : _b.notebook.pages[this.noteIndex];
     if (page) (_c = this.tiles) == null ? void 0 : _c.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight);
-    this.updateViewport(true);
+    this.updateViewport(refine);
   }
   updateViewport(refine) {
-    var _a;
+    var _a, _b;
     if (!this.pageWrap || !this.scroller) return;
     const pageRect = this.pageWrap.getBoundingClientRect();
     const screenRect = this.scroller.getBoundingClientRect();
@@ -30617,7 +30702,11 @@ var PdfInkView = class extends InkWritingView {
       width: Math.max(1, Math.min(this.canvasLogicalWidth - x, (screenRect.right - pageRect.left) / this.zoom - x)),
       height: Math.max(1, Math.min(this.canvasLogicalHeight - y, (screenRect.bottom - pageRect.top) / this.zoom - y))
     };
-    (_a = this.tiles) == null ? void 0 : _a.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine);
+    (_b = this.tiles) == null ? void 0 : _b.update(
+      this.viewport,
+      (_a = this.desktopRenderDensity) != null ? _a : (window.devicePixelRatio || 1) * this.zoom,
+      refine && this.desktopRenderDensity === void 0
+    );
     this.resizeSelectionCanvas();
     this.resizePreview();
     this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
@@ -30625,6 +30714,7 @@ var PdfInkView = class extends InkWritingView {
   }
   onViewportMotion() {
     this.updateViewport(false);
+    if (this.desktopRenderDensity !== void 0) return;
     if (this.zoomTimer !== void 0) window.clearTimeout(this.zoomTimer);
     this.zoomTimer = window.setTimeout(() => this.updateViewport(true), 100);
   }
@@ -30667,12 +30757,33 @@ var PdfInkView = class extends InkWritingView {
   }
   desktopNavigate(destination) {
     var _a, _b, _c, _d;
+    if (destination === "previous" || destination === "next") {
+      if (this.queuePageSwipeDelta(destination === "next" ? 1 : -1)) return;
+    }
     const count = (_d = (_c = (_a = this.sidecar) == null ? void 0 : _a.notePages.length) != null ? _c : (_b = this.pdfDoc) == null ? void 0 : _b.numPages) != null ? _d : 1;
     const next = destination === "first" ? 0 : destination === "last" ? count - 1 : this.noteIndex + (destination === "next" ? 1 : -1);
+    if (this.queuePageSwipeTarget(next)) return;
     void this.navigatePages(next - this.noteIndex).catch((error) => this.setStatus(`Could not switch pages: ${messageOf(error)}`, true));
   }
   desktopZoom(factor, target) {
+    var _a;
+    if (this.zoomLocked) return;
+    if (this.desktopRenderDensity === void 0) {
+      this.desktopRenderDensity = (window.devicePixelRatio || 1) * this.zoom;
+      if (this.zoomTimer !== void 0) window.clearTimeout(this.zoomTimer);
+      this.zoomTimer = void 0;
+      (_a = this.tiles) == null ? void 0 : _a.beginInput();
+    }
     this.setZoom(this.zoom * factor, target);
+    if (this.desktopZoomTimer !== void 0) window.clearTimeout(this.desktopZoomTimer);
+    this.desktopZoomTimer = window.setTimeout(() => this.finishDesktopZoom(), 180);
+  }
+  finishDesktopZoom(refine = true) {
+    if (this.desktopZoomTimer !== void 0) window.clearTimeout(this.desktopZoomTimer);
+    this.desktopZoomTimer = void 0;
+    if (this.desktopRenderDensity === void 0) return;
+    this.desktopRenderDensity = void 0;
+    if (refine) this.updateViewport(true);
   }
   desktopResetZoom() {
     this.resetZoom();
@@ -30722,6 +30833,9 @@ var PdfInkView = class extends InkWritingView {
   onRenderResize() {
     this.layoutPage();
   }
+  onInputStarting() {
+    this.finishDesktopZoom();
+  }
   toolbarRoot() {
     return this.root;
   }
@@ -30732,6 +30846,7 @@ var PdfInkView = class extends InkWritingView {
     return this.zoom / this.fitZoom;
   }
   onZoomLockChanged() {
+    this.finishDesktopZoom();
     this.zoomTouched = true;
   }
   applyGestureZoom(value, focus, anchor) {
@@ -31059,6 +31174,7 @@ var PdfInkView = class extends InkWritingView {
     this.noteIndex = Math.max(0, Math.min(this.noteIndex, count - 1));
   }
   resetViewState() {
+    this.finishDesktopZoom(false);
     this.destroySwipeStage();
     this.cancelPdfRender();
     this.finishPointerInput(false);
