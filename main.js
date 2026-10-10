@@ -31419,15 +31419,25 @@ var PDF_VIEW_ENHANCER_PLUGIN_IDS = [
   "yh-inklight",
   "pdf-writer"
 ];
-function pdfTakeoverReplacement(viewState, gate, viewType, eState) {
+function pdfTakeoverReplacement(viewState, gate, viewType, eState, ordinaryOpen = false) {
   var _a, _b;
   if (!gate.enabled || gate.enhancerActive && !gate.preferInk) return null;
   if (!viewState || viewState.type !== "pdf") return null;
   const file = (_a = viewState.state) == null ? void 0 : _a.file;
   if (typeof file !== "string" || !gate.isPdfFile(file)) return null;
-  if (Object.keys((_b = viewState.state) != null ? _b : {}).some((key) => key !== "file")) return null;
-  if (eState != null && (typeof eState !== "object" || Object.keys(eState).length > 0)) return null;
+  if (!(gate.preferInk && ordinaryOpen) && Object.entries((_b = viewState.state) != null ? _b : {}).some(([key, value]) => key !== "file" && !(key === "sync" && typeof value === "boolean") && value != null)) return null;
+  if (hasNativeNavigation(eState)) return null;
   return viewType;
+}
+function hasNativeNavigation(state) {
+  if (state == null) return false;
+  if (typeof state !== "object" || Array.isArray(state)) return true;
+  return Object.entries(state).some(([key, value]) => {
+    if (value == null) return false;
+    if (key === "focus" && typeof value === "boolean") return false;
+    if (key === "subpath" && (value === "" || value === "#")) return false;
+    return true;
+  });
 }
 var PdfTabTakeover = class {
   constructor(gateProvider, viewType) {
@@ -31436,6 +31446,7 @@ var PdfTabTakeover = class {
     this.uninstaller = null;
     this.inert = false;
     this.suppressedLeaves = /* @__PURE__ */ new WeakSet();
+    this.ordinaryOpens = /* @__PURE__ */ new WeakMap();
   }
   get installed() {
     return this.uninstaller !== null;
@@ -31444,17 +31455,49 @@ var PdfTabTakeover = class {
     if (this.uninstaller) return;
     const takeover = this;
     this.inert = false;
-    this.uninstaller = around(target, {
+    const uninstallViewState = around(target, {
       setViewState(old) {
         return async function setViewState(viewState, eState) {
+          var _a;
           if (!takeover.inert && !takeover.suppressedLeaves.has(this)) {
-            const replacement = pdfTakeoverReplacement(viewState, takeover.gateProvider(), takeover.viewType, eState);
+            const request = takeover.ordinaryOpens.get(this);
+            const ordinary = (request == null ? void 0 : request.active) === true && request.ordinary && request.path === ((_a = viewState.state) == null ? void 0 : _a.file);
+            const replacement = pdfTakeoverReplacement(viewState, takeover.gateProvider(), takeover.viewType, eState, ordinary);
             if (replacement) return old.call(this, { ...viewState, type: replacement }, eState);
           }
           return old.call(this, viewState, eState);
         };
       }
     });
+    const uninstallOpenFile = typeof target.openFile === "function" ? around(target, {
+      openFile(old) {
+        return async function(file, openState) {
+          const gate = takeover.gateProvider();
+          const ordinary = !takeover.inert && !takeover.suppressedLeaves.has(this) && gate.preferInk && pdfTakeoverReplacement(
+            { type: "pdf", state: { ...openState == null ? void 0 : openState.state, file: file.path } },
+            gate,
+            takeover.viewType,
+            openState == null ? void 0 : openState.eState
+          ) !== null;
+          const request = { path: file.path, ordinary: !!ordinary, active: true };
+          const previous = takeover.ordinaryOpens.get(this);
+          takeover.ordinaryOpens.set(this, request);
+          try {
+            await old.call(this, file, openState);
+          } finally {
+            request.active = false;
+            if (takeover.ordinaryOpens.get(this) === request) {
+              if (previous == null ? void 0 : previous.active) takeover.ordinaryOpens.set(this, previous);
+              else takeover.ordinaryOpens.delete(this);
+            }
+          }
+        };
+      }
+    }) : void 0;
+    this.uninstaller = () => {
+      uninstallOpenFile == null ? void 0 : uninstallOpenFile();
+      uninstallViewState();
+    };
   }
   /**
    * Remove only our wrapper. monkey-around neutralizes its own mid-chain

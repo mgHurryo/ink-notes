@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.2 - 2026-10-10
+
+- Fix ordinary PDF opens bypassing Ink Notes first when the host supplies focus flags, empty fragments or native viewport memory. Track the original public openFile request so passive state added during dispatch does not override an explicit handwriting preference.
+- Preserve explicit page/search/selection links, unknown navigation requests, compatible/native modes and tabs explicitly returned to the native viewer. Opening context is cleared on completion or failure and both wrappers are removed on unload.
+- No notebook/sidecar migration or rendering changes; minimum Obsidian remains 1.5.7. Physical iPad reproduction remains unverified.
+
 ## 0.1.1 - 2026-10-10
 
 - Fix Community directory review blockers: remove redundant host branding from the manifest description, use official settings headings and supported style APIs/CSS, and require Obsidian 1.5.7 for view-scoped keyboard shortcuts.

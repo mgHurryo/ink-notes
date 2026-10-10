@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
+import type { OpenViewState, TFile } from "obsidian";
 import { readFileSync } from "node:fs";
 import { PDF_VIEW_ENHANCER_PLUGIN_IDS, PdfTabTakeover, pdfTakeoverReplacement } from "../src/pdf-takeover";
 
@@ -38,6 +39,12 @@ describe("pdfTakeoverReplacement", () => {
     expect(pdfTakeoverReplacement({ ...state, state: { ...state.state, search: "term" } }, ink, "pdf-ink")).toBeNull();
   });
 
+  it.each([{ focus: true }, { focus: false, subpath: "" }, { subpath: "#" }, { subpath: undefined }])(
+    "allows non-navigation ephemeral host state: %j", (ephemeral) => {
+      expect(pdfTakeoverReplacement({ type: "pdf", state: { file: "a.pdf", sync: true } },
+        gate({ enhancerActive: true, preferInk: true }), "pdf-ink", ephemeral)).toBe("pdf-ink");
+    });
+
   it.each([{ page: 7 }, { subpath: "#page=3&rect=10,20,30,40" }, { search: "phrase" }, { selection: [1, 4] }, { futureNativeOption: true }])(
     "preserves native persistent and ephemeral navigation state: %j", (navigation) => {
       const state = { type: "pdf", state: { file: "docs/lecture.pdf" } };
@@ -45,6 +52,127 @@ describe("pdfTakeoverReplacement", () => {
       expect(pdfTakeoverReplacement(state, gate(), "pdf-ink", navigation)).toBeNull();
       expect(pdfTakeoverReplacement(state, gate(), "pdf-ink", {})).toBe("pdf-ink");
     });
+});
+
+describe("ordinary PDF file opening intent", () => {
+  function setupOpen() {
+    const current = gate({ enhancerActive: true, preferInk: true });
+    const received: unknown[][] = [];
+    const host = {
+      setViewState: vi.fn(async (...args: unknown[]) => { received.push(args); }),
+      async openFile(file: TFile, options?: OpenViewState) {
+        // Host dispatch, with the native viewer's remembered viewport supplied by
+        // an extension. This is distinct from caller-requested navigation options.
+        await this.setViewState({ type: "pdf", state: { file: file.path, page: 4, zoom: 1.5, left: 0, top: 180,
+          ...options?.state }, active: options?.active, group: options?.group }, options?.eState ?? { focus: true });
+      },
+    };
+    const originalOpen = vi.spyOn(host, "openFile");
+    const takeover = new PdfTabTakeover(() => current, "pdf-ink");
+    takeover.install(host as never);
+    const file = { path: "a.pdf" } as TFile;
+    return { current, host, takeover, file, received, originalOpen };
+  }
+
+  it("forces ordinary opens with native viewport memory while preserving host focus and original arguments", async () => {
+    const { host, takeover, file, received, originalOpen } = setupOpen();
+    try {
+      const options = { active: true, eState: { focus: true, subpath: "" } };
+      await host.openFile(file, options);
+      expect(originalOpen).toHaveBeenCalledWith(file, options);
+      expect(received[0]).toEqual([expect.objectContaining({ type: "pdf-ink", active: true }), options.eState]);
+      await host.setViewState({ type: "pdf", state: { file: file.path, page: 4 } });
+      expect(received[1][0]).toEqual({ type: "pdf", state: { file: file.path, page: 4 } });
+    } finally { takeover.uninstall(); }
+  });
+
+  it.each([{ state: { page: 7 } }, { eState: { subpath: "#page=7" } }, { eState: { selection: [1, 4] } },
+    { state: { futureNativeOption: true } }])("preserves explicit navigation requests: %j", async (options) => {
+      const { host, takeover, file, received } = setupOpen();
+      try {
+        await host.openFile(file, options);
+        expect(received[0][0]).toEqual(expect.objectContaining({ type: "pdf" }));
+      } finally { takeover.uninstall(); }
+    });
+
+  it("keeps compatible mode, disabled takeover and a returned native tab native", async () => {
+    const { host, current, takeover, file, received } = setupOpen();
+    try {
+      current.preferInk = false;
+      await host.openFile(file);
+      current.preferInk = true;
+      current.enabled = false;
+      await host.openFile(file);
+      current.enabled = true;
+      takeover.suppressLeaf(host as never);
+      await host.openFile(file);
+      expect(received.map(([state]) => (state as { type: string }).type)).toEqual(["pdf", "pdf", "pdf"]);
+    } finally { takeover.uninstall(); }
+  });
+
+  it("does not leave opening intent behind after a rejected open or intercept another file", async () => {
+    const { host, takeover, file, received, originalOpen } = setupOpen();
+    try {
+      originalOpen.mockRejectedValueOnce(new Error("opening failed"));
+      await expect(host.openFile(file)).rejects.toThrow("opening failed");
+      await host.setViewState({ type: "pdf", state: { file: file.path, page: 4 } });
+      expect(received[0][0]).toEqual(expect.objectContaining({ type: "pdf" }));
+      originalOpen.mockImplementationOnce(async () => {
+        await host.setViewState({ type: "pdf", state: { file: "other.pdf", page: 4 } });
+      });
+      await host.openFile(file);
+      expect(received[1][0]).toEqual(expect.objectContaining({ type: "pdf" }));
+    } finally { takeover.uninstall(); }
+  });
+
+  it("keeps a nested explicit open native and restores the outer ordinary request", async () => {
+    const { host, takeover, file, received, originalOpen } = setupOpen();
+    try {
+      originalOpen.mockImplementationOnce(async () => {
+        await host.openFile(file, { state: { page: 7 } });
+        await host.setViewState({ type: "pdf", state: { file: file.path, page: 4 } }, { focus: true });
+      });
+      await host.openFile(file);
+      expect(received.map(([state]) => (state as { type: string }).type)).toEqual(["pdf", "pdf-ink"]);
+    } finally { takeover.uninstall(); }
+  });
+
+  it("does not restore completed intent when overlapping opens finish out of order", async () => {
+    const { host, takeover, file, received, originalOpen } = setupOpen();
+    let resumeFirst!: () => void;
+    let resumeSecond!: () => void;
+    const firstWait = new Promise<void>((resolve) => { resumeFirst = resolve; });
+    const secondWait = new Promise<void>((resolve) => { resumeSecond = resolve; });
+    originalOpen.mockImplementationOnce(async () => { await firstWait; });
+    originalOpen.mockImplementationOnce(async () => { await secondWait; });
+    try {
+      const first = host.openFile(file);
+      const second = host.openFile(file);
+      resumeFirst();
+      await first;
+      resumeSecond();
+      await second;
+      await host.setViewState({ type: "pdf", state: { file: file.path, page: 7 } });
+      expect(received[0][0]).toEqual(expect.objectContaining({ type: "pdf" }));
+    } finally { takeover.uninstall(); }
+  });
+
+  it("removes both wrappers on uninstall and stays inert during an unfinished open", async () => {
+    const { host, takeover, file, received, originalOpen } = setupOpen();
+    let resume!: () => void;
+    const wait = new Promise<void>((resolve) => { resume = resolve; });
+    originalOpen.mockImplementationOnce(async () => {
+      await wait;
+      await host.setViewState({ type: "pdf", state: { file: file.path, page: 4 } });
+    });
+    const opening = host.openFile(file);
+    takeover.uninstall();
+    expect(host.openFile).toBe(originalOpen);
+    expect(takeover.installed).toBe(false);
+    resume();
+    await opening;
+    expect(received[0][0]).toEqual(expect.objectContaining({ type: "pdf" }));
+  });
 });
 
 interface HostLike {
