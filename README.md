@@ -8,13 +8,9 @@ Ink Notes is licensed under Apache-2.0. The bundled stroke model is adapted from
 
 Ink Notes requires Obsidian 1.5.7 or later for view-scoped keyboard shortcuts.
 
-Ink Notes is being prepared for the Obsidian Community directory. Until its listing is approved, install it manually from the [latest release](https://github.com/mgHurryo/ink-notes/releases/latest):
+Install Ink Notes from the [Obsidian Community directory](https://community.obsidian.md/plugins/ink-notes), or open **Settings -> Community plugins -> Browse**, search for **Ink Notes**, and select **Install**. Then enable it in **Settings -> Community plugins -> Installed plugins**. Installation and enabling are separate steps.
 
-1. Create `.obsidian/plugins/ink-notes/` inside your vault.
-2. Place `main.js`, `manifest.json` and `styles.css` from the same release in that folder.
-3. Reload Obsidian, open **Settings -> Community plugins**, enable community plugins if needed, then enable **Ink Notes**.
-
-Once listed, use **Settings -> Community plugins -> Browse**, search for **Ink Notes**, install it, then enable it. Installation and enabling are separate steps. Existing installations with the old higher version numbers need a manual reinstall of 0.1.0.
+For manual installation, download `main.js`, `manifest.json` and `styles.css` from the [latest GitHub release](https://github.com/mgHurryo/ink-notes/releases/latest), place them in `.obsidian/plugins/ink-notes/` inside your vault, reload Obsidian, then enable **Ink Notes** in **Settings -> Community plugins**. Existing installations with the old higher version numbers need a manual reinstall of 0.1.0.
 
 ## Start a notebook or PDF
 
