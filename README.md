@@ -2,7 +2,36 @@
 
 Ink Notes is a cross-platform handwritten notebook plugin for Obsidian. It stores notebooks as JSON files inside the Vault under `Ink Notes/`, so Obsidian Sync and other Vault sync tools can replicate the same pages and strokes to Windows, macOS, Linux, iOS, and iPadOS.
 
-## Current MVP
+Ink Notes is licensed under Apache-2.0. The bundled stroke model is adapted from Google's `ink-stroke-modeler` and retains its Apache-2.0 attribution. Other bundled dependencies retain their original licenses; see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+
+## Install and enable
+
+Ink Notes is being prepared for the Obsidian Community directory. Until its listing is approved, install it manually from the [latest release](https://github.com/mgHurryo/ink-notes/releases/latest):
+
+1. Create `.obsidian/plugins/ink-notes/` inside your vault.
+2. Place `main.js`, `manifest.json` and `styles.css` from the same release in that folder.
+3. Reload Obsidian, open **Settings -> Community plugins**, enable community plugins if needed, then enable **Ink Notes**.
+
+Once listed, use **Settings -> Community plugins -> Browse**, search for **Ink Notes**, install it, then enable it. Installation and enabling are separate steps. Existing installations with the old higher version numbers need a manual reinstall of 0.1.0.
+
+## Start a notebook or PDF
+
+- For a native notebook, select the pen icon in the ribbon or run **Ink Notes: Open Ink Notebook** from the command palette. The picker can create, open and rename notebooks. **Ink Notes: Create Ink Notebook** creates one directly.
+- For a PDF, open the PDF, then run **Ink Notes: Open current PDF with handwriting** from the command palette. This opens a separate Ink Notes tab. You can also right-click the PDF in the file explorer, or open its file context menu on mobile, and choose **Open PDF with Ink Notes handwriting**. The command palette and file menu are alternatives to the editor's three-dot menu.
+- Assign a hotkey to **Open current PDF with handwriting** in **Settings -> Hotkeys** for quicker access.
+- In the handwriting view, use **Editing** for writing and erasing, or **Reading** for navigation without drawing. Export creates a PDF copy with handwriting; the source PDF is preserved.
+
+### Why does a PDF still open in the default viewer?
+
+**Settings -> Ink Notes -> PDF handwriting -> Take over PDF tabs automatically** is enabled by default. It applies to ordinary PDF opens; changing it does not convert tabs already open, so close and reopen the PDF or use the explicit handwriting command.
+
+Ink Notes deliberately keeps the native PDF viewer when a supported viewer extension such as PDF++, Jot or PDF Writer is enabled. This lets its text selection, links, highlighting and other native-view features continue working. Page/search/selection links and other navigation state also keep the native viewer, even when automatic takeover is enabled. Turning the setting on does not override these compatibility rules.
+
+To use both workflows, keep the other plugin enabled and open an Ink Notes handwriting tab explicitly. Native-view extensions and Ink Notes use separate views; their annotations and tools are not combined into a single viewer. To make ordinary PDF opens use Ink Notes automatically, disable the competing native-view extension, leave automatic takeover enabled, then reopen the PDF. You can return from an Ink Notes tab with **Ink Notes: Return current PDF tab to the built-in viewer**.
+
+If the explicit command is missing, check that Ink Notes is enabled in this vault and reload it. If an unknown plugin still intercepts the explicit opening, temporarily disable that plugin to isolate the conflict, then [report an issue](https://github.com/mgHurryo/ink-notes/issues) with plugin names, versions and the opening steps. Compatibility with every plugin combination is not guaranteed.
+
+## Features
 
 - Pointer Events input for pen, mouse, and touch-capable WebViews.
 - Pressure-aware pen strokes with tilt values retained in the file and adjustable smoothing for cleaner everyday handwriting.
@@ -42,6 +71,10 @@ page: page-id
 ## Capability boundary
 
 Apple Pencil squeeze and double-tap are not standard Web signals, so this MVP does not claim support for those gestures. They can be added later through platform-specific bridge APIs if Obsidian exposes them.
+
+## Privacy and storage
+
+Ink Notes does not send notes, diagnostics or usage data to a server, and requires no account or payment. It does not make network requests or read files outside your vault. Notebook files live in `Ink Notes/`; PDF handwriting sidecars live in `A_pdfinkwrittern/`. Cross-device sync is provided by your chosen vault sync service, not by Ink Notes. Diagnostics exports are local and may contain handwriting records; review them before sharing.
 
 ## PDF plugin compatibility
 
