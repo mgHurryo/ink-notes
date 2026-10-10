@@ -230,6 +230,30 @@ describe("interactive tile commits", () => {
     expect(renderer.pendingTiles.has(key)).toBe(false);
   });
 
+  it("keeps the current zoom raster when an older density completes late", async () => {
+    const requests: Array<(value: any) => void> = [];
+    const state = { id: 7, page: { id: "page" }, index: { revisions: new Map([["0:0", 1]]) } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, {
+      backend: { renderTile: vi.fn(() => new Promise(resolve => requests.push(resolve))) },
+      active: state, density: 3, disposed: false, renderGeneration: 1, pendingTiles: new Map(),
+      cache: new Map(), visible: new Set(["0:0"]),
+      tileFromBitmap: vi.fn((job: any) => ({ ...job, revision: 1 })),
+      cacheTile: vi.fn((tile: any) => renderer.cache.set(`7/0:0/${tile.density}`, tile)),
+      attach: vi.fn(), evict: vi.fn(), schedule: vi.fn(), backendError: vi.fn(),
+    });
+    for (const density of [1, 3]) renderer.requestWorkerTile({ state, cell: "0:0", density });
+    const result = (density: number) => ({ pageId: "page", cell: "0:0", density, revision: 1, renderGeneration: 1 });
+    requests[1](result(3));
+    await Promise.resolve();
+    const current = renderer.cache.get("7/0:0/3");
+    expect(renderer.attach).toHaveBeenLastCalledWith(current);
+    requests[0](result(1));
+    await Promise.resolve();
+    expect(renderer.attach).toHaveBeenLastCalledWith(current);
+    expect(renderer.backendError).not.toHaveBeenCalled();
+  });
+
   it("cancels the previous backend when switching render backends", () => {
     const oldBackend = { renderTile: vi.fn(), cancelGeneration: vi.fn() };
     const nextBackend = { renderTile: vi.fn(), cancelGeneration: vi.fn() };

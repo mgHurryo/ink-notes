@@ -76,7 +76,7 @@ export default class InkNotesPlugin extends Plugin {
         const file = this.app.workspace.getActiveFile();
         if (!file || file.extension !== "pdf") return false;
         if (checking) return true;
-        this.openPdfHandwriting(file);
+        this.runAsync(this.openPdfHandwriting(file), "open PDF handwriting");
         return true;
       },
     });
@@ -103,6 +103,11 @@ export default class InkNotesPlugin extends Plugin {
       },
     });
     this.registerMarkdownCodeBlockProcessor("ink", createInkEmbedProcessor(this.app, (file, pageId) => this.openFile(file, pageId)));
+    this.registerEvent(this.app.workspace.on("file-menu", (menu, file) => {
+      if (!(file instanceof TFile) || file.extension.toLowerCase() !== "pdf") return;
+      menu.addItem((item) => item.setTitle("Open PDF with Ink Notes handwriting").setIcon("pen-line")
+        .onClick(() => this.runAsync(this.openPdfHandwriting(file), "open PDF handwriting")));
+    }));
     this.addSettingTab(new InkSettingTab(this.app, this));
     this.register(this.store.observe((file) => this.queueRefresh(file)));
     this.register(() => {
@@ -131,8 +136,7 @@ export default class InkNotesPlugin extends Plugin {
     this.arbiter = new PdfWriterArbiter();
     this.takeover = new PdfTabTakeover(() => ({
       enabled: this.config.takeOverPdfTabs,
-      // PDF++ enhances the built-in viewer from the inside; while it is
-      // enabled we yield so both plugins stay fully usable.
+      // Query current plugin state on each open, including runtime enable/disable.
       enhancerActive: PDF_VIEW_ENHANCER_PLUGIN_IDS.some((id) => {
         const plugins = (this.app as unknown as { plugins?: { enabledPlugins?: Set<string> } }).plugins;
         return plugins?.enabledPlugins?.has(id) === true;
@@ -158,7 +162,14 @@ export default class InkNotesPlugin extends Plugin {
         }
       }));
       this.registerEvent(this.app.vault.on("modify", (file: TAbstractFile) => {
-        if (!(file instanceof TFile) || file.parent?.path !== PDF_INK_FOLDER || !file.name.endsWith(`.${PDF_SIDECAR_EXTENSION}`)) return;
+        if (!(file instanceof TFile)) return;
+        if (file.extension.toLowerCase() === "pdf") {
+          for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_PDF_INK)) {
+            if (leaf.view instanceof PdfInkView && leaf.view.file?.path === file.path) void leaf.view.checkSourcePdfRevision();
+          }
+          return;
+        }
+        if (file.parent?.path !== PDF_INK_FOLDER || !file.name.endsWith(`.${PDF_SIDECAR_EXTENSION}`)) return;
         for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_PDF_INK)) {
           if (leaf.view instanceof PdfInkView) void leaf.view.reloadExternalSidecar(file.path);
         }
@@ -264,7 +275,8 @@ class InkSettingTab extends PluginSettingTab {
     pdf.createEl("h4", { text: "PDF handwriting" });
     pdf.createEl("p", {
       text: "Open PDFs in a handwriting view with a sidecar stored in A_pdfinkwrittern/. "
-        + "Turn this off to keep the built-in PDF viewer (including PDF++); you can still open "
+        + "Native PDF extensions and navigation links keep their original viewer automatically. "
+        + "Turn this off to always keep the built-in PDF viewer; you can still open "
         + "individual PDFs with handwriting from the file context menu or the command palette.",
     });
     const pdfRow = pdf.createDiv({ cls: "ink-settings-actions" });

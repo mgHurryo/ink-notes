@@ -43,6 +43,14 @@ page: page-id
 
 Apple Pencil squeeze and double-tap are not standard Web signals, so this MVP does not claim support for those gestures. They can be added later through platform-specific bridge APIs if Obsidian exposes them.
 
+## PDF plugin compatibility
+
+Ink Notes keeps its handwriting in a separate view and sidecar; it never replaces the source PDF. Native PDF extensions (including PDF++, Jot, PDF Writer, translators, readers and annotation tools in the audited list) retain their normal viewer automatically. PDF navigation/search/selection state is forwarded to the native viewer. Handwriting remains available through **Open current PDF with handwriting** and the PDF file context menu, and **Return current PDF tab to the built-in viewer** saves ink before handing the tab back.
+
+Native text-layer extensions operate in the native viewer, while Ink Notes editing operates in its own tab. This does not combine independent annotation formats or guarantee compatibility among third-party plugins themselves. If another tool changes the source PDF revision, reopen it to check the sidecar; export refuses to apply old ink coordinates to different source bytes.
+
+The [compatibility audit](docs/pdf-plugin-compatibility.md), [283-plugin inventory](docs/pdf-plugin-inventory.md), and [pinned source evidence](docs/pdf-plugin-compatibility.json) distinguish source inspection from real Obsidian validation. The automatic takeover setting remains available for plugins outside the audited list.
+
 ## Build
 
 ```bash

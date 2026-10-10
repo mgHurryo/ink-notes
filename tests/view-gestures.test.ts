@@ -314,6 +314,26 @@ describe("page touch navigation", () => {
     expect(view.zoom).toBeCloseTo(1.08);
   });
 
+  it("holds the desktop raster until wheel zoom ends and preserves cursor anchoring", () => {
+    vi.useFakeTimers();
+    try {
+      const { view, point } = setup();
+      const anchor = point(320, 430);
+      view.desktopZoom(1.1, { x: 320, y: 430 });
+      vi.advanceTimersByTime(120);
+      view.desktopZoom(1.1, { x: 320, y: 430 });
+      expect(view.zoom).toBeCloseTo(1.21);
+      expect(view.pinchRenderZoom).toBe(1);
+      expect(view.tiles.setDisplayScale).not.toHaveBeenCalled();
+      expect(point(320, 430)).toEqual(expect.objectContaining({ x: expect.closeTo(anchor.x), y: expect.closeTo(anchor.y) }));
+      vi.advanceTimersByTime(179);
+      expect(view.resizeCanvas).not.toHaveBeenCalled();
+      vi.advanceTimersByTime(1);
+      expect(view.resizeCanvas).toHaveBeenCalledOnce();
+      expect(view.pinchRenderZoom).toBeUndefined();
+    } finally { vi.useRealTimers(); }
+  });
+
   it("allows panning at maximum zoom and clamps the scale", () => {
     const { view } = setup();
     view.setZoom(20);
