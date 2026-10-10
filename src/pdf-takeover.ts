@@ -75,7 +75,8 @@ export function pdfTakeoverReplacement(viewState: PdfViewState | null | undefine
   return viewType;
 }
 
-function hasNativeNavigation(state: unknown): boolean {
+/** Shared by opening routes and existing views so focus never becomes navigation. */
+export function hasNativeNavigation(state: unknown): boolean {
   if (state == null) return false;
   if (typeof state !== "object" || Array.isArray(state)) return true;
   return Object.entries(state).some(([key, value]) => {

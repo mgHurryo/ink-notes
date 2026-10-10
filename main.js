@@ -29340,7 +29340,7 @@ function renderError(el, error) {
 }
 
 // src/pdf-view.ts
-var import_obsidian8 = require("obsidian");
+var import_obsidian9 = require("obsidian");
 
 // src/pdf-sidecar.ts
 var PDF_SIDECAR_FORMAT = 1;
@@ -29730,6 +29730,199 @@ function serializeSidecar(sidecar) {
 `;
 }
 
+// node_modules/monkey-around/dist/index.mjs
+function around(obj, factories) {
+  const removers = Object.keys(factories).map((key) => around1(obj, key, factories[key]));
+  return removers.length === 1 ? removers[0] : function() {
+    removers.forEach((r) => r());
+  };
+}
+function around1(obj, method, createWrapper) {
+  const inherited = obj[method], hadOwn = obj.hasOwnProperty(method), original = hadOwn ? inherited : function() {
+    return Object.getPrototypeOf(obj)[method].apply(this, arguments);
+  };
+  let current = createWrapper(original);
+  if (inherited)
+    Object.setPrototypeOf(current, inherited);
+  Object.setPrototypeOf(wrapper, current);
+  obj[method] = wrapper;
+  return remove;
+  function wrapper(...args) {
+    if (current === original && obj[method] === wrapper)
+      remove();
+    return current.apply(this, args);
+  }
+  function remove() {
+    if (obj[method] === wrapper) {
+      if (hadOwn)
+        obj[method] = original;
+      else
+        delete obj[method];
+    }
+    if (current === original)
+      return;
+    current = original;
+    Object.setPrototypeOf(wrapper, inherited || Function);
+  }
+}
+
+// src/pdf-takeover.ts
+var import_obsidian8 = require("obsidian");
+var PDF_VIEW_ENHANCER_PLUGIN_IDS = [
+  "annotations-everywhere",
+  "book-note",
+  "easy-pdf-highlight",
+  "fit-pdf",
+  "fleur-pdf",
+  "fleurpdf-tint",
+  "freedraw-pdf",
+  "handwriting",
+  "handwritten-notes",
+  "icor-for-life-pdf-annotation",
+  "inkidian",
+  "inkling",
+  "jot",
+  "lark-knowledge-ai",
+  "llm-translator",
+  "local-pdf-annotator",
+  "magicnotes",
+  "marglow",
+  "native-pdf-handwriting",
+  "native-search",
+  "note-reader-cosyvoice",
+  "note-reader-mobile",
+  "open-pdf-translate",
+  "pandocit",
+  "paper-reader",
+  "pdf-editor",
+  "pdf-highlight-notes",
+  "pdf-pager-hz",
+  "pdf-plus",
+  "pdf-read-aloud",
+  "pdf-scholia-scribe",
+  "pdf-scroll-lock",
+  "pdf-selection-translator",
+  "pdf-simple",
+  "pdf-toggle-dark-mode",
+  "pdf-versioning",
+  "pdftion",
+  "qmd-as-md-obsidian",
+  "reader-margins",
+  "reading-progress-bookmarks",
+  "reading-ruler",
+  "siden",
+  "study-pdf",
+  "supernote-annotations",
+  "third-mind-reader",
+  "view-memory",
+  "word-memo",
+  "yh-inklight",
+  "pdf-writer"
+];
+function pdfTakeoverReplacement(viewState, gate, viewType, eState, ordinaryOpen = false) {
+  var _a, _b;
+  if (!gate.enabled || gate.enhancerActive && !gate.preferInk) return null;
+  if (!viewState || viewState.type !== "pdf") return null;
+  const file = (_a = viewState.state) == null ? void 0 : _a.file;
+  if (typeof file !== "string" || !gate.isPdfFile(file)) return null;
+  if (!(gate.preferInk && ordinaryOpen) && Object.entries((_b = viewState.state) != null ? _b : {}).some(([key, value]) => key !== "file" && !(key === "sync" && typeof value === "boolean") && value != null)) return null;
+  if (hasNativeNavigation(eState)) return null;
+  return viewType;
+}
+function hasNativeNavigation(state) {
+  if (state == null) return false;
+  if (typeof state !== "object" || Array.isArray(state)) return true;
+  return Object.entries(state).some(([key, value]) => {
+    if (value == null) return false;
+    if (key === "focus" && typeof value === "boolean") return false;
+    if (key === "subpath" && (value === "" || value === "#")) return false;
+    return true;
+  });
+}
+var PdfTabTakeover = class {
+  constructor(gateProvider, viewType) {
+    this.gateProvider = gateProvider;
+    this.viewType = viewType;
+    this.uninstaller = null;
+    this.inert = false;
+    this.suppressedLeaves = /* @__PURE__ */ new WeakSet();
+    this.ordinaryOpens = /* @__PURE__ */ new WeakMap();
+  }
+  get installed() {
+    return this.uninstaller !== null;
+  }
+  install(target = import_obsidian8.WorkspaceLeaf.prototype) {
+    if (this.uninstaller) return;
+    const takeover = this;
+    this.inert = false;
+    const uninstallViewState = around(target, {
+      setViewState(old) {
+        return async function setViewState(viewState, eState) {
+          var _a;
+          if (!takeover.inert && !takeover.suppressedLeaves.has(this)) {
+            const request = takeover.ordinaryOpens.get(this);
+            const ordinary = (request == null ? void 0 : request.active) === true && request.ordinary && request.path === ((_a = viewState.state) == null ? void 0 : _a.file);
+            const replacement = pdfTakeoverReplacement(viewState, takeover.gateProvider(), takeover.viewType, eState, ordinary);
+            if (replacement) return old.call(this, { ...viewState, type: replacement }, eState);
+          }
+          return old.call(this, viewState, eState);
+        };
+      }
+    });
+    const uninstallOpenFile = typeof target.openFile === "function" ? around(target, {
+      openFile(old) {
+        return async function(file, openState) {
+          const gate = takeover.gateProvider();
+          const ordinary = !takeover.inert && !takeover.suppressedLeaves.has(this) && gate.preferInk && pdfTakeoverReplacement(
+            { type: "pdf", state: { ...openState == null ? void 0 : openState.state, file: file.path } },
+            gate,
+            takeover.viewType,
+            openState == null ? void 0 : openState.eState
+          ) !== null;
+          const request = { path: file.path, ordinary: !!ordinary, active: true };
+          const previous = takeover.ordinaryOpens.get(this);
+          takeover.ordinaryOpens.set(this, request);
+          try {
+            await old.call(this, file, openState);
+          } finally {
+            request.active = false;
+            if (takeover.ordinaryOpens.get(this) === request) {
+              if (previous == null ? void 0 : previous.active) takeover.ordinaryOpens.set(this, previous);
+              else takeover.ordinaryOpens.delete(this);
+            }
+          }
+        };
+      }
+    }) : void 0;
+    this.uninstaller = () => {
+      uninstallOpenFile == null ? void 0 : uninstallOpenFile();
+      uninstallViewState();
+    };
+  }
+  /**
+   * Remove only our wrapper. monkey-around neutralizes its own mid-chain
+   * wrapper without removing a wrapper installed later by another plugin.
+   */
+  uninstall() {
+    if (!this.uninstaller) return;
+    const uninstaller = this.uninstaller;
+    this.uninstaller = null;
+    uninstaller();
+    this.inert = true;
+  }
+  /**
+   * Keep a leaf in the built-in viewer even while the patch is active: set
+   * before switching the leaf back to type "pdf", so our own patch does not
+   * immediately recapture the tab.
+   */
+  suppressLeaf(leaf) {
+    this.suppressedLeaves.add(leaf);
+  }
+  releaseLeaf(leaf) {
+    this.suppressedLeaves.delete(leaf);
+  }
+};
+
 // src/pdf-view.ts
 var VIEW_TYPE_PDF_INK = "ink-notes-pdf-view";
 var SAVE_CONFLICT_RETRIES2 = 3;
@@ -29813,7 +30006,7 @@ var PdfInkView = class extends InkWritingView {
     this.swipeLayer = null;
     /** Last drag offset; settle animations continue from it. */
     this.swipeDragOffset = 0;
-    this.scope = new import_obsidian8.Scope(this.app.scope);
+    this.scope = new import_obsidian9.Scope(this.app.scope);
   }
   /** Wired by the plugin right after construction. */
   configure(deps) {
@@ -29877,8 +30070,8 @@ var PdfInkView = class extends InkWritingView {
     if (outcome.status === "failed" && this.sidecar && this.sidecarFile) {
       outcome = await this.saveConflictCopy(this.sidecarRaw, outcome.message);
     }
-    if (outcome.status === "failed") new import_obsidian8.Notice(`Ink Notes could not save this PDF's latest notes: ${outcome.message}`);
-    if (outcome.status === "conflict") new import_obsidian8.Notice(`Ink Notes kept a conflict copy: ${outcome.message}`);
+    if (outcome.status === "failed") new import_obsidian9.Notice(`Ink Notes could not save this PDF's latest notes: ${outcome.message}`);
+    if (outcome.status === "conflict") new import_obsidian9.Notice(`Ink Notes kept a conflict copy: ${outcome.message}`);
     this.releaseWriter();
     this.loadGeneration += 1;
     this.cancelPdfRender();
@@ -29927,7 +30120,7 @@ var PdfInkView = class extends InkWritingView {
     if (generation !== this.loadGeneration) return;
     let pdfjs;
     try {
-      pdfjs = await (0, import_obsidian8.loadPdfJs)();
+      pdfjs = await (0, import_obsidian9.loadPdfJs)();
     } catch (error) {
       if (generation !== this.loadGeneration) return;
       this.setStatus(`Could not load the PDF renderer: ${messageOf(error)}`, true);
@@ -29962,7 +30155,7 @@ var PdfInkView = class extends InkWritingView {
     this.finishPointerInput(false);
     const outcome = await this.flushSaveNow();
     if (outcome.status === "failed") throw new Error(`Could not save PDF handwriting: ${outcome.message}`);
-    if (outcome.status === "conflict") new import_obsidian8.Notice(`Ink Notes kept a conflict copy: ${outcome.message}`);
+    if (outcome.status === "conflict") new import_obsidian9.Notice(`Ink Notes kept a conflict copy: ${outcome.message}`);
     this.clearSaveTimers();
     this.loadGeneration += 1;
     this.cancelPdfRender();
@@ -30023,7 +30216,7 @@ var PdfInkView = class extends InkWritingView {
     this.finishPointerInput(false);
     const outcome = await this.flushSaveNow();
     if (outcome.status === "failed") {
-      new import_obsidian8.Notice(`Save failed, staying in the handwriting view: ${outcome.message}`);
+      new import_obsidian9.Notice(`Save failed, staying in the handwriting view: ${outcome.message}`);
       return;
     }
     if (!this.file) return;
@@ -30036,11 +30229,11 @@ var PdfInkView = class extends InkWritingView {
       );
     } catch (error) {
       this.takeover.releaseLeaf(this.leaf);
-      new import_obsidian8.Notice(`Could not return to the PDF viewer: ${messageOf(error)}`);
+      new import_obsidian9.Notice(`Could not return to the PDF viewer: ${messageOf(error)}`);
     }
   }
   setEphemeralState(state) {
-    if (state != null && typeof state === "object" && Object.keys(state).length > 0) {
+    if (hasNativeNavigation(state)) {
       void this.restoreBuiltinViewer(state);
     }
   }
@@ -30125,11 +30318,11 @@ var PdfInkView = class extends InkWritingView {
           const migrated = this.store.sidecarFileFor(file.path);
           if (migrated) await this.writeSidecar(migrated, serializeSidecar(sidecar), sidecar);
           this.attachSidecar(sidecar, serializeSidecar(sidecar), migrated != null ? migrated : recovered);
-          new import_obsidian8.Notice(`Restored handwriting notes from ${recovered.name}`);
+          new import_obsidian9.Notice(`Restored handwriting notes from ${recovered.name}`);
           return;
         }
       } catch (error) {
-        new import_obsidian8.Notice(`Recovered notes stayed at ${recovered.path}: ${messageOf(error)}`);
+        new import_obsidian9.Notice(`Recovered notes stayed at ${recovered.path}: ${messageOf(error)}`);
         this.attachSidecar(sidecar, serializeSidecar(sidecar), recovered);
         return;
       }
@@ -30172,7 +30365,7 @@ var PdfInkView = class extends InkWritingView {
         this.renderAll();
         void this.renderPdfPage();
       } catch (error) {
-        new import_obsidian8.Notice(`Could not restore the selected notes file: ${messageOf(error)}`);
+        new import_obsidian9.Notice(`Could not restore the selected notes file: ${messageOf(error)}`);
       }
     }).open();
   }
@@ -30538,14 +30731,14 @@ var PdfInkView = class extends InkWritingView {
   withPageUndo(change, label) {
     var _a, _b;
     if (!this.sidecar || this.editingLocked()) {
-      new import_obsidian8.Notice(`Ink Notes could not ${label}: this view is read-only`);
+      new import_obsidian9.Notice(`Ink Notes could not ${label}: this view is read-only`);
       return;
     }
     this.finishPointerInput(false);
     const before = serializeSidecar(this.sidecar);
     const beforePageId = (_a = this.sidecar.notePages[this.noteIndex]) == null ? void 0 : _a.id;
     if (!change()) {
-      new import_obsidian8.Notice(`Ink Notes could not ${label}: source PDF pages are permanent`);
+      new import_obsidian9.Notice(`Ink Notes could not ${label}: source PDF pages are permanent`);
       return;
     }
     const after = serializeSidecar(this.sidecar);
@@ -30573,7 +30766,7 @@ var PdfInkView = class extends InkWritingView {
       this.renderAll();
       void this.renderPdfPage();
     } catch (error) {
-      new import_obsidian8.Notice(`Ink Notes could not restore the previous page state: ${messageOf(error)}`);
+      new import_obsidian9.Notice(`Ink Notes could not restore the previous page state: ${messageOf(error)}`);
     }
   }
   markSidecarChanged() {
@@ -31263,7 +31456,7 @@ var PdfInkView = class extends InkWritingView {
       await this.app.vault.create(conflictPath, serializeSidecar(sidecar));
       this.sidecarRaw = diskRaw;
       this.dirty = this.editRevision !== revision;
-      new import_obsidian8.Notice(`Ink Notes kept your notes in ${conflictPath}`);
+      new import_obsidian9.Notice(`Ink Notes kept your notes in ${conflictPath}`);
       return { status: "conflict", message: reason };
     } catch (error) {
       return { status: "failed", message: `${reason}; writing the conflict copy failed: ${messageOf(error)}` };
@@ -31274,12 +31467,12 @@ var PdfInkView = class extends InkWritingView {
     if (!this.file || !this.sidecar) return;
     this.finishPointerInput(false);
     if (!sidecarHasInk(this.sidecar)) {
-      new import_obsidian8.Notice("This PDF has no handwriting to export yet");
+      new import_obsidian9.Notice("This PDF has no handwriting to export yet");
       return;
     }
     const outcome = await this.flushSaveNow();
     if (outcome.status === "failed") {
-      new import_obsidian8.Notice(`Export cancelled: could not save notes (${outcome.message})`);
+      new import_obsidian9.Notice(`Export cancelled: could not save notes (${outcome.message})`);
       return;
     }
     try {
@@ -31287,26 +31480,26 @@ var PdfInkView = class extends InkWritingView {
       const fingerprint = await this.store.computeFingerprint(bytes);
       if (fingerprint.sha256 !== this.sidecar.source.sha256 || fingerprint.byteLength !== this.sidecar.source.byteLength) {
         this.sourcePdfModified();
-        new import_obsidian8.Notice("Export cancelled: the source PDF changed. Your notes still belong to the previous revision.");
+        new import_obsidian9.Notice("Export cancelled: the source PDF changed. Your notes still belong to the previous revision.");
         return;
       }
       const output = await exportHandwrittenPdf(bytes, this.sidecar, this.file.basename, this.canvasLogicalWidth);
       const target = exportPathFor(this.file.path, (candidate) => this.app.vault.getAbstractFileByPath(candidate) !== null);
       await this.app.vault.createBinary(target, output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength));
-      new import_obsidian8.Notice(`Exported ${target}`);
+      new import_obsidian9.Notice(`Exported ${target}`);
     } catch (error) {
       if (error instanceof PdfExportError) {
-        new import_obsidian8.Notice(`Export failed: ${error.message}. Your notes are untouched.`);
+        new import_obsidian9.Notice(`Export failed: ${error.message}. Your notes are untouched.`);
         return;
       }
-      new import_obsidian8.Notice(`Export failed: ${messageOf(error)}`);
+      new import_obsidian9.Notice(`Export failed: ${messageOf(error)}`);
     }
   }
 };
 function messageOf(error) {
   return error instanceof Error ? error.message : String(error);
 }
-var RecoveryChoiceModal = class extends import_obsidian8.SuggestModal {
+var RecoveryChoiceModal = class extends import_obsidian9.SuggestModal {
   constructor(app, candidates, choose) {
     super(app);
     this.candidates = candidates;
@@ -31327,199 +31520,6 @@ var RecoveryChoiceModal = class extends import_obsidian8.SuggestModal {
   onClose() {
     super.onClose();
     if (!this.chosen) void this.choose(null);
-  }
-};
-
-// node_modules/monkey-around/dist/index.mjs
-function around(obj, factories) {
-  const removers = Object.keys(factories).map((key) => around1(obj, key, factories[key]));
-  return removers.length === 1 ? removers[0] : function() {
-    removers.forEach((r) => r());
-  };
-}
-function around1(obj, method, createWrapper) {
-  const inherited = obj[method], hadOwn = obj.hasOwnProperty(method), original = hadOwn ? inherited : function() {
-    return Object.getPrototypeOf(obj)[method].apply(this, arguments);
-  };
-  let current = createWrapper(original);
-  if (inherited)
-    Object.setPrototypeOf(current, inherited);
-  Object.setPrototypeOf(wrapper, current);
-  obj[method] = wrapper;
-  return remove;
-  function wrapper(...args) {
-    if (current === original && obj[method] === wrapper)
-      remove();
-    return current.apply(this, args);
-  }
-  function remove() {
-    if (obj[method] === wrapper) {
-      if (hadOwn)
-        obj[method] = original;
-      else
-        delete obj[method];
-    }
-    if (current === original)
-      return;
-    current = original;
-    Object.setPrototypeOf(wrapper, inherited || Function);
-  }
-}
-
-// src/pdf-takeover.ts
-var import_obsidian9 = require("obsidian");
-var PDF_VIEW_ENHANCER_PLUGIN_IDS = [
-  "annotations-everywhere",
-  "book-note",
-  "easy-pdf-highlight",
-  "fit-pdf",
-  "fleur-pdf",
-  "fleurpdf-tint",
-  "freedraw-pdf",
-  "handwriting",
-  "handwritten-notes",
-  "icor-for-life-pdf-annotation",
-  "inkidian",
-  "inkling",
-  "jot",
-  "lark-knowledge-ai",
-  "llm-translator",
-  "local-pdf-annotator",
-  "magicnotes",
-  "marglow",
-  "native-pdf-handwriting",
-  "native-search",
-  "note-reader-cosyvoice",
-  "note-reader-mobile",
-  "open-pdf-translate",
-  "pandocit",
-  "paper-reader",
-  "pdf-editor",
-  "pdf-highlight-notes",
-  "pdf-pager-hz",
-  "pdf-plus",
-  "pdf-read-aloud",
-  "pdf-scholia-scribe",
-  "pdf-scroll-lock",
-  "pdf-selection-translator",
-  "pdf-simple",
-  "pdf-toggle-dark-mode",
-  "pdf-versioning",
-  "pdftion",
-  "qmd-as-md-obsidian",
-  "reader-margins",
-  "reading-progress-bookmarks",
-  "reading-ruler",
-  "siden",
-  "study-pdf",
-  "supernote-annotations",
-  "third-mind-reader",
-  "view-memory",
-  "word-memo",
-  "yh-inklight",
-  "pdf-writer"
-];
-function pdfTakeoverReplacement(viewState, gate, viewType, eState, ordinaryOpen = false) {
-  var _a, _b;
-  if (!gate.enabled || gate.enhancerActive && !gate.preferInk) return null;
-  if (!viewState || viewState.type !== "pdf") return null;
-  const file = (_a = viewState.state) == null ? void 0 : _a.file;
-  if (typeof file !== "string" || !gate.isPdfFile(file)) return null;
-  if (!(gate.preferInk && ordinaryOpen) && Object.entries((_b = viewState.state) != null ? _b : {}).some(([key, value]) => key !== "file" && !(key === "sync" && typeof value === "boolean") && value != null)) return null;
-  if (hasNativeNavigation(eState)) return null;
-  return viewType;
-}
-function hasNativeNavigation(state) {
-  if (state == null) return false;
-  if (typeof state !== "object" || Array.isArray(state)) return true;
-  return Object.entries(state).some(([key, value]) => {
-    if (value == null) return false;
-    if (key === "focus" && typeof value === "boolean") return false;
-    if (key === "subpath" && (value === "" || value === "#")) return false;
-    return true;
-  });
-}
-var PdfTabTakeover = class {
-  constructor(gateProvider, viewType) {
-    this.gateProvider = gateProvider;
-    this.viewType = viewType;
-    this.uninstaller = null;
-    this.inert = false;
-    this.suppressedLeaves = /* @__PURE__ */ new WeakSet();
-    this.ordinaryOpens = /* @__PURE__ */ new WeakMap();
-  }
-  get installed() {
-    return this.uninstaller !== null;
-  }
-  install(target = import_obsidian9.WorkspaceLeaf.prototype) {
-    if (this.uninstaller) return;
-    const takeover = this;
-    this.inert = false;
-    const uninstallViewState = around(target, {
-      setViewState(old) {
-        return async function setViewState(viewState, eState) {
-          var _a;
-          if (!takeover.inert && !takeover.suppressedLeaves.has(this)) {
-            const request = takeover.ordinaryOpens.get(this);
-            const ordinary = (request == null ? void 0 : request.active) === true && request.ordinary && request.path === ((_a = viewState.state) == null ? void 0 : _a.file);
-            const replacement = pdfTakeoverReplacement(viewState, takeover.gateProvider(), takeover.viewType, eState, ordinary);
-            if (replacement) return old.call(this, { ...viewState, type: replacement }, eState);
-          }
-          return old.call(this, viewState, eState);
-        };
-      }
-    });
-    const uninstallOpenFile = typeof target.openFile === "function" ? around(target, {
-      openFile(old) {
-        return async function(file, openState) {
-          const gate = takeover.gateProvider();
-          const ordinary = !takeover.inert && !takeover.suppressedLeaves.has(this) && gate.preferInk && pdfTakeoverReplacement(
-            { type: "pdf", state: { ...openState == null ? void 0 : openState.state, file: file.path } },
-            gate,
-            takeover.viewType,
-            openState == null ? void 0 : openState.eState
-          ) !== null;
-          const request = { path: file.path, ordinary: !!ordinary, active: true };
-          const previous = takeover.ordinaryOpens.get(this);
-          takeover.ordinaryOpens.set(this, request);
-          try {
-            await old.call(this, file, openState);
-          } finally {
-            request.active = false;
-            if (takeover.ordinaryOpens.get(this) === request) {
-              if (previous == null ? void 0 : previous.active) takeover.ordinaryOpens.set(this, previous);
-              else takeover.ordinaryOpens.delete(this);
-            }
-          }
-        };
-      }
-    }) : void 0;
-    this.uninstaller = () => {
-      uninstallOpenFile == null ? void 0 : uninstallOpenFile();
-      uninstallViewState();
-    };
-  }
-  /**
-   * Remove only our wrapper. monkey-around neutralizes its own mid-chain
-   * wrapper without removing a wrapper installed later by another plugin.
-   */
-  uninstall() {
-    if (!this.uninstaller) return;
-    const uninstaller = this.uninstaller;
-    this.uninstaller = null;
-    uninstaller();
-    this.inert = true;
-  }
-  /**
-   * Keep a leaf in the built-in viewer even while the patch is active: set
-   * before switching the leaf back to type "pdf", so our own patch does not
-   * immediately recapture the tab.
-   */
-  suppressLeaf(leaf) {
-    this.suppressedLeaves.add(leaf);
-  }
-  releaseLeaf(leaf) {
-    this.suppressedLeaves.delete(leaf);
   }
 };
 

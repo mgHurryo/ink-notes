@@ -20,7 +20,7 @@ import {
 } from "./pdf-sidecar";
 import { PdfSidecarStore, serializeSidecar } from "./pdf-store";
 import { PdfExportError, exportHandwrittenPdf, exportPathFor, sidecarHasInk } from "./pdf-export";
-import { PdfTabTakeover } from "./pdf-takeover";
+import { PdfTabTakeover, hasNativeNavigation } from "./pdf-takeover";
 
 export const VIEW_TYPE_PDF_INK = "ink-notes-pdf-view";
 
@@ -412,7 +412,8 @@ export class PdfInkView extends InkWritingView {
 
   setEphemeralState(state: unknown): void {
     // openLinkText can reuse an existing ink leaf without another setViewState call.
-    if (state != null && typeof state === "object" && Object.keys(state).length > 0) {
+    // Host focus delivery on open/refocus must not return the tab to native PDF.
+    if (hasNativeNavigation(state)) {
       void this.restoreBuiltinViewer(state);
     }
   }
