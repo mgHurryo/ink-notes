@@ -1,15 +1,17 @@
 import { around } from "monkey-around";
-import { WorkspaceLeaf } from "obsidian";
+import { WorkspaceLeaf, type OpenViewState, type TFile } from "obsidian";
 
 /**
  * PDF tab takeover.
  *
  * Obsidian has no public API to replace the built-in `pdf` view, and the plan
  * explicitly rules out private registries — so this module wraps the public
- * `WorkspaceLeaf.prototype.setViewState` at the single choke point every PDF
- * open path converges on (file list, search, internal links, `#page=` links
- * all end in a setViewState call with type "pdf"). The patch redirects those
- * calls to our view type before the built-in view is instantiated.
+ * `WorkspaceLeaf.prototype.setViewState` where PDF open paths converge (file
+ * list, search, internal links and `#page=` links). In Ink-first mode the public
+ * openFile request also supplies
+ * the opening intent, before native viewers add remembered viewport state.
+ * The patch redirects ordinary opens to our view type before the built-in view
+ * is instantiated.
  *
  * Patch pattern follows PDF++ (MIT, © Ryota Ushio,
  * https://github.com/RyotaUshio/obsidian-pdf-plus), including the use of the
@@ -60,22 +62,35 @@ export interface PdfTakeoverGate {
  * Pure decision: which view type a setViewState call should actually open.
  * Returns the replacement view type, or null to pass through untouched.
  */
-export function pdfTakeoverReplacement(viewState: PdfViewState | null | undefined, gate: PdfTakeoverGate, viewType: string, eState?: unknown): string | null {
+export function pdfTakeoverReplacement(viewState: PdfViewState | null | undefined, gate: PdfTakeoverGate, viewType: string, eState?: unknown, ordinaryOpen = false): string | null {
   if (!gate.enabled || (gate.enhancerActive && !gate.preferInk)) return null;
   if (!viewState || viewState.type !== "pdf") return null;
   const file = viewState.state?.file;
   if (typeof file !== "string" || !gate.isPdfFile(file)) return null;
-  // Native navigation/search/selection state has no equivalent in the ink view.
-  // Preserve even unfamiliar state rather than silently discarding another plugin's request.
-  if (Object.keys(viewState.state ?? {}).some((key) => key !== "file")) return null;
-  if (eState != null && (typeof eState !== "object" || Object.keys(eState).length > 0)) return null;
+  // An ordinary openFile request takes precedence over remembered native state
+  // in Ink-first mode. Explicit navigation and unknown requests still stay native.
+  if (!(gate.preferInk && ordinaryOpen) && Object.entries(viewState.state ?? {})
+    .some(([key, value]) => key !== "file" && !(key === "sync" && typeof value === "boolean") && value != null)) return null;
+  if (hasNativeNavigation(eState)) return null;
   return viewType;
+}
+
+function hasNativeNavigation(state: unknown): boolean {
+  if (state == null) return false;
+  if (typeof state !== "object" || Array.isArray(state)) return true;
+  return Object.entries(state).some(([key, value]) => {
+    if (value == null) return false;
+    if (key === "focus" && typeof value === "boolean") return false;
+    if (key === "subpath" && (value === "" || value === "#")) return false;
+    return true;
+  });
 }
 
 export class PdfTabTakeover {
   private uninstaller: (() => void) | null = null;
   private inert = false;
   private readonly suppressedLeaves = new WeakSet<WorkspaceLeaf>();
+  private readonly ordinaryOpens = new WeakMap<WorkspaceLeaf, { path: string; ordinary: boolean; active: boolean }>();
 
   constructor(private readonly gateProvider: () => PdfTakeoverGate, private readonly viewType: string) {}
 
@@ -84,22 +99,52 @@ export class PdfTabTakeover {
   }
 
   install(
-    target: { setViewState: (this: WorkspaceLeaf, viewState: PdfViewState, eState?: unknown) => Promise<void> } = WorkspaceLeaf.prototype,
+    target: {
+      setViewState: (this: WorkspaceLeaf, viewState: PdfViewState, eState?: unknown) => Promise<void>;
+      openFile?: (this: WorkspaceLeaf, file: TFile, openState?: OpenViewState) => Promise<void>;
+    } = WorkspaceLeaf.prototype,
   ): void {
     if (this.uninstaller) return;
     const takeover = this;
     this.inert = false;
-    this.uninstaller = around(target, {
+    const uninstallViewState = around(target, {
       setViewState(old: (this: WorkspaceLeaf, viewState: PdfViewState, eState?: unknown) => Promise<void>) {
         return async function setViewState(this: WorkspaceLeaf, viewState: PdfViewState, eState?: unknown) {
           if (!takeover.inert && !takeover.suppressedLeaves.has(this)) {
-            const replacement = pdfTakeoverReplacement(viewState, takeover.gateProvider(), takeover.viewType, eState);
+            const request = takeover.ordinaryOpens.get(this);
+            const ordinary = request?.active === true && request.ordinary && request.path === viewState.state?.file;
+            const replacement = pdfTakeoverReplacement(viewState, takeover.gateProvider(), takeover.viewType, eState, ordinary);
             if (replacement) return old.call(this, { ...viewState, type: replacement }, eState);
           }
           return old.call(this, viewState, eState);
         } as unknown as typeof old;
       },
     });
+    const uninstallOpenFile = typeof target.openFile === "function" ? around(target as typeof target & {
+      openFile: NonNullable<typeof target.openFile>;
+    }, {
+      openFile(old) {
+        return async function(this: WorkspaceLeaf, file: TFile, openState?: OpenViewState) {
+          const gate = takeover.gateProvider();
+          const ordinary = !takeover.inert && !takeover.suppressedLeaves.has(this) && gate.preferInk
+            && pdfTakeoverReplacement({ type: "pdf", state: { ...openState?.state, file: file.path } },
+              gate, takeover.viewType, openState?.eState) !== null;
+          const request = { path: file.path, ordinary: !!ordinary, active: true };
+          const previous = takeover.ordinaryOpens.get(this);
+          takeover.ordinaryOpens.set(this, request);
+          try {
+            await old.call(this, file, openState);
+          } finally {
+            request.active = false;
+            if (takeover.ordinaryOpens.get(this) === request) {
+              if (previous?.active) takeover.ordinaryOpens.set(this, previous);
+              else takeover.ordinaryOpens.delete(this);
+            }
+          }
+        };
+      },
+    }) : undefined;
+    this.uninstaller = () => { uninstallOpenFile?.(); uninstallViewState(); };
   }
 
   /**
