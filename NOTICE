@@ -1,0 +1,13 @@
+Ink Notes
+Copyright 2026 Ink Notes contributors
+
+This product includes a modified TypeScript adaptation of Google's
+ink-stroke-modeler, Copyright 2022 Google LLC, Apache License 2.0.
+https://github.com/google/ink-stroke-modeler
+
+The adaptation retains causal smoothing, resampling, spring-drag modeling
+and stylus projection. Prediction, loop contraction, stroke-normal
+projection and Save/Restore are omitted. See src/stroke-modeler.ts.
+
+Other bundled dependencies retain their own terms. See
+THIRD-PARTY-NOTICES.md for dependency attributions and license texts.
