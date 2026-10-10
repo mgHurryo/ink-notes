@@ -396,6 +396,62 @@ describe("PDF plugin handoff and source revisions", () => {
     expect(leaf.setViewState).toHaveBeenCalledWith({ type: "pdf", state: { file: "docs/lecture.pdf" } }, state);
   });
 
+  it.each([undefined, null, {}, { focus: true }, { focus: false }, { subpath: "" }, { subpath: "#" },
+    { focus: true, subpath: undefined }, { focus: false, subpath: "", selection: null }])(
+    "keeps handwriting and pending ink when receiving non-navigation state: %j", async (state) => {
+      const { view, internal } = setup();
+      internal.onPointerDown(pointer(60, 60));
+      const stroke = internal.activeStroke;
+      const restore = vi.spyOn(view, "restoreBuiltinViewer").mockResolvedValue();
+      view.setEphemeralState(state);
+      await Promise.resolve();
+      expect(restore).not.toHaveBeenCalled();
+      expect(internal.activeStroke).toBe(stroke);
+      expect(internal.writerHeld).toBe(true);
+    });
+
+  it("keeps a taken-over PDF in handwriting through host state delivery and tab refocus", async () => {
+    const { view, internal } = setup();
+    let currentType = "empty";
+    const host = {
+      async setViewState(state: { type: string; state?: Record<string, unknown> }, eState?: unknown) {
+        currentType = state.type;
+        // Real host forwards ephemeral state after installing the new view.
+        if (currentType === VIEW_TYPE_PDF_INK) view.setEphemeralState(eState);
+      },
+      async openFile(file: TFile) {
+        await this.setViewState({ type: "pdf", state: { file: file.path, page: 4, zoom: 1.5 } }, { focus: true });
+      },
+    };
+    const takeover = new PdfTabTakeover(() => ({ enabled: true, preferInk: true,
+      enhancerActive: true, isPdfFile: () => true }), VIEW_TYPE_PDF_INK);
+    takeover.install(host as never);
+    Object.assign(internal, { leaf: host, takeover });
+    try {
+      await host.openFile(view.file!);
+      await Promise.resolve();
+      expect(currentType).toBe(VIEW_TYPE_PDF_INK);
+      view.setEphemeralState({ focus: false }); // leave the tab
+      view.setEphemeralState({ focus: true }); // return to the tab
+      await Promise.resolve();
+      expect(currentType).toBe(VIEW_TYPE_PDF_INK);
+      expect(internal.writerHeld).toBe(true);
+      // A focus update must not suppress future ordinary opens on this leaf.
+      await host.openFile(view.file!);
+      expect(currentType).toBe(VIEW_TYPE_PDF_INK);
+    } finally { takeover.uninstall(); }
+  });
+
+  it.each([{ subpath: "#page=5" }, { search: "phrase" }, { selection: [2, 8] },
+    { futureNativeOption: true }, { focus: "unexpected" }])(
+    "still delegates explicit and unknown native navigation intact: %j", async (state) => {
+      const { view } = setup();
+      const restore = vi.spyOn(view, "restoreBuiltinViewer").mockResolvedValue();
+      view.setEphemeralState(state);
+      expect(restore).toHaveBeenCalledOnce();
+      expect(restore).toHaveBeenCalledWith(state);
+    });
+
   it("ignores identical source modify events but blocks new ink on changed PDF bytes", async () => {
     const { view, internal, store } = setup();
     Object.assign(internal.app.vault as object, { readBinary: vi.fn(async () => new ArrayBuffer(100)) });
