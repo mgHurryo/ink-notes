@@ -71,8 +71,9 @@ describe("interactive tile commits", () => {
 
   it("keeps tile bleed in logical pixels at high density", () => {
     const originalDocument = globalThis.document;
-    const canvas: any = { width: 0, height: 0, style: {}, getContext: vi.fn(() => ({ setTransform: vi.fn() })) };
-    const node: any = { dataset: {} as Record<string, string>, style: {}, appendChild: vi.fn() };
+    const setCssStyles = function(this: { style: object }, styles: object) { Object.assign(this.style, styles); };
+    const canvas: any = { width: 0, height: 0, style: {}, setCssStyles, getContext: vi.fn(() => ({ setTransform: vi.fn() })) };
+    const node: any = { dataset: {} as Record<string, string>, style: {}, setCssStyles, appendChild: vi.fn() };
     vi.stubGlobal("document", { createElement: vi.fn((tag: string) => tag === "canvas" ? canvas : node) });
     const renderer = Object.create(TileRenderer.prototype) as any;
     const state = {

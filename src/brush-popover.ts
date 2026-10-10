@@ -343,7 +343,6 @@ export class BrushPopoverController {
         type: "color", value, "aria-label": `${spec.label} ${label.toLowerCase()} preset picker`,
         "data-color": value, "data-brush-tool": spec.tool, tabindex: "-1",
       } });
-      picker.style.pointerEvents = "none";
       // This slot's live preset color: the closure must follow in-place edits
       // or the SECOND adjustment can no longer find its entry.
       let current = value;
@@ -355,11 +354,11 @@ export class BrushPopoverController {
         settings.color = current;
         this.updateColorSwatches(spec.tool, current);
         this.update();
-        picker.style.pointerEvents = "auto";
+        picker.addClass("is-armed");
         if (armTimer !== undefined) window.clearTimeout(armTimer);
         armTimer = window.setTimeout(() => {
           armTimer = undefined;
-          picker.style.pointerEvents = "none";
+          picker.removeClass("is-armed");
         }, PICKER_ARM_MS);
       });
       // The pick replaces this preset LIVE on every input event (iOS fires
@@ -458,11 +457,11 @@ export class BrushPopoverController {
       this.curveOpen = !this.curveOpen;
       curveToggle.setAttribute("aria-expanded", String(this.curveOpen));
       setIcon(curveIcon, this.curveOpen ? "chevron-up" : "chevron-down");
-      curveBody.style.display = this.curveOpen ? "" : "none";
+      curveBody.toggleClass("is-collapsed", !this.curveOpen);
       if (this.curveOpen) requestAnimationFrame(() => this.drawPressureCurve(settings));
     });
     const curveBody = body.createDiv({ cls: "ink-curve-body" });
-    if (!this.curveOpen) curveBody.style.display = "none";
+    curveBody.toggleClass("is-collapsed", !this.curveOpen);
     const resetRow = curveBody.createDiv({ cls: "ink-curve-actions" });
     const resetButton = resetRow.createEl("button", { text: "Reset", attr: { type: "button" } });
     resetButton.addEventListener("click", () => {
@@ -471,8 +470,6 @@ export class BrushPopoverController {
     });
     const editor = curveBody.createDiv({ cls: "ink-curve-editor", attr: { "aria-label": "Pressure mapping curve" } });
     const canvas = editor.createEl("canvas", { cls: "ink-curve-editor-canvas" });
-    canvas.style.width = "100%";
-    canvas.style.height = "110px";
     canvas.setAttribute("aria-hidden", "true");
     const hit = (clientX: number, clientY: number): { x: number; y: number } => {
       const rect = canvas.getBoundingClientRect();

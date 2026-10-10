@@ -439,7 +439,7 @@ describe("reference-style editor", () => {
     // Tap 1 selects and arms the swatch's own native picker input.
     blue.click();
     const picker = document.querySelector<HTMLInputElement>('input.ink-swatch-picker[data-color="#195bff"]')!;
-    expect(picker.style.pointerEvents).toBe("auto");
+    expect(picker.classList.contains("is-armed")).toBe(true);
     // Tap 2 lands on the real input and opens the system picker natively;
     // the settled pick replaces the preset and follows the selected color.
     picker.value = "#123456";

@@ -19,7 +19,8 @@ import { WorkspaceLeaf } from "obsidian";
  * Native PDF compatibility: viewer extensions keep the built-in `pdf` view and enhance it
  * from the inside, so while our patch is active its enhancements never engage
  * (the built-in view is never created). We therefore yield automatically
- * while a source-confirmed native extension is enabled. PDFs open in the built-in viewer and
+ * while a source-confirmed native extension is enabled in compatibility mode. Ink-first mode
+ * honors the user's explicit viewer choice. PDFs open in the built-in viewer and
  * handwriting stays available per-tab through the explicit open command and
  * file menu entry. The user can also flip a tab back to the built-in viewer
  * from inside our view.
@@ -49,6 +50,8 @@ export interface PdfTakeoverGate {
   enabled: boolean;
   /** True while an installed enhancer plugin owns the built-in viewer UX. */
   enhancerActive: boolean;
+  /** Explicit Ink-first choice overrides extension detection, not native navigation. */
+  preferInk?: boolean;
   /** Vault membership + extension check for the path inside the view state. */
   isPdfFile: (path: string) => boolean;
 }
@@ -58,7 +61,7 @@ export interface PdfTakeoverGate {
  * Returns the replacement view type, or null to pass through untouched.
  */
 export function pdfTakeoverReplacement(viewState: PdfViewState | null | undefined, gate: PdfTakeoverGate, viewType: string, eState?: unknown): string | null {
-  if (!gate.enabled || gate.enhancerActive) return null;
+  if (!gate.enabled || (gate.enhancerActive && !gate.preferInk)) return null;
   if (!viewState || viewState.type !== "pdf") return null;
   const file = viewState.state?.file;
   if (typeof file !== "string" || !gate.isPdfFile(file)) return null;

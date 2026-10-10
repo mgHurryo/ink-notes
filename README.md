@@ -6,6 +6,8 @@ Ink Notes is licensed under Apache-2.0. The bundled stroke model is adapted from
 
 ## Install and enable
 
+Ink Notes requires Obsidian 1.5.7 or later for view-scoped keyboard shortcuts.
+
 Ink Notes is being prepared for the Obsidian Community directory. Until its listing is approved, install it manually from the [latest release](https://github.com/mgHurryo/ink-notes/releases/latest):
 
 1. Create `.obsidian/plugins/ink-notes/` inside your vault.
@@ -23,11 +25,11 @@ Once listed, use **Settings -> Community plugins -> Browse**, search for **Ink N
 
 ### Why does a PDF still open in the default viewer?
 
-**Settings -> Ink Notes -> PDF handwriting -> Take over PDF tabs automatically** is enabled by default. It applies to ordinary PDF opens; changing it does not convert tabs already open, so close and reopen the PDF or use the explicit handwriting command.
+Choose **Settings -> Ink Notes -> PDF handwriting -> Default PDF viewer**. **Ink Notes first** opens ordinary PDFs in handwriting even when PDF++ is enabled. **Compatibility mode** automatically chooses the native viewer when a supported PDF extension is enabled; it is the default for a fresh installation. **Native PDF viewer** disables automatic handwriting opens. Existing checked **Take over PDF tabs automatically** settings migrate to **Ink Notes first**; unchecked settings migrate to **Native PDF viewer**. Changing the mode does not convert tabs already open, so close and reopen the PDF or use the explicit handwriting command.
 
-Ink Notes deliberately keeps the native PDF viewer when a supported viewer extension such as PDF++, Jot or PDF Writer is enabled. This lets its text selection, links, highlighting and other native-view features continue working. Page/search/selection links and other navigation state also keep the native viewer, even when automatic takeover is enabled. Turning the setting on does not override these compatibility rules.
+In compatibility mode, Ink Notes deliberately keeps the native PDF viewer when a supported viewer extension such as PDF++, Jot or PDF Writer is enabled. This lets its text selection, links, highlighting and other native-view features continue working. Page/search/selection links and other navigation state keep the native viewer in every mode so their destinations are preserved.
 
-To use both workflows, keep the other plugin enabled and open an Ink Notes handwriting tab explicitly. Native-view extensions and Ink Notes use separate views; their annotations and tools are not combined into a single viewer. To make ordinary PDF opens use Ink Notes automatically, disable the competing native-view extension, leave automatic takeover enabled, then reopen the PDF. You can return from an Ink Notes tab with **Ink Notes: Return current PDF tab to the built-in viewer**.
+To use both workflows, keep the other plugin enabled and choose **Ink Notes first** or open an Ink Notes handwriting tab explicitly. Native-view extensions and Ink Notes use separate views; their annotations and tools are not combined into a single viewer. You can return from an Ink Notes tab with **Ink Notes: Return current PDF tab to the built-in viewer**; that tab retains your native-viewer choice.
 
 If the explicit command is missing, check that Ink Notes is enabled in this vault and reload it. If an unknown plugin still intercepts the explicit opening, temporarily disable that plugin to isolate the conflict, then [report an issue](https://github.com/mgHurryo/ink-notes/issues) with plugin names, versions and the opening steps. Compatibility with every plugin combination is not guaranteed.
 
@@ -78,7 +80,7 @@ Ink Notes does not send notes, diagnostics or usage data to a server, and requir
 
 ## PDF plugin compatibility
 
-Ink Notes keeps its handwriting in a separate view and sidecar; it never replaces the source PDF. Native PDF extensions (including PDF++, Jot, PDF Writer, translators, readers and annotation tools in the audited list) retain their normal viewer automatically. PDF navigation/search/selection state is forwarded to the native viewer. Handwriting remains available through **Open current PDF with handwriting** and the PDF file context menu, and **Return current PDF tab to the built-in viewer** saves ink before handing the tab back.
+Ink Notes keeps its handwriting in a separate view and sidecar; it never replaces the source PDF. In compatibility mode, native PDF extensions (including PDF++, Jot, PDF Writer, translators, readers and annotation tools in the audited list) retain their normal viewer automatically. Ink Notes first honors the user's handwriting preference for ordinary opens. PDF navigation/search/selection state is forwarded to the native viewer. Handwriting remains available through **Open current PDF with handwriting** and the PDF file context menu, and **Return current PDF tab to the built-in viewer** saves ink before handing the tab back.
 
 Native text-layer extensions operate in the native viewer, while Ink Notes editing operates in its own tab. This does not combine independent annotation formats or guarantee compatibility among third-party plugins themselves. If another tool changes the source PDF revision, reopen it to check the sidecar; export refuses to apply old ink coordinates to different source bytes.
 

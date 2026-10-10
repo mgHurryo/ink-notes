@@ -589,10 +589,10 @@ export class TileRenderer {
       if (context) context.drawImage(result.bitmap, 0, 0);
       result.bitmap.close();
     }
-    canvas.style.cssText = "position:absolute";
+    canvas.setCssStyles({ position: "absolute" });
     const node = document.createElement("div");
     node.dataset.cell = result.cell;
-    node.style.cssText = "position:absolute;overflow:hidden";
+    node.setCssStyles({ position: "absolute", overflow: "hidden" });
     node.appendChild(canvas);
     const tile = { node, canvas, revision: result.revision, pixels: result.canvasWidth * result.canvasHeight,
       used: ++this.sequence, state: job.state, cell: result.cell, density: result.density };
@@ -624,10 +624,10 @@ export class TileRenderer {
     const bleedPixels = Math.ceil(BLEED * density);
     canvas.width = Math.ceil(width * density) + bleedPixels * 2;
     canvas.height = Math.ceil(height * density) + bleedPixels * 2;
-    canvas.style.cssText = "position:absolute";
+    canvas.setCssStyles({ position: "absolute" });
     const node = document.createElement("div");
     node.dataset.cell = cell;
-    node.style.cssText = "position:absolute;overflow:hidden";
+    node.setCssStyles({ position: "absolute", overflow: "hidden" });
     node.appendChild(canvas);
     const ctx = canvas.getContext("2d")!;
     if (base) ctx.drawImage(base.canvas, 0, 0);

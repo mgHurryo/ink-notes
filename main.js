@@ -23100,7 +23100,6 @@ var BrushPopoverController = class {
         "data-brush-tool": spec.tool,
         tabindex: "-1"
       } });
-      picker.style.pointerEvents = "none";
       let current = value;
       let suppressClick = false;
       let armTimer;
@@ -23112,11 +23111,11 @@ var BrushPopoverController = class {
         settings.color = current;
         this.updateColorSwatches(spec.tool, current);
         this.update();
-        picker.style.pointerEvents = "auto";
+        picker.addClass("is-armed");
         if (armTimer !== void 0) window.clearTimeout(armTimer);
         armTimer = window.setTimeout(() => {
           armTimer = void 0;
-          picker.style.pointerEvents = "none";
+          picker.removeClass("is-armed");
         }, PICKER_ARM_MS);
       });
       const applyPick = () => {
@@ -23211,11 +23210,11 @@ var BrushPopoverController = class {
       this.curveOpen = !this.curveOpen;
       curveToggle.setAttribute("aria-expanded", String(this.curveOpen));
       (0, import_obsidian2.setIcon)(curveIcon, this.curveOpen ? "chevron-up" : "chevron-down");
-      curveBody.style.display = this.curveOpen ? "" : "none";
+      curveBody.toggleClass("is-collapsed", !this.curveOpen);
       if (this.curveOpen) requestAnimationFrame(() => this.drawPressureCurve(settings));
     });
     const curveBody = body.createDiv({ cls: "ink-curve-body" });
-    if (!this.curveOpen) curveBody.style.display = "none";
+    curveBody.toggleClass("is-collapsed", !this.curveOpen);
     const resetRow = curveBody.createDiv({ cls: "ink-curve-actions" });
     const resetButton = resetRow.createEl("button", { text: "Reset", attr: { type: "button" } });
     resetButton.addEventListener("click", () => {
@@ -23224,8 +23223,6 @@ var BrushPopoverController = class {
     });
     const editor = curveBody.createDiv({ cls: "ink-curve-editor", attr: { "aria-label": "Pressure mapping curve" } });
     const canvas = editor.createEl("canvas", { cls: "ink-curve-editor-canvas" });
-    canvas.style.width = "100%";
-    canvas.style.height = "110px";
     canvas.setAttribute("aria-hidden", "true");
     const hit = (clientX, clientY) => {
       const rect = canvas.getBoundingClientRect();
@@ -24359,7 +24356,7 @@ var InkWritingView = class extends import_obsidian3.FileView {
   showPageInsertPreview(stage, side) {
     stage.dataset.insert = "true";
     const hint = stage.createDiv({ cls: "ink-page-insert-hint", attr: { "aria-hidden": "true" } });
-    hint.style[side < 0 ? "right" : "left"] = "24px";
+    hint.setCssStyles(side < 0 ? { right: "24px" } : { left: "24px" });
     (0, import_obsidian3.setIcon)(hint, "plus");
   }
   updatePageInsertPreview(stage, offset) {
@@ -24430,7 +24427,7 @@ var InkWritingView = class extends import_obsidian3.FileView {
       if (--remaining === 0) done();
     };
     for (const element of elements) {
-      element.style.transition = "none";
+      element.setCssStyles({ transition: "none" });
       element.style.transform = `translateX(${to}px)`;
       if (reduced || from === to || typeof element.animate !== "function") {
         finish();
@@ -26098,8 +26095,7 @@ var InkWritingView = class extends import_obsidian3.FileView {
     );
     this.lassoCanvas.width = resolution.width;
     this.lassoCanvas.height = resolution.height;
-    this.lassoCanvas.style.left = "0";
-    this.lassoCanvas.style.top = "0";
+    this.lassoCanvas.setCssStyles({ left: "0", top: "0" });
     this.lassoCanvas.style.width = `${this.canvasLogicalWidth * this.zoom}px`;
     this.lassoCanvas.style.height = `${this.canvasLogicalHeight * this.zoom}px`;
     this.lassoCtx.setTransform(
@@ -26112,8 +26108,7 @@ var InkWritingView = class extends import_obsidian3.FileView {
     );
     this.lassoCtx.clearRect(0, 0, this.canvasLogicalWidth, this.canvasLogicalHeight);
     for (const stroke of drag.strokes) drawInkStroke(this.lassoCtx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
-    this.lassoCanvas.style.transform = "translate(0px, 0px)";
-    this.lassoCanvas.style.display = "block";
+    this.lassoCanvas.setCssStyles({ transform: "translate(0px, 0px)", display: "block" });
   }
   onLassoDragMoved(dx, dy) {
     if (!this.lassoCanvas) return;
@@ -26152,8 +26147,7 @@ var InkWritingView = class extends import_obsidian3.FileView {
   }
   hideLassoPreview() {
     if (!this.lassoCanvas) return;
-    this.lassoCanvas.style.display = "none";
-    this.lassoCanvas.style.transform = "none";
+    this.lassoCanvas.setCssStyles({ display: "none", transform: "none" });
     this.lassoCanvas.width = this.lassoCanvas.height = 1;
   }
   flushWorkerStrokePoints() {
@@ -26502,11 +26496,11 @@ var InkWritingView = class extends import_obsidian3.FileView {
       const target = anchor != null ? anchor : this.activeSettingsAnchor();
       if (target) placePopover(pop, target, 8);
     };
-    pop.style.visibility = "hidden";
+    pop.setCssStyles({ visibility: "hidden" });
     window.requestAnimationFrame(() => {
       if (this.eraserPopover !== pop) return;
       place();
-      pop.style.visibility = "";
+      pop.setCssStyles({ visibility: "" });
       pop.addClass("is-open");
     });
     const onOutside = (event) => {
@@ -27197,10 +27191,10 @@ var TileRenderer = class {
       if (context) context.drawImage(result.bitmap, 0, 0);
       result.bitmap.close();
     }
-    canvas.style.cssText = "position:absolute";
+    canvas.setCssStyles({ position: "absolute" });
     const node = document.createElement("div");
     node.dataset.cell = result.cell;
-    node.style.cssText = "position:absolute;overflow:hidden";
+    node.setCssStyles({ position: "absolute", overflow: "hidden" });
     node.appendChild(canvas);
     const tile = {
       node,
@@ -27236,10 +27230,10 @@ var TileRenderer = class {
     const bleedPixels = Math.ceil(BLEED * density);
     canvas.width = Math.ceil(width * density) + bleedPixels * 2;
     canvas.height = Math.ceil(height * density) + bleedPixels * 2;
-    canvas.style.cssText = "position:absolute";
+    canvas.setCssStyles({ position: "absolute" });
     const node = document.createElement("div");
     node.dataset.cell = cell;
-    node.style.cssText = "position:absolute;overflow:hidden";
+    node.setCssStyles({ position: "absolute", overflow: "hidden" });
     node.appendChild(canvas);
     const ctx = canvas.getContext("2d");
     if (base) ctx.drawImage(base.canvas, 0, 0);
@@ -27883,23 +27877,17 @@ var InkView = class extends InkWritingView {
     this.eraserCursor = this.pageElement.createDiv({ cls: "ink-eraser-cursor", attr: { "aria-hidden": "true" } });
     this.eraserCursor.createSpan({ cls: "ink-eraser-reference-point" });
     const tileHost = this.pageElement.createDiv({ cls: "ink-tile-layer" });
-    tileHost.style.cssText = "position:absolute;inset:0;pointer-events:none;overflow:hidden";
     this.tiles = new TileRenderer(tileHost);
     this.canvas = this.pageElement.createEl("canvas", { cls: "ink-canvas ink-selection-canvas" });
     this.ctx = this.canvas.getContext("2d");
     this.canvas.setAttribute("aria-label", "Handwriting canvas");
     this.lassoCanvas = this.pageElement.createEl("canvas", { cls: "ink-canvas ink-lasso-preview-canvas" });
-    this.lassoCanvas.style.display = "none";
-    this.lassoCanvas.style.pointerEvents = "none";
+    this.lassoCanvas.setCssStyles({ display: "none" });
     this.lassoCtx = this.lassoCanvas.getContext("2d");
     this.confirmedPreviewCanvas = this.pageElement.createEl("canvas", { cls: "ink-canvas ink-confirmed-preview-canvas" });
-    this.confirmedPreviewCanvas.style.pointerEvents = "none";
     this.confirmedPreviewCtx = this.confirmedPreviewCanvas.getContext("2d");
     this.previewCanvas = this.pageElement.createEl("canvas", { cls: "ink-canvas ink-preview-canvas" });
-    this.previewCanvas.style.pointerEvents = "none";
     this.previewCtx = this.previewCanvas.getContext("2d");
-    this.canvas.style.pointerEvents = "none";
-    this.pageElement.style.touchAction = "none";
     this.registerDomEvent(this.pageElement, "pointerenter", (event) => this.onPointerEnter(event));
     this.registerDomEvent(this.pageElement, "pointerdown", (event) => this.onPointerDown(event));
     this.registerDomEvent(this.pageElement, "pointermove", (event) => this.onPointerMove(event));
@@ -28144,8 +28132,7 @@ var InkView = class extends InkWritingView {
     canvas.style.top = top;
     canvas.style.width = displayWidth;
     canvas.style.height = displayHeight;
-    canvas.style.right = "auto";
-    canvas.style.bottom = "auto";
+    canvas.setCssStyles({ right: "auto", bottom: "auto" });
     ctx.setTransform(resolution.width / width, 0, 0, resolution.height / height, -x * (resolution.width / width), -y * (resolution.height / height));
     return changed;
   }
@@ -28265,10 +28252,10 @@ var InkView = class extends InkWritingView {
     const pitch = this.swipePitch();
     offset = this.swipeStage ? Math.max(-pitch, Math.min(pitch, offset)) : offset / (1 + Math.abs(offset) / 80);
     this.swipeDragOffset = offset;
-    extent.style.transition = "none";
+    extent.setCssStyles({ transition: "none" });
     extent.style.transform = `translateX(${offset}px)`;
     if (this.swipeStage) {
-      this.swipeStage.style.transition = "none";
+      this.swipeStage.setCssStyles({ transition: "none" });
       this.swipeStage.style.transform = `translateX(${offset}px)`;
     }
   }
@@ -28317,8 +28304,7 @@ var InkView = class extends InkWritingView {
       this.showPageInsertPreview(stage, side);
       return;
     }
-    const canvas = stage.createEl("canvas");
-    canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%";
+    const canvas = stage.createEl("canvas", { cls: "ink-swipe-canvas" });
     const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, window.devicePixelRatio || 1, previewZoom, OVERLAY_RESIZE_BUDGET);
     canvas.width = resolution.width;
     canvas.height = resolution.height;
@@ -28351,14 +28337,14 @@ var InkView = class extends InkWritingView {
     this.animatePageSwipe(stage ? [extent, stage] : [extent], from, to, () => {
       if (!isCurrent()) return;
       this.cancelPageSwipeAnimations();
-      extent.style.transform = "";
+      extent.setCssStyles({ transform: "" });
       if (create) {
         this.addPage(side < 0 ? 0 : this.notebook.pages.length);
         this.destroySwipeStage();
         this.resumePageSwipeDrag();
         return;
       }
-      if (flip && stage) extent.style.visibility = "hidden";
+      if (flip && stage) extent.setCssStyles({ visibility: "hidden" });
       void this.navigatePageSwipe((index) => {
         const page = this.notebook.pages[index];
         return page ? this.navigateToPage(page.id) : Promise.resolve();
@@ -28378,8 +28364,7 @@ var InkView = class extends InkWritingView {
     (_b = this.swipeStage) == null ? void 0 : _b.remove();
     this.swipeLayer = this.swipeStage = null;
     if (this.pageExtent) {
-      this.pageExtent.style.transform = "";
-      this.pageExtent.style.visibility = "";
+      this.pageExtent.setCssStyles({ transform: "", visibility: "" });
     }
     this.swipeDragOffset = 0;
     this.flipSettling = false;
@@ -28859,7 +28844,7 @@ page: ${this.currentPage().id}
     if (typeof this.pageElement.style.setProperty === "function") {
       this.pageElement.style.setProperty("--ink-page-scale", String(renderZoom));
     }
-    this.pageElement.style.zoom = "";
+    this.pageElement.setCssStyles({ zoom: "" });
     this.pageElement.style.transform = this.pinchRenderZoom === void 0 ? "none" : `scale(${this.zoom / renderZoom})`;
     this.pageElement.style.willChange = this.pinchRenderZoom === void 0 ? "" : "transform";
     this.pageExtent.style.width = displayWidth + horizontalGutter * 2 + "px";
@@ -30728,15 +30713,11 @@ var PdfInkView = class extends InkWritingView {
     this.canvas = host.createEl("canvas", { cls: "ink-canvas ink-selection-canvas" });
     this.ctx = this.canvas.getContext("2d");
     this.lassoCanvas = host.createEl("canvas", { cls: "ink-canvas ink-lasso-preview-canvas" });
-    this.lassoCanvas.style.pointerEvents = "none";
     this.lassoCtx = this.lassoCanvas.getContext("2d");
     this.confirmedPreviewCanvas = host.createEl("canvas", { cls: "ink-canvas ink-confirmed-preview-canvas" });
-    this.confirmedPreviewCanvas.style.pointerEvents = "none";
     this.confirmedPreviewCtx = this.confirmedPreviewCanvas.getContext("2d");
     this.previewCanvas = host.createEl("canvas", { cls: "ink-canvas ink-preview-canvas" });
-    this.previewCanvas.style.pointerEvents = "none";
     this.previewCtx = this.previewCanvas.getContext("2d");
-    host.style.touchAction = "none";
     host.addEventListener("pointerenter", (event) => this.onPointerEnter(event));
     host.addEventListener("pointerdown", (event) => this.onPointerDown(event));
     host.addEventListener("pointermove", (event) => this.onPointerMove(event));
@@ -30921,8 +30902,7 @@ var PdfInkView = class extends InkWritingView {
       return;
     }
     void this.renderSwipeStagePage(stage, neighborIndex);
-    const ink = stage.createEl("canvas");
-    ink.style.cssText = "position:absolute;inset:0;width:100%;height:100%";
+    const ink = stage.createEl("canvas", { cls: "ink-swipe-canvas" });
     const logicalHeight = baseWidth * display.height / display.width;
     const resolution = canvasResolution(baseWidth, logicalHeight, window.devicePixelRatio || 1, zoom, SELECTION_OVERLAY_BUDGET);
     ink.width = resolution.width;
@@ -31023,14 +31003,14 @@ var PdfInkView = class extends InkWritingView {
     this.animatePageSwipe(stage ? [wrap, stage] : [wrap], from, to, () => {
       if (!isCurrent()) return;
       this.cancelPageSwipeAnimations();
-      wrap.style.transform = "";
+      wrap.setCssStyles({ transform: "" });
       if (create) {
         this.addBlankPage(side < 0 ? 0 : this.sidecar.notePages.length);
         this.destroySwipeStage();
         this.resumePageSwipeDrag();
         return;
       }
-      if (flip && stage) wrap.style.visibility = "hidden";
+      if (flip && stage) wrap.setCssStyles({ visibility: "hidden" });
       void this.navigatePageSwipe(
         (index) => this.navigatePages(index - this.noteIndex),
         () => this.noteIndex,
@@ -31053,8 +31033,7 @@ var PdfInkView = class extends InkWritingView {
     (_b = this.swipeStage) == null ? void 0 : _b.remove();
     this.swipeLayer = this.swipeStage = null;
     if (this.pageWrap) {
-      this.pageWrap.style.transform = "";
-      this.pageWrap.style.visibility = "";
+      this.pageWrap.setCssStyles({ transform: "", visibility: "" });
     }
     this.swipeDragOffset = 0;
     this.flipSettling = false;
@@ -31442,7 +31421,7 @@ var PDF_VIEW_ENHANCER_PLUGIN_IDS = [
 ];
 function pdfTakeoverReplacement(viewState, gate, viewType, eState) {
   var _a, _b;
-  if (!gate.enabled || gate.enhancerActive) return null;
+  if (!gate.enabled || gate.enhancerActive && !gate.preferInk) return null;
   if (!viewState || viewState.type !== "pdf") return null;
   const file = (_a = viewState.state) == null ? void 0 : _a.file;
   if (typeof file !== "string" || !gate.isPdfFile(file)) return null;
@@ -31503,7 +31482,7 @@ var PdfTabTakeover = class {
 
 // src/main.ts
 var DEFAULT_SETTINGS = {
-  takeOverPdfTabs: true
+  pdfOpenMode: "compatible"
 };
 var InkNotesPlugin = class extends import_obsidian10.Plugin {
   constructor() {
@@ -31519,7 +31498,7 @@ var InkNotesPlugin = class extends import_obsidian10.Plugin {
   async onload() {
     const saved = await this.loadData();
     this.config = {
-      takeOverPdfTabs: typeof (saved == null ? void 0 : saved.takeOverPdfTabs) === "boolean" ? saved.takeOverPdfTabs : DEFAULT_SETTINGS.takeOverPdfTabs
+      pdfOpenMode: (saved == null ? void 0 : saved.pdfOpenMode) === "native" || (saved == null ? void 0 : saved.pdfOpenMode) === "compatible" || (saved == null ? void 0 : saved.pdfOpenMode) === "ink" ? saved.pdfOpenMode : typeof (saved == null ? void 0 : saved.takeOverPdfTabs) === "boolean" ? saved.takeOverPdfTabs ? "ink" : "native" : DEFAULT_SETTINGS.pdfOpenMode
     };
     this.toolState = sanitizeToolState(saved == null ? void 0 : saved.toolState);
     this.toolStateSaver = new ToolStateSaver((stored) => this.persistToolState(stored));
@@ -31612,7 +31591,8 @@ var InkNotesPlugin = class extends import_obsidian10.Plugin {
     this.pdfStore = new PdfSidecarStore(this.app);
     this.arbiter = new PdfWriterArbiter();
     this.takeover = new PdfTabTakeover(() => ({
-      enabled: this.config.takeOverPdfTabs,
+      enabled: this.config.pdfOpenMode !== "native",
+      preferInk: this.config.pdfOpenMode === "ink",
       // Query current plugin state on each open, including runtime enable/disable.
       enhancerActive: PDF_VIEW_ENHANCER_PLUGIN_IDS.some((id) => {
         var _a;
@@ -31621,7 +31601,7 @@ var InkNotesPlugin = class extends import_obsidian10.Plugin {
       }),
       isPdfFile: (path) => {
         const file = this.app.vault.getAbstractFileByPath(path);
-        return file instanceof import_obsidian10.TFile && file.extension === "pdf";
+        return file instanceof import_obsidian10.TFile && file.extension.toLowerCase() === "pdf";
       }
     }), VIEW_TYPE_PDF_INK);
     this.registerView(VIEW_TYPE_PDF_INK, (leaf) => {
@@ -31658,7 +31638,7 @@ var InkNotesPlugin = class extends import_obsidian10.Plugin {
   refreshPdfTakeover() {
     if (!this.takeover) return;
     this.takeover.uninstall();
-    if (this.config.takeOverPdfTabs && this.app.vault) this.takeover.install();
+    if (this.config.pdfOpenMode !== "native" && this.app.vault) this.takeover.install();
   }
   /**
    * One writer for the data file: the plugin settings and the shared tool
@@ -31668,13 +31648,13 @@ var InkNotesPlugin = class extends import_obsidian10.Plugin {
   persistToolState(stored) {
     this.toolState.eraserMode = stored.eraserMode;
     this.toolState.eraserSize = stored.eraserSize;
-    return this.saveData({ takeOverPdfTabs: this.config.takeOverPdfTabs, toolState: stored }).catch((error) => {
+    return this.saveData({ pdfOpenMode: this.config.pdfOpenMode, toolState: stored }).catch((error) => {
       new import_obsidian10.Notice(`Ink Notes could not save tool settings: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
   /** Persists the plugin settings together with the latest tool settings. */
   async persistSettings() {
-    await this.saveData({ takeOverPdfTabs: this.config.takeOverPdfTabs, toolState: storedToolState(this.toolState) });
+    await this.saveData({ pdfOpenMode: this.config.pdfOpenMode, toolState: storedToolState(this.toolState) });
   }
   /** Open a PDF tab in the handwriting view on explicit request. */
   async openPdfHandwriting(file) {
@@ -31744,35 +31724,23 @@ var InkSettingTab = class extends import_obsidian10.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h3", { text: "Ink Notes" });
-    const pdf = containerEl.createDiv();
-    pdf.createEl("h4", { text: "PDF handwriting" });
-    pdf.createEl("p", {
-      text: "Open PDFs in a handwriting view with a sidecar stored in A_pdfinkwrittern/. Native PDF extensions and navigation links keep their original viewer automatically. Turn this off to always keep the built-in PDF viewer; you can still open individual PDFs with handwriting from the file context menu or the command palette."
-    });
-    const pdfRow = pdf.createDiv({ cls: "ink-settings-actions" });
-    const toggle = pdfRow.createEl("label");
-    const checkbox = toggle.createEl("input", { type: "checkbox" });
-    checkbox.checked = this.plugin.config.takeOverPdfTabs;
-    toggle.createSpan({ text: " Take over PDF tabs automatically" });
-    checkbox.addEventListener("change", () => {
-      this.plugin.config.takeOverPdfTabs = checkbox.checked;
-      void this.plugin.persistSettings();
+    new import_obsidian10.Setting(containerEl).setName("PDF handwriting").setHeading();
+    new import_obsidian10.Setting(containerEl).setName("Default PDF viewer").setDesc(
+      "PDF handwriting is stored in A_pdfinkwrittern/. Choose which viewer opens ordinary PDFs. Compatibility mode keeps the native viewer when PDF extensions are enabled. Ink Notes first opens handwriting even with PDF++ enabled; its native-view tools remain available after returning to the built-in viewer. Page, search and selection links always keep the native viewer. Reopen existing tabs to apply the choice."
+    ).addDropdown((dropdown) => dropdown.addOption("native", "Native PDF viewer").addOption("compatible", "Compatibility mode").addOption("ink", "Ink Notes first").setValue(this.plugin.config.pdfOpenMode).onChange(async (value) => {
+      if (value !== "native" && value !== "compatible" && value !== "ink") return;
+      this.plugin.config.pdfOpenMode = value;
       this.plugin.refreshPdfTakeover();
-    });
-    const diagnostics = containerEl.createDiv();
-    diagnostics.createEl("h4", { text: "Diagnostics" });
-    diagnostics.createEl("p", { text: "Capture telemetry and per-stroke records from the currently open notebook. Export is available to everyone \u2014 also from the Page options menu inside the editor." });
-    const actions = diagnostics.createDiv({ cls: "ink-settings-actions" });
-    const exportButton = actions.createEl("button", { text: "Export diagnostics JSON", attr: { type: "button" } });
-    exportButton.addEventListener("click", () => this.eachView((view) => view.exportDiagnosticsJson(false)));
-    const copyButton = actions.createEl("button", { text: "Copy diagnostics JSON", attr: { type: "button" } });
-    copyButton.addEventListener("click", () => this.eachView((view) => view.exportDiagnosticsJson(true)));
-    const panel = containerEl.createDiv();
-    panel.createEl("h4", { text: "Developer panel" });
-    panel.createEl("p", { text: "Show the live developer panel (sample rate, sparse detection, per-stroke records) inside the open editor." });
-    const toggleButton = panel.createEl("button", { text: "Toggle developer panel", attr: { type: "button" } });
-    toggleButton.addEventListener("click", () => this.eachView((view) => view.toggleDevPanel()));
+      try {
+        await this.plugin.persistSettings();
+      } catch (error) {
+        new import_obsidian10.Notice(`Ink Notes could not save PDF settings: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }));
+    new import_obsidian10.Setting(containerEl).setName("Diagnostics").setHeading();
+    new import_obsidian10.Setting(containerEl).setName("Export diagnostics").setDesc("Export local per-stroke records from open notebooks. Review handwriting data before sharing.").addButton((button) => button.setButtonText("Export JSON").onClick(() => this.eachView((view) => view.exportDiagnosticsJson(false)))).addButton((button) => button.setButtonText("Copy JSON").onClick(() => this.eachView((view) => view.exportDiagnosticsJson(true))));
+    new import_obsidian10.Setting(containerEl).setName("Developer panel").setHeading();
+    new import_obsidian10.Setting(containerEl).setName("Live diagnostics").setDesc("Show sample rate and per-stroke records inside open notebooks.").addButton((button) => button.setButtonText("Toggle panel").onClick(() => this.eachView((view) => view.toggleDevPanel())));
   }
   eachView(run) {
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_INK)) {
