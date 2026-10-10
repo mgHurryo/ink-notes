@@ -6,6 +6,8 @@ Ink Notes is licensed under Apache-2.0. The bundled stroke model is adapted from
 
 ## Install and enable
 
+Ink Notes requires Obsidian 1.5.7 or later for view-scoped keyboard shortcuts.
+
 Ink Notes is being prepared for the Obsidian Community directory. Until its listing is approved, install it manually from the [latest release](https://github.com/mgHurryo/ink-notes/releases/latest):
 
 1. Create `.obsidian/plugins/ink-notes/` inside your vault.

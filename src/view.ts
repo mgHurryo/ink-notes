@@ -281,23 +281,17 @@ export class InkView extends InkWritingView {
     this.eraserCursor = this.pageElement.createDiv({ cls: "ink-eraser-cursor", attr: { "aria-hidden": "true" } });
     this.eraserCursor.createSpan({ cls: "ink-eraser-reference-point" });
     const tileHost = this.pageElement.createDiv({ cls: "ink-tile-layer" });
-    tileHost.style.cssText = "position:absolute;inset:0;pointer-events:none;overflow:hidden";
     this.tiles = new TileRenderer(tileHost);
     this.canvas = this.pageElement.createEl("canvas", { cls: "ink-canvas ink-selection-canvas" });
     this.ctx = this.canvas.getContext("2d")!;
     this.canvas.setAttribute("aria-label", "Handwriting canvas");
     this.lassoCanvas = this.pageElement.createEl("canvas", { cls: "ink-canvas ink-lasso-preview-canvas" });
-    this.lassoCanvas.style.display = "none";
-    this.lassoCanvas.style.pointerEvents = "none";
+    this.lassoCanvas.setCssStyles({ display: "none" });
     this.lassoCtx = this.lassoCanvas.getContext("2d")!;
     this.confirmedPreviewCanvas = this.pageElement.createEl("canvas", { cls: "ink-canvas ink-confirmed-preview-canvas" });
-    this.confirmedPreviewCanvas.style.pointerEvents = "none";
     this.confirmedPreviewCtx = this.confirmedPreviewCanvas.getContext("2d")!;
     this.previewCanvas = this.pageElement.createEl("canvas", { cls: "ink-canvas ink-preview-canvas" });
-    this.previewCanvas.style.pointerEvents = "none";
     this.previewCtx = this.previewCanvas.getContext("2d")!;
-    this.canvas.style.pointerEvents = "none";
-    this.pageElement.style.touchAction = "none";
     this.registerDomEvent(this.pageElement, "pointerenter", (event) => this.onPointerEnter(event));
     this.registerDomEvent(this.pageElement, "pointerdown", (event) => this.onPointerDown(event));
     this.registerDomEvent(this.pageElement, "pointermove", (event) => this.onPointerMove(event));
@@ -564,7 +558,7 @@ export class InkView extends InkWritingView {
     if (canvas.height !== resolution.height) canvas.height = resolution.height;
     canvas.style.left = left; canvas.style.top = top;
     canvas.style.width = displayWidth; canvas.style.height = displayHeight;
-    canvas.style.right = "auto"; canvas.style.bottom = "auto";
+    canvas.setCssStyles({ right: "auto", bottom: "auto" });
     ctx.setTransform(resolution.width / width, 0, 0, resolution.height / height, -x * (resolution.width / width), -y * (resolution.height / height));
     return changed;
   }
@@ -681,10 +675,10 @@ export class InkView extends InkWritingView {
     const pitch = this.swipePitch();
     offset = this.swipeStage ? Math.max(-pitch, Math.min(pitch, offset)) : offset / (1 + Math.abs(offset) / 80);
     this.swipeDragOffset = offset;
-    extent.style.transition = "none";
+    extent.setCssStyles({ transition: "none" });
     extent.style.transform = `translateX(${offset}px)`;
     if (this.swipeStage) {
-      this.swipeStage.style.transition = "none";
+      this.swipeStage.setCssStyles({ transition: "none" });
       this.swipeStage.style.transform = `translateX(${offset}px)`;
     }
   }
@@ -723,8 +717,7 @@ export class InkView extends InkWritingView {
     stage.style.setProperty("--ink-page-scale", String(previewZoom));
     this.swipeStage = stage;
     if (insert) { this.showPageInsertPreview(stage, side); return; }
-    const canvas = stage.createEl("canvas");
-    canvas.style.cssText = "position:absolute;inset:0;width:100%;height:100%";
+    const canvas = stage.createEl("canvas", { cls: "ink-swipe-canvas" });
     const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, window.devicePixelRatio || 1, previewZoom, OVERLAY_RESIZE_BUDGET);
     canvas.width = resolution.width;
     canvas.height = resolution.height;
@@ -761,14 +754,14 @@ export class InkView extends InkWritingView {
       if (!isCurrent()) return;
       // Reset geometry before rendering, while the incoming snapshot covers it.
       this.cancelPageSwipeAnimations();
-      extent.style.transform = "";
+      extent.setCssStyles({ transform: "" });
       if (create) {
         this.addPage(side < 0 ? 0 : this.notebook.pages.length);
         this.destroySwipeStage();
         this.resumePageSwipeDrag();
         return;
       }
-      if (flip && stage) extent.style.visibility = "hidden";
+      if (flip && stage) extent.setCssStyles({ visibility: "hidden" });
       void this.navigatePageSwipe((index) => {
         const page = this.notebook.pages[index];
         return page ? this.navigateToPage(page.id) : Promise.resolve();
@@ -788,8 +781,7 @@ export class InkView extends InkWritingView {
     this.swipeStage?.remove();
     this.swipeLayer = this.swipeStage = null;
     if (this.pageExtent) {
-      this.pageExtent.style.transform = "";
-      this.pageExtent.style.visibility = "";
+      this.pageExtent.setCssStyles({ transform: "", visibility: "" });
     }
     this.swipeDragOffset = 0;
     this.flipSettling = false;
@@ -1247,7 +1239,7 @@ export class InkView extends InkWritingView {
       // re-flowed the ruling to a different line count.)
       this.pageElement.style.setProperty("--ink-page-scale", String(renderZoom));
     }
-    this.pageElement.style.zoom = "";
+    this.pageElement.setCssStyles({ zoom: "" });
     // Scale ink and ruling as one image during the gesture. Repainting each
     // fractional line spacing and replacing tile densities causes shimmer.
     this.pageElement.style.transform = this.pinchRenderZoom === undefined ? "none" : `scale(${this.zoom / renderZoom})`;

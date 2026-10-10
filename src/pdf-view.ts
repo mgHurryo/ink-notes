@@ -1152,16 +1152,12 @@ export class PdfInkView extends InkWritingView {
     this.canvas = host.createEl("canvas", { cls: "ink-canvas ink-selection-canvas" });
     this.ctx = this.canvas.getContext("2d")!;
     this.lassoCanvas = host.createEl("canvas", { cls: "ink-canvas ink-lasso-preview-canvas" });
-    this.lassoCanvas.style.pointerEvents = "none";
     this.lassoCtx = this.lassoCanvas.getContext("2d");
     this.confirmedPreviewCanvas = host.createEl("canvas", { cls: "ink-canvas ink-confirmed-preview-canvas" });
-    this.confirmedPreviewCanvas.style.pointerEvents = "none";
     this.confirmedPreviewCtx = this.confirmedPreviewCanvas.getContext("2d");
     this.previewCanvas = host.createEl("canvas", { cls: "ink-canvas ink-preview-canvas" });
-    this.previewCanvas.style.pointerEvents = "none";
     this.previewCtx = this.previewCanvas.getContext("2d");
     // The paper owns the gestures in editing mode (same as the notebook page).
-    host.style.touchAction = "none";
     host.addEventListener("pointerenter", (event) => this.onPointerEnter(event));
     host.addEventListener("pointerdown", (event) => this.onPointerDown(event));
     host.addEventListener("pointermove", (event) => this.onPointerMove(event));
@@ -1345,8 +1341,7 @@ export class PdfInkView extends InkWritingView {
     this.swipeStage = stage;
     if (insert) { this.showPageInsertPreview(stage, side); return; }
     void this.renderSwipeStagePage(stage, neighborIndex);
-    const ink = stage.createEl("canvas");
-    ink.style.cssText = "position:absolute;inset:0;width:100%;height:100%";
+    const ink = stage.createEl("canvas", { cls: "ink-swipe-canvas" });
     const logicalHeight = baseWidth * display.height / display.width;
     const resolution = canvasResolution(baseWidth, logicalHeight, window.devicePixelRatio || 1, zoom, SELECTION_OVERLAY_BUDGET);
     ink.width = resolution.width; ink.height = resolution.height;
@@ -1447,14 +1442,14 @@ export class PdfInkView extends InkWritingView {
     this.animatePageSwipe(stage ? [wrap, stage] : [wrap], from, to, () => {
       if (!isCurrent()) return;
       this.cancelPageSwipeAnimations();
-      wrap.style.transform = "";
+      wrap.setCssStyles({ transform: "" });
       if (create) {
         this.addBlankPage(side < 0 ? 0 : this.sidecar!.notePages.length);
         this.destroySwipeStage();
         this.resumePageSwipeDrag();
         return;
       }
-      if (flip && stage) wrap.style.visibility = "hidden";
+      if (flip && stage) wrap.setCssStyles({ visibility: "hidden" });
       void this.navigatePageSwipe((index) => this.navigatePages(index - this.noteIndex),
         () => this.noteIndex, isCurrent).catch((error) => {
         this.setStatus(`Could not switch pages: ${messageOf(error)}`, true);
@@ -1474,8 +1469,7 @@ export class PdfInkView extends InkWritingView {
     this.swipeStage?.remove();
     this.swipeLayer = this.swipeStage = null;
     if (this.pageWrap) {
-      this.pageWrap.style.transform = "";
-      this.pageWrap.style.visibility = "";
+      this.pageWrap.setCssStyles({ transform: "", visibility: "" });
     }
     this.swipeDragOffset = 0;
     this.flipSettling = false;

@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.1 - 2026-10-10
+
+- Fix Community directory review blockers: remove redundant host branding from the manifest description, use official settings headings and supported style APIs/CSS, and require Obsidian 1.5.7 for view-scoped keyboard shortcuts.
+- Add an explicit PDF open mode. Preferring Ink handwriting now takes over ordinary PDF opens even with PDF++ enabled; compatible mode preserves native enhancement workflows. Existing checked automatic-takeover preferences migrate to prefer Ink.
+- Preserve page/search/selection navigation in the native viewer and retain manual handwriting/native-view entry points. Notebook and PDF sidecar formats are unchanged.
+
 ## 0.1.0 - 2026-10-10
 
 - Publish the first formal 0.1 release of Ink Notes with native notebooks, PDF handwriting, page previews, blank-page insertion, reading/editing modes, zoom lock and PDF export. Correct the briefly published 1.0.0 numbering to 0.1.0; users who installed 1.0.0 must manually reinstall because automatic version comparison treats 0.1.0 as older. Existing notebook/sidecar formats and minimum Obsidian 1.5.0 remain compatible.

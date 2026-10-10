@@ -649,7 +649,7 @@ export abstract class InkWritingView extends FileView {
   protected showPageInsertPreview(stage: HTMLElement, side: number): void {
     stage.dataset.insert = "true";
     const hint = stage.createDiv({ cls: "ink-page-insert-hint", attr: { "aria-hidden": "true" } });
-    hint.style[side < 0 ? "right" : "left"] = "24px";
+    hint.setCssStyles(side < 0 ? { right: "24px" } : { left: "24px" });
     setIcon(hint, "plus");
   }
 
@@ -728,7 +728,7 @@ export abstract class InkWritingView extends FileView {
     let remaining = elements.length;
     const finish = () => { if (--remaining === 0) done(); };
     for (const element of elements) {
-      element.style.transition = "none";
+      element.setCssStyles({ transition: "none" });
       element.style.transform = `translateX(${to}px)`;
       if (reduced || from === to || typeof element.animate !== "function") {
         finish();
@@ -2429,16 +2429,14 @@ export abstract class InkWritingView extends FileView {
       window.devicePixelRatio || 1, this.zoom, 4_000_000);
     this.lassoCanvas.width = resolution.width;
     this.lassoCanvas.height = resolution.height;
-    this.lassoCanvas.style.left = "0";
-    this.lassoCanvas.style.top = "0";
+    this.lassoCanvas.setCssStyles({ left: "0", top: "0" });
     this.lassoCanvas.style.width = `${this.canvasLogicalWidth * this.zoom}px`;
     this.lassoCanvas.style.height = `${this.canvasLogicalHeight * this.zoom}px`;
     this.lassoCtx.setTransform(resolution.width / this.canvasLogicalWidth, 0, 0,
       resolution.height / this.canvasLogicalHeight, 0, 0);
     this.lassoCtx.clearRect(0, 0, this.canvasLogicalWidth, this.canvasLogicalHeight);
     for (const stroke of drag.strokes) drawInkStroke(this.lassoCtx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
-    this.lassoCanvas.style.transform = "translate(0px, 0px)";
-    this.lassoCanvas.style.display = "block";
+    this.lassoCanvas.setCssStyles({ transform: "translate(0px, 0px)", display: "block" });
   }
 
   protected onLassoDragMoved(dx: number, dy: number): void {
@@ -2481,8 +2479,7 @@ export abstract class InkWritingView extends FileView {
 
   private hideLassoPreview(): void {
     if (!this.lassoCanvas) return;
-    this.lassoCanvas.style.display = "none";
-    this.lassoCanvas.style.transform = "none";
+    this.lassoCanvas.setCssStyles({ display: "none", transform: "none" });
     this.lassoCanvas.width = this.lassoCanvas.height = 1;
   }
 
@@ -2855,11 +2852,11 @@ export abstract class InkWritingView extends FileView {
     };
     // Hidden until placed: a fixed-position element without coordinates
     // would flash at its static position for a frame.
-    pop.style.visibility = "hidden";
+    pop.setCssStyles({ visibility: "hidden" });
     window.requestAnimationFrame(() => {
       if (this.eraserPopover !== pop) return;
       place();
-      pop.style.visibility = "";
+      pop.setCssStyles({ visibility: "" });
       pop.addClass("is-open");
     });
     const onOutside = (event: PointerEvent): void => {
