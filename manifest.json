@@ -1,9 +1,9 @@
 {
   "id": "ink-notes",
   "name": "Ink Notes",
-  "version": "0.1.0",
-  "minAppVersion": "1.5.0",
-  "description": "Goodnotes-style handwritten notebooks that sync as Vault files across Obsidian devices.",
+  "version": "0.1.1",
+  "minAppVersion": "1.5.7",
+  "description": "Create handwritten notebooks and annotate PDFs with pressure-aware ink stored in your vault.",
   "author": "Ink Notes",
   "isDesktopOnly": false
 }

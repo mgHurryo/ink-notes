@@ -32,6 +32,10 @@ function drawingContext() {
     drawImage: vi.fn() };
 }
 
+function setCssStyles(this: { style: object }, styles: object): void {
+  Object.assign(this.style, styles);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   vi.stubGlobal("window", { requestAnimationFrame: vi.fn(() => 1), cancelAnimationFrame: vi.fn(),
@@ -253,7 +257,7 @@ it.each([0, 8, 72, 96])("keeps every unconfirmed live sample when the Worker has
 
 it("allocates overlays with the mobile high-density pixel budget", () => {
   const v = view();
-  const canvas = { width: 1, height: 1, style: {} };
+  const canvas = { width: 1, height: 1, style: {}, setCssStyles };
   const ctx = { setTransform: vi.fn() };
   v.previewCanvas = canvas;
   v.previewCtx = ctx;
@@ -343,7 +347,7 @@ it("uses explicit scaled layout without CSS zoom or transform", () => {
   v.zoom = 2;
   v.notebook = { pageWidth: 1600, pageHeight: 2200 };
   v.pageScroller = { clientWidth: 800 };
-  v.pageElement = { style: {} };
+  v.pageElement = { style: {}, setCssStyles };
   v.pageExtent = { style: {} };
   vi.stubGlobal("getComputedStyle", () => ({ paddingLeft: "20", paddingRight: "20" }));
   v.layoutPage();
@@ -359,7 +363,7 @@ it("keeps wide-screen centering space inside the zoomable scroll track", () => {
   v.zoom = 1.5;
   v.notebook = { pageWidth: 1600, pageHeight: 2200 };
   v.pageScroller = { clientWidth: 1366 };
-  v.pageElement = { style: {} };
+  v.pageElement = { style: {}, setCssStyles };
   v.pageExtent = { style: {} };
   vi.stubGlobal("getComputedStyle", () => ({ paddingLeft: "28", paddingRight: "28" }));
 
@@ -375,7 +379,7 @@ it("keeps logical coordinates stable while the page uses scaled layout dimension
   v.zoom = 2;
   v.notebook = { pageWidth: 1600, pageHeight: 2200 };
   v.pageScroller = { clientWidth: 800 };
-  v.pageElement = { style: { setProperty: vi.fn() }, getBoundingClientRect: () => ({ left: 100, top: 50, width: 1520, height: 2090 }) };
+  v.pageElement = { style: { setProperty: vi.fn() }, setCssStyles, getBoundingClientRect: () => ({ left: 100, top: 50, width: 1520, height: 2090 }) };
   v.pageExtent = { style: {} };
   v.canvas = {};
   v.state = { tool: "pen", eraserMode: "stroke", eraserSize: 32 };
@@ -400,7 +404,7 @@ it("does not create a transformed canvas layer at 100% on older engines", () => 
   v.zoom = 1;
   v.notebook = { pageWidth: 1600, pageHeight: 2200 };
   v.pageScroller = { clientWidth: 800 };
-  v.pageElement = { style: {} };
+  v.pageElement = { style: {}, setCssStyles };
   v.pageExtent = { style: {} };
   vi.stubGlobal("getComputedStyle", () => ({ paddingLeft: "20", paddingRight: "20" }));
   vi.stubGlobal("CSS", { supports: () => false });
