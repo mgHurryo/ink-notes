@@ -1,4 +1,4 @@
-import { Notice, Plugin, PluginSettingTab, TAbstractFile, TFile, WorkspaceLeaf } from "obsidian";
+import { Notice, Plugin, PluginSettingTab, Setting, TAbstractFile, TFile, WorkspaceLeaf } from "obsidian";
 import { NotebookSuggestModal } from "./notebook-modal";
 import { InkView, VIEW_TYPE_INK } from "./view";
 import { INK_EXTENSION, NotebookStore } from "./storage";
@@ -12,12 +12,11 @@ import { sanitizeToolState, storedToolState, ToolStateSaver, type SharedToolStat
 import type { ToolState } from "./ink-writing";
 
 interface InkNotesSettings {
-  /** Master switch for taking over PDF tabs with the handwriting view. */
-  takeOverPdfTabs: boolean;
+  pdfOpenMode: "native" | "compatible" | "ink";
 }
 
 const DEFAULT_SETTINGS: InkNotesSettings = {
-  takeOverPdfTabs: true,
+  pdfOpenMode: "compatible",
 };
 
 export default class InkNotesPlugin extends Plugin {
@@ -39,9 +38,13 @@ export default class InkNotesPlugin extends Plugin {
   async onload(): Promise<void> {
     // Field-level read: one corrupted value falls back to its default
     // instead of taking the whole configuration down with it.
-    const saved = (await this.loadData()) as { takeOverPdfTabs?: unknown; toolState?: unknown } | null;
+    const saved = (await this.loadData()) as { pdfOpenMode?: unknown; takeOverPdfTabs?: unknown; toolState?: unknown } | null;
     this.config = {
-      takeOverPdfTabs: typeof saved?.takeOverPdfTabs === "boolean" ? saved.takeOverPdfTabs : DEFAULT_SETTINGS.takeOverPdfTabs,
+      pdfOpenMode: saved?.pdfOpenMode === "native" || saved?.pdfOpenMode === "compatible" || saved?.pdfOpenMode === "ink"
+        ? saved.pdfOpenMode
+        : typeof saved?.takeOverPdfTabs === "boolean"
+          ? saved.takeOverPdfTabs ? "ink" : "native"
+          : DEFAULT_SETTINGS.pdfOpenMode,
     };
     this.toolState = sanitizeToolState(saved?.toolState);
     this.toolStateSaver = new ToolStateSaver((stored) => this.persistToolState(stored));
@@ -135,7 +138,8 @@ export default class InkNotesPlugin extends Plugin {
     this.pdfStore = new PdfSidecarStore(this.app);
     this.arbiter = new PdfWriterArbiter();
     this.takeover = new PdfTabTakeover(() => ({
-      enabled: this.config.takeOverPdfTabs,
+      enabled: this.config.pdfOpenMode !== "native",
+      preferInk: this.config.pdfOpenMode === "ink",
       // Query current plugin state on each open, including runtime enable/disable.
       enhancerActive: PDF_VIEW_ENHANCER_PLUGIN_IDS.some((id) => {
         const plugins = (this.app as unknown as { plugins?: { enabledPlugins?: Set<string> } }).plugins;
@@ -143,7 +147,7 @@ export default class InkNotesPlugin extends Plugin {
       }),
       isPdfFile: (path) => {
         const file = this.app.vault.getAbstractFileByPath(path);
-        return file instanceof TFile && file.extension === "pdf";
+        return file instanceof TFile && file.extension.toLowerCase() === "pdf";
       },
     }), VIEW_TYPE_PDF_INK);
     this.registerView(VIEW_TYPE_PDF_INK, (leaf) => {
@@ -181,7 +185,7 @@ export default class InkNotesPlugin extends Plugin {
   refreshPdfTakeover(): void {
     if (!this.takeover) return;
     this.takeover.uninstall();
-    if (this.config.takeOverPdfTabs && this.app.vault) this.takeover.install();
+    if (this.config.pdfOpenMode !== "native" && this.app.vault) this.takeover.install();
   }
 
   /**
@@ -195,14 +199,14 @@ export default class InkNotesPlugin extends Plugin {
     // settings need no sync: the editors alias the shared objects in place.
     this.toolState.eraserMode = stored.eraserMode;
     this.toolState.eraserSize = stored.eraserSize;
-    return this.saveData({ takeOverPdfTabs: this.config.takeOverPdfTabs, toolState: stored }).catch((error) => {
+    return this.saveData({ pdfOpenMode: this.config.pdfOpenMode, toolState: stored }).catch((error) => {
       new Notice(`Ink Notes could not save tool settings: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
 
   /** Persists the plugin settings together with the latest tool settings. */
   async persistSettings(): Promise<void> {
-    await this.saveData({ takeOverPdfTabs: this.config.takeOverPdfTabs, toolState: storedToolState(this.toolState) });
+    await this.saveData({ pdfOpenMode: this.config.pdfOpenMode, toolState: storedToolState(this.toolState) });
   }
 
   /** Open a PDF tab in the handwriting view on explicit request. */
@@ -269,41 +273,33 @@ class InkSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h3", { text: "Ink Notes" });
+    new Setting(containerEl).setName("PDF handwriting").setHeading();
+    new Setting(containerEl).setName("Default PDF viewer").setDesc(
+      "PDF handwriting is stored in A_pdfinkwrittern/. Choose which viewer opens ordinary PDFs. "
+        + "Compatibility mode keeps the native viewer when PDF extensions are enabled. "
+        + "Ink Notes first opens handwriting even with PDF++ enabled; its native-view tools remain available "
+        + "after returning to the built-in viewer. Page, search and selection links always keep the native viewer. "
+        + "Reopen existing tabs to apply the choice.",
+    ).addDropdown((dropdown) => dropdown
+      .addOption("native", "Native PDF viewer")
+      .addOption("compatible", "Compatibility mode")
+      .addOption("ink", "Ink Notes first")
+      .setValue(this.plugin.config.pdfOpenMode)
+      .onChange(async (value) => {
+        if (value !== "native" && value !== "compatible" && value !== "ink") return;
+        this.plugin.config.pdfOpenMode = value;
+        this.plugin.refreshPdfTakeover();
+        try { await this.plugin.persistSettings(); }
+        catch (error) { new Notice(`Ink Notes could not save PDF settings: ${error instanceof Error ? error.message : String(error)}`); }
+      }));
 
-    const pdf = containerEl.createDiv();
-    pdf.createEl("h4", { text: "PDF handwriting" });
-    pdf.createEl("p", {
-      text: "Open PDFs in a handwriting view with a sidecar stored in A_pdfinkwrittern/. "
-        + "Native PDF extensions and navigation links keep their original viewer automatically. "
-        + "Turn this off to always keep the built-in PDF viewer; you can still open "
-        + "individual PDFs with handwriting from the file context menu or the command palette.",
-    });
-    const pdfRow = pdf.createDiv({ cls: "ink-settings-actions" });
-    const toggle = pdfRow.createEl("label");
-    const checkbox = toggle.createEl("input", { type: "checkbox" });
-    checkbox.checked = this.plugin.config.takeOverPdfTabs;
-    toggle.createSpan({ text: " Take over PDF tabs automatically" });
-    checkbox.addEventListener("change", () => {
-      this.plugin.config.takeOverPdfTabs = checkbox.checked;
-      void this.plugin.persistSettings();
-      this.plugin.refreshPdfTakeover();
-    });
-
-    const diagnostics = containerEl.createDiv();
-    diagnostics.createEl("h4", { text: "Diagnostics" });
-    diagnostics.createEl("p", { text: "Capture telemetry and per-stroke records from the currently open notebook. Export is available to everyone — also from the Page options menu inside the editor." });
-    const actions = diagnostics.createDiv({ cls: "ink-settings-actions" });
-    const exportButton = actions.createEl("button", { text: "Export diagnostics JSON", attr: { type: "button" } });
-    exportButton.addEventListener("click", () => this.eachView((view) => view.exportDiagnosticsJson(false)));
-    const copyButton = actions.createEl("button", { text: "Copy diagnostics JSON", attr: { type: "button" } });
-    copyButton.addEventListener("click", () => this.eachView((view) => view.exportDiagnosticsJson(true)));
-
-    const panel = containerEl.createDiv();
-    panel.createEl("h4", { text: "Developer panel" });
-    panel.createEl("p", { text: "Show the live developer panel (sample rate, sparse detection, per-stroke records) inside the open editor." });
-    const toggleButton = panel.createEl("button", { text: "Toggle developer panel", attr: { type: "button" } });
-    toggleButton.addEventListener("click", () => this.eachView((view) => view.toggleDevPanel()));
+    new Setting(containerEl).setName("Diagnostics").setHeading();
+    new Setting(containerEl).setName("Export diagnostics").setDesc("Export local per-stroke records from open notebooks. Review handwriting data before sharing.")
+      .addButton((button) => button.setButtonText("Export JSON").onClick(() => this.eachView((view) => view.exportDiagnosticsJson(false))))
+      .addButton((button) => button.setButtonText("Copy JSON").onClick(() => this.eachView((view) => view.exportDiagnosticsJson(true))));
+    new Setting(containerEl).setName("Developer panel").setHeading();
+    new Setting(containerEl).setName("Live diagnostics").setDesc("Show sample rate and per-stroke records inside open notebooks.")
+      .addButton((button) => button.setButtonText("Toggle panel").onClick(() => this.eachView((view) => view.toggleDevPanel())));
   }
 
   private eachView(run: (view: InkView) => void): void {

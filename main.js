@@ -31442,7 +31442,7 @@ var PDF_VIEW_ENHANCER_PLUGIN_IDS = [
 ];
 function pdfTakeoverReplacement(viewState, gate, viewType, eState) {
   var _a, _b;
-  if (!gate.enabled || gate.enhancerActive) return null;
+  if (!gate.enabled || gate.enhancerActive && !gate.preferInk) return null;
   if (!viewState || viewState.type !== "pdf") return null;
   const file = (_a = viewState.state) == null ? void 0 : _a.file;
   if (typeof file !== "string" || !gate.isPdfFile(file)) return null;
@@ -31503,7 +31503,7 @@ var PdfTabTakeover = class {
 
 // src/main.ts
 var DEFAULT_SETTINGS = {
-  takeOverPdfTabs: true
+  pdfOpenMode: "compatible"
 };
 var InkNotesPlugin = class extends import_obsidian10.Plugin {
   constructor() {
@@ -31519,7 +31519,7 @@ var InkNotesPlugin = class extends import_obsidian10.Plugin {
   async onload() {
     const saved = await this.loadData();
     this.config = {
-      takeOverPdfTabs: typeof (saved == null ? void 0 : saved.takeOverPdfTabs) === "boolean" ? saved.takeOverPdfTabs : DEFAULT_SETTINGS.takeOverPdfTabs
+      pdfOpenMode: (saved == null ? void 0 : saved.pdfOpenMode) === "native" || (saved == null ? void 0 : saved.pdfOpenMode) === "compatible" || (saved == null ? void 0 : saved.pdfOpenMode) === "ink" ? saved.pdfOpenMode : typeof (saved == null ? void 0 : saved.takeOverPdfTabs) === "boolean" ? saved.takeOverPdfTabs ? "ink" : "native" : DEFAULT_SETTINGS.pdfOpenMode
     };
     this.toolState = sanitizeToolState(saved == null ? void 0 : saved.toolState);
     this.toolStateSaver = new ToolStateSaver((stored) => this.persistToolState(stored));
@@ -31612,7 +31612,8 @@ var InkNotesPlugin = class extends import_obsidian10.Plugin {
     this.pdfStore = new PdfSidecarStore(this.app);
     this.arbiter = new PdfWriterArbiter();
     this.takeover = new PdfTabTakeover(() => ({
-      enabled: this.config.takeOverPdfTabs,
+      enabled: this.config.pdfOpenMode !== "native",
+      preferInk: this.config.pdfOpenMode === "ink",
       // Query current plugin state on each open, including runtime enable/disable.
       enhancerActive: PDF_VIEW_ENHANCER_PLUGIN_IDS.some((id) => {
         var _a;
@@ -31621,7 +31622,7 @@ var InkNotesPlugin = class extends import_obsidian10.Plugin {
       }),
       isPdfFile: (path) => {
         const file = this.app.vault.getAbstractFileByPath(path);
-        return file instanceof import_obsidian10.TFile && file.extension === "pdf";
+        return file instanceof import_obsidian10.TFile && file.extension.toLowerCase() === "pdf";
       }
     }), VIEW_TYPE_PDF_INK);
     this.registerView(VIEW_TYPE_PDF_INK, (leaf) => {
@@ -31658,7 +31659,7 @@ var InkNotesPlugin = class extends import_obsidian10.Plugin {
   refreshPdfTakeover() {
     if (!this.takeover) return;
     this.takeover.uninstall();
-    if (this.config.takeOverPdfTabs && this.app.vault) this.takeover.install();
+    if (this.config.pdfOpenMode !== "native" && this.app.vault) this.takeover.install();
   }
   /**
    * One writer for the data file: the plugin settings and the shared tool
@@ -31668,13 +31669,13 @@ var InkNotesPlugin = class extends import_obsidian10.Plugin {
   persistToolState(stored) {
     this.toolState.eraserMode = stored.eraserMode;
     this.toolState.eraserSize = stored.eraserSize;
-    return this.saveData({ takeOverPdfTabs: this.config.takeOverPdfTabs, toolState: stored }).catch((error) => {
+    return this.saveData({ pdfOpenMode: this.config.pdfOpenMode, toolState: stored }).catch((error) => {
       new import_obsidian10.Notice(`Ink Notes could not save tool settings: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
   /** Persists the plugin settings together with the latest tool settings. */
   async persistSettings() {
-    await this.saveData({ takeOverPdfTabs: this.config.takeOverPdfTabs, toolState: storedToolState(this.toolState) });
+    await this.saveData({ pdfOpenMode: this.config.pdfOpenMode, toolState: storedToolState(this.toolState) });
   }
   /** Open a PDF tab in the handwriting view on explicit request. */
   async openPdfHandwriting(file) {
@@ -31744,35 +31745,23 @@ var InkSettingTab = class extends import_obsidian10.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    containerEl.createEl("h3", { text: "Ink Notes" });
-    const pdf = containerEl.createDiv();
-    pdf.createEl("h4", { text: "PDF handwriting" });
-    pdf.createEl("p", {
-      text: "Open PDFs in a handwriting view with a sidecar stored in A_pdfinkwrittern/. Native PDF extensions and navigation links keep their original viewer automatically. Turn this off to always keep the built-in PDF viewer; you can still open individual PDFs with handwriting from the file context menu or the command palette."
-    });
-    const pdfRow = pdf.createDiv({ cls: "ink-settings-actions" });
-    const toggle = pdfRow.createEl("label");
-    const checkbox = toggle.createEl("input", { type: "checkbox" });
-    checkbox.checked = this.plugin.config.takeOverPdfTabs;
-    toggle.createSpan({ text: " Take over PDF tabs automatically" });
-    checkbox.addEventListener("change", () => {
-      this.plugin.config.takeOverPdfTabs = checkbox.checked;
-      void this.plugin.persistSettings();
+    new import_obsidian10.Setting(containerEl).setName("PDF handwriting").setHeading();
+    new import_obsidian10.Setting(containerEl).setName("Default PDF viewer").setDesc(
+      "PDF handwriting is stored in A_pdfinkwrittern/. Choose which viewer opens ordinary PDFs. Compatibility mode keeps the native viewer when PDF extensions are enabled. Ink Notes first opens handwriting even with PDF++ enabled; its native-view tools remain available after returning to the built-in viewer. Page, search and selection links always keep the native viewer. Reopen existing tabs to apply the choice."
+    ).addDropdown((dropdown) => dropdown.addOption("native", "Native PDF viewer").addOption("compatible", "Compatibility mode").addOption("ink", "Ink Notes first").setValue(this.plugin.config.pdfOpenMode).onChange(async (value) => {
+      if (value !== "native" && value !== "compatible" && value !== "ink") return;
+      this.plugin.config.pdfOpenMode = value;
       this.plugin.refreshPdfTakeover();
-    });
-    const diagnostics = containerEl.createDiv();
-    diagnostics.createEl("h4", { text: "Diagnostics" });
-    diagnostics.createEl("p", { text: "Capture telemetry and per-stroke records from the currently open notebook. Export is available to everyone \u2014 also from the Page options menu inside the editor." });
-    const actions = diagnostics.createDiv({ cls: "ink-settings-actions" });
-    const exportButton = actions.createEl("button", { text: "Export diagnostics JSON", attr: { type: "button" } });
-    exportButton.addEventListener("click", () => this.eachView((view) => view.exportDiagnosticsJson(false)));
-    const copyButton = actions.createEl("button", { text: "Copy diagnostics JSON", attr: { type: "button" } });
-    copyButton.addEventListener("click", () => this.eachView((view) => view.exportDiagnosticsJson(true)));
-    const panel = containerEl.createDiv();
-    panel.createEl("h4", { text: "Developer panel" });
-    panel.createEl("p", { text: "Show the live developer panel (sample rate, sparse detection, per-stroke records) inside the open editor." });
-    const toggleButton = panel.createEl("button", { text: "Toggle developer panel", attr: { type: "button" } });
-    toggleButton.addEventListener("click", () => this.eachView((view) => view.toggleDevPanel()));
+      try {
+        await this.plugin.persistSettings();
+      } catch (error) {
+        new import_obsidian10.Notice(`Ink Notes could not save PDF settings: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }));
+    new import_obsidian10.Setting(containerEl).setName("Diagnostics").setHeading();
+    new import_obsidian10.Setting(containerEl).setName("Export diagnostics").setDesc("Export local per-stroke records from open notebooks. Review handwriting data before sharing.").addButton((button) => button.setButtonText("Export JSON").onClick(() => this.eachView((view) => view.exportDiagnosticsJson(false)))).addButton((button) => button.setButtonText("Copy JSON").onClick(() => this.eachView((view) => view.exportDiagnosticsJson(true))));
+    new import_obsidian10.Setting(containerEl).setName("Developer panel").setHeading();
+    new import_obsidian10.Setting(containerEl).setName("Live diagnostics").setDesc("Show sample rate and per-stroke records inside open notebooks.").addButton((button) => button.setButtonText("Toggle panel").onClick(() => this.eachView((view) => view.toggleDevPanel())));
   }
   eachView(run) {
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_INK)) {

@@ -8,6 +8,7 @@ const notice = vi.fn();
 const pickerOpen = vi.fn();
 const pickerArguments = vi.fn();
 const create = vi.fn();
+const settings: { name: string; options?: Record<string, string>; value?: string; change?: (value: string) => Promise<void> }[] = [];
 
 vi.mock("obsidian", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -23,7 +24,24 @@ vi.mock("obsidian", async (importOriginal) => ({
   },
   Notice: class { constructor(message: string) { notice(message); } },
   SuggestModal: class {},
-  PluginSettingTab: class {},
+  PluginSettingTab: class { containerEl = { empty: vi.fn() }; },
+  Setting: class {
+    entry = { name: "" } as typeof settings[number];
+    constructor() { settings.push(this.entry); }
+    setName(name: string) { this.entry.name = name; return this; }
+    setHeading() { return this; }
+    setDesc() { return this; }
+    addButton() { return this; }
+    addDropdown(build: (dropdown: unknown) => void) {
+      const entry = this.entry;
+      const dropdown = {
+        addOption(value: string, text: string) { (entry.options ??= {})[value] = text; return dropdown; },
+        setValue(value: string) { entry.value = value; return dropdown; },
+        onChange(change: typeof entry.change) { entry.change = change; return dropdown; },
+      };
+      build(dropdown); return this;
+    }
+  },
   TFile: class {},
   WorkspaceLeaf: class {},
   FileView: class { app = { scope: {} }; file = null; },
@@ -55,7 +73,64 @@ import { PdfInkView } from "../src/pdf-view";
 
 describe("plugin event synchronization", () => {
   beforeEach(() => { observe.mockReset(); register.mockReset(); registerMarkdown.mockReset(); list.mockReset(); notice.mockReset();
-    pickerOpen.mockReset(); pickerArguments.mockReset(); create.mockReset(); });
+    pickerOpen.mockReset(); pickerArguments.mockReset(); create.mockReset(); settings.length = 0; });
+
+  it("settings expose and immediately apply the three viewer choices, and report save failures", async () => {
+    const plugin = new InkNotesPlugin({} as never, {} as never);
+    await plugin.onload();
+    const tab = (plugin.addSettingTab as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    tab.display();
+    const choice = settings.find((setting) => setting.name === "Default PDF viewer")!;
+    expect(choice.options).toEqual({ native: "Native PDF viewer", compatible: "Compatibility mode", ink: "Ink Notes first" });
+    expect(choice.value).toBe("compatible");
+    const refresh = vi.spyOn(plugin, "refreshPdfTakeover").mockImplementation(() => undefined);
+    await choice.change!("ink");
+    expect(plugin.config.pdfOpenMode).toBe("ink");
+    expect(refresh).toHaveBeenCalledOnce();
+    expect(plugin.saveData).toHaveBeenLastCalledWith(expect.objectContaining({ pdfOpenMode: "ink" }));
+    (plugin.saveData as ReturnType<typeof vi.fn>).mockRejectedValue(new Error("storage failed"));
+    await choice.change!("native");
+    expect(notice).toHaveBeenCalledWith("Ink Notes could not save PDF settings: storage failed");
+    await choice.change!("invalid");
+    expect(plugin.config.pdfOpenMode).toBe("native");
+  });
+
+  it.each([
+    [{}, "compatible"],
+    [{ takeOverPdfTabs: true }, "ink"],
+    [{ takeOverPdfTabs: false }, "native"],
+    [{ pdfOpenMode: "compatible", takeOverPdfTabs: true }, "compatible"],
+    [{ pdfOpenMode: "native", takeOverPdfTabs: true }, "native"],
+    [{ pdfOpenMode: "ink", takeOverPdfTabs: false }, "ink"],
+    [{ pdfOpenMode: "invalid", takeOverPdfTabs: true }, "ink"],
+    [{ pdfOpenMode: "invalid" }, "compatible"],
+  ])("loads and persists the PDF viewer choice from %j", async (saved, expected) => {
+    const plugin = new InkNotesPlugin({} as never, {} as never);
+    (plugin.loadData as ReturnType<typeof vi.fn>).mockResolvedValue(saved);
+    await plugin.onload();
+    expect(plugin.config.pdfOpenMode).toBe(expected);
+    await plugin.persistSettings();
+    expect(plugin.saveData).toHaveBeenLastCalledWith(expect.objectContaining({ pdfOpenMode: expected }));
+    expect((plugin.saveData as ReturnType<typeof vi.fn>).mock.calls.at(-1)![0]).not.toHaveProperty("takeOverPdfTabs");
+  });
+
+  it("migrates the checked legacy setting to automatic ink with PDF++ enabled, including uppercase PDF", async () => {
+    const install = vi.spyOn(PdfTabTakeover.prototype, "install").mockImplementation(() => undefined);
+    try {
+      const plugin = new InkNotesPlugin({} as never, {} as never);
+      const file = Object.assign(new TFile(), { path: "docs/Test.PDF", extension: "PDF" });
+      (plugin.loadData as ReturnType<typeof vi.fn>).mockResolvedValue({ takeOverPdfTabs: true });
+      Object.assign(plugin.app, { plugins: { enabledPlugins: new Set(["pdf-plus"]) }, vault: { on: vi.fn(), getAbstractFileByPath: vi.fn(() => file) } });
+      await plugin.onload();
+      const takeover = (plugin as unknown as { takeover: { gateProvider(): { enabled: boolean; preferInk: boolean; enhancerActive: boolean; isPdfFile(path: string): boolean } } }).takeover;
+      expect(takeover.gateProvider()).toMatchObject({ enabled: true, preferInk: true, enhancerActive: true });
+      expect(takeover.gateProvider().isPdfFile(file.path)).toBe(true);
+      plugin.config.pdfOpenMode = "compatible";
+      expect(takeover.gateProvider().preferInk).toBe(false);
+      plugin.config.pdfOpenMode = "native";
+      expect(takeover.gateProvider().enabled).toBe(false);
+    } finally { install.mockRestore(); }
+  });
   it.each([{ files: [] }, { files: [{ path: "Ink Notes/Existing.ink", basename: "Existing" }] }])("ribbon always opens a picker with a reusable creation action: $files", async ({ files }) => {
     list.mockResolvedValue(files);
     const file = { path: "Ink Notes/New name.ink" };

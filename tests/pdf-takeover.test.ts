@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { PDF_VIEW_ENHANCER_PLUGIN_IDS, PdfTabTakeover, pdfTakeoverReplacement } from "../src/pdf-takeover";
 
-const gate = (overrides: Partial<{ enabled: boolean; enhancerActive: boolean }> = {}) => ({
+const gate = (overrides: Partial<{ enabled: boolean; enhancerActive: boolean; preferInk: boolean }> = {}) => ({
   enabled: true,
   enhancerActive: false,
   isPdfFile: (path: string) => path.endsWith(".pdf"),
@@ -27,6 +27,15 @@ describe("pdfTakeoverReplacement", () => {
     expect(pdfTakeoverReplacement({ type: "pdf", state: { file: "docs/notes.md" } }, vaultGate, "pdf-ink")).toBeNull();
     expect(pdfTakeoverReplacement({ type: "pdf", state: {} }, vaultGate, "pdf-ink")).toBeNull();
     expect(pdfTakeoverReplacement({ type: "pdf", state: { file: "https://x/y.pdf" } }, vaultGate, "pdf-ink")).toBeNull();
+  });
+
+  it("honors Ink-first with PDF++ enabled while retaining native navigation and the off switch", () => {
+    const state = { type: "pdf", state: { file: "docs/lecture.pdf" } };
+    const ink = gate({ enhancerActive: true, preferInk: true });
+    expect(pdfTakeoverReplacement(state, ink, "pdf-ink")).toBe("pdf-ink");
+    expect(pdfTakeoverReplacement(state, { ...ink, enabled: false }, "pdf-ink")).toBeNull();
+    expect(pdfTakeoverReplacement(state, ink, "pdf-ink", { subpath: "#page=7" })).toBeNull();
+    expect(pdfTakeoverReplacement({ ...state, state: { ...state.state, search: "term" } }, ink, "pdf-ink")).toBeNull();
   });
 
   it.each([{ page: 7 }, { subpath: "#page=3&rect=10,20,30,40" }, { search: "phrase" }, { selection: [1, 4] }, { futureNativeOption: true }])(
@@ -91,6 +100,23 @@ describe("PdfTabTakeover", () => {
     const { host } = setup(false);
     await host.setViewState({ type: "pdf", state: { file: "docs/a.pdf" } });
     expect(host.lastCall).toBe("builtin:pdf");
+  });
+
+  it("switches between compatible, Ink-first and native modes while PDF++ stays enabled", async () => {
+    const current = gate({ enhancerActive: true, preferInk: false });
+    const host = makeHost();
+    const takeover = new PdfTabTakeover(() => current, "pdf-ink");
+    takeover.install(host as never);
+    const state = { type: "pdf", state: { file: "docs/a.pdf" } };
+    await host.setViewState(state);
+    expect(host.lastCall).toBe("builtin:pdf");
+    current.preferInk = true;
+    await host.setViewState(state);
+    expect(host.lastCall).toBe("builtin:pdf-ink");
+    current.enabled = false;
+    await host.setViewState(state);
+    expect(host.lastCall).toBe("builtin:pdf");
+    takeover.uninstall();
   });
 
   it("suppresses recapture for leaves handed back to the builtin viewer", async () => {
