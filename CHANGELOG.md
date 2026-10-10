@@ -1,8 +1,8 @@
 # Changelog
 
-## 1.0.0 - 2026-10-10
+## 0.1.0 - 2026-10-10
 
-- Publish the first 1.0 release of Ink Notes with native notebooks, PDF handwriting, page previews, blank-page insertion, reading/editing modes, zoom lock and PDF export. Existing notebook/sidecar formats and minimum Obsidian 1.5.0 remain compatible.
+- Publish the first formal 0.1 release of Ink Notes with native notebooks, PDF handwriting, page previews, blank-page insertion, reading/editing modes, zoom lock and PDF export. Correct the briefly published 1.0.0 numbering to 0.1.0; users who installed 1.0.0 must manually reinstall because automatic version comparison treats 0.1.0 as older. Existing notebook/sidecar formats and minimum Obsidian 1.5.0 remain compatible.
 - Desktop mouse navigation now continues from panning into gallery page switching at actual scroll edges. Independent trackpad bursts retain their destinations while a previous page waits on saving or rendering; canceled drags rebound.
 - Desktop zoom keeps existing ink rasters during motion and refines after a short pause. Late Worker tiles at an old density no longer replace a better raster for the current magnification.
 - Native PDF enhancement plugins retain their own viewer workflows through evidence-based default takeover suppression, transparent page/subpath navigation and an explicit handwriting entry. PDF++ and Ink handwriting use separate views; same-view overlay integration is not included.
