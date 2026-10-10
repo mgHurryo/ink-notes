@@ -8,13 +8,9 @@ Ink Notes is licensed under Apache-2.0. The bundled stroke model is adapted from
 
 Ink Notes requires Obsidian 1.5.7 or later for view-scoped keyboard shortcuts.
 
-Ink Notes is being prepared for the Obsidian Community directory. Until its listing is approved, install it manually from the [latest release](https://github.com/mgHurryo/ink-notes/releases/latest):
+Install Ink Notes from the [Obsidian Community directory](https://community.obsidian.md/plugins/ink-notes), or open **Settings -> Community plugins -> Browse**, search for **Ink Notes**, and select **Install**. Then enable it in **Settings -> Community plugins -> Installed plugins**. Installation and enabling are separate steps.
 
-1. Create `.obsidian/plugins/ink-notes/` inside your vault.
-2. Place `main.js`, `manifest.json` and `styles.css` from the same release in that folder.
-3. Reload Obsidian, open **Settings -> Community plugins**, enable community plugins if needed, then enable **Ink Notes**.
-
-Once listed, use **Settings -> Community plugins -> Browse**, search for **Ink Notes**, install it, then enable it. Installation and enabling are separate steps. Existing installations with the old higher version numbers need a manual reinstall of 0.1.0.
+For manual installation, download `main.js`, `manifest.json` and `styles.css` from the [latest GitHub release](https://github.com/mgHurryo/ink-notes/releases/latest), place them in `.obsidian/plugins/ink-notes/` inside your vault, reload Obsidian, then enable **Ink Notes** in **Settings -> Community plugins**. Existing installations with the old higher version numbers need a manual reinstall of 0.1.0.
 
 ## Start a notebook or PDF
 
@@ -25,7 +21,7 @@ Once listed, use **Settings -> Community plugins -> Browse**, search for **Ink N
 
 ### Why does a PDF still open in the default viewer?
 
-Choose **Settings -> Ink Notes -> PDF handwriting -> Default PDF viewer**. **Ink Notes first** opens ordinary PDFs in handwriting even when PDF++ is enabled. **Compatibility mode** automatically chooses the native viewer when a supported PDF extension is enabled; it is the default for a fresh installation. **Native PDF viewer** disables automatic handwriting opens. Existing checked **Take over PDF tabs automatically** settings migrate to **Ink Notes first**; unchecked settings migrate to **Native PDF viewer**. Changing the mode does not convert tabs already open, so close and reopen the PDF or use the explicit handwriting command.
+Choose **Settings -> Ink Notes -> PDF handwriting -> Default PDF viewer**. **Ink Notes first** opens ordinary PDFs in handwriting even when PDF++ is enabled. Focus flags, empty link fragments and native viewport memory added during ordinary file opens do not override this choice. **Compatibility mode** automatically chooses the native viewer when a supported PDF extension is enabled; it is the default for a fresh installation. **Native PDF viewer** disables automatic handwriting opens. Existing checked **Take over PDF tabs automatically** settings migrate to **Ink Notes first**; unchecked settings migrate to **Native PDF viewer**. Changing the mode does not convert tabs already open, so close and reopen the PDF or use the explicit handwriting command.
 
 In compatibility mode, Ink Notes deliberately keeps the native PDF viewer when a supported viewer extension such as PDF++, Jot or PDF Writer is enabled. This lets its text selection, links, highlighting and other native-view features continue working. Page/search/selection links and other navigation state keep the native viewer in every mode so their destinations are preserved.
 
