@@ -562,7 +562,11 @@ export class TileRenderer {
         if (result.revision !== currentRevision || result.density !== job.density || result.renderGeneration !== generation) { result.bitmap.close(); this.schedule(); return; }
         const tile = this.tileFromBitmap(job, result);
         this.cacheTile(tile);
-        if (job.state === this.active && this.visible.has(job.cell)) this.attach(tile);
+        if (job.state === this.active && this.visible.has(job.cell)) {
+          // Requests at different zoom densities may resolve out of order.
+          // A late result must not replace a better raster for the current zoom.
+          this.attach(this.get(job.state, job.cell, this.density) ?? this.fallback(job.state, job.cell) ?? tile);
+        }
         this.evict();
         this.schedule();
       })

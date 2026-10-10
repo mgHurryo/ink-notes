@@ -98,3 +98,143 @@ test("touchpad-like ctrl wheel zooms at the cursor and horizontal wheel flips on
   await page.mouse.wheel(140, 0);
   await expect(page.locator(".ink-page-status")).toHaveText("2 / 2");
 });
+
+test("desktop reader drag flips at the page edge without waiting on the animation", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  await page.evaluate(async () => {
+    const view = (window as unknown as { __inkNotesPreview: { view: any } }).__inkNotesPreview.view;
+    view.duplicateCurrentPage();
+    await view.navigateToPage(view.notebook.pages[0].id);
+  });
+  await page.getByRole("button", { name: "Reading mode" }).click();
+  const box = await page.locator(".ink-page").boundingBox();
+  expect(box).not.toBeNull();
+  const x = box!.x + box!.width / 2, y = box!.y + box!.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x - box!.width * 0.7, y, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.locator(".ink-page-status")).toHaveText("2 / 2");
+  // A second drag starts immediately after the first settle and must still
+  // reach the edge rather than being discarded by the previous animation.
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x + box!.width * 0.7, y, { steps: 4 });
+  await page.mouse.up();
+  await expect(page.locator(".ink-page-status")).toHaveText("1 / 2");
+});
+
+test("desktop wheel zoom keeps mounted ink stable until the burst ends", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  await expect.poll(() => page.locator(".ink-tile-layer canvas").count()).toBeGreaterThan(0);
+  await page.waitForTimeout(400);
+  await page.evaluate(() => {
+    const scope = window as any;
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    scope.wheelTiles = new Map(Array.from(document.querySelectorAll<HTMLElement>(".ink-tile-layer [data-cell]"))
+      .map(tile => [tile.dataset.cell, tile]));
+    scope.sendDesktopZoom = () => {
+      const rect = scroller.getBoundingClientRect();
+      scroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true,
+        ctrlKey: true, deltaY: -20, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 }));
+    };
+  });
+  for (let i = 0; i < 5; i++) {
+    await page.evaluate(() => (window as any).sendDesktopZoom());
+    await page.waitForTimeout(70);
+    const replaced = await page.evaluate(() => {
+      const initial = (window as any).wheelTiles as Map<string, Element>;
+      return Array.from(document.querySelectorAll<HTMLElement>(".ink-tile-layer [data-cell]"))
+        .filter(tile => initial.has(tile.dataset.cell!) && initial.get(tile.dataset.cell!) !== tile).length;
+    });
+    expect(replaced).toBe(0);
+  }
+  await expect(page.locator(".ink-page-extent > .ink-page")).toHaveCSS("transform", "none");
+  const inkPixels = await page.locator(".ink-tile-layer canvas").evaluateAll((canvases: HTMLCanvasElement[]) => {
+    let pixels = 0;
+    for (const canvas of canvases) {
+      const copy = document.createElement("canvas");
+      copy.width = canvas.width; copy.height = canvas.height;
+      const ctx = copy.getContext("2d")!;
+      ctx.drawImage(canvas, 0, 0);
+      const data = ctx.getImageData(0, 0, copy.width, copy.height).data;
+      for (let i = 3; i < data.length; i += 4) if (data[i]) pixels++;
+    }
+    return pixels;
+  });
+  expect(inkPixels).toBeGreaterThan(0);
+  await page.screenshot({ path: "test-results/desktop-wheel-zoom.png" });
+});
+
+test("a zoomed mouse pan continues into a page swipe at the edge and cancellation rebounds", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  await page.evaluate(async () => {
+    const view = (window as any).__inkNotesPreview.view;
+    view.duplicateCurrentPage();
+    await view.navigateToPage(view.notebook.pages[0].id);
+    view.setReadingMode(true);
+    view.setZoom(2);
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    scroller.scrollLeft = scroller.scrollWidth;
+    scroller.scrollLeft -= 100;
+  });
+  const box = await page.locator(".ink-page-scroller").boundingBox();
+  const x = box!.x + box!.width * 0.9, y = box!.y + box!.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x - 800, y, { steps: 12 });
+  await page.mouse.up();
+  await expect(page.locator(".ink-page-status")).toHaveText("2 / 2");
+  await page.mouse.move(x - 700, y);
+  await page.mouse.down();
+  await page.mouse.move(x, y, { steps: 5 });
+  await page.evaluate(() => {
+    const view = (window as any).__inkNotesPreview.view;
+    const pointerId = view.desktopPan.pointerId;
+    document.dispatchEvent(new PointerEvent("pointercancel", { pointerId, pointerType: "mouse", bubbles: true }));
+  });
+  await page.mouse.up();
+  await expect(page.locator(".ink-swipe-stage")).toHaveCount(0);
+  await expect(page.locator(".ink-page-status")).toHaveText("2 / 2");
+  await expect(page.locator(".ink-page-extent")).toHaveCSS("transform", "none");
+});
+
+test("separate trackpad bursts keep every destination across a slow notebook save barrier", async ({ page }) => {
+  await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  await page.evaluate(async () => {
+    const scope = window as any;
+    const view = scope.__inkNotesPreview.view;
+    for (let i = 1; i < 6; i++) view.duplicateCurrentPage();
+    await view.navigateToPage(view.notebook.pages[0].id);
+    const barrier = view.workerSession.barrier.bind(view.workerSession);
+    let held = false;
+    view.workerSession.barrier = async (revision: number) => {
+      await barrier(revision);
+      if (!held) {
+        held = true;
+        await new Promise<void>(resolve => { scope.releaseDesktopBarrier = resolve; });
+      }
+    };
+    scope.sendPageWheel = () => document.querySelector(".ink-page-scroller")!.dispatchEvent(new WheelEvent("wheel", {
+      bubbles: true, cancelable: true, deltaX: 150, deltaY: 0,
+    }));
+    scope.sendPageWheel();
+    document.getAnimations().forEach(animation => animation.finish());
+  });
+  await expect.poll(() => page.evaluate(() => typeof (window as any).releaseDesktopBarrier)).toBe("function");
+  for (let i = 0; i < 3; i++) {
+    await page.waitForTimeout(220);
+    await page.evaluate(() => (window as any).sendPageWheel());
+  }
+  await expect(page.locator(".ink-page-status")).toHaveText("1 / 6");
+  await page.evaluate(() => (window as any).releaseDesktopBarrier());
+  await expect(page.locator(".ink-page-status")).toHaveText("5 / 6");
+  await expect(page.locator(".ink-swipe-stage")).toHaveCount(0);
+});

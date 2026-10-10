@@ -14,7 +14,7 @@ vi.mock("obsidian", async (importOriginal) => ({
   Plugin: class {
     app = {
       vault: null,
-      workspace: { getLeavesOfType: vi.fn(() => []), getActiveFile: vi.fn(() => null), getActiveViewOfType: vi.fn(() => null) },
+      workspace: { on: vi.fn(), getLeavesOfType: vi.fn(() => []), getActiveFile: vi.fn(() => null), getActiveViewOfType: vi.fn(() => null) },
     };
     registerView = vi.fn(); registerExtensions = vi.fn(); addRibbonIcon = vi.fn(); addCommand = vi.fn(); addSettingTab = vi.fn(); registerEvent = vi.fn();
     loadData = vi.fn(async () => ({})); saveData = vi.fn(async () => undefined);
@@ -49,6 +49,9 @@ vi.mock("../src/view", async (importOriginal) => ({
 
 import InkNotesPlugin from "../src/main";
 import { InkView } from "../src/view";
+import { TFile } from "obsidian";
+import { PdfTabTakeover } from "../src/pdf-takeover";
+import { PdfInkView } from "../src/pdf-view";
 
 describe("plugin event synchronization", () => {
   beforeEach(() => { observe.mockReset(); register.mockReset(); registerMarkdown.mockReset(); list.mockReset(); notice.mockReset();
@@ -108,6 +111,49 @@ describe("plugin event synchronization", () => {
     const command = addCommand.mock.calls.map(([value]) => value).find((value) => value.id === "open-ink-notebook");
     command.callback();
     await vi.waitFor(() => expect(notice).toHaveBeenCalledWith("Ink Notes could not open a notebook: vault unavailable"));
+  });
+
+  it("adds handwriting to the PDF file menu without consuming other menu entries", async () => {
+    const plugin = new InkNotesPlugin({} as never, {} as never);
+    const setViewState = vi.fn(async () => undefined);
+    Object.assign(plugin.app.workspace, { getLeaf: vi.fn(() => ({ setViewState })) });
+    await plugin.onload();
+    const listener = (plugin.app.workspace.on as ReturnType<typeof vi.fn>).mock.calls.find(([name]) => name === "file-menu")![1];
+    let click!: () => void;
+    const item = { setTitle: vi.fn(() => item), setIcon: vi.fn(() => item), onClick: vi.fn((callback) => { click = callback; return item; }) };
+    const menu = { addItem: vi.fn((build) => build(item)) };
+    listener(menu, { extension: "pdf" });
+    expect(menu.addItem).not.toHaveBeenCalled();
+    const file = Object.assign(new TFile(), { path: "docs/Test.PDF", extension: "PDF" });
+    listener(menu, file);
+    expect(menu.addItem).toHaveBeenCalledOnce();
+    click();
+    await vi.waitFor(() => expect(setViewState).toHaveBeenCalledWith({ type: "ink-notes-pdf-view", state: { file: file.path } }));
+  });
+
+  it("reads live enabled-plugin state and routes only matching PDF source changes", async () => {
+    const install = vi.spyOn(PdfTabTakeover.prototype, "install").mockImplementation(() => undefined);
+    try {
+      const plugin = new InkNotesPlugin({} as never, {} as never);
+      const file = Object.assign(new TFile(), { path: "docs/Test.pdf", extension: "pdf" });
+      const other = Object.assign(new TFile(), { path: "docs/Other.pdf", extension: "pdf" });
+      const enabledPlugins = new Set<string>();
+      const view = Object.assign(Object.create(PdfInkView.prototype), { file, checkSourcePdfRevision: vi.fn(async () => undefined) });
+      const otherView = Object.assign(Object.create(PdfInkView.prototype), { file: other, checkSourcePdfRevision: vi.fn(async () => undefined) });
+      const on = vi.fn();
+      Object.assign(plugin.app, { plugins: { enabledPlugins }, vault: { on, getAbstractFileByPath: vi.fn(() => file) } });
+      plugin.app.workspace.getLeavesOfType = vi.fn(() => [{ view }, { view: otherView }]) as never;
+      await plugin.onload();
+      const takeover = (plugin as unknown as { takeover: { gateProvider(): { enhancerActive: boolean } } }).takeover;
+      expect(takeover.gateProvider().enhancerActive).toBe(false);
+      enabledPlugins.add("pdf-selection-translator");
+      expect(takeover.gateProvider().enhancerActive).toBe(true);
+      enabledPlugins.clear(); enabledPlugins.add("reflow");
+      expect(takeover.gateProvider().enhancerActive).toBe(false);
+      on.mock.calls.find(([name]) => name === "modify")![1](file);
+      expect(view.checkSourcePdfRevision).toHaveBeenCalledOnce();
+      expect(otherView.checkSourcePdfRevision).not.toHaveBeenCalled();
+    } finally { install.mockRestore(); }
   });
 
   it("refreshes only the matching open notebook and coalesces in-flight changes", async () => {

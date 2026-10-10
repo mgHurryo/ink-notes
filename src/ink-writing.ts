@@ -681,6 +681,19 @@ export abstract class InkWritingView extends FileView {
     return () => this.flipSettling && this.pageSwipeRequest === request;
   }
 
+  /** Coalesce desktop navigation into the in-flight swipe handoff. */
+  protected queuePageSwipeTarget(target: number): boolean {
+    const request = this.pageSwipeRequest;
+    if (!this.flipSettling || !request) return false;
+    request.target = Math.max(0, Math.min(request.count - 1, target));
+    return true;
+  }
+
+  protected queuePageSwipeDelta(delta: number): boolean {
+    const request = this.pageSwipeRequest;
+    return request ? this.queuePageSwipeTarget(request.target + delta) : false;
+  }
+
   protected clearPageSwipeTarget(): void { this.pageSwipeRequest = null; }
 
   /** Coalesce rapid swipes instead of replaying a backlog of animations/renders. */
@@ -697,6 +710,7 @@ export abstract class InkWritingView extends FileView {
 
   protected resumePageSwipeDrag(): void {
     if (this.touchGesture?.axis === "x") this.swipeDrag(this.touchGesture.dragX);
+    else if (this.desktopPan?.mode === "swipe") this.swipeDrag(this.desktopPan.x - this.desktopPan.startX);
   }
 
   private finishPageSwipeAnimations(): void {
@@ -755,8 +769,7 @@ export abstract class InkWritingView extends FileView {
     const crossed = Math.abs(travel) > width * 0.35;
     const delta = fling || crossed ? (travel > 0 ? -1 : 1) : 0;
     if (this.flipSettling) {
-      const request = this.pageSwipeRequest;
-      if (request) request.target = Math.max(0, Math.min(request.count - 1, request.target + delta));
+      this.queuePageSwipeDelta(delta);
     } else {
       this.swipeSettle(delta, travel);
     }
@@ -931,7 +944,7 @@ export abstract class InkWritingView extends FileView {
   private pageOptionsMenu: { menu: Menu; trigger: HTMLElement | null } | null = null;
   private pageOptionsTriggerPressed = false;
   private pageOptionsDismissRegistered = false;
-  private desktopPan: { pointerId: number; x: number; y: number } | null = null;
+  private desktopPan: { pointerId: number; x: number; y: number; startX: number; startY: number; mode: "pan" | "swipe" | null } | null = null;
   private desktopSpaceDown = false;
   private desktopWheelTravel = 0;
   private desktopWheelTimer: number | undefined;
@@ -1024,7 +1037,7 @@ export abstract class InkWritingView extends FileView {
     }, true);
     for (const type of ["pointerup", "pointercancel", "lostpointercapture"] as const) {
       this.registerDomEvent(doc, type, (event) => {
-        if (this.desktopPan?.pointerId === event.pointerId) this.endDesktopPan();
+        if (this.desktopPan?.pointerId === event.pointerId) this.endDesktopPan(type === "pointerup");
       }, true);
     }
     const reset = () => {
@@ -1073,30 +1086,40 @@ export abstract class InkWritingView extends FileView {
   }
 
   private beginDesktopPan(event: InkPointerSample): boolean {
-    if (event.pointerType !== "mouse" || this.flipSettling || this.activePointerId !== null || this.nativeMenuOpen()) return false;
+    if (event.pointerType !== "mouse" || this.activePointerId !== null || this.nativeMenuOpen()) return false;
     const button = event.button ?? 0;
     if (button !== 1 && !(button === 0 && (this.desktopSpaceDown || this.readingMode))) return false;
-    this.desktopPan = { pointerId: event.pointerId, x: event.clientX, y: event.clientY };
+    this.desktopPan = { pointerId: event.pointerId, x: event.clientX, y: event.clientY,
+      startX: event.clientX, startY: event.clientY, mode: null };
     this.inputScroller().classList.add("ink-panning");
     this.capturePointer(event.pointerId);
     event.preventDefault?.();
     return true;
   }
 
-  private endDesktopPan(): void {
+  private endDesktopPan(commit = false): void {
     const pan = this.desktopPan;
     this.desktopPan = null;
     this.inputScroller()?.classList.remove("ink-panning");
+    if (pan?.mode === "swipe") {
+      const travel = pan.x - pan.startX;
+      const threshold = this.inputScroller().clientWidth * 0.35;
+      const delta = commit && Math.abs(travel) >= threshold ? (travel > 0 ? -1 : 1) : 0;
+      if (delta !== 0 && !this.queuePageSwipeDelta(delta)) this.swipeSettle(delta, travel);
+      else if (delta === 0 && !this.flipSettling) this.swipeSettle(0, travel);
+    }
     if (pan) this.releasePointer(pan.pointerId);
   }
 
   protected onWheel(event: WheelEvent): void {
-    if (this.nativeMenuOpen() || this.activePointerId !== null || this.desktopPan || this.flipSettling) return;
+    // Wheel navigation can join the pending destination during a swipe.
+    if (this.nativeMenuOpen() || this.activePointerId !== null || this.desktopPan) return;
     const scroller = this.inputScroller();
     const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? scroller.clientHeight : 1;
     const x = event.deltaX * unit, y = event.deltaY * unit;
     if (event.ctrlKey || event.metaKey) {
       event.preventDefault();
+      if (this.flipSettling) return;
       this.desktopZoom(Math.exp(-Math.max(-100, Math.min(100, y)) * 0.004), { x: event.clientX, y: event.clientY });
       this.showZoomHud(); this.scheduleZoomHudHide();
       return;
@@ -1113,17 +1136,21 @@ export abstract class InkWritingView extends FileView {
       this.desktopWheelTimer = undefined; this.desktopWheelTravel = 0; this.desktopWheelFlipped = false;
     }, 180);
     event.preventDefault();
-    const before = scroller.scrollLeft;
-    scroller.scrollLeft += x;
-    // Compare actual movement: stable/overlay scrollbar gutters can make
-    // scrollWidth - clientWidth disagree with the browser's clamped limit.
-    if (Math.abs(scroller.scrollLeft - before) > 0.5) { this.desktopWheelTravel = 0; return; }
+    if (!this.flipSettling) {
+      const before = scroller.scrollLeft;
+      scroller.scrollLeft += x;
+      // Compare actual movement: scrollbar gutters can obscure the edge.
+      if (Math.abs(scroller.scrollLeft - before) > 0.5) { this.desktopWheelTravel = 0; return; }
+    }
     if (this.desktopWheelFlipped) return;
     if (Math.sign(this.desktopWheelTravel) !== Math.sign(x)) this.desktopWheelTravel = 0;
     this.desktopWheelTravel += x;
     if (Math.abs(this.desktopWheelTravel) >= 100) {
       this.desktopWheelFlipped = true;
-      this.desktopNavigate(x > 0 ? "next" : "previous");
+      const delta = x > 0 ? 1 : -1;
+      if (this.queuePageSwipeDelta(delta)) return;
+      this.swipeDrag(-delta * 24);
+      this.swipeSettle(delta);
     }
   }
 
@@ -1252,10 +1279,39 @@ export abstract class InkWritingView extends FileView {
     if (event.pointerType === "touch") return;
     if (this.desktopPan?.pointerId === event.pointerId) {
       const scroller = this.inputScroller();
-      scroller.scrollLeft -= event.clientX - this.desktopPan.x;
-      scroller.scrollTop -= event.clientY - this.desktopPan.y;
-      this.desktopPan.x = event.clientX;
-      this.desktopPan.y = event.clientY;
+      const pan = this.desktopPan;
+      const dx = event.clientX - pan.x;
+      const dy = event.clientY - pan.y;
+      const totalX = event.clientX - pan.startX;
+      const totalY = event.clientY - pan.startY;
+      if (pan.mode === null && Math.max(Math.abs(totalX), Math.abs(totalY)) > 10) {
+        const scrollableX = scroller.scrollWidth > scroller.clientWidth + 4;
+        let flipAllowed = !scrollableX;
+        if (scrollableX) {
+          const atLeft = scroller.scrollLeft <= 2;
+          const atRight = scroller.scrollLeft >= scroller.scrollWidth - scroller.clientWidth - 2;
+          flipAllowed = (totalX > 0 && atLeft) || (totalX < 0 && atRight);
+        }
+        pan.mode = Math.abs(totalX) > Math.abs(totalY) * 1.5 && flipAllowed ? "swipe" : "pan";
+      }
+      if (pan.mode === "swipe") {
+        if (this.flipSettling) this.finishPageSwipeAnimations();
+        this.swipeDrag(totalX);
+      } else if (!this.flipSettling) {
+        const before = scroller.scrollLeft;
+        scroller.scrollLeft -= dx;
+        scroller.scrollTop -= dy;
+        // Once actual horizontal scrolling stops, continue the same drag
+        // into a page swipe. Scrollbar gutters can obscure the numeric edge.
+        if (pan.mode === "pan" && dx !== 0 && Math.abs(totalX) > Math.abs(totalY) * 1.5
+          && Math.abs(scroller.scrollLeft - before) < 0.5) {
+          pan.mode = "swipe";
+          pan.startX = pan.x;
+          this.swipeDrag(dx);
+        }
+      }
+      pan.x = event.clientX;
+      pan.y = event.clientY;
       event.preventDefault?.();
       return;
     }
@@ -1302,7 +1358,7 @@ export abstract class InkWritingView extends FileView {
   protected onPointerUp(event: InkPointerSample, source: InteractionContext["source"] = "pointer"): void {
     this.devPointerEvents += 1;
     if (this.desktopPan?.pointerId === event.pointerId) {
-      this.endDesktopPan();
+      this.endDesktopPan(true);
       return;
     }
     if (this.activePointerId !== event.pointerId || (this.interaction?.source ?? "pointer") !== source) return;
