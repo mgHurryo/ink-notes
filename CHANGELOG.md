@@ -3,7 +3,9 @@
 ## 0.1.2 - 2026-10-10
 
 - Fix ordinary PDF opens bypassing Ink Notes first when the host supplies focus flags, empty fragments or native viewport memory. Track the original public openFile request so passive state added during dispatch does not override an explicit handwriting preference.
+- Keep handwriting tabs when the host delivers focus or empty-fragment state after opening or refocusing. The view receiver shares the opening route's navigation check instead of immediately returning these tabs to the native viewer.
 - Preserve explicit page/search/selection links, unknown navigation requests, compatible/native modes and tabs explicitly returned to the native viewer. Opening context is cleared on completion or failure and both wrappers are removed on unload.
+- Replace the withdrawn initial 0.1.2 package with the complete focus-handoff fix. Users who installed the withdrawn package must reinstall this release manually: the version number remains 0.1.2, so automatic update checks may not detect the replacement.
 - No notebook/sidecar migration or rendering changes; minimum Obsidian remains 1.5.7. Physical iPad reproduction remains unverified.
 
 ## 0.1.1 - 2026-10-10
