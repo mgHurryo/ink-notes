@@ -12,6 +12,8 @@ Install Ink Notes from the [Obsidian Community directory](https://community.obsi
 
 For manual installation, download `main.js`, `manifest.json` and `styles.css` from the [latest GitHub release](https://github.com/mgHurryo/ink-notes/releases/latest), place them in `.obsidian/plugins/ink-notes/` inside your vault, reload Obsidian, then enable **Ink Notes** in **Settings -> Community plugins**. Existing installations with the old higher version numbers need a manual reinstall of 0.1.0.
 
+If you installed the withdrawn initial 0.1.2 package, manually replace all three plugin files with the corrected 0.1.2 release and restart Obsidian. The version number is unchanged, so an automatic update check may report that you are already up to date.
+
 ## Start a notebook or PDF
 
 - For a native notebook, select the pen icon in the ribbon or run **Ink Notes: Open Ink Notebook** from the command palette. The picker can create, open and rename notebooks. **Ink Notes: Create Ink Notebook** creates one directly.
