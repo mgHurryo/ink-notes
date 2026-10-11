@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.3-beta.4
+
 - Clear the previous PDF sidecar when a workspace view starts loading another file, so read-only or failed sidecar resolution cannot leave the old document's notes attached to the new PDF.
 
 - Add colored sticky notes to Ink and PDF handwriting pages with position/size controls, foldable previews, handwritten and typed content, and undo/redo. Frame resizing retains the fixed content coordinates; the editor can extend and scroll its board without allocating a board-sized canvas. Explicit Save applies drafts; reading mode prevents changes and stale drafts cannot overwrite another pane's note.
