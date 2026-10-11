@@ -156,6 +156,25 @@ function setup() {
 describe("split-pane edit availability", () => {
   beforeEach(() => { vi.useFakeTimers(); vi.stubGlobal("window", globalThis); });
 
+  it("does not retain the previous sidecar while a reused view loads another PDF", () => {
+    const { internal, session } = setup();
+    const nextSidecar = createSidecar("docs/next.pdf", FINGERPRINT, SOURCE_PAGES);
+    const nextRaw = serializeSidecar(nextSidecar);
+    const nextSidecarFile = { path: "A_pdfinkwrittern/next--x.pdfink.json" } as TFile;
+    expect((internal as any).inputLocked()).toBe(false);
+
+    (internal as any).resetViewState();
+
+    expect((internal as any).sidecar).toBeNull();
+    expect((internal as any).sidecarFile).toBeNull();
+    expect((internal as any).sidecarRaw).toBe("");
+    expect((internal as any).inputLocked()).toBe(true);
+    expect(session.dispose).toHaveBeenCalledOnce();
+
+    (internal as any).attachSidecar(nextSidecar, nextRaw, nextSidecarFile);
+    expect((internal as any).inputLocked()).toBe(false);
+  });
+
   it("allows two independent panes of the same PDF to write", () => {
     const first = setup();
     const second = setup();

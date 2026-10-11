@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Clear the previous PDF sidecar when a workspace view starts loading another file, so read-only or failed sidecar resolution cannot leave the old document's notes attached to the new PDF.
+
 ## 0.1.3-beta.3
 
 - Unify pen, finger, mouse and keyboard gestures across Ink and PDF editors. By default, stylus writes while fingers select or move images/handwriting and navigate; opt in to Use finger as pen for single-finger writing, highlighting, erasing and selection, with two-finger navigation. Hold opens clipboard actions, color removal requires an explicit menu choice, and pressure-curve points use an explicit remove action. Cancelled edits roll back before pinch or stylus handoff.
