@@ -22,6 +22,7 @@ describe("tool state persistence", () => {
       state.highlighter.opacity = 0.55;
       state.eraserMode = "square";
       state.eraserSize = 64;
+      state.lasso.crossFileClipboard = true;
       expect(sanitizeToolState(storedToolState(state))).toEqual(state);
     });
 
@@ -112,6 +113,10 @@ describe("tool state persistence", () => {
   });
 
   describe("storedToolState", () => {
+    it("requires an explicit boolean to enable cross-file copying", () => {
+      expect(sanitizeToolState({ lasso: { crossFileClipboard: "true" } }).lasso.crossFileClipboard).toBe(false);
+      expect(sanitizeToolState({ lasso: { crossFileClipboard: true } }).lasso.crossFileClipboard).toBe(true);
+    });
     it("strips the session tool and deep-copies the curve", () => {
       const source = defaultToolState();
       source.pen.pressureCurve = [[0, 0], [1, 1]];

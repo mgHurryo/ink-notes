@@ -38,12 +38,20 @@ If the explicit command is missing, check that Ink Notes is enabled in this vaul
 - Real-time pen and highlighter previews, including long strokes that cross render tiles.
 - Stroke, circular, and square erasers with an always-visible aiming outline and adjustable local-eraser size.
 - Paper templates, a collapsible page rail, page creation, duplication, deletion, reordering, rename, and zoom.
-- Undo and redo for drawing, erasing, lasso moves, and page operations.
-- Lasso selection and constrained on-page stroke movement.
+- Undo and redo for drawing, erasing, lasso moves, cut/paste/delete, and page operations.
+- Lasso selection, constrained on-page movement, and a floating Copy / Cut / Delete / Paste menu that stays inside the current editor pane.
 - A single compact 56px responsive toolbar with tool settings in an accessible popover and no duplicate offscreen controls.
 - Atomic Vault writes with stroke and page tombstones so deleted content stays deleted during cross-device merges.
 - Read-only Markdown `ink` code-block embeds with optional page targeting.
 - No native dependency, so the plugin is packaged once for all Obsidian platforms.
+
+### Copy handwriting with the lasso
+
+Choose **Select** and circle handwriting to show **Copy**, **Cut**, **Delete** and **Paste**. The menu moves above or below the selection and wraps on narrow screens. Pasted handwriting stays selected so you can drag it into place. Cut, paste and delete support undo/redo; copying keeps the original strokes.
+
+Tap **Select** again to open **Lasso** settings. Enable **Copy and paste across files** to paste handwriting from any Ink notebook or PDF handwriting page into another file. This option is off by default; while off, pasting is limited to pages of the source file. In the destination, tap blank paper with Select to choose a paste location, or use **Paste handwriting** in Lasso settings to paste at the visible page center. This copies handwriting only; PDF text and page backgrounds are excluded.
+
+On desktop, Select supports **Ctrl/Cmd+C**, **Ctrl/Cmd+X**, **Ctrl/Cmd+V**, and **Delete/Backspace**. The handwriting clipboard is held in memory for the running plugin instance and clears on restart or plugin reload. It is not the system clipboard and does not sync between devices.
 
 ## UI Preview
 

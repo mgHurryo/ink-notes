@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add floating lasso Copy / Cut / Delete / Paste actions for Ink notebooks and PDF handwriting. Actions stay inside the editor pane, wrap on narrow screens, and support undo/redo and desktop shortcuts. Selection and placement targets clear on page/file changes.
+- Add an opt-in Copy and paste across files setting in the lasso panel. A plugin-scoped in-memory clipboard preserves handwriting proportions, pressure and brush settings across Ink/PDF pages; copied contents clear on reload and never use the system clipboard or modify the original PDF.
 - Add multi-select page management to both page rails. Bulk deletion is undoable; PDF deletions hide source-page note records only in the sidecar and never modify the source PDF. The final visible page is protected.
 - The default pen can now erase handwriting with a deliberate fast scribble over existing ink. It removes complete strokes crossed by the gesture and the gesture itself, with one undo restoring the erased writing; ordinary pen marks and scribbles over blank areas remain ink.
 - Allow both editing panes of the same PDF to write, erase and add note pages. Concurrent sidecar saves merge strokes, deletion markers and page changes instead of overwriting another pane's notes.

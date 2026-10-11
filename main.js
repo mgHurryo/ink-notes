@@ -23829,7 +23829,8 @@ function defaultToolState() {
     highlighter: { color: "#f2c94c", width: 18, opacity: 0.4 },
     eraserMode: "stroke",
     eraserSize: 32,
-    palette: INK_COLORS.map((color) => color.value)
+    palette: INK_COLORS.map((color) => color.value),
+    lasso: { crossFileClipboard: false }
   };
 }
 var PEN_WIDTH_RANGE = [1, 24];
@@ -23847,7 +23848,8 @@ function sanitizeToolState(raw) {
     highlighter: sanitizeBrush(source.highlighter, defaults.highlighter, HIGHLIGHTER_WIDTH_RANGE, false),
     eraserMode: isEraserMode(source.eraserMode) ? source.eraserMode : defaults.eraserMode,
     eraserSize: sanitizeNumber(source.eraserSize, defaults.eraserSize, ERASER_SIZE_RANGE),
-    palette: sanitizePalette(source.palette)
+    palette: sanitizePalette(source.palette),
+    lasso: { crossFileClipboard: isRecord(source.lasso) && source.lasso.crossFileClipboard === true }
   };
 }
 function storedToolState(state) {
@@ -23856,7 +23858,8 @@ function storedToolState(state) {
     highlighter: storedBrush(state.highlighter),
     eraserMode: state.eraserMode,
     eraserSize: state.eraserSize,
-    palette: [...state.palette]
+    palette: [...state.palette],
+    lasso: { ...state.lasso }
   };
 }
 var TOOL_STATE_SAVE_DEBOUNCE_MS = 500;
@@ -23947,6 +23950,57 @@ function storedBrush(settings) {
     // Deep-copy the curve: the editor mutates control-point arrays in place.
     ...settings.pressureCurve ? { pressureCurve: settings.pressureCurve.map((point) => [...point]) } : {}
   };
+}
+
+// src/lasso-clipboard.ts
+var InkClipboard = class {
+  constructor() {
+    this.content = null;
+  }
+  copy(content) {
+    this.content = { ...content, strokes: content.strokes.map(copyStroke) };
+  }
+};
+function copyStroke(stroke) {
+  var _a;
+  return {
+    ...stroke,
+    points: stroke.points.map((point) => ({ ...point })),
+    dynamics: stroke.dynamics ? {
+      ...stroke.dynamics,
+      pressureCurve: (_a = stroke.dynamics.pressureCurve) == null ? void 0 : _a.map((point) => [...point])
+    } : void 0
+  };
+}
+function pasteClipboardStrokes(content, pageId, width, height, target) {
+  if (![width, height, content.width, content.height].every((value) => Number.isFinite(value) && value > 0)) return [];
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const stroke of content.strokes) for (const point of stroke.points) {
+    minX = Math.min(minX, point.x);
+    maxX = Math.max(maxX, point.x);
+    minY = Math.min(minY, point.y);
+    maxY = Math.max(maxY, point.y);
+  }
+  if (!Number.isFinite(minX)) return [];
+  const yScale = content.height / content.width / (height / width);
+  const spanX = maxX - minX, spanY = (maxY - minY) * yScale;
+  const fit = Math.min(1, 1 / Math.max(spanX, spanY, 1));
+  const left = Math.max(0, Math.min(1 - spanX * fit, target.x - spanX * fit / 2));
+  const top = Math.max(0, Math.min(1 - spanY * fit, target.y - spanY * fit / 2));
+  const now = Date.now();
+  return content.strokes.map((stroke) => ({
+    ...copyStroke(stroke),
+    id: newId("stroke"),
+    pageId,
+    width: stroke.width * width / content.width * fit,
+    createdAt: now,
+    updatedAt: now,
+    points: stroke.points.map((point) => ({
+      ...point,
+      x: left + (point.x - minX) * fit,
+      y: top + (point.y - minY) * yScale * fit
+    }))
+  }));
 }
 
 // src/ink-writing.ts
@@ -24275,6 +24329,11 @@ var InkWritingView = class extends import_obsidian3.FileView {
     this.selectedStrokeIds = /* @__PURE__ */ new Set();
     this.lassoDrag = null;
     this.pendingLassoPoint = null;
+    this.inkClipboard = new InkClipboard();
+    this.selectionActions = null;
+    this.pasteTarget = null;
+    this.lassoSettingsPopover = null;
+    this.lassoSettingsCleanup = null;
     // --- history
     this.undoStack = [];
     this.redoStack = [];
@@ -24617,8 +24676,10 @@ var InkWritingView = class extends import_obsidian3.FileView {
       highlighter: shared.config.highlighter,
       eraserMode: shared.config.eraserMode,
       eraserSize: shared.config.eraserSize,
-      palette: shared.config.palette
+      palette: shared.config.palette,
+      lasso: shared.config.lasso
     };
+    if (shared.clipboard) this.inkClipboard = shared.clipboard;
   }
   /** Persists tool settings (debounced); safe to call on every input event. */
   scheduleToolStateSave() {
@@ -24649,6 +24710,7 @@ var InkWritingView = class extends import_obsidian3.FileView {
     this.closePageOptionsMenu();
     (_a = this.brushPopover) == null ? void 0 : _a.close();
     this.closeEraserPopover();
+    this.closeLassoSettings();
     this.clearSelection();
     this.readingMode = reading;
     this.toolbarRoot().toggleClass("ink-reading", reading);
@@ -24739,8 +24801,15 @@ var InkWritingView = class extends import_obsidian3.FileView {
   desktopResetZoom() {
   }
   registerDesktopInput() {
+    var _a;
     const scroller = this.inputScroller();
     const doc = this.containerEl.ownerDocument;
+    this.registerDomEvent((_a = doc.defaultView) != null ? _a : window, "resize", () => this.positionSelectionActions());
+    this.registerDomEvent(doc, "scroll", () => this.positionSelectionActions(), true);
+    this.register(() => {
+      this.hideSelectionActions();
+      this.closeLassoSettings();
+    });
     scroller.tabIndex = 0;
     this.registerDomEvent(scroller, "pointerdown", (event) => {
       if (event.pointerType !== "mouse" || this.nativeMenuOpen()) return;
@@ -24748,9 +24817,9 @@ var InkWritingView = class extends import_obsidian3.FileView {
       if (this.beginDesktopPan(event)) event.stopPropagation();
     }, true);
     this.registerDomEvent(this.containerEl, "keydown", (event) => {
-      var _a, _b;
+      var _a2, _b;
       const target = event.target;
-      if (event.defaultPrevented || event.isComposing || this.nativeMenuOpen() || ((_a = target == null ? void 0 : target.closest) == null ? void 0 : _a.call(target, 'input, textarea, select, [contenteditable], [role="dialog"]'))) return;
+      if (event.defaultPrevented || event.isComposing || this.nativeMenuOpen() || ((_a2 = target == null ? void 0 : target.closest) == null ? void 0 : _a2.call(target, 'input, textarea, select, [contenteditable], [role="dialog"]'))) return;
       if (event.code === "Space" || event.key === " ") {
         if (((_b = target == null ? void 0 : target.closest) == null ? void 0 : _b.call(target, "button")) || event.ctrlKey || event.metaKey || event.altKey) return;
         this.desktopSpaceDown = true;
@@ -24770,16 +24839,16 @@ var InkWritingView = class extends import_obsidian3.FileView {
       }
     });
     this.registerDomEvent(doc, "pointermove", (event) => {
-      var _a;
-      if (((_a = this.desktopPan) == null ? void 0 : _a.pointerId) === event.pointerId) {
+      var _a2;
+      if (((_a2 = this.desktopPan) == null ? void 0 : _a2.pointerId) === event.pointerId) {
         this.onPointerMove(event);
         event.stopPropagation();
       }
     }, true);
     for (const type of ["pointerup", "pointercancel", "lostpointercapture"]) {
       this.registerDomEvent(doc, type, (event) => {
-        var _a;
-        if (((_a = this.desktopPan) == null ? void 0 : _a.pointerId) === event.pointerId) this.endDesktopPan(type === "pointerup");
+        var _a2;
+        if (((_a2 = this.desktopPan) == null ? void 0 : _a2.pointerId) === event.pointerId) this.endDesktopPan(type === "pointerup");
       }, true);
     }
     const reset = () => {
@@ -24811,6 +24880,20 @@ var InkWritingView = class extends import_obsidian3.FileView {
         return true;
       }
       if (this.inputLocked()) return false;
+      if (this.state.tool === "lasso") {
+        if (key === "c" && this.selectedStrokes().length > 0) {
+          this.copySelection();
+          return true;
+        }
+        if (key === "x" && this.selectedStrokes().length > 0) {
+          this.copySelection(true);
+          return true;
+        }
+        if (key === "v" && this.availableClipboard()) {
+          this.pasteSelection();
+          return true;
+        }
+      }
       if (key === "z") {
         if (event.shiftKey) this.redo();
         else this.undo();
@@ -24865,6 +24948,10 @@ var InkWritingView = class extends import_obsidian3.FileView {
     }
     if (key === "escape") {
       this.clearSelection();
+      return true;
+    }
+    if (this.state.tool === "lasso" && (key === "delete" || key === "backspace") && this.selectedStrokes().length > 0) {
+      this.deleteSelection();
       return true;
     }
     return false;
@@ -24997,6 +25084,7 @@ var InkWritingView = class extends import_obsidian3.FileView {
       return;
     }
     if (tool === "lasso") {
+      this.hideSelectionActions();
       if (this.isPointInSelection(point)) {
         const strokes = this.selectedStrokes();
         const before = new Map(strokes.map((stroke) => [stroke.id, clonePoints(stroke.points)]));
@@ -25811,6 +25899,8 @@ var InkWritingView = class extends import_obsidian3.FileView {
     this.lassoPath = [];
     this.lassoDrag = null;
     this.hideLassoPreview();
+    this.hideSelectionActions();
+    this.pasteTarget = null;
   }
   finishLasso(page) {
     if (this.lassoDrag) {
@@ -25845,13 +25935,128 @@ var InkWritingView = class extends import_obsidian3.FileView {
       }
       this.lassoDrag = null;
       this.commitLassoPreview(page);
+      this.showSelectionActions();
       return;
     }
     if (this.lassoPath.length >= 3) {
       this.selectedStrokeIds = new Set(page.strokes.filter((stroke) => stroke.points.some((point) => pointInPolygon(point, this.lassoPath))).map((stroke) => stroke.id));
     }
+    const lastPoint = this.lassoPath[this.lassoPath.length - 1];
+    if (lastPoint) this.pasteTarget = { x: lastPoint.x, y: lastPoint.y };
     this.lassoPath = [];
     this.drawStrokes(page.strokes);
+    this.showSelectionActions();
+  }
+  availableClipboard() {
+    var _a, _b;
+    const content = this.inkClipboard.content;
+    return content && (this.state.lasso.crossFileClipboard || content.filePath === ((_b = (_a = this.file) == null ? void 0 : _a.path) != null ? _b : "")) ? content : null;
+  }
+  copySelection(cut = false) {
+    var _a, _b;
+    if (this.inputLocked() || this.activePointerId !== null) return;
+    const strokes = this.selectedStrokes();
+    if (strokes.length === 0) return;
+    this.inkClipboard.copy({
+      filePath: (_b = (_a = this.file) == null ? void 0 : _a.path) != null ? _b : "",
+      width: this.canvasLogicalWidth,
+      height: this.canvasLogicalHeight,
+      strokes
+    });
+    if (cut) this.deleteSelection();
+    else this.showSelectionActions();
+  }
+  deleteSelection() {
+    if (this.inputLocked() || this.activePointerId !== null) return;
+    const strokes = this.selectedStrokes().map(cloneStroke);
+    if (strokes.length === 0) return;
+    const page = this.currentPage();
+    this.materializePendingInkPreview(page);
+    const ids = strokes.map((stroke) => stroke.id);
+    this.deleteStrokes(page, ids);
+    this.markChanged(page);
+    this.queueStrokePatch(page, [], ids);
+    this.pushCommand(this.erasedStrokesCommand(page.id, strokes, []));
+    this.clearSelection();
+    this.drawInteractiveStrokes(page.strokes, true);
+    this.scheduleSave();
+    this.afterInputFullySettled();
+    this.showSelectionActions();
+  }
+  pasteSelection() {
+    var _a;
+    if (this.inputLocked() || this.activePointerId !== null) return;
+    const content = this.availableClipboard();
+    if (!content) return;
+    const page = this.currentPage();
+    const rect = this.inputRect(), scroller = this.inputScroller().getBoundingClientRect();
+    const bounds = selectionBounds(this.selectedStrokes());
+    const target = bounds ? { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 } : (_a = this.pasteTarget) != null ? _a : {
+      x: rect.width > 0 ? (scroller.left + scroller.width / 2 - rect.left) / rect.width : 0.5,
+      y: rect.height > 0 ? (scroller.top + scroller.height / 2 - rect.top) / rect.height : 0.5
+    };
+    const strokes = pasteClipboardStrokes(content, page.id, this.canvasLogicalWidth, this.canvasLogicalHeight, target);
+    if (strokes.length === 0) return;
+    this.materializePendingInkPreview(page);
+    page.strokes.push(...strokes);
+    this.markChanged(page);
+    this.queueStrokePatch(page, strokes, []);
+    this.pushCommand(this.erasedStrokesCommand(page.id, [], strokes));
+    this.selectedStrokeIds = new Set(strokes.map((stroke) => stroke.id));
+    this.drawInteractiveStrokes(page.strokes, true);
+    this.scheduleSave();
+    this.afterInputFullySettled();
+    this.showSelectionActions();
+  }
+  hideSelectionActions() {
+    var _a;
+    (_a = this.selectionActions) == null ? void 0 : _a.remove();
+    this.selectionActions = null;
+  }
+  showSelectionActions() {
+    this.hideSelectionActions();
+    if (!this.viewReady) return;
+    const selected = this.selectedStrokes().length > 0;
+    if (this.state.tool !== "lasso" || this.inputLocked() || !selected && !this.availableClipboard()) return;
+    const pop = this.toolbarRoot().createDiv({ cls: "ink-selection-actions", attr: { role: "group", "aria-label": "Selection actions" } });
+    this.selectionActions = pop;
+    for (const type of ["pointerdown", "touchstart", "touchmove"]) pop.addEventListener(type, (event) => event.stopPropagation());
+    const add = (icon, label, action, disabled, cls = "") => {
+      const button = this.addIconButton(pop, icon, label, action, disabled);
+      if (cls) button.addClass(cls);
+      button.createSpan({ text: label });
+    };
+    if (selected) {
+      add("copy", "Copy", () => this.copySelection(), false);
+      add("scissors", "Cut", () => this.copySelection(true), false);
+      add("trash-2", "Delete", () => this.deleteSelection(), false, "is-danger");
+    }
+    add("clipboard-paste", "Paste", () => this.pasteSelection(), !this.availableClipboard());
+    this.positionSelectionActions();
+  }
+  positionSelectionActions() {
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
+    const pop = this.selectionActions;
+    if (!pop) return;
+    if (this.inputLocked() || this.state.tool !== "lasso") {
+      this.hideSelectionActions();
+      return;
+    }
+    const rect = this.inputRect(), viewport = this.inputScroller().getBoundingClientRect();
+    const rootRect = this.toolbarRoot().getBoundingClientRect();
+    const win = (_a = pop.ownerDocument.defaultView) != null ? _a : window;
+    const leftEdge = Math.max(8, viewport.left + 8), rightEdge = Math.min(win.innerWidth - 8, viewport.right - 8);
+    const topEdge = Math.max(8, viewport.top + 8), bottomEdge = Math.min(win.innerHeight - 8, viewport.bottom - 8);
+    pop.style.maxWidth = `${Math.max(44, rightEdge - leftEdge)}px`;
+    pop.style.maxHeight = `${Math.max(44, bottomEdge - topEdge)}px`;
+    const size = { width: pop.offsetWidth, height: pop.offsetHeight }, bounds = selectionBounds(this.selectedStrokes());
+    const x = rect.left + (bounds ? (bounds.minX + bounds.maxX) / 2 : (_c = (_b = this.pasteTarget) == null ? void 0 : _b.x) != null ? _c : 0.5) * rect.width;
+    const top = rect.top + ((_f = (_e = bounds == null ? void 0 : bounds.minY) != null ? _e : (_d = this.pasteTarget) == null ? void 0 : _d.y) != null ? _f : 0.5) * rect.height;
+    const bottom = rect.top + ((_i = (_h = bounds == null ? void 0 : bounds.maxY) != null ? _h : (_g = this.pasteTarget) == null ? void 0 : _g.y) != null ? _i : 0.5) * rect.height;
+    const candidates = [top - size.height - 10, bottom + 10];
+    const y = (_j = candidates.find((candidate) => candidate >= topEdge && candidate + size.height <= bottomEdge)) != null ? _j : topEdge;
+    pop.style.left = `${Math.max(leftEdge, Math.min(rightEdge - size.width, x - size.width / 2)) - rootRect.left}px`;
+    pop.style.top = `${Math.max(topEdge, Math.min(bottomEdge - size.height, y)) - rootRect.top}px`;
   }
   applyStrokePoints(pageId, pointsById) {
     const page = this.pageById(pageId);
@@ -26107,6 +26312,7 @@ var InkWritingView = class extends import_obsidian3.FileView {
     this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
   drawSelection(width, height) {
+    this.positionSelectionActions();
     const ctx = this.ctx;
     if (!ctx) return;
     ctx.save();
@@ -26647,6 +26853,85 @@ var InkWritingView = class extends import_obsidian3.FileView {
     this.eraserPopoverClose = null;
     closeAnchoredPopover(pop, () => pop.remove());
   }
+  toggleLassoSettings(anchor) {
+    var _a, _b;
+    if (this.lassoSettingsPopover) {
+      this.closeLassoSettings();
+      return;
+    }
+    (_a = this.brushPopover) == null ? void 0 : _a.close();
+    this.closeEraserPopover();
+    const pop = this.toolbarRoot().createDiv({
+      cls: "ink-lasso-settings ink-eraser-popover is-open",
+      attr: { role: "dialog", "aria-label": "Lasso settings" }
+    });
+    this.lassoSettingsPopover = pop;
+    for (const type of ["pointerdown", "touchstart", "touchmove"]) pop.addEventListener(type, (event) => event.stopPropagation());
+    pop.createDiv({ cls: "ink-size-popover-title", text: "Lasso" });
+    const row = pop.createEl("label", { cls: "ink-lasso-clipboard-toggle" });
+    const toggle = row.createEl("input", { attr: { type: "checkbox", "aria-label": "Copy and paste across files" } });
+    toggle.checked = this.state.lasso.crossFileClipboard;
+    row.createSpan({ text: "Copy and paste across files" });
+    pop.createDiv({ cls: "ink-lasso-hint", text: "Share copied handwriting between Ink notebooks and PDF notes while the plugin is running." });
+    const paste = pop.createEl("button", { text: "Paste handwriting", attr: { type: "button", "aria-label": "Paste handwriting" } });
+    paste.disabled = !this.availableClipboard();
+    toggle.addEventListener("change", () => {
+      this.state.lasso.crossFileClipboard = toggle.checked;
+      this.scheduleToolStateSave();
+      paste.disabled = !this.availableClipboard();
+      this.showSelectionActions();
+    });
+    paste.addEventListener("click", () => {
+      this.closeLassoSettings();
+      this.pasteSelection();
+    });
+    const doc = pop.ownerDocument, win = (_b = doc.defaultView) != null ? _b : window;
+    const place = () => {
+      if (!anchor) return;
+      const root = this.toolbarRoot().getBoundingClientRect(), button = anchor.getBoundingClientRect();
+      const leftEdge = Math.max(8, root.left + 8), rightEdge = Math.min(win.innerWidth - 8, root.right - 8);
+      const topEdge = Math.max(8, root.top + 8), bottomEdge = Math.min(win.innerHeight - 8, root.bottom - 8);
+      pop.style.maxWidth = `${Math.max(44, rightEdge - leftEdge)}px`;
+      pop.style.maxHeight = `${Math.max(44, bottomEdge - topEdge)}px`;
+      const width = pop.offsetWidth, height = pop.offsetHeight;
+      const left = Math.max(leftEdge, Math.min(rightEdge - width, button.left + button.width / 2 - width / 2));
+      const below = button.bottom + 10;
+      const top = below + height <= bottomEdge ? below : Math.max(topEdge, button.top - height - 10);
+      pop.style.left = `${left - root.left}px`;
+      pop.style.top = `${top - root.top}px`;
+      pop.style.setProperty("--ink-popover-origin-x", `${button.left + button.width / 2 - left}px`);
+      pop.style.setProperty("--ink-popover-origin-y", `${top === below ? 0 : height}px`);
+    };
+    const outside = (event) => {
+      var _a2;
+      const target = event.target;
+      if (target && (pop.contains(target) || ((_a2 = target.closest) == null ? void 0 : _a2.call(target, ".ink-tool-button")))) return;
+      this.closeLassoSettings();
+    };
+    const key = (event) => {
+      if (event.key === "Escape") this.closeLassoSettings();
+    };
+    doc.addEventListener("pointerdown", outside, true);
+    doc.addEventListener("keydown", key);
+    win.addEventListener("resize", place);
+    win.addEventListener("scroll", place, true);
+    this.lassoSettingsCleanup = () => {
+      doc.removeEventListener("pointerdown", outside, true);
+      doc.removeEventListener("keydown", key);
+      win.removeEventListener("resize", place);
+      win.removeEventListener("scroll", place, true);
+      anchor == null ? void 0 : anchor.setAttribute("aria-expanded", "false");
+    };
+    anchor == null ? void 0 : anchor.setAttribute("aria-expanded", "true");
+    place();
+  }
+  closeLassoSettings() {
+    var _a, _b;
+    (_a = this.lassoSettingsPopover) == null ? void 0 : _a.remove();
+    this.lassoSettingsPopover = null;
+    (_b = this.lassoSettingsCleanup) == null ? void 0 : _b.call(this);
+    this.lassoSettingsCleanup = null;
+  }
   // -------------------------------------------------------------- toolbar
   addToolbarSection(parent, label) {
     const section = parent.createDiv({ cls: "ink-toolbar-section" });
@@ -26666,14 +26951,14 @@ var InkWritingView = class extends import_obsidian3.FileView {
     return button;
   }
   addToolButton(parent, icon, label, tool) {
-    const hasSettings = tool === "pen" || tool === "highlighter" || tool === "eraser";
     const button = parent.createEl("button", { cls: "ink-tool-button", attr: {
       type: "button",
       title: label,
       "aria-label": label,
       "aria-pressed": String(this.state.tool === tool),
       "data-tool": tool,
-      ...hasSettings ? { "aria-haspopup": "dialog", "aria-expanded": "false" } : {}
+      "aria-haspopup": "dialog",
+      "aria-expanded": "false"
     } });
     const shortcut = { pen: "B", highlighter: "H", eraser: "E", lasso: "V" };
     button.title = `${label} (${shortcut[tool]})`;
@@ -26682,7 +26967,7 @@ var InkWritingView = class extends import_obsidian3.FileView {
     button.addEventListener("click", () => {
       if (this.readingMode) return;
       this.finishPointerInput(false);
-      if (this.state.tool === tool && hasSettings) {
+      if (this.state.tool === tool) {
         this.toggleToolSettings(button);
         return;
       }
@@ -26695,8 +26980,9 @@ var InkWritingView = class extends import_obsidian3.FileView {
     this.onToolSelected(tool);
     this.state.tool = tool;
     if (tool !== "lasso") this.clearSelection();
-    if (tool === "eraser") (_a = this.brushPopover) == null ? void 0 : _a.close();
+    if (tool === "eraser" || tool === "lasso") (_a = this.brushPopover) == null ? void 0 : _a.close();
     this.closeEraserPopover();
+    this.closeLassoSettings();
     (_b = this.brushPopover) == null ? void 0 : _b.update();
     this.updateToolButtons();
     this.refreshEraserCursor();
@@ -27862,6 +28148,8 @@ var InkView = class extends InkWritingView {
     if (this.zoomRenderTimer !== void 0) window.clearTimeout(this.zoomRenderTimer);
     if (this.desktopZoomTimer !== void 0) globalThis.clearTimeout(this.desktopZoomTimer);
     this.finishPointerInput(false);
+    this.clearSelection();
+    this.closeLassoSettings();
     this.cancelPendingInkCommitTimer();
     this.clearSaveTimers();
     this.destroySwipeStage();
@@ -27910,6 +28198,8 @@ var InkView = class extends InkWritingView {
     this.pageNavigationGeneration += 1;
     this.destroySwipeStage();
     this.finishPointerInput(false);
+    this.clearSelection();
+    this.closeLassoSettings();
     this.cancelPendingInkCommitTimer();
     this.clearSaveTimers();
     if (this.dirtyRevision > this.savedRevision || this.activeSave) await this.save(file);
@@ -28509,10 +28799,15 @@ var InkView = class extends InkWritingView {
   }
   settingsOpen() {
     var _a, _b;
+    if (this.state.tool === "lasso") return this.lassoSettingsPopover !== null;
     return this.state.tool === "eraser" ? this.eraserPopover !== null : (_b = (_a = this.brushPopover) == null ? void 0 : _a.isOpen) != null ? _b : false;
   }
   toggleToolSettings(anchor) {
     var _a, _b;
+    if (this.state.tool === "lasso") {
+      this.toggleLassoSettings(anchor);
+      return;
+    }
     if (this.state.tool === "eraser") {
       this.toggleEraserPopover(anchor);
       return;
@@ -28524,6 +28819,10 @@ var InkView = class extends InkWritingView {
   }
   reopenToolSettings() {
     var _a, _b;
+    if (this.state.tool === "lasso") {
+      if (!this.lassoSettingsPopover) this.toggleLassoSettings(this.activeSettingsAnchor());
+      return;
+    }
     if (this.state.tool === "eraser") {
       if (!this.eraserPopover) this.toggleEraserPopover(this.activeToolButton());
       return;
@@ -29038,6 +29337,8 @@ page: ${this.currentPage().id}
     if (zoomIn) zoomIn.disabled = this.zoomLocked || this.zoom >= 3;
   }
   resetPageView() {
+    this.clearSelection();
+    this.closeLassoSettings();
     if (this.desktopZoomTimer !== void 0) globalThis.clearTimeout(this.desktopZoomTimer);
     this.desktopZoomTimer = void 0;
     this.pinchRenderZoom = void 0;
@@ -30251,6 +30552,8 @@ var PdfInkView = class extends InkWritingView {
     this.disposeZoomHud();
     this.closePageOptionsMenu();
     this.finishPointerInput(false);
+    this.clearSelection();
+    this.closeLassoSettings();
     let outcome = await this.flushSaveNow();
     if (outcome.status === "failed" && this.sidecar && this.sidecarFile) {
       outcome = await this.saveConflictCopy(this.sidecarRaw, outcome.message);
@@ -30338,6 +30641,8 @@ var PdfInkView = class extends InkWritingView {
   async onUnloadFile(_file) {
     var _a;
     this.finishPointerInput(false);
+    this.clearSelection();
+    this.closeLassoSettings();
     let outcome = { status: "saved" };
     try {
       outcome = await this.flushSaveNow();
@@ -31069,6 +31374,8 @@ var PdfInkView = class extends InkWritingView {
     if (next < 0 || next >= count) return;
     this.finishPointerInput(false);
     this.noteIndex = next;
+    this.clearSelection();
+    this.closeLassoSettings();
     this.zoomTouched = this.zoomLocked;
     if (this.scroller) {
       this.scroller.scrollLeft = 0;
@@ -31522,10 +31829,15 @@ var PdfInkView = class extends InkWritingView {
   }
   settingsOpen() {
     var _a, _b;
+    if (this.state.tool === "lasso") return this.lassoSettingsPopover !== null;
     return this.state.tool === "eraser" ? this.eraserPopover !== null : (_b = (_a = this.brushPopover) == null ? void 0 : _a.isOpen) != null ? _b : false;
   }
   toggleToolSettings(anchor) {
     var _a;
+    if (this.state.tool === "lasso") {
+      this.toggleLassoSettings(anchor);
+      return;
+    }
     if (this.state.tool === "eraser") {
       this.toggleEraserPopover(anchor);
       return;
@@ -31535,6 +31847,10 @@ var PdfInkView = class extends InkWritingView {
   }
   reopenToolSettings() {
     var _a, _b, _c;
+    if (this.state.tool === "lasso") {
+      if (!this.lassoSettingsPopover) this.toggleLassoSettings(this.activeSettingsAnchor());
+      return;
+    }
     if (this.state.tool === "eraser") {
       if (!this.eraserPopover) this.toggleEraserPopover((_a = this.toolbarButtons.get(`tool-${this.state.tool}`)) != null ? _a : null);
       return;
@@ -31840,7 +32156,8 @@ var InkNotesPlugin = class extends import_obsidian10.Plugin {
     this.toolStateSaver = new ToolStateSaver((stored) => this.persistToolState(stored));
     this.toolStateBinding = {
       config: this.toolState,
-      scheduleSave: (state) => this.toolStateSaver.schedule(state)
+      scheduleSave: (state) => this.toolStateSaver.schedule(state),
+      clipboard: new InkClipboard()
     };
     this.store = new NotebookStore(this.app);
     this.workers = new InkWorkerService((message) => new import_obsidian10.Notice(message));
