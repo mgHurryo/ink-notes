@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Recognize default-pen scribble erasing from raw Pencil samples, with conservative repeated-area reversal checks to reduce accidental erasure of connected handwriting. Add a persistent enable toggle and 0–100% sensitivity slider in eraser settings (default 25%); lower values require more deliberate scrubbing. Ordinary/blank-area strokes remain ink.
+
 ## 0.1.3-beta.3
 
 - Unify pen, finger, mouse and keyboard gestures across Ink and PDF editors. By default, stylus writes while fingers select or move images/handwriting and navigate; opt in to Use finger as pen for single-finger writing, highlighting, erasing and selection, with two-finger navigation. Hold opens clipboard actions, color removal requires an explicit menu choice, and pressure-curve points use an explicit remove action. Cancelled edits roll back before pinch or stylus handoff.
