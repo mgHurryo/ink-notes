@@ -55,6 +55,21 @@ afterEach(async () => {
 gestureContract(async () => view);
 
 describe("reference-style editor", () => {
+  it("duplicates sticky boards with independent note/stroke ownership and content", () => {
+    const host = view as any, page = host.notebook.pages[0];
+    button("Add sticky note").click();
+    const sticky = page.stickyNotes[0];
+    sticky.strokes.push({ id: "source-ink", pageId: sticky.id, tool: "pen", width: 3, opacity: 1, color: "#000000",
+      points: [{ x: 4, y: 8, pressure: .5, t: 1 }], createdAt: 1, updatedAt: 1 });
+    Array.from(document.querySelectorAll<HTMLButtonElement>('.ink-sticky-editor button')).find((button) => button.textContent === "Cancel")!.click();
+    host.duplicateCurrentPage();
+    const duplicate = host.notebook.pages[1], copy = duplicate.stickyNotes[0];
+    expect(copy.id).not.toBe(page.stickyNotes[0].id);
+    expect(copy.pageId).toBe(duplicate.id); expect(copy.strokes[0].pageId).toBe(copy.id);
+    expect(copy.strokes[0].id).not.toBe(page.stickyNotes[0].strokes[0].id);
+    expect(copy.strokes[0].points).toEqual(page.stickyNotes[0].strokes[0].points);
+    copy.strokes[0].points[0].x = 90; expect(page.stickyNotes[0].strokes[0].points[0].x).toBe(4);
+  });
   function selectSampleInk() {
     const host = view as unknown as { notebook: ReturnType<typeof createNotebook>; canvasLogicalWidth: number; canvasLogicalHeight: number;
       lassoPath: { x: number; y: number; pressure: number; t: number }[]; finishLasso(page: InkPage): void; clearSelection(): void };
@@ -406,7 +421,7 @@ describe("reference-style editor", () => {
     const labels = (selector: string) => Array.from(toolbar.querySelectorAll(selector))
       .map((el) => el.getAttribute("aria-label"));
     expect(labels(".ink-toolbar-start button")).toEqual(["Pages", "Undo", "Redo"]);
-    expect(labels(".ink-toolbar-section-draw button")).toEqual(["Pen", "Highlight", "Erase", "Select"]);
+    expect(labels(".ink-toolbar-section-draw button")).toEqual(["Pen", "Highlight", "Erase", "Select", "Add sticky note"]);
     expect(labels(".ink-toolbar-section-document button")).toEqual(["Reading mode", "Add page", "Export as PDF", "Page options"]);
   });
 
@@ -728,6 +743,30 @@ describe("reference-style editor", () => {
     button("Square eraser").click();
     expect(cursor.classList.contains("is-square")).toBe(true);
     expect(button("Square eraser").getAttribute("aria-checked")).toBe("true");
+  });
+  it("exposes a persistent scribble eraser toggle in eraser settings", () => {
+    const scheduleSave = vi.fn();
+    (view as unknown as { sharedToolSettings: unknown }).sharedToolSettings = {
+      config: defaultToolState(), scheduleSave,
+    };
+    button("Erase").click();
+    button("Erase").click();
+    const toggle = document.querySelector<HTMLInputElement>('input[aria-label="Scribble erase with pen"]')!;
+    expect(toggle.checked).toBe(true);
+    const sensitivity = document.querySelector<HTMLInputElement>('input[aria-label="Scribble erase sensitivity"]')!;
+    expect(sensitivity.value).toBe("25");
+    sensitivity.value = "60";
+    sensitivity.dispatchEvent(new Event("input", { bubbles: true }));
+    expect((view as any).state.scribbleSensitivity).toBe(60);
+    expect(document.body.textContent).toContain("Scribble sensitivity: 60%");
+    toggle.checked = false;
+    toggle.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(scheduleSave).toHaveBeenCalled();
+    expect((view as any).state.scribbleErase).toBe(false);
+    expect(sensitivity.disabled).toBe(true);
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(sensitivity.disabled).toBe(false);
   });
   it("toggles the eraser mini popover on re-tap without the reopen race", async () => {
     button("Erase").click();   // select the eraser

@@ -1,4 +1,5 @@
 import { InkNotebook, InkStroke, mergeNotebooks, normalizeNotebook } from "./model";
+import { cloneSticky } from "./sticky-model";
 import { drawInkStroke, penOutlineRings } from "./rendering";
 import {
   InkWorkerRequest,
@@ -524,6 +525,12 @@ export function applyNotebookOperation(notebook: InkNotebook, operation: Noteboo
       stroke.points = stroke.points.map((point) => ({ ...point, x: point.x + operation.dx, y: point.y + operation.dy }));
       stroke.updatedAt = operation.pageUpdatedAt;
     }
+  } else if (operation.type === "patch-sticky-notes") {
+    const removed = new Set(operation.remove), upsert = new Map(operation.upsert.map((note) => [note.id, cloneSticky(note)]));
+    page.deletedStickyNotes = { ...page.deletedStickyNotes };
+    for (const [id, time] of Object.entries(operation.deletedStickyNotes)) page.deletedStickyNotes[id] = Math.max(page.deletedStickyNotes[id] ?? 0, time);
+    page.stickyNotes = [...(page.stickyNotes ?? []).filter((note) => !removed.has(note.id) && !upsert.has(note.id)), ...upsert.values()]
+      .filter((note) => note.updatedAt > (page.deletedStickyNotes![note.id] ?? 0));
   } else if (operation.type === "patch-images") {
     const removed = new Set(operation.remove);
     const upsert = new Map(operation.upsert.map((image) => [image.id, { ...image }]));

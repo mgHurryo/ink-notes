@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.1.3-beta.4
+
+- Clear the previous PDF sidecar when a workspace view starts loading another file, so read-only or failed sidecar resolution cannot leave the old document's notes attached to the new PDF.
+
+- Add colored sticky notes to Ink and PDF handwriting pages with position/size controls, foldable previews, handwritten and typed content, and undo/redo. Frame resizing retains the fixed content coordinates; the editor can extend and scroll its board without allocating a board-sized canvas. Explicit Save applies drafts; reading mode prevents changes and stale drafts cannot overwrite another pane's note.
+- Add vault-wide sticky-note title/text/keyword search and Markdown links to exact notes. Provide an optional cancellable handwriting-index adapter with a five-second per-note timeout; no recognition service is bundled or invoked by default. Notes appear in previews, Ink embeds and PDF exports, which capture the visible window/fold state. Source PDFs remain unchanged; old versions may discard sticky metadata on save.
+- Recognize default-pen scribble erasing from raw Pencil samples, with conservative repeated-area reversal checks to reduce accidental erasure of connected handwriting. Add a persistent enable toggle and 0–100% sensitivity slider in eraser settings (default 25%); lower values require more deliberate scrubbing. Ordinary/blank-area strokes remain ink.
+
 ## 0.1.3-beta.3
 
 - Unify pen, finger, mouse and keyboard gestures across Ink and PDF editors. By default, stylus writes while fingers select or move images/handwriting and navigate; opt in to Use finger as pen for single-finger writing, highlighting, erasing and selection, with two-finger navigation. Hold opens clipboard actions, color removal requires an explicit menu choice, and pressure-curve points use an explicit remove action. Cancelled edits roll back before pinch or stylus handoff.

@@ -1,5 +1,6 @@
 import { App, Modal, Notice, TFile, normalizePath } from "obsidian";
 import { InkImage, InkPage, isManagedImagePath, newId } from "./model";
+import { paintPageStickies } from "./sticky-rendering";
 
 export interface ImageAsset { id: string; path: string; name: string; width: number; height: number; groupId: string; }
 interface ImageLibrary { schema: 1; groups: { id: string; name: string }[]; assets: ImageAsset[]; }
@@ -180,7 +181,7 @@ export function paintPageImages(store: ImageLibraryStore | undefined, canvas: HT
     const layer = (foreground: boolean) => images.forEach((image, index) => {
       if (image.foreground === foreground && loaded[index]) ctx.drawImage(loaded[index]!, image.x * canvas.width, image.y * canvas.height, image.width * canvas.width, image.height * canvas.height);
     });
-    layer(false); ink(ctx); layer(true); ctx.restore();
+    layer(false); ink(ctx); layer(true); paintPageStickies(ctx, page.stickyNotes, canvas.width, canvas.height); ctx.restore();
   };
   draw([]);
   if (images.length && store) void Promise.allSettled(images.map((image) => store.image(image.assetPath))).then((results) => draw(results.map((result) => {
