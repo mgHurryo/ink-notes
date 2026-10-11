@@ -24,6 +24,7 @@ vi.mock("obsidian", async (importOriginal) => ({
   },
   Notice: class { constructor(message: string) { notice(message); } },
   SuggestModal: class {},
+  Modal: class {},
   PluginSettingTab: class { containerEl = { empty: vi.fn() }; },
   Setting: class {
     entry = { name: "" } as typeof settings[number];

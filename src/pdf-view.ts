@@ -22,6 +22,7 @@ import {
 import { PdfSidecarStore, serializeSidecar } from "./pdf-store";
 import { PdfExportError, exportHandwrittenPdf, exportPathFor, sidecarHasInk } from "./pdf-export";
 import { PdfTabTakeover, hasNativeNavigation } from "./pdf-takeover";
+import { paintPageImages } from "./image-library";
 
 export const VIEW_TYPE_PDF_INK = "ink-notes-pdf-view";
 
@@ -974,14 +975,27 @@ export class PdfInkView extends InkWritingView {
    */
   private overlayThumbInk(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, index: number): void {
     const page = this.sidecar?.notebook.pages[index];
-    if (!page || page.strokes.length === 0) return;
-    const scale = canvas.width / Math.max(1, this.canvasLogicalWidth);
-    ctx.save();
-    ctx.setTransform(scale, 0, 0, scale, 0, 0);
-    for (const stroke of page.strokes) {
-      drawInkStroke(ctx, scaledStroke(stroke, scale), this.canvasLogicalWidth, this.canvasLogicalHeight);
+    if (!page) return;
+    if ((page.images?.length ?? 0) > 0) {
+      const background = document.createElement("canvas"); background.width = canvas.width; background.height = canvas.height;
+      background.getContext("2d")?.drawImage(canvas, 0, 0);
+      const width = this.canvasLogicalWidth, height = this.canvasLogicalHeight;
+      const scale = canvas.width / Math.max(1, width);
+      paintPageImages(this.imageLibrary, canvas, page, (context) => { context.clearRect(0, 0, canvas.width, canvas.height); context.drawImage(background, 0, 0); }, (context) => {
+        context.setTransform(scale, 0, 0, scale, 0, 0);
+        for (const stroke of page.strokes) drawInkStroke(context, scaledStroke(stroke, scale), width, height);
+        context.setTransform(1, 0, 0, 1, 0, 0);
+      });
+      return;
     }
-    ctx.restore();
+    const scale = canvas.width / Math.max(1, this.canvasLogicalWidth);
+    // Even an image-free repaint invalidates pending paints from an older
+    // revision, otherwise a slow image load can resurrect a deleted image.
+    paintPageImages(this.imageLibrary, canvas, page, () => undefined, (context) => {
+      context.setTransform(scale, 0, 0, scale, 0, 0);
+      for (const stroke of page.strokes) drawInkStroke(context, scaledStroke(stroke, scale), this.canvasLogicalWidth, this.canvasLogicalHeight);
+      context.setTransform(1, 0, 0, 1, 0, 0);
+    });
   }
 
   private openPageMenu(event: MouseEvent): void {
@@ -1439,9 +1453,12 @@ export class PdfInkView extends InkWritingView {
     const ctx = ink.getContext("2d");
     if (ctx) {
       ctx.setTransform(ink.width / baseWidth, 0, 0, ink.height / logicalHeight, 0, 0);
-      for (const stroke of this.sidecar?.notebook.pages[neighborIndex]?.strokes ?? []) {
-        drawInkStroke(ctx, stroke, baseWidth, logicalHeight);
-      }
+      const page = this.sidecar?.notebook.pages[neighborIndex];
+      if (page) paintPageImages(this.imageLibrary, ink, page, (context) => context.clearRect(0, 0, ink.width, ink.height), (context) => {
+        context.setTransform(ink.width / baseWidth, 0, 0, ink.height / logicalHeight, 0, 0);
+        for (const stroke of page.strokes) drawInkStroke(context, stroke, baseWidth, logicalHeight);
+        context.setTransform(1, 0, 0, 1, 0, 0);
+      });
     }
   }
 
@@ -1566,6 +1583,7 @@ export class PdfInkView extends InkWritingView {
     this.flipSettling = false;
   }
   protected settingsOpen(): boolean {
+    if (this.state.tool === "pointer") return false;
     if (this.state.tool === "lasso") return this.lassoSettingsPopover !== null;
     return this.state.tool === "eraser" ? this.eraserPopover !== null : this.brushPopover?.isOpen ?? false;
   }
@@ -1841,7 +1859,7 @@ export class PdfInkView extends InkWritingView {
         new Notice("Export cancelled: the source PDF changed. Your notes still belong to the previous revision.");
         return;
       }
-      const output = await exportHandwrittenPdf(bytes, this.sidecar, this.file.basename, this.canvasLogicalWidth);
+      const output = await exportHandwrittenPdf(bytes, this.sidecar, this.file.basename, this.canvasLogicalWidth, this.imageLibrary?.bytes);
       const target = exportPathFor(this.file.path, (candidate) => this.app.vault.getAbstractFileByPath(candidate) !== null);
       await this.app.vault.createBinary(target, output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength) as ArrayBuffer);
       new Notice(`Exported ${target}`);

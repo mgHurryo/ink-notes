@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Add image-library batch deletion with a count/name confirmation and undo of the latest deletion while the library stays open. Existing multi-select group moves now disable with no selection; counts include selections hidden by search/group filters. Deletion removes catalog entries only, retaining managed files for placed images, previews and PDF exports; it does not reclaim disk space.
+
+- Add a dedicated Pointer arrow tool (desktop shortcut A) for image editing. Insertion selects the image immediately; a finger/mouse contact on an image opens its controls, and tapping outside dismisses them. Stylus Pointer and native stylus Touch input cannot select/drag images; handwriting and lasso tools keep their existing behavior. Pointer contacts on blank paper never create ink.
+
+- Add a grouped image library with batch photo/file, vault, path-list, paste and drop imports. Insert reusable managed image copies into Ink and PDF handwriting pages; move, resize, change their layer above/below handwriting and delete individual placements with undo/redo. Images default below handwriting and appear in previews, Markdown embeds and PDF exports. Existing note files remain readable without migration; sync managed image assets with notes and back up before downgrading to an older plugin.
+
 - Add Freehand and Rectangle selection modes in lasso settings for both Ink and PDF handwriting. Freehand remains the default; rectangle drags work in every direction, select crossing strokes, and retain the existing move/copy/cut/delete/paste actions. The mode persists across sessions; older settings default to Freehand.
 - Add floating lasso Copy / Cut / Delete / Paste actions for Ink notebooks and PDF handwriting. Actions stay inside the editor pane, wrap on narrow screens, and support undo/redo and desktop shortcuts. Selection and placement targets clear on page/file changes.
 - Add an opt-in Copy and paste across files setting in the lasso panel. A plugin-scoped in-memory clipboard preserves handwriting proportions, pressure and brush settings across Ink/PDF pages; copied contents clear on reload and never use the system clipboard or modify the original PDF.

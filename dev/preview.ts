@@ -8,6 +8,8 @@ import { drawInkStroke } from "../src/rendering";
 import { TFile } from "obsidian";
 import { NotebookSuggestModal } from "../src/notebook-modal";
 import type { WorkspaceLeaf } from "obsidian";
+import { ImageLibraryStore } from "../src/image-library";
+import { imageVaultApp } from "./image-vault";
 
 type RendererComparisonMode = "pen" | "highlighter" | "stroke-eraser" | "circle-eraser" | "square-eraser" | "lasso";
 
@@ -49,6 +51,7 @@ const store = {
 };
 const workers = new InkWorkerService((message) => console.warn(message));
 const view = new InkView({} as WorkspaceLeaf, store as unknown as NotebookStore, workers);
+view.useImageLibrary(new ImageLibraryStore(imageVaultApp()));
 void (async () => {
   await view.onOpen();
   await view.onLoadFile({ path: "Ink Notes/Preview.ink", basename: "Preview" } as TFile);

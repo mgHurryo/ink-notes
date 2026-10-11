@@ -15,6 +15,9 @@
  */
 
 import { FileView, Menu, Notice, setIcon } from "obsidian";
+import { ImageLibraryModal, ImageLibraryStore, placedImage } from "./image-library";
+import { PageImageLayer } from "./page-images";
+import type { InkImage } from "./model";
 import {
   MAX_RAW_POINT_SAMPLES,
   ModelerEngageReason,
@@ -436,6 +439,61 @@ function isPointerCaptureError(error: unknown): boolean {
  * identically in both editors.
  */
 export abstract class InkWritingView extends FileView {
+  protected imageLibrary?: ImageLibraryStore;
+  private pageImages?: PageImageLayer;
+
+  useImageLibrary(store: ImageLibraryStore): void { this.imageLibrary = store; }
+
+  private syncPageImages(): void {
+    if (!this.imageLibrary || !this.viewReady) return;
+    const host = this.inputHost(); if (!host) return;
+    if (this.pageImages?.host !== host) {
+      this.pageImages?.dispose();
+      this.pageImages = new PageImageLayer(host, this.toolbarRoot(), this.imageLibrary, {
+        page: () => this.currentPage(), editable: () => this.state.tool === "pointer" && !this.inputLocked(),
+        select: () => { this.selectedStrokeIds.clear(); this.hideSelectionActions(); },
+        change: (before, after) => { if (!this.inputLocked()) this.changeImages(this.currentPage().id, before, after); },
+      });
+    }
+    this.pageImages.sync();
+  }
+
+  private openImageLibrary(): void {
+    if (!this.imageLibrary || this.inputLocked()) return;
+    this.finishPointerInput(false);
+    const notebook = this.currentNotebook(), pageId = this.currentPage().id, file = this.file;
+    new ImageLibraryModal(this.imageLibrary, (assets) => {
+      if (this.file !== file || this.currentNotebook() !== notebook || this.currentPage().id !== pageId || this.inputLocked()) {
+        new Notice("The page changed. Open the image library again to insert here."); return;
+      }
+      const images = assets.map((asset, index) => placedImage(asset, pageId, this.canvasLogicalWidth / this.canvasLogicalHeight, index));
+      if (!images.length) return;
+      this.selectWritingTool("pointer"); this.changeImages(pageId, [], images);
+      this.pageImages?.select(images[images.length - 1].id);
+    }).open();
+  }
+
+  private changeImages(pageId: string, before: InkImage[], after: InkImage[]): void {
+    const templatesBefore = before.map((i) => ({ ...i })), templatesAfter = after.map((i) => ({ ...i }));
+    let current = before.map((i) => ({ ...i }));
+    const apply = (templates: InkImage[]) => {
+      const page = this.pageById(pageId); if (!page) return;
+      const now = Math.max(Date.now(), page.updatedAt + 1);
+      const tombstones = new Set(page.deletedImageIds ?? []);
+      const desired = templates.map((i) => ({ ...i, id: tombstones.has(i.id) ? newId("placed-image") : i.id, pageId, updatedAt: now }));
+      const ids = new Set(current.map((i) => i.id));
+      const removed = current.filter((i) => !desired.some((next) => next.id === i.id)).map((i) => i.id);
+      page.images = [...(page.images ?? []).filter((i) => !ids.has(i.id)), ...desired];
+      page.deletedImageIds = [...new Set([...(page.deletedImageIds ?? []), ...removed])];
+      this.markChanged(page); page.updatedAt = now; this.currentNotebook().updatedAt = now;
+      this.queueWorkerOperation({ type: "patch-images", pageId, upsert: desired, remove: [...ids], deletedImageIds: removed,
+        pageUpdatedAt: page.updatedAt, notebookUpdatedAt: this.currentNotebook().updatedAt });
+      current = desired;
+      this.syncPageImages(); this.scheduleSave(); this.afterInputFullySettled();
+    };
+    apply(templatesAfter);
+    this.pushCommand({ undo: () => apply(templatesBefore), redo: () => apply(templatesAfter) });
+  }
   /** Defaults come from the persistence module so saved settings restore
    *  against the exact same shape the editors start from. */
   protected state: ToolState = defaultToolState();
@@ -961,6 +1019,8 @@ export abstract class InkWritingView extends FileView {
     this.addToolButton(draw, "highlighter", "Highlight", "highlighter");
     this.addToolButton(draw, "eraser", "Erase", "eraser");
     this.addToolButton(draw, "lasso-select", "Select", "lasso");
+    if (this.imageLibrary) this.addToolButton(draw, "mouse-pointer-2", "Pointer", "pointer");
+    if (this.imageLibrary) this.addIconButton(draw, "image-plus", "Image library", () => this.openImageLibrary());
   }
 
   protected buildReadingModeButton(parent: HTMLElement): void {
@@ -1069,6 +1129,7 @@ export abstract class InkWritingView extends FileView {
   protected desktopResetZoom(): void {}
 
   protected registerDesktopInput(): void {
+    this.register(() => { this.pageImages?.dispose(); this.pageImages = undefined; });
     const scroller = this.inputScroller();
     const doc = this.containerEl.ownerDocument;
     this.registerDomEvent(doc.defaultView ?? window, "resize", () => this.positionSelectionActions());
@@ -1150,7 +1211,7 @@ export abstract class InkWritingView extends FileView {
     if (key === "-") { this.desktopZoom(1 / 1.1); return true; }
     if (key === "0") { this.desktopResetZoom(); return true; }
     if (event.shiftKey || this.inputLocked()) return false;
-    const tools: Record<string, InkTool> = { b: "pen", h: "highlighter", e: "eraser", v: "lasso" };
+    const tools: Record<string, InkTool> = { b: "pen", h: "highlighter", e: "eraser", v: "lasso", a: "pointer" };
     const tool = tools[key];
     if (tool) { this.selectWritingTool(tool); return true; }
     if (key === "escape") { this.clearSelection(); return true; }
@@ -1235,6 +1296,9 @@ export abstract class InkWritingView extends FileView {
     if (this.inputLocked()) return;
     if (this.nativeMenuOpen()) return;
     if (event.pointerType === "touch") return;
+    // Pointer selects page objects through their own handlers; blank paper
+    // and stylus contacts must never fall through into stroke creation.
+    if (this.state.tool === "pointer") return;
     // Deduplicate only the contact currently owned by native stylus Touch.
     // The next contact may have Pointer events without a classified Touch,
     // so observing one Touch stream must not disable pen input for the view.
@@ -2163,6 +2227,7 @@ export abstract class InkWritingView extends FileView {
   }
 
   protected clearSelection(): void {
+    this.pageImages?.clear();
     this.selectedStrokeIds.clear();
     this.lassoPath = [];
     this.lassoDrag = null;
@@ -2598,6 +2663,7 @@ export abstract class InkWritingView extends FileView {
   }
 
   protected drawSelection(width: number, height: number): void {
+    this.syncPageImages();
     this.positionSelectionActions();
     const ctx = this.ctx;
     if (!ctx) return;
@@ -3273,9 +3339,9 @@ export abstract class InkWritingView extends FileView {
   protected addToolButton(parent: HTMLElement, icon: string, label: string, tool: InkTool): void {
     const button = parent.createEl("button", { cls: "ink-tool-button", attr: {
       type: "button", title: label, "aria-label": label, "aria-pressed": String(this.state.tool === tool), "data-tool": tool,
-      "aria-haspopup": "dialog", "aria-expanded": "false",
+      ...(tool === "pointer" ? {} : { "aria-haspopup": "dialog", "aria-expanded": "false" }),
     } });
-    const shortcut: Record<InkTool, string> = { pen: "B", highlighter: "H", eraser: "E", lasso: "V" };
+    const shortcut: Record<InkTool, string> = { pen: "B", highlighter: "H", eraser: "E", lasso: "V", pointer: "A" };
     button.title = `${label} (${shortcut[tool]})`;
     const iconHolder = button.createSpan({ cls: "ink-button-icon" });
     setIcon(iconHolder, icon);
@@ -3283,7 +3349,7 @@ export abstract class InkWritingView extends FileView {
       if (this.readingMode) return;
       this.finishPointerInput(false);
       if (this.state.tool === tool) {
-        this.toggleToolSettings(button);
+        if (tool !== "pointer") this.toggleToolSettings(button);
         return;
       }
       this.selectWritingTool(tool);
@@ -3295,12 +3361,13 @@ export abstract class InkWritingView extends FileView {
     this.onToolSelected(tool);
     this.state.tool = tool;
     if (tool !== "lasso") this.clearSelection();
-    if (tool === "eraser" || tool === "lasso") this.brushPopover?.close();
+    if (!isBrushTool(tool)) this.brushPopover?.close();
     this.closeEraserPopover();
     this.closeLassoSettings();
     this.brushPopover?.update();
     this.updateToolButtons();
     this.refreshEraserCursor();
+    this.syncPageImages();
     if (this.settingsOpen()) this.reopenToolSettings();
   }
 

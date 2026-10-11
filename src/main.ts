@@ -11,6 +11,7 @@ import { PDF_VIEW_ENHANCER_PLUGIN_IDS, PdfTabTakeover } from "./pdf-takeover";
 import { sanitizeToolState, storedToolState, ToolStateSaver, type SharedToolState, type StoredToolState } from "./tool-state";
 import type { ToolState } from "./ink-writing";
 import { InkClipboard } from "./lasso-clipboard";
+import { ImageLibraryStore } from "./image-library";
 
 interface InkNotesSettings {
   pdfOpenMode: "native" | "compatible" | "ink";
@@ -21,6 +22,7 @@ const DEFAULT_SETTINGS: InkNotesSettings = {
 };
 
 export default class InkNotesPlugin extends Plugin {
+  private imageLibrary?: ImageLibraryStore;
   private store!: NotebookStore;
   private workers!: InkWorkerService;
   private pdfStore!: PdfSidecarStore;
@@ -54,6 +56,7 @@ export default class InkNotesPlugin extends Plugin {
       clipboard: new InkClipboard(),
     };
     this.store = new NotebookStore(this.app);
+    if (this.app.vault) this.imageLibrary = new ImageLibraryStore(this.app);
     this.workers = new InkWorkerService((message) => new Notice(message));
     this.register(() => this.workers.dispose());
     this.registerView(VIEW_TYPE_INK, (leaf) => this.createView(leaf));
@@ -106,7 +109,7 @@ export default class InkNotesPlugin extends Plugin {
         return true;
       },
     });
-    this.registerMarkdownCodeBlockProcessor("ink", createInkEmbedProcessor(this.app, (file, pageId) => this.openFile(file, pageId)));
+    this.registerMarkdownCodeBlockProcessor("ink", createInkEmbedProcessor(this.app, (file, pageId) => this.openFile(file, pageId), this.imageLibrary));
     this.registerEvent(this.app.workspace.on("file-menu", (menu, file) => {
       if (!(file instanceof TFile) || file.extension.toLowerCase() !== "pdf") return;
       menu.addItem((item) => item.setTitle("Open PDF with Ink Notes handwriting").setIcon("pen-line")
@@ -127,7 +130,9 @@ export default class InkNotesPlugin extends Plugin {
   }
 
   private createView(leaf: WorkspaceLeaf): InkView {
-    return new InkView(leaf, this.store, this.workers, this.toolStateBinding);
+    const view = new InkView(leaf, this.store, this.workers, this.toolStateBinding);
+    if (this.imageLibrary) view.useImageLibrary(this.imageLibrary);
+    return view;
   }
 
   /**
@@ -152,6 +157,7 @@ export default class InkNotesPlugin extends Plugin {
     }), VIEW_TYPE_PDF_INK);
     this.registerView(VIEW_TYPE_PDF_INK, (leaf) => {
       const view = new PdfInkView(leaf);
+      if (this.imageLibrary) view.useImageLibrary(this.imageLibrary);
       view.configure({ store: this.pdfStore, workers: this.workers, takeover: this.takeover, toolState: this.toolStateBinding });
       return view;
     });

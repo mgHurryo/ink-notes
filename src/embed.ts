@@ -2,14 +2,15 @@ import { App, MarkdownPostProcessorContext, MarkdownRenderChild, Notice, TFile, 
 import { InkNotebook, InkPage, normalizeNotebook } from "./model";
 import { drawInkStroke } from "./rendering";
 import { InkEmbedSpec, parseInkEmbed } from "./embed-spec";
+import { ImageLibraryStore } from "./image-library";
 export { parseInkEmbed } from "./embed-spec";
 
-export function createInkEmbedProcessor(app: App, open: (file: TFile, pageId?: string) => Promise<void>) {
+export function createInkEmbedProcessor(app: App, open: (file: TFile, pageId?: string) => Promise<void>, images?: ImageLibraryStore) {
   return (source: string, el: HTMLElement, context: MarkdownPostProcessorContext): void => {
     let spec: InkEmbedSpec;
     try { spec = parseInkEmbed(source); }
     catch (error) { renderError(el, error); return; }
-    context.addChild(new InkEmbedChild(app, el, spec, open));
+    context.addChild(new InkEmbedChild(app, el, spec, open, images));
   };
 }
 
@@ -21,6 +22,7 @@ class InkEmbedChild extends MarkdownRenderChild {
     container: HTMLElement,
     private readonly spec: InkEmbedSpec,
     private readonly open: (file: TFile, pageId?: string) => Promise<void>,
+    private readonly images?: ImageLibraryStore,
   ) { super(container); }
 
   onload(): void {
@@ -57,6 +59,13 @@ class InkEmbedChild extends MarkdownRenderChild {
     frame.style.aspectRatio = `${notebook.pageWidth} / ${notebook.pageHeight}`;
     const canvas = frame.createEl("canvas", { attr: { "aria-label": `Ink preview: ${page.title}` } });
     drawPage(canvas, notebook, page);
+    for (const image of page.images ?? []) {
+      const img = frame.createEl("img", { cls: "ink-embed-image", attr: { alt: "Inserted image" } });
+      try { img.src = (this.images ?? new ImageLibraryStore(this.app)).url(image.assetPath); } catch { img.alt = "Missing image"; }
+      img.style.left = `${image.x * 100}%`; img.style.top = `${image.y * 100}%`;
+      img.style.width = `${image.width * 100}%`; img.style.height = `${image.height * 100}%`;
+      img.style.zIndex = image.foreground ? "2" : "0";
+    }
     const button = next.createEl("button", { cls: "ink-embed-open", attr: { type: "button", "aria-label": "Open Ink notebook" } });
     setIcon(button, "external-link");
     button.createSpan({ text: "Open notebook" });
