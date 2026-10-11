@@ -23,6 +23,7 @@ interface PdfViewInternals {
   mode: string;
   sidecar: PdfSidecar;
   sidecarRaw: string;
+  sidecarFile: TFile | null;
   pendingMergedSidecar: PdfSidecar | null;
   dirty: boolean;
   writeBlockedReason: string | null;
@@ -568,14 +569,45 @@ describe("PDF plugin handoff and source revisions", () => {
     expect(internal.sidecar).toBeNull();
   });
 
-  it("keeps notes and edit availability when unloading cannot save", async () => {
-    const { view, internal, store } = setup();
+  it("recovers a conflict copy and unloads when saving fails", async () => {
+    const { view, internal, store, vaultCalls, session } = setup();
     internal.markSidecarChanged();
     store.writeIfUnchanged.mockRejectedValue(new Error("disk full"));
+    await view.onUnloadFile(view.file!);
+    expect(vaultCalls.created).toHaveLength(1);
+    expect(vaultCalls.created[0]).toMatch(/\.conflict-\d+\.pdfink\.json$/);
+    expect(internal.sidecar).toBeNull();
+    expect(session.dispose).toHaveBeenCalled();
+  });
+
+  it("keeps local ink in a conflict copy when the source changes before unload", async () => {
+    const { view, internal, vaultCalls, session } = setup();
+    internal.onPointerDown(pointer(60, 60));
+    internal.onPointerMove(pointer(140, 100));
+    view.sourcePdfModified();
+
+    await view.onUnloadFile(view.file!);
+
+    expect(vaultCalls.created).toHaveLength(1);
+    const recovery = JSON.parse(vaultCalls.createdContents[0]) as PdfSidecar;
+    expect(recovery.notebook.pages[0].strokes).toHaveLength(1);
+    expect(internal.sidecar).toBeNull();
+    expect(internal.sidecarFile).toBeNull();
+    expect(session.dispose).toHaveBeenCalled();
+  });
+
+  it("tears down after both the save and conflict recovery fail", async () => {
+    const { view, internal, store, session } = setup();
+    const vault = internal.app.vault as { create: (path: string, data?: string) => Promise<unknown> };
+    vault.create = async () => { throw new Error("recovery disk full"); };
+    internal.markSidecarChanged();
+    store.writeIfUnchanged.mockRejectedValue(new Error("disk full"));
+
     await expect(view.onUnloadFile(view.file!)).rejects.toThrow("disk full");
-    expect(internal.sidecar).not.toBeNull();
-    expect(internal.dirty).toBe(true);
-    expect(internal.canEdit()).toBe(true);
+
+    expect(internal.sidecar).toBeNull();
+    expect(internal.sidecarFile).toBeNull();
+    expect(session.dispose).toHaveBeenCalled();
   });
 
   it("returns source page numbers rather than inserted blank-page positions and keeps the leaf native", async () => {

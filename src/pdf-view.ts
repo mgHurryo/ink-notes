@@ -301,19 +301,29 @@ export class PdfInkView extends InkWritingView {
 
   async onUnloadFile(_file: TFile): Promise<void> {
     this.finishPointerInput(false);
-    const outcome = await this.flushSaveNow();
+    let outcome: SaveOutcome = { status: "saved" };
+    try {
+      outcome = await this.flushSaveNow();
+      if (outcome.status === "failed" && this.sidecar && this.sidecarFile) {
+        outcome = await this.saveConflictCopy(this.sidecarRaw, outcome.message);
+      }
+      if (outcome.status === "conflict") new Notice(`Ink Notes kept a conflict copy: ${outcome.message}`);
+    } catch (error) {
+      outcome = { status: "failed", message: messageOf(error) };
+    } finally {
+      this.clearSaveTimers();
+      this.loadGeneration += 1;
+      this.cancelPdfRender();
+      this.discardPendingInkPreview();
+      this.disposeWorkerSession();
+      void this.pdfDoc?.destroy().catch(() => undefined);
+      this.pdfDoc = null;
+      this.sidecar = null;
+      this.sidecarFile = null;
+      this.writeBlockedReason = null;
+      this.pendingMergedSidecar = null;
+    }
     if (outcome.status === "failed") throw new Error(`Could not save PDF handwriting: ${outcome.message}`);
-    if (outcome.status === "conflict") new Notice(`Ink Notes kept a conflict copy: ${outcome.message}`);
-    this.clearSaveTimers();
-    this.loadGeneration += 1;
-    this.cancelPdfRender();
-    this.discardPendingInkPreview();
-    void this.pdfDoc?.destroy().catch(() => undefined);
-    this.pdfDoc = null;
-    this.sidecar = null;
-    this.sidecarFile = null;
-    this.writeBlockedReason = null;
-    this.pendingMergedSidecar = null;
   }
 
   /**
@@ -433,7 +443,8 @@ export class PdfInkView extends InkWritingView {
   sourcePdfModified(): void {
     if (!this.sidecar) return;
     this.finishPointerInput(false);
-    this.writeBlockedReason = "The source PDF changed. Reopen it to check the notes against the new revision.";
+    this.writeBlockedReason = `The source PDF changed. Reopen it to check the notes against the new revision.${
+      this.dirty ? " Unsaved notes will be kept in a conflict copy if you close this tab." : ""}`;
     this.updateToolButtons();
     this.setStatus(this.writeBlockedReason, true);
   }
