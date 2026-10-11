@@ -24745,6 +24745,7 @@ function defaultToolState() {
     eraserMode: "stroke",
     eraserSize: 32,
     scribbleErase: true,
+    scribbleSensitivity: 25,
     palette: INK_COLORS.map((color) => color.value),
     lasso: { mode: "freehand", crossFileClipboard: false }
   };
@@ -24767,6 +24768,7 @@ function sanitizeToolState(raw) {
     eraserMode: isEraserMode(source.eraserMode) ? source.eraserMode : defaults.eraserMode,
     eraserSize: sanitizeNumber(source.eraserSize, defaults.eraserSize, ERASER_SIZE_RANGE),
     scribbleErase: source.scribbleErase !== false,
+    scribbleSensitivity: sanitizeNumber(source.scribbleSensitivity, defaults.scribbleSensitivity, PERCENT_RANGE),
     palette: sanitizePalette(source.palette),
     lasso: { mode: lasso.mode === "rectangle" ? "rectangle" : "freehand", crossFileClipboard: lasso.crossFileClipboard === true }
   };
@@ -24779,6 +24781,7 @@ function storedToolState(state) {
     eraserMode: state.eraserMode,
     eraserSize: state.eraserSize,
     scribbleErase: state.scribbleErase,
+    scribbleSensitivity: state.scribbleSensitivity,
     palette: [...state.palette],
     lasso: { ...state.lasso }
   };
@@ -24998,7 +25001,7 @@ function strokeIntersectsEraser(stroke, center, radius, mode, width, height) {
   }
   return false;
 }
-function isScribbleEraseGesture(points, eraserSize, width, height) {
+function isScribbleEraseGesture(points, eraserSize, width, height, sensitivity) {
   if (points.length < 8) return false;
   const filtered = [points[0]];
   for (const point of points.slice(1)) {
@@ -25019,7 +25022,7 @@ function isScribbleEraseGesture(points, eraserSize, width, height) {
     const ax = (previous.x - before.x) * width, ay = (previous.y - before.y) * height;
     const bx = (point.x - previous.x) * width, by = (point.y - previous.y) * height;
     const lengths = Math.hypot(ax, ay) * Math.hypot(bx, by);
-    if (lengths > 0 && (ax * bx + ay * by) / lengths < -0.15 && distanceSinceTurn >= Math.max(4, eraserSize * 0.15)) {
+    if (lengths > 0 && (ax * bx + ay * by) / lengths < -0.35 && distanceSinceTurn >= Math.max(8, eraserSize * 0.25)) {
       turns++;
       distanceSinceTurn = 0;
     }
@@ -25037,7 +25040,30 @@ function isScribbleEraseGesture(points, eraserSize, width, height) {
   const boundsHeight = maxY - minY;
   const boundsDiagonal = Math.hypot(boundsWidth, boundsHeight);
   const duration = filtered[filtered.length - 1].t - filtered[0].t;
-  return turns >= 3 && pathLength >= Math.max(64, eraserSize * 2) && boundsDiagonal >= eraserSize * 0.5 && pathLength / Math.max(1, boundsDiagonal) >= 2.4 && duration >= 0 && duration <= 1800;
+  const ease = Math.max(0, Math.min(100, sensitivity)) / 100;
+  const minimumTurns = Math.round(6 - 3 * ease);
+  const horizontal = boundsWidth >= boundsHeight;
+  const span = horizontal ? boundsWidth : boundsHeight;
+  const coordinate = (point) => horizontal ? point.x * width : point.y * height;
+  let extreme = coordinate(filtered[0]), direction = 0, traversals = 0;
+  const travel = Math.max(8, span * 0.6);
+  for (const point of filtered.slice(1)) {
+    const value = coordinate(point);
+    if (direction === 0) {
+      if (Math.abs(value - extreme) >= travel) {
+        direction = Math.sign(value - extreme);
+        extreme = value;
+        traversals++;
+      }
+    } else if ((value - extreme) * direction >= 0) {
+      extreme = value;
+    } else if ((extreme - value) * direction >= travel) {
+      direction *= -1;
+      extreme = value;
+      traversals++;
+    }
+  }
+  return turns >= minimumTurns && traversals >= minimumTurns + 1 && pathLength >= Math.max(96, eraserSize * 3) && boundsDiagonal >= eraserSize * 0.5 && pathLength / Math.max(1, boundsDiagonal) >= 4.8 - 1.6 * ease && duration >= 0 && duration <= 1800;
 }
 function strokeIntersectsScribble(stroke, path, radius, width, height) {
   const samples = sampleStrokeForEraser(path, Math.max(1, radius / 2), width, height);
@@ -25696,6 +25722,12 @@ var InkWritingView = class extends import_obsidian4.FileView {
       },
       set scribbleErase(value) {
         shared.config.scribbleErase = value;
+      },
+      get scribbleSensitivity() {
+        return shared.config.scribbleSensitivity;
+      },
+      set scribbleSensitivity(value) {
+        shared.config.scribbleSensitivity = value;
       },
       pen: shared.config.pen,
       highlighter: shared.config.highlighter,
@@ -27754,7 +27786,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
   }
   finishScribbleErase(page, gesture, path) {
     var _a, _b, _c, _d;
-    if (!isScribbleEraseGesture(path, this.state.eraserSize, this.canvasLogicalWidth, this.canvasLogicalHeight)) return false;
+    if (!isScribbleEraseGesture(path, this.state.eraserSize, this.canvasLogicalWidth, this.canvasLogicalHeight, this.state.scribbleSensitivity)) return false;
     const radius = this.state.eraserSize / 2;
     let minX = Number.POSITIVE_INFINITY, minY = Number.POSITIVE_INFINITY;
     let maxX = Number.NEGATIVE_INFINITY, maxY = Number.NEGATIVE_INFINITY;
@@ -28036,8 +28068,24 @@ var InkWritingView = class extends import_obsidian4.FileView {
     scribbleLabel.createSpan({ text: "Scribble erase with pen" });
     scribbleToggle.addEventListener("change", () => {
       this.state.scribbleErase = scribbleToggle.checked;
+      sensitivity.disabled = !scribbleToggle.checked;
       this.scheduleToolStateSave();
     });
+    const sensitivityLabel = scribbleRow.createEl("label", { cls: "ink-eraser-size-row" });
+    const sensitivityValue = sensitivityLabel.createSpan();
+    const sensitivity = sensitivityLabel.createEl("input", { attr: { type: "range", min: "0", max: "100", step: "1", "aria-label": "Scribble erase sensitivity" } });
+    sensitivity.value = String(this.state.scribbleSensitivity);
+    sensitivity.disabled = !this.state.scribbleErase;
+    const updateSensitivityLabel = () => {
+      sensitivityValue.setText(`Scribble sensitivity: ${this.state.scribbleSensitivity}%`);
+    };
+    updateSensitivityLabel();
+    sensitivity.addEventListener("input", () => {
+      this.state.scribbleSensitivity = Number(sensitivity.value);
+      updateSensitivityLabel();
+      this.scheduleToolStateSave();
+    });
+    scribbleRow.createDiv({ cls: "ink-settings-label", text: "Low: fewer accidental erases. High: fewer back-and-forth strokes needed." });
     const syncSizeVisibility = () => {
       sizeRow.style.display = this.state.eraserMode === "stroke" ? "none" : "";
     };

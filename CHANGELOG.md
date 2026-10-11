@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-- Fix default-pen scribble erasing by recognizing the raw in-progress Pencil path before display smoothing removes rapid reversals. Add a persistent "Scribble erase with pen" toggle to the eraser settings; it defaults on for existing installations, and ordinary/blank-area strokes remain ink.
+- Recognize default-pen scribble erasing from raw Pencil samples, with conservative repeated-area reversal checks to reduce accidental erasure of connected handwriting. Add a persistent enable toggle and 0–100% sensitivity slider in eraser settings (default 25%); lower values require more deliberate scrubbing. Ordinary/blank-area strokes remain ink.
 
 ## 0.1.3-beta.3
 

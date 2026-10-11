@@ -23,6 +23,7 @@ describe("tool state persistence", () => {
       state.eraserMode = "square";
       state.eraserSize = 64;
       state.scribbleErase = false;
+      state.scribbleSensitivity = 72;
       state.lasso.crossFileClipboard = true;
       state.lasso.mode = "rectangle";
       state.fingerAsPen = true;
@@ -54,6 +55,13 @@ describe("tool state persistence", () => {
       expect(sanitizeToolState({}).scribbleErase).toBe(true);
       expect(sanitizeToolState({ scribbleErase: false }).scribbleErase).toBe(false);
       expect(sanitizeToolState({ scribbleErase: "false" }).scribbleErase).toBe(true);
+    });
+
+    it("defaults sensitivity conservatively and clamps or rejects invalid saved values", () => {
+      expect(sanitizeToolState({}).scribbleSensitivity).toBe(25);
+      for (const value of [null, "90", NaN, Infinity]) expect(sanitizeToolState({ scribbleSensitivity: value }).scribbleSensitivity).toBe(25);
+      expect(sanitizeToolState({ scribbleSensitivity: -5 }).scribbleSensitivity).toBe(0);
+      expect(sanitizeToolState({ scribbleSensitivity: 110 }).scribbleSensitivity).toBe(100);
     });
 
     it("clamps numbers into their control ranges", () => {

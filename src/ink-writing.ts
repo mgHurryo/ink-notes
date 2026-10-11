@@ -54,6 +54,7 @@ export interface ToolState {
   eraserMode: EraserMode;
   eraserSize: number;
   scribbleErase: boolean;
+  scribbleSensitivity: number;
   /** Editable preset swatch colors, shared by both editors and persisted
    *  with the rest of the tool settings (1..10 entries). */
   palette: string[];
@@ -223,7 +224,7 @@ export function strokeIntersectsEraser(stroke: InkStroke, center: InkPoint, radi
   return false;
 }
 
-function isScribbleEraseGesture(points: InkPoint[], eraserSize: number, width: number, height: number): boolean {
+function isScribbleEraseGesture(points: InkPoint[], eraserSize: number, width: number, height: number, sensitivity: number): boolean {
   if (points.length < 8) return false;
   const filtered = [points[0]];
   for (const point of points.slice(1)) {
@@ -245,11 +246,9 @@ function isScribbleEraseGesture(points: InkPoint[], eraserSize: number, width: n
     const ax = (previous.x - before.x) * width, ay = (previous.y - before.y) * height;
     const bx = (point.x - previous.x) * width, by = (point.y - previous.y) * height;
     const lengths = Math.hypot(ax, ay) * Math.hypot(bx, by);
-    // Only sharp, separated reversals count; handwriting corners and sample jitter do not.
-    // The stroke modeler smooths and sparsifies Pencil samples. A reversal
-    // can therefore span several stored points, so use a shorter minimum
-    // distance and a softer angle than raw-pointer corner detection would.
-    if (lengths > 0 && (ax * bx + ay * by) / lengths < -0.15 && distanceSinceTurn >= Math.max(4, eraserSize * 0.15)) {
+    // These are raw pointer samples: ordinary corners and small backhooks
+    // must not count as deliberate scrubbing reversals.
+    if (lengths > 0 && (ax * bx + ay * by) / lengths < -0.35 && distanceSinceTurn >= Math.max(8, eraserSize * 0.25)) {
       turns++;
       distanceSinceTurn = 0;
     }
@@ -266,10 +265,30 @@ function isScribbleEraseGesture(points: InkPoint[], eraserSize: number, width: n
   const boundsHeight = maxY - minY;
   const boundsDiagonal = Math.hypot(boundsWidth, boundsHeight);
   const duration = filtered[filtered.length - 1].t - filtered[0].t;
-  return turns >= 3
-    && pathLength >= Math.max(64, eraserSize * 2)
+  const ease = Math.max(0, Math.min(100, sensitivity)) / 100;
+  const minimumTurns = Math.round(6 - 3 * ease);
+  // Connected writing often has many corners but advances across the page.
+  // Require repeated substantial traversals of the same bounding region,
+  // ignoring short backhooks and sample jitter between those traversals.
+  const horizontal = boundsWidth >= boundsHeight;
+  const span = horizontal ? boundsWidth : boundsHeight;
+  const coordinate = (point: InkPoint): number => horizontal ? point.x * width : point.y * height;
+  let extreme = coordinate(filtered[0]), direction = 0, traversals = 0;
+  const travel = Math.max(8, span * 0.6);
+  for (const point of filtered.slice(1)) {
+    const value = coordinate(point);
+    if (direction === 0) {
+      if (Math.abs(value - extreme) >= travel) { direction = Math.sign(value - extreme); extreme = value; traversals++; }
+    } else if ((value - extreme) * direction >= 0) {
+      extreme = value;
+    } else if ((extreme - value) * direction >= travel) {
+      direction *= -1; extreme = value; traversals++;
+    }
+  }
+  return turns >= minimumTurns && traversals >= minimumTurns + 1
+    && pathLength >= Math.max(96, eraserSize * 3)
     && boundsDiagonal >= eraserSize * 0.5
-    && pathLength / Math.max(1, boundsDiagonal) >= 2.4
+    && pathLength / Math.max(1, boundsDiagonal) >= 4.8 - 1.6 * ease
     && duration >= 0 && duration <= 1_800;
 }
 
@@ -1019,6 +1038,8 @@ export abstract class InkWritingView extends FileView {
       get fingerAsPen() { return shared.config.fingerAsPen; },
       get scribbleErase() { return shared.config.scribbleErase; },
       set scribbleErase(value: boolean) { shared.config.scribbleErase = value; },
+      get scribbleSensitivity() { return shared.config.scribbleSensitivity; },
+      set scribbleSensitivity(value: number) { shared.config.scribbleSensitivity = value; },
       pen: shared.config.pen,
       highlighter: shared.config.highlighter,
       eraserMode: shared.config.eraserMode,
@@ -3034,7 +3055,7 @@ export abstract class InkWritingView extends FileView {
   }
 
   private finishScribbleErase(page: InkPage, gesture: InkStroke, path: InkPoint[]): boolean {
-    if (!isScribbleEraseGesture(path, this.state.eraserSize, this.canvasLogicalWidth, this.canvasLogicalHeight)) return false;
+    if (!isScribbleEraseGesture(path, this.state.eraserSize, this.canvasLogicalWidth, this.canvasLogicalHeight, this.state.scribbleSensitivity)) return false;
     const radius = this.state.eraserSize / 2;
     let minX = Number.POSITIVE_INFINITY, minY = Number.POSITIVE_INFINITY;
     let maxX = Number.NEGATIVE_INFINITY, maxY = Number.NEGATIVE_INFINITY;
@@ -3336,8 +3357,22 @@ export abstract class InkWritingView extends FileView {
     scribbleLabel.createSpan({ text: "Scribble erase with pen" });
     scribbleToggle.addEventListener("change", () => {
       this.state.scribbleErase = scribbleToggle.checked;
+      sensitivity.disabled = !scribbleToggle.checked;
       this.scheduleToolStateSave();
     });
+    const sensitivityLabel = scribbleRow.createEl("label", { cls: "ink-eraser-size-row" });
+    const sensitivityValue = sensitivityLabel.createSpan();
+    const sensitivity = sensitivityLabel.createEl("input", { attr: { type: "range", min: "0", max: "100", step: "1", "aria-label": "Scribble erase sensitivity" } });
+    sensitivity.value = String(this.state.scribbleSensitivity);
+    sensitivity.disabled = !this.state.scribbleErase;
+    const updateSensitivityLabel = (): void => { sensitivityValue.setText(`Scribble sensitivity: ${this.state.scribbleSensitivity}%`); };
+    updateSensitivityLabel();
+    sensitivity.addEventListener("input", () => {
+      this.state.scribbleSensitivity = Number(sensitivity.value);
+      updateSensitivityLabel();
+      this.scheduleToolStateSave();
+    });
+    scribbleRow.createDiv({ cls: "ink-settings-label", text: "Low: fewer accidental erases. High: fewer back-and-forth strokes needed." });
     // The stroke eraser ignores the size (fixed hit radius) - offer the
     // slider only for the shapes that use it.
     const syncSizeVisibility = (): void => {

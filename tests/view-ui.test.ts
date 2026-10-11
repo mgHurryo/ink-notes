@@ -738,10 +738,20 @@ describe("reference-style editor", () => {
     button("Erase").click();
     const toggle = document.querySelector<HTMLInputElement>('input[aria-label="Scribble erase with pen"]')!;
     expect(toggle.checked).toBe(true);
+    const sensitivity = document.querySelector<HTMLInputElement>('input[aria-label="Scribble erase sensitivity"]')!;
+    expect(sensitivity.value).toBe("25");
+    sensitivity.value = "60";
+    sensitivity.dispatchEvent(new Event("input", { bubbles: true }));
+    expect((view as any).state.scribbleSensitivity).toBe(60);
+    expect(document.body.textContent).toContain("Scribble sensitivity: 60%");
     toggle.checked = false;
     toggle.dispatchEvent(new Event("change", { bubbles: true }));
     expect(scheduleSave).toHaveBeenCalled();
     expect((view as any).state.scribbleErase).toBe(false);
+    expect(sensitivity.disabled).toBe(true);
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(sensitivity.disabled).toBe(false);
   });
   it("toggles the eraser mini popover on re-tap without the reopen race", async () => {
     button("Erase").click();   // select the eraser
