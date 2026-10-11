@@ -52,6 +52,89 @@ afterEach(async () => {
 });
 
 describe("reference-style editor", () => {
+  function selectSampleInk() {
+    const host = view as unknown as { notebook: ReturnType<typeof createNotebook>; canvasLogicalWidth: number; canvasLogicalHeight: number;
+      lassoPath: { x: number; y: number; pressure: number; t: number }[]; finishLasso(page: InkPage): void; clearSelection(): void };
+    host.canvasLogicalWidth = 100; host.canvasLogicalHeight = 100;
+    const page = host.notebook.pages[0];
+    page.strokes.push({ id: "selected", pageId: page.id, tool: "pen", color: "#123456", width: 3, opacity: 1,
+      createdAt: 1, updatedAt: 1, points: [{ x: 0.2, y: 0.3, pressure: 0.5, t: 1 }, { x: 0.4, y: 0.4, pressure: 0.7, t: 2 }] });
+    button("Select").click();
+    host.lassoPath = [[0.1, 0.1], [0.5, 0.1], [0.5, 0.5], [0.1, 0.5]].map(([x, y]) => ({ x, y, pressure: 0.5, t: 1 }));
+    host.finishLasso(page);
+    return { host, page };
+  }
+
+  it("offers copy, cut, delete and paste after lasso selection with one-step history", () => {
+    const { page } = selectSampleInk();
+    expect(button("Paste").disabled).toBe(true);
+    button("Copy").click();
+    expect(page.strokes).toHaveLength(1);
+    button("Paste").click();
+    expect(page.strokes).toHaveLength(2);
+    expect(page.strokes[1].id).not.toBe("selected");
+    button("Undo").click();
+    expect(page.strokes).toHaveLength(1);
+    button("Redo").click();
+    expect(page.strokes).toHaveLength(2);
+    button("Select").click();
+    expect(document.querySelector('[aria-label="Lasso settings"]')).not.toBeNull();
+  });
+
+  it("cuts selected ink and allows paste onto empty paper; delete does not replace copied ink", () => {
+    const { host, page } = selectSampleInk();
+    button("Cut").click();
+    expect(page.strokes).toHaveLength(0);
+    expect(page.deletedStrokeIds).toContain("selected");
+    host.lassoPath = [{ x: 0.7, y: 0.7, pressure: 0.5, t: 1 }];
+    host.finishLasso(page);
+    button("Paste").click();
+    expect(page.strokes).toHaveLength(1);
+    button("Delete").click();
+    expect(page.strokes).toHaveLength(0);
+    button("Undo").click();
+    expect(page.strokes).toHaveLength(1);
+  });
+
+  it("supports lasso shortcuts and clears stale selection when switching pages", async () => {
+    const { host, page } = selectSampleInk();
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    const key = (key: string, ctrlKey = false) => scroller.dispatchEvent(new KeyboardEvent("keydown", { key, ctrlKey, bubbles: true }));
+    key("c", true); key("x", true);
+    expect(page.strokes).toHaveLength(0);
+    key("v", true);
+    expect(page.strokes).toHaveLength(1);
+    key("Delete");
+    expect(page.strokes).toHaveLength(0);
+    button("Undo").click();
+    host.lassoPath = [[0.1, 0.1], [0.5, 0.1], [0.5, 0.5], [0.1, 0.5]].map(([x, y]) => ({ x, y, pressure: 0.5, t: 1 }));
+    host.finishLasso(page);
+    const editor = host as unknown as { addPage(): void; navigateToPage(id: string): Promise<void>; selectedStrokeIds: Set<string>; pasteTarget: unknown };
+    editor.addPage();
+    expect(document.querySelector(".ink-selection-actions")).toBeNull();
+    expect(editor.selectedStrokeIds.size).toBe(0);
+    expect(editor.pasteTarget).toBeNull();
+    await editor.navigateToPage(page.id);
+    button("Reading mode").click();
+    key("v", true);
+    expect(page.strokes).toHaveLength(1);
+  });
+
+  it("keeps the action strip within a split-pane viewport when the selection is near the edge", () => {
+    const { host } = selectSampleInk();
+    const strip = document.querySelector<HTMLElement>(".ink-selection-actions")!;
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    vi.spyOn(scroller, "getBoundingClientRect").mockReturnValue(new DOMRect(200, 100, 320, 500));
+    Object.defineProperties(strip, { offsetWidth: { value: 250 }, offsetHeight: { value: 60 } });
+    const positionHost = host as unknown as { inputRect(): DOMRect; positionSelectionActions(): void };
+    vi.spyOn(positionHost, "inputRect").mockReturnValue(new DOMRect(200, 100, 1000, 1000));
+    positionHost.positionSelectionActions();
+    expect(parseFloat(strip.style.left)).toBeGreaterThanOrEqual(208);
+    expect(parseFloat(strip.style.left) + 250).toBeLessThanOrEqual(512);
+    expect(parseFloat(strip.style.top)).toBeGreaterThanOrEqual(108);
+    button("Reading mode").click();
+    expect(document.querySelector(".ink-selection-actions")).toBeNull();
+  });
   it("locks notebook mutations and closes settings in reading mode, then restores editing", () => {
     const host = view as unknown as { notebook: ReturnType<typeof createNotebook>; readingMode: boolean;
       inputLocked(): boolean; addPage(): void; duplicateCurrentPage(): void; deleteCurrentPage(): void; moveCurrentPage(n: number): void;
