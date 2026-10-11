@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a dedicated Pointer arrow tool (desktop shortcut A) for image editing. Insertion selects the image immediately; a finger/mouse contact on an image opens its controls, and tapping outside dismisses them. Stylus Pointer and native stylus Touch input cannot select/drag images; handwriting and lasso tools keep their existing behavior. Pointer contacts on blank paper never create ink.
+
 - Add a grouped image library with batch photo/file, vault, path-list, paste and drop imports. Insert reusable managed image copies into Ink and PDF handwriting pages; move, resize, change their layer above/below handwriting and delete individual placements with undo/redo. Images default below handwriting and appear in previews, Markdown embeds and PDF exports. Existing note files remain readable without migration; sync managed image assets with notes and back up before downgrading to an older plugin.
 
 - Add Freehand and Rectangle selection modes in lasso settings for both Ink and PDF handwriting. Freehand remains the default; rectangle drags work in every direction, select crossing strokes, and retain the existing move/copy/cut/delete/paste actions. The mode persists across sessions; older settings default to Freehand.

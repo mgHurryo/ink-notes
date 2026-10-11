@@ -1,4 +1,4 @@
-export type InkTool = "pen" | "highlighter" | "eraser" | "lasso";
+export type InkTool = "pen" | "highlighter" | "eraser" | "lasso" | "pointer";
 export type PaperStyle = "blank" | "ruled" | "grid" | "dot";
 
 export interface InkPoint {
@@ -13,7 +13,7 @@ export interface InkPoint {
 export interface InkStroke {
   id: string;
   pageId: string;
-  tool: Exclude<InkTool, "eraser" | "lasso">;
+  tool: "pen" | "highlighter";
   color: string;
   width: number;
   opacity: number;

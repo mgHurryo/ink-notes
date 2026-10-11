@@ -822,6 +822,7 @@ export class InkView extends InkWritingView {
     this.flipSettling = false;
   }
   protected settingsOpen(): boolean {
+    if (this.state.tool === "pointer") return false;
     if (this.state.tool === "lasso") return this.lassoSettingsPopover !== null;
     return this.state.tool === "eraser" ? this.eraserPopover !== null : this.brushPopover?.isOpen ?? false;
   }

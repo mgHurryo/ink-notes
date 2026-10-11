@@ -450,7 +450,7 @@ export abstract class InkWritingView extends FileView {
     if (this.pageImages?.host !== host) {
       this.pageImages?.dispose();
       this.pageImages = new PageImageLayer(host, this.toolbarRoot(), this.imageLibrary, {
-        page: () => this.currentPage(), editable: () => this.state.tool === "lasso" && !this.inputLocked(),
+        page: () => this.currentPage(), editable: () => this.state.tool === "pointer" && !this.inputLocked(),
         select: () => { this.selectedStrokeIds.clear(); this.hideSelectionActions(); },
         change: (before, after) => { if (!this.inputLocked()) this.changeImages(this.currentPage().id, before, after); },
       });
@@ -468,7 +468,7 @@ export abstract class InkWritingView extends FileView {
       }
       const images = assets.map((asset, index) => placedImage(asset, pageId, this.canvasLogicalWidth / this.canvasLogicalHeight, index));
       if (!images.length) return;
-      this.selectWritingTool("lasso"); this.changeImages(pageId, [], images);
+      this.selectWritingTool("pointer"); this.changeImages(pageId, [], images);
       this.pageImages?.select(images[images.length - 1].id);
     }).open();
   }
@@ -1019,6 +1019,7 @@ export abstract class InkWritingView extends FileView {
     this.addToolButton(draw, "highlighter", "Highlight", "highlighter");
     this.addToolButton(draw, "eraser", "Erase", "eraser");
     this.addToolButton(draw, "lasso-select", "Select", "lasso");
+    if (this.imageLibrary) this.addToolButton(draw, "mouse-pointer-2", "Pointer", "pointer");
     if (this.imageLibrary) this.addIconButton(draw, "image-plus", "Image library", () => this.openImageLibrary());
   }
 
@@ -1210,7 +1211,7 @@ export abstract class InkWritingView extends FileView {
     if (key === "-") { this.desktopZoom(1 / 1.1); return true; }
     if (key === "0") { this.desktopResetZoom(); return true; }
     if (event.shiftKey || this.inputLocked()) return false;
-    const tools: Record<string, InkTool> = { b: "pen", h: "highlighter", e: "eraser", v: "lasso" };
+    const tools: Record<string, InkTool> = { b: "pen", h: "highlighter", e: "eraser", v: "lasso", a: "pointer" };
     const tool = tools[key];
     if (tool) { this.selectWritingTool(tool); return true; }
     if (key === "escape") { this.clearSelection(); return true; }
@@ -1295,6 +1296,9 @@ export abstract class InkWritingView extends FileView {
     if (this.inputLocked()) return;
     if (this.nativeMenuOpen()) return;
     if (event.pointerType === "touch") return;
+    // Pointer selects page objects through their own handlers; blank paper
+    // and stylus contacts must never fall through into stroke creation.
+    if (this.state.tool === "pointer") return;
     // Deduplicate only the contact currently owned by native stylus Touch.
     // The next contact may have Pointer events without a classified Touch,
     // so observing one Touch stream must not disable pen input for the view.
@@ -3335,9 +3339,9 @@ export abstract class InkWritingView extends FileView {
   protected addToolButton(parent: HTMLElement, icon: string, label: string, tool: InkTool): void {
     const button = parent.createEl("button", { cls: "ink-tool-button", attr: {
       type: "button", title: label, "aria-label": label, "aria-pressed": String(this.state.tool === tool), "data-tool": tool,
-      "aria-haspopup": "dialog", "aria-expanded": "false",
+      ...(tool === "pointer" ? {} : { "aria-haspopup": "dialog", "aria-expanded": "false" }),
     } });
-    const shortcut: Record<InkTool, string> = { pen: "B", highlighter: "H", eraser: "E", lasso: "V" };
+    const shortcut: Record<InkTool, string> = { pen: "B", highlighter: "H", eraser: "E", lasso: "V", pointer: "A" };
     button.title = `${label} (${shortcut[tool]})`;
     const iconHolder = button.createSpan({ cls: "ink-button-icon" });
     setIcon(iconHolder, icon);
@@ -3345,7 +3349,7 @@ export abstract class InkWritingView extends FileView {
       if (this.readingMode) return;
       this.finishPointerInput(false);
       if (this.state.tool === tool) {
-        this.toggleToolSettings(button);
+        if (tool !== "pointer") this.toggleToolSettings(button);
         return;
       }
       this.selectWritingTool(tool);
@@ -3357,7 +3361,7 @@ export abstract class InkWritingView extends FileView {
     this.onToolSelected(tool);
     this.state.tool = tool;
     if (tool !== "lasso") this.clearSelection();
-    if (tool === "eraser" || tool === "lasso") this.brushPopover?.close();
+    if (!isBrushTool(tool)) this.brushPopover?.close();
     this.closeEraserPopover();
     this.closeLassoSettings();
     this.brushPopover?.update();

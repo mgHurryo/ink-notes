@@ -96,7 +96,7 @@ it("edits PDF page images, restores deletion with fresh IDs, and keeps images se
   const { view, internal, sidecar } = await setup(2, { url: () => "data:image/png;base64,", image: async () => document.createElement("img") } as unknown as ImageLibraryStore);
   internal.renderAll();
   expect(document.querySelector('[aria-label="Image library"]')).not.toBeNull();
-  document.querySelector<HTMLButtonElement>('[aria-label="Select"]')!.click();
+  document.querySelector<HTMLButtonElement>('[aria-label="Pointer"]')!.click();
   const editor = view as any, pageId = sidecar.notebook.pages[0].id;
   editor.changeImages(pageId, [], [{ id: "pdf-image", pageId, assetPath: "Ink Notes/Images/assets/a.png", x: .1, y: .1, width: .3, height: .3,
     foreground: false, createdAt: 1, updatedAt: 1 }]);

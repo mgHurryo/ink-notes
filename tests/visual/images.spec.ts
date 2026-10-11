@@ -20,6 +20,7 @@ for (const width of [360, 1280]) {
     await library.getByRole("button", { name: "Insert selected (2)", exact: true }).click();
     await expect(page.locator(".ink-placed-image")).toHaveCount(2);
     await expect(page.getByRole("group", { name: "Image controls" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "Pointer", exact: true })).toHaveAttribute("aria-pressed", "true");
     const imageState = () => page.evaluate(() => (window as any).__inkNotesPreview.view.currentPage().images);
     expect((await imageState()).every((i: any) => !i.foreground)).toBe(true);
     const inspector = page.getByRole("group", { name: "Image controls" });
@@ -109,4 +110,63 @@ test("vault and manual batch imports keep managed copies; touch edits cancel for
   await expect(page.locator(".ink-image-inspector")).toBeHidden();
   await page.evaluate(() => { const view = (window as any).__inkNotesPreview.view; view.navigateToPage(view.notebook.pages[0].id); });
   await expect(page.locator(".ink-placed-image")).toHaveCount(4);
+});
+
+test("image editing dismisses outside and excludes pen and native stylus input in drawing tools", async ({ page }) => {
+  await page.setViewportSize({ width: 820, height: 1100 }); await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  await page.getByRole("button", { name: "Image library", exact: true }).click();
+  const library = page.getByRole("dialog", { name: "Image library", exact: true });
+  await library.locator('input[type="file"]').setInputFiles({ name: "One.png", mimeType: "image/png", buffer: png });
+  await expect(library.locator(".ink-image-library-card")).toHaveCount(1);
+  await library.getByRole("button", { name: "Select visible", exact: true }).click();
+  await library.getByRole("button", { name: "Insert selected (1)", exact: true }).click();
+  const inspector = page.getByRole("group", { name: "Image controls" }), placed = page.locator(".ink-placed-image");
+  await expect(inspector).toBeVisible();
+  const original = await page.evaluate(() => (window as any).__inkNotesPreview.view.currentPage().images[0]);
+  const rect = (await page.locator(".ink-page:not(.ink-swipe-stage)").boundingBox())!;
+  await page.mouse.click(rect.x + 12, rect.y + 12); await expect(inspector).toBeHidden();
+  await page.locator('.ink-image-inspector input[aria-label="Image X percent"]').evaluate((el: HTMLInputElement) => {
+    el.value = "70"; el.dispatchEvent(new Event("change"));
+  });
+  expect(await page.evaluate(() => (window as any).__inkNotesPreview.view.currentPage().images[0])).toEqual(original);
+  const count = await page.evaluate(() => (window as any).__inkNotesPreview.view.currentPage().strokes.length);
+  await placed.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType: "pen", pointerId: 77, clientX: r.x + 12, clientY: r.y + 12, pressure: .5 }));
+    el.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerType: "pen", pointerId: 77, clientX: r.x + 12, clientY: r.y + 12 }));
+    const touch = new Touch({ target: el, identifier: 78, clientX: r.x + 12, clientY: r.y + 12 });
+    Object.defineProperty(touch, "touchType", { value: "stylus" });
+    el.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, cancelable: true, touches: [touch], changedTouches: [touch] }));
+    el.dispatchEvent(new TouchEvent("touchend", { bubbles: true, cancelable: true, touches: [], changedTouches: [touch] }));
+  });
+  await expect(inspector).toBeHidden();
+  expect(await page.evaluate(() => (window as any).__inkNotesPreview.view.currentPage().strokes.length)).toBe(count);
+  for (const tool of ["Pen", "Highlight", "Erase", "Select"]) {
+    await page.getByRole("button", { name: tool, exact: true }).click();
+    await placed.evaluate((el) => {
+      const r = el.getBoundingClientRect(), host = el.closest(".ink-page") as HTMLElement;
+      el.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, pointerType: "pen", pointerId: 90, clientX: r.x + 12, clientY: r.y + 12, pressure: .5 }));
+      host.dispatchEvent(new PointerEvent("pointerup", { bubbles: true, pointerType: "pen", pointerId: 90, clientX: r.x + 12, clientY: r.y + 12 }));
+      const touch = new Touch({ target: el, identifier: 91, clientX: r.x + 16, clientY: r.y + 16 });
+      Object.defineProperty(touch, "touchType", { value: "stylus" });
+      el.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, cancelable: true, touches: [touch], changedTouches: [touch] }));
+      el.dispatchEvent(new TouchEvent("touchend", { bubbles: true, cancelable: true, touches: [], changedTouches: [touch] }));
+    });
+    await expect(inspector).toBeHidden();
+    expect(await page.evaluate(() => (window as any).__inkNotesPreview.view.currentPage().images[0])).toEqual(original);
+  }
+  await page.getByRole("button", { name: "Pointer", exact: true }).click();
+  await placed.evaluate((el) => {
+    const r = el.getBoundingClientRect(); const t = new Touch({ target: el, identifier: 1, clientX: r.x + 12, clientY: r.y + 12 });
+    el.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, cancelable: true, touches: [t], changedTouches: [t] }));
+    document.dispatchEvent(new TouchEvent("touchend", { bubbles: true, cancelable: true, touches: [], changedTouches: [t] }));
+  });
+  await expect(inspector).toBeVisible();
+  await page.locator(".ink-page-scroller").evaluate((el) => {
+    const touch = new Touch({ target: el, identifier: 2, clientX: 1, clientY: 1 });
+    el.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, cancelable: true, touches: [touch], changedTouches: [touch] }));
+    el.dispatchEvent(new TouchEvent("touchend", { bubbles: true, cancelable: true, touches: [], changedTouches: [touch] }));
+  });
+  await expect(inspector).toBeHidden();
 });

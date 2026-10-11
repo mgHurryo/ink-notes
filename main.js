@@ -23381,6 +23381,15 @@ var PageImageLayer = class {
       if (e.touches.length > 1) this.cancel();
     }, { signal, capture: true });
     const doc = host.ownerDocument;
+    const outside = (e) => {
+      if (this.selectedId === null && !this.drag) return;
+      const target = e.target;
+      if (target && (this.layer.contains(target) || this.outline.contains(target) || this.inspector.contains(target))) return;
+      this.clear();
+      this.sync();
+    };
+    doc.addEventListener("pointerdown", outside, { signal, capture: true });
+    doc.addEventListener("touchstart", outside, { signal, capture: true });
     doc.addEventListener("pointermove", (e) => {
       if (this.drag && !this.drag.touch && e.pointerId === this.drag.id) {
         this.move(e.clientX, e.clientY);
@@ -23430,6 +23439,8 @@ var PageImageLayer = class {
     this.outline.hidden = this.inspector.hidden = true;
   }
   select(id) {
+    var _a;
+    if (!this.context.editable() || !((_a = this.context.page().images) == null ? void 0 : _a.some((image) => image.id === id))) return;
     this.context.select();
     this.selectedId = id;
     this.last = void 0;
@@ -23475,6 +23486,7 @@ var PageImageLayer = class {
       }
       this.button(image.foreground ? "Below handwriting" : "Above handwriting", () => this.commit(image, { ...image, foreground: !image.foreground }));
       this.button("Delete image", () => {
+        if (!this.isSelected(image)) return;
         this.context.change([image], []);
         this.clear();
         this.sync();
@@ -23520,11 +23532,11 @@ var PageImageLayer = class {
       this.drag = { id, touch, pageId: page.id, original: { ...image }, preview: { ...image }, x, y, rect: this.host.getBoundingClientRect(), resize };
     };
     el.addEventListener("pointerdown", (e) => {
-      if (e.pointerType === "touch" || e.button !== 0) return;
+      if (e.pointerType !== "mouse" || e.button !== 0) return;
       start(e.pointerId, false, e.clientX, e.clientY, e);
     });
     el.addEventListener("touchstart", (e) => {
-      if (e.touches.length === 1) {
+      if (e.touches.length === 1 && e.touches[0].touchType !== "stylus") {
         const t = e.touches[0];
         start(t.identifier, true, t.clientX, t.clientY, e);
       }
@@ -23567,7 +23579,12 @@ var PageImageLayer = class {
     this.last = void 0;
     this.sync();
   }
+  isSelected(image) {
+    var _a;
+    return this.context.editable() && this.selectedId === image.id && this.context.page().id === image.pageId && !!((_a = this.context.page().images) == null ? void 0 : _a.some((current) => current.id === image.id));
+  }
   commit(before, after) {
+    if (!this.isSelected(before)) return;
     if (JSON.stringify(before) !== JSON.stringify(after)) this.context.change([before], [after]);
     this.last = void 0;
     this.sync();
@@ -25086,7 +25103,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
       (_b = this.pageImages) == null ? void 0 : _b.dispose();
       this.pageImages = new PageImageLayer(host, this.toolbarRoot(), this.imageLibrary, {
         page: () => this.currentPage(),
-        editable: () => this.state.tool === "lasso" && !this.inputLocked(),
+        editable: () => this.state.tool === "pointer" && !this.inputLocked(),
         select: () => {
           this.selectedStrokeIds.clear();
           this.hideSelectionActions();
@@ -25110,7 +25127,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
       }
       const images = assets.map((asset, index) => placedImage(asset, pageId, this.canvasLogicalWidth / this.canvasLogicalHeight, index));
       if (!images.length) return;
-      this.selectWritingTool("lasso");
+      this.selectWritingTool("pointer");
       this.changeImages(pageId, [], images);
       (_a = this.pageImages) == null ? void 0 : _a.select(images[images.length - 1].id);
     }).open();
@@ -25483,6 +25500,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
     this.addToolButton(draw, "highlighter", "Highlight", "highlighter");
     this.addToolButton(draw, "eraser", "Erase", "eraser");
     this.addToolButton(draw, "lasso-select", "Select", "lasso");
+    if (this.imageLibrary) this.addToolButton(draw, "mouse-pointer-2", "Pointer", "pointer");
     if (this.imageLibrary) this.addIconButton(draw, "image-plus", "Image library", () => this.openImageLibrary());
   }
   buildReadingModeButton(parent) {
@@ -25733,7 +25751,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
       return true;
     }
     if (event.shiftKey || this.inputLocked()) return false;
-    const tools = { b: "pen", h: "highlighter", e: "eraser", v: "lasso" };
+    const tools = { b: "pen", h: "highlighter", e: "eraser", v: "lasso", a: "pointer" };
     const tool = tools[key];
     if (tool) {
       this.selectWritingTool(tool);
@@ -25835,6 +25853,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
     if (this.inputLocked()) return;
     if (this.nativeMenuOpen()) return;
     if (event.pointerType === "touch") return;
+    if (this.state.tool === "pointer") return;
     if (source === "pointer" && event.pointerType === "pen" && ((_b = this.interaction) == null ? void 0 : _b.source) === "stylus-touch") return;
     this.onInputStarting();
     this.interactionGeneration += 1;
@@ -27790,10 +27809,9 @@ var InkWritingView = class extends import_obsidian4.FileView {
       "aria-label": label,
       "aria-pressed": String(this.state.tool === tool),
       "data-tool": tool,
-      "aria-haspopup": "dialog",
-      "aria-expanded": "false"
+      ...tool === "pointer" ? {} : { "aria-haspopup": "dialog", "aria-expanded": "false" }
     } });
-    const shortcut = { pen: "B", highlighter: "H", eraser: "E", lasso: "V" };
+    const shortcut = { pen: "B", highlighter: "H", eraser: "E", lasso: "V", pointer: "A" };
     button2.title = `${label} (${shortcut[tool]})`;
     const iconHolder = button2.createSpan({ cls: "ink-button-icon" });
     (0, import_obsidian4.setIcon)(iconHolder, icon);
@@ -27801,7 +27819,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
       if (this.readingMode) return;
       this.finishPointerInput(false);
       if (this.state.tool === tool) {
-        this.toggleToolSettings(button2);
+        if (tool !== "pointer") this.toggleToolSettings(button2);
         return;
       }
       this.selectWritingTool(tool);
@@ -27813,7 +27831,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
     this.onToolSelected(tool);
     this.state.tool = tool;
     if (tool !== "lasso") this.clearSelection();
-    if (tool === "eraser" || tool === "lasso") (_a = this.brushPopover) == null ? void 0 : _a.close();
+    if (!isBrushTool(tool)) (_a = this.brushPopover) == null ? void 0 : _a.close();
     this.closeEraserPopover();
     this.closeLassoSettings();
     (_b = this.brushPopover) == null ? void 0 : _b.update();
@@ -29643,6 +29661,7 @@ var InkView = class extends InkWritingView {
   }
   settingsOpen() {
     var _a, _b;
+    if (this.state.tool === "pointer") return false;
     if (this.state.tool === "lasso") return this.lassoSettingsPopover !== null;
     return this.state.tool === "eraser" ? this.eraserPopover !== null : (_b = (_a = this.brushPopover) == null ? void 0 : _a.isOpen) != null ? _b : false;
   }
@@ -32719,6 +32738,7 @@ var PdfInkView = class extends InkWritingView {
   }
   settingsOpen() {
     var _a, _b;
+    if (this.state.tool === "pointer") return false;
     if (this.state.tool === "lasso") return this.lassoSettingsPopover !== null;
     return this.state.tool === "eraser" ? this.eraserPopover !== null : (_b = (_a = this.brushPopover) == null ? void 0 : _a.isOpen) != null ? _b : false;
   }

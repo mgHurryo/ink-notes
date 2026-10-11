@@ -31,6 +31,14 @@ export class PageImageLayer {
     const signal = this.events.signal;
     host.addEventListener("touchstart", (e) => { if (e.touches.length > 1) this.cancel(); }, { signal, capture: true });
     const doc = host.ownerDocument;
+    const outside = (e: Event) => {
+      if (this.selectedId === null && !this.drag) return;
+      const target = e.target as Node | null;
+      if (target && (this.layer.contains(target) || this.outline.contains(target) || this.inspector.contains(target))) return;
+      this.clear(); this.sync();
+    };
+    doc.addEventListener("pointerdown", outside, { signal, capture: true });
+    doc.addEventListener("touchstart", outside, { signal, capture: true });
     doc.addEventListener("pointermove", (e) => { if (this.drag && !this.drag.touch && e.pointerId === this.drag.id) { this.move(e.clientX, e.clientY); e.preventDefault(); e.stopPropagation(); } }, { signal, passive: false });
     doc.addEventListener("pointerup", (e) => { if (this.drag && !this.drag.touch && e.pointerId === this.drag.id) { this.finish(); e.stopPropagation(); } }, { signal });
     doc.addEventListener("pointercancel", () => this.cancel(), { signal });
@@ -44,7 +52,10 @@ export class PageImageLayer {
   }
   dispose(): void { this.events.abort(); this.layer.remove(); this.outline.remove(); this.inspector.remove(); }
   clear(): void { this.cancel(); this.selectedId = null; this.last = undefined; this.outline.hidden = this.inspector.hidden = true; }
-  select(id: string): void { this.context.select(); this.selectedId = id; this.last = undefined; this.sync(); }
+  select(id: string): void {
+    if (!this.context.editable() || !this.context.page().images?.some((image) => image.id === id)) return;
+    this.context.select(); this.selectedId = id; this.last = undefined; this.sync();
+  }
   sync(): void {
     const page = this.context.page(), editable = this.context.editable();
     if (this.drag && (this.drag.pageId !== page.id || !editable)) this.cancel();
@@ -72,7 +83,10 @@ export class PageImageLayer {
         };
       }
       this.button(image.foreground ? "Below handwriting" : "Above handwriting", () => this.commit(image, { ...image, foreground: !image.foreground }));
-      this.button("Delete image", () => { this.context.change([image], []); this.clear(); this.sync(); });
+      this.button("Delete image", () => {
+        if (!this.isSelected(image)) return;
+        this.context.change([image], []); this.clear(); this.sync();
+      });
       this.button("Done", () => { this.clear(); this.sync(); });
       this.outline.textContent = "";
       const handle = this.outline.createEl("button", { cls: "ink-image-resize", attr: { type: "button", "aria-label": "Resize image" } });
@@ -94,8 +108,12 @@ export class PageImageLayer {
       this.select(image.id);
       this.drag = { id, touch, pageId: page.id, original: { ...image }, preview: { ...image }, x, y, rect: this.host.getBoundingClientRect(), resize };
     };
-    el.addEventListener("pointerdown", (e) => { if (e.pointerType === "touch" || e.button !== 0) return; start(e.pointerId, false, e.clientX, e.clientY, e); });
-    el.addEventListener("touchstart", (e) => { if (e.touches.length === 1) { const t = e.touches[0]; start(t.identifier, true, t.clientX, t.clientY, e); } }, { passive: false });
+    el.addEventListener("pointerdown", (e) => { if (e.pointerType !== "mouse" || e.button !== 0) return; start(e.pointerId, false, e.clientX, e.clientY, e); });
+    el.addEventListener("touchstart", (e) => {
+      if (e.touches.length === 1 && e.touches[0].touchType !== "stylus") {
+        const t = e.touches[0]; start(t.identifier, true, t.clientX, t.clientY, e);
+      }
+    }, { passive: false });
     el.addEventListener("dragstart", (e) => e.preventDefault());
   }
   private move(x: number, y: number): void {
@@ -116,7 +134,12 @@ export class PageImageLayer {
     if (drag && this.context.editable() && this.context.page().id === drag.pageId) this.commit(drag.original, drag.preview);
   }
   private cancel(): void { if (!this.drag) return; this.drag = null; this.last = undefined; this.sync(); }
+  private isSelected(image: InkImage): boolean {
+    return this.context.editable() && this.selectedId === image.id && this.context.page().id === image.pageId
+      && !!this.context.page().images?.some((current) => current.id === image.id);
+  }
   private commit(before: InkImage, after: InkImage): void {
+    if (!this.isSelected(before)) return;
     if (JSON.stringify(before) !== JSON.stringify(after)) this.context.change([before], [after]);
     this.last = undefined; this.sync();
   }
