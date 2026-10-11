@@ -1,6 +1,6 @@
 {
   "name": "obsidian-ink-notes",
-  "version": "0.1.2",
+  "version": "0.2.0-beta.9",
   "private": true,
   "description": "Cross-platform handwritten notes for Obsidian.",
   "main": "main.js",
