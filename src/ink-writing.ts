@@ -47,6 +47,7 @@ const PASTE_HOLD_SLOP_PX = 10;
 
 export interface ToolState {
   tool: InkTool;
+  fingerAsPen: boolean;
   pen: BrushSettings;
   highlighter: BrushSettings;
   eraserMode: EraserMode;
@@ -70,7 +71,7 @@ export interface InteractionContext {
   generation: number;
   pointerId: number;
   pointerType: string;
-  source: "pointer" | "stylus-touch";
+  source: "pointer" | "stylus-touch" | "finger-touch";
   pageId: string;
   tool: InkTool;
   eraserMode?: EraserMode;
@@ -185,6 +186,11 @@ function stylusTouchSample(touch: StylusTouch, timeStamp?: number): InkPointerSa
     // per-event, which is exactly the per-sample time for stylus input.
     timeStamp: typeof timeStamp === "number" && Number.isFinite(timeStamp) ? timeStamp : undefined,
   };
+}
+
+function fingerTouchSample(touch: Touch, timeStamp: number): InkPointerSample {
+  return { pointerId: touch.identifier, pointerType: "touch", clientX: touch.clientX,
+    clientY: touch.clientY, pressure: 0.5, timeStamp };
 }
 
 /**
@@ -453,7 +459,9 @@ export abstract class InkWritingView extends FileView {
     if (this.pageImages?.host !== host) {
       this.pageImages?.dispose();
       this.pageImages = new PageImageLayer(host, this.toolbarRoot(), this.imageLibrary, {
-        page: () => this.currentPage(), editable: () => this.state.tool === "pointer" && !this.inputLocked(),
+        page: () => this.currentPage(), editable: () => !this.inputLocked(),
+        canInteract: (type) => !this.inputLocked() && this.activePointerId === null
+          && (type === "touch" ? !this.state.fingerAsPen || this.state.tool === "pointer" : this.state.tool === "pointer"),
         select: () => { this.selectedStrokeIds.clear(); this.hideSelectionActions(); },
         change: (before, after) => { if (!this.inputLocked()) this.changeImages(this.currentPage().id, before, after); },
       });
@@ -947,6 +955,7 @@ export abstract class InkWritingView extends FileView {
         this.scheduleToolStateSave();
       },
       anchor: () => this.activeSettingsAnchor(),
+      registerCleanup: (dispose) => this.register(dispose),
     });
     this.settingsPanel = this.brushPopover.root;
     this.registerPopoverDismiss();
@@ -969,6 +978,7 @@ export abstract class InkWritingView extends FileView {
       // tool must not close the popover first (it rebuilds for that tool).
       if (target && target.closest?.(".ink-tool-button")) return;
       if (target && popover.root.contains(target)) return;
+      if (popover.optionsOpen && target?.closest?.(".menu")) return;
       popover.close();
     });
     this.registerDomEvent(document, "keydown", (event) => {
@@ -998,6 +1008,7 @@ export abstract class InkWritingView extends FileView {
     this.sharedToolSettings = shared;
     this.state = {
       tool: this.state.tool,
+      get fingerAsPen() { return shared.config.fingerAsPen; },
       pen: shared.config.pen,
       highlighter: shared.config.highlighter,
       eraserMode: shared.config.eraserMode,
@@ -1011,6 +1022,15 @@ export abstract class InkWritingView extends FileView {
   /** Persists tool settings (debounced); safe to call on every input event. */
   protected scheduleToolStateSave(): void {
     this.sharedToolSettings?.scheduleSave(this.state);
+  }
+
+  /** Settings are shared live; finish the old contact before changing input ownership. */
+  refreshInputPreferences(): void {
+    this.cancelPasteHold();
+    this.finishFingerInput();
+    this.touchGesture = null;
+    this.pageImages?.clear();
+    this.syncPageImages();
   }
 
   /** Shared drawing tools in the centre, with history next to page navigation. */
@@ -1152,6 +1172,18 @@ export abstract class InkWritingView extends FileView {
     this.registerDomEvent(doc, "touchstart", dismissActions, true);
     this.registerDomEvent(doc, "touchcancel", () => { this.cancelPasteHold(); this.hideSelectionActions(); this.pasteTarget = null; }, true);
     this.registerDomEvent(doc, "touchend", () => this.cancelPasteHold(), true);
+    this.registerDomEvent(scroller, "contextmenu", (event) => {
+      if (this.inputLocked() || this.nativeMenuOpen() || !this.inputHost()?.contains(event.target as Node)
+        || (event.target as HTMLElement).closest("button, input, .ink-placed-image, .ink-image-outline")) return;
+      event.preventDefault();
+      this.cancelPasteHold(); this.hideSelectionActions();
+      const point = this.toPoint({ clientX: event.clientX, clientY: event.clientY, pressure: .5, pointerId: 0, pointerType: "mouse" }, this.inputRect());
+      if (this.isPointInSelection(point)) this.showSelectionActions();
+      else {
+        this.clearSelection(); this.drawStrokes(this.currentPage().strokes);
+        if (this.availableClipboard()) { this.pasteTarget = point; this.showSelectionActions(true); }
+      }
+    });
     this.registerDomEvent(scroller, "scroll", () => { this.cancelPasteHold(); this.hideSelectionActions(); this.pasteTarget = null; }, { passive: true });
     this.register(() => { this.cancelPasteHold(); this.hideSelectionActions(); this.closeLassoSettings(); });
     scroller.tabIndex = 0;
@@ -1189,6 +1221,7 @@ export abstract class InkWritingView extends FileView {
     }
     const reset = () => {
       this.cancelPasteHold(); this.hideSelectionActions(); this.pasteTarget = null;
+      this.finishFingerInput(); this.touchGesture = null;
       this.desktopSpaceDown = false;
       scroller.classList.remove("ink-pan-ready");
       this.endDesktopPan();
@@ -1317,7 +1350,7 @@ export abstract class InkWritingView extends FileView {
     if (event.pointerType === "mouse" && ((event.button ?? 0) !== 0 || this.desktopPan)) return;
     if (this.inputLocked()) return;
     if (this.nativeMenuOpen()) return;
-    if (event.pointerType === "touch") return;
+    if (event.pointerType === "touch" && source !== "finger-touch") return;
     // Pointer selects page objects through their own handlers; blank paper
     // and stylus contacts must never fall through into stroke creation.
     if (this.state.tool === "pointer") return;
@@ -1325,6 +1358,7 @@ export abstract class InkWritingView extends FileView {
     // The next contact may have Pointer events without a classified Touch,
     // so observing one Touch stream must not disable pen input for the view.
     if (source === "pointer" && event.pointerType === "pen" && this.interaction?.source === "stylus-touch") return;
+    if (event.pointerType === "pen") this.finishFingerInput(true);
     this.onInputStarting();
     this.interactionGeneration += 1;
     if (this.activePointerId !== null) this.finishPointerInput(false);
@@ -1437,7 +1471,7 @@ export abstract class InkWritingView extends FileView {
 
   protected onPointerMove(event: InkPointerSample, source: InteractionContext["source"] = "pointer"): void {
     this.devPointerEvents += 1;
-    if (event.pointerType === "touch") return;
+    if (event.pointerType === "touch" && source !== "finger-touch") return;
     if (this.desktopPan?.pointerId === event.pointerId) {
       const scroller = this.inputScroller();
       const pan = this.desktopPan;
@@ -1919,7 +1953,7 @@ export abstract class InkWritingView extends FileView {
     // The input host handles ordinary endings first. This catches an
     // uncaptured Pencil released elsewhere in the document after capture was
     // unavailable.
-    if (this.interaction?.source !== "stylus-touch" && this.activePointerId === event.pointerId) this.finishPointerInput(false);
+    if ((this.interaction?.source ?? "pointer") === "pointer" && this.activePointerId === event.pointerId) this.finishPointerInput(false);
   }
 
   protected capturePointer(pointerId: number): void {
@@ -1953,6 +1987,7 @@ export abstract class InkWritingView extends FileView {
     const sample = stylusTouchSample(touch, event.timeStamp);
     const interaction = this.interaction;
     if (event.type === "touchstart") {
+      this.finishFingerInput(true);
       // Scribble can suppress Pointer events. Native stylus Touch owns this
       // contact, including a Pointer stream that has already started it.
       if (interaction?.source === "pointer" && interaction.pointerType === "pen") {
@@ -1978,13 +2013,39 @@ export abstract class InkWritingView extends FileView {
   /** The element pointer capture is taken on (the writing surface). */
   protected abstract inputHost(): HTMLElement | undefined;
 
+  private finishFingerInput(discardChanges = false): void {
+    if (this.interaction?.source !== "finger-touch") return;
+    const undoBefore = discardChanges ? [...this.undoStack] : null;
+    const redoBefore = discardChanges ? this.redoStack : null;
+    // Lasso movement is only a preview until release. A second finger,
+    // Pencil contact or cancellation hands the surface back without moving ink.
+    if (this.interaction.tool === "lasso") {
+      this.pendingLassoPoint = null; this.lassoPath = []; this.lassoDrag = null;
+    }
+    this.finishPointerInput(false);
+    // The second contact converts the gesture into navigation. Reuse the
+    // existing reversible command to remove a provisional dot/eraser action,
+    // including worker patches, without adding a navigation step to history.
+    const command = this.undoStack[this.undoStack.length - 1];
+    if (undoBefore && command && command !== undoBefore[undoBefore.length - 1]) {
+      command.undo(); this.undoStack = undoBefore; this.redoStack = redoBefore!;
+      this.afterCommand(command);
+    }
+    this.hideSelectionActions(); this.hideLassoPreview();
+  }
+
+  protected onTouchCancel(event: TouchEvent): void {
+    this.cancelPasteHold(); this.finishFingerInput(true); this.onStylusTouch(event);
+    this.scheduleZoomHudHide(); this.cancelPageFlip(); this.touchGesture = null;
+  }
+
   // ---------------------------------------------------------------- touch
 
   protected onTouchStart(event: TouchEvent): void {
     this.cancelPasteHold();
     if (event.type === "touchstart") {
       this.hideSelectionActions(); this.pasteTarget = null;
-      if (this.activePointerId === null && this.selectedStrokeIds.size
+      if (this.state.tool !== "lasso" && this.activePointerId === null && this.selectedStrokeIds.size
         && !Array.from(event.changedTouches ?? []).some((touch) => touch.touchType === "stylus")) {
         this.clearSelection(); this.drawStrokes(this.currentPage().strokes);
       }
@@ -2014,9 +2075,14 @@ export abstract class InkWritingView extends FileView {
     }
     this.settlePageFlip(event);
     this.touchGesture = null;
-    this.healStaleInteraction(Array.from(event.touches));
     const touches = Array.from(event.touches).filter((touch) => touch.touchType !== "stylus"
       && !this.zoomHud?.contains(touch.target as Node));
+    if (this.interaction?.source === "finger-touch") {
+      const touch = Array.from(event.changedTouches).find((t) => t.identifier === this.interaction!.pointerId);
+      if (event.type === "touchend" && touch) this.onPointerUp(fingerTouchSample(touch, event.timeStamp), "finger-touch");
+      else if (touches.length !== 1) this.finishFingerInput(true);
+    }
+    this.healStaleInteraction(Array.from(event.touches));
     if (touches.length < 1 || touches.length > 2) return;
     if (this.flipSettling && touches.length === 2) return;
     if (this.activePointerId !== null) return;
@@ -2037,15 +2103,26 @@ export abstract class InkWritingView extends FileView {
       pageY: (y - rect.top) / rect.height,
     };
     if (b) this.showZoomHud();
-    else if (event.type === "touchstart" && !this.inputLocked() && this.availableClipboard()
+    else if (event.type === "touchstart" && !this.inputLocked()
+      && (this.state.fingerAsPen || this.state.tool === "lasso") && this.state.tool !== "pointer"
+      && this.inputHost()?.contains(a.target as Node) && pointInsideRect(a, rect)) {
+      this.onPointerDown(fingerTouchSample(a, event.timeStamp), "finger-touch");
+    }
+    // A stationary hold opens options even in finger-writing mode. Roll back
+    // its provisional ink/erase action before presenting clipboard actions.
+    if (!b && event.type === "touchstart" && !this.inputLocked()
+      && (this.availableClipboard() || this.selectedStrokeIds.size)
       && this.inputHost()?.contains(a.target as Node) && pointInsideRect(a, rect)) {
       const page = this.currentPage(), gesture = this.touchGesture;
       const point = { x: gesture.pageX, y: gesture.pageY };
       this.pasteHold = { x, y, timer: window.setTimeout(() => {
         this.pasteHold = null;
-        if (this.touchGesture !== gesture || this.currentPage() !== page || this.activePointerId !== null
-          || this.inputLocked() || this.nativeMenuOpen() || !this.availableClipboard()) return;
-        this.pasteTarget = point; this.showSelectionActions(true);
+        if (this.touchGesture !== gesture || this.currentPage() !== page
+          || (this.activePointerId !== null && this.interaction?.source !== "finger-touch")
+          || this.inputLocked() || this.nativeMenuOpen()) return;
+        this.finishFingerInput(true);
+        if (this.selectedStrokeIds.size && this.isPointInSelection({ ...point, pressure: .5, t: event.timeStamp })) this.showSelectionActions();
+        else if (this.availableClipboard()) { this.pasteTarget = point; this.showSelectionActions(true); }
       }, PASTE_HOLD_DELAY_MS) };
     }
   }
@@ -2068,7 +2145,7 @@ export abstract class InkWritingView extends FileView {
   private healStaleInteraction(touches: Touch[]): void {
     const interaction = this.interaction;
     if (!interaction || this.activePointerId === null) return;
-    if (interaction.source === "stylus-touch") {
+    if ((interaction.source ?? "pointer") !== "pointer") {
       const alive = touches.some((touch) => touch.identifier === interaction.pointerId);
       if (!alive) this.finishPointerInput(false);
       return;
@@ -2080,6 +2157,15 @@ export abstract class InkWritingView extends FileView {
     if (this.nativeMenuOpen()) { this.touchGesture = null; return; }
     event.stopPropagation?.();
     if (this.onStylusTouch(event)) return;
+    if (this.interaction?.source === "finger-touch") {
+      const touch = Array.from(event.touches).find((t) => t.identifier === this.interaction!.pointerId);
+      if (touch && event.touches.length === 1) {
+        if (this.pasteHold && Math.hypot(touch.clientX - this.pasteHold.x, touch.clientY - this.pasteHold.y) > PASTE_HOLD_SLOP_PX) this.cancelPasteHold();
+        if (!this.pasteHold) this.onPointerMove(fingerTouchSample(touch, event.timeStamp), "finger-touch");
+        event.preventDefault(); return;
+      }
+      this.finishFingerInput(true); this.onTouchStart(event); return;
+    }
     if (this.activePointerId !== null) {
       this.touchGesture = null;
       return;
@@ -3412,6 +3498,7 @@ export abstract class InkWritingView extends FileView {
   private selectWritingTool(tool: InkTool): void {
     this.finishPointerInput(false);
     this.onToolSelected(tool);
+    this.pageImages?.clear();
     this.state.tool = tool;
     if (tool !== "lasso") this.clearSelection();
     if (!isBrushTool(tool)) this.brushPopover?.close();

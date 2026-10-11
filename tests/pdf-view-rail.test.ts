@@ -14,6 +14,7 @@ import { InkClipboard } from "../src/lasso-clipboard";
 import { defaultToolState, type SharedToolState } from "../src/tool-state";
 import type { InkNotebook, InkStroke } from "../src/model";
 import type { ImageLibraryStore } from "../src/image-library";
+import { gestureContract } from "./gesture-contract";
 
 const FINGERPRINT = { sha256: "a".repeat(64), byteLength: 100 };
 const views = new Set<PdfInkView>();
@@ -90,12 +91,12 @@ async function setup(sourcePageCount = 3, imageLibrary?: ImageLibraryStore) {
 }
 
 const thumbs = () => document.querySelectorAll<HTMLButtonElement>(".ink-pdf-view .ink-page-thumb");
+gestureContract(async () => { const { view, internal } = await setup(); internal.renderAll(); return view; });
 const thumbAt = (index: number) => thumbs()[index]!;
 
 it("routes image-target finger movement before PDF navigation and keeps native touch targets attached", async () => {
   const { view, internal, sidecar } = await setup(2, { url: () => "data:image/png;base64,", image: async () => document.createElement("img") } as unknown as ImageLibraryStore);
   internal.renderAll();
-  document.querySelector<HTMLButtonElement>('[aria-label="Pointer"]')!.click();
   const editor = view as any, page = sidecar.notebook.pages[0];
   editor.changeImages(page.id, [], [{ id: "pdf-touch-image", pageId: page.id, assetPath: "Ink Notes/Images/assets/a.png", x: .1, y: .1, width: .3, height: .3,
     foreground: false, createdAt: 1, updatedAt: 1 }]);

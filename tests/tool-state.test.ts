@@ -24,6 +24,7 @@ describe("tool state persistence", () => {
       state.eraserSize = 64;
       state.lasso.crossFileClipboard = true;
       state.lasso.mode = "rectangle";
+      state.fingerAsPen = true;
       expect(sanitizeToolState(storedToolState(state))).toEqual(state);
     });
 
@@ -41,6 +42,11 @@ describe("tool state persistence", () => {
       expect(state.highlighter.width).toBe(18);
       expect(state.eraserMode).toBe("circle");
       expect(state.eraserSize).toBe(64);
+    });
+
+    it("keeps legacy touch navigation unless finger writing is explicitly enabled", () => {
+      for (const value of [undefined, null, "true", 1, false]) expect(sanitizeToolState({ fingerAsPen: value }).fingerAsPen).toBe(false);
+      expect(sanitizeToolState({ fingerAsPen: true }).fingerAsPen).toBe(true);
     });
 
     it("clamps numbers into their control ranges", () => {
