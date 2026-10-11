@@ -435,6 +435,77 @@ describe("consecutive handwriting input", () => {
     expect(store.save).not.toHaveBeenCalled();
   });
 
+  it("turns a fast repeated pen scrub over existing ink into one undoable erase", () => {
+    const { internal } = setup();
+    (internal as any).commitPreview = (InkView.prototype as any).commitPreview.bind(internal);
+    internal.state.pen.smooth = 0;
+    const page = internal.notebook.pages[0];
+    const target: InkStroke = {
+      id: "word-line", pageId: page.id, tool: "pen", color: "#000", width: 3, opacity: 1,
+      points: [{ x: 0.2, y: 0.5, pressure: 0.5, t: 1 }, { x: 0.8, y: 0.5, pressure: 0.5, t: 2 }],
+      createdAt: 1, updatedAt: 1,
+    };
+    page.strokes.push(target);
+    const vertices = [[25, 40], [65, 60], [25, 60], [65, 40], [25, 40], [65, 60]];
+    const path = vertices.slice(1).flatMap((end, index) => {
+      const start = vertices[index];
+      return Array.from({ length: 5 }, (_, step) => ({
+        x: start[0] + (end[0] - start[0]) * (step + 1) / 5,
+        y: start[1] + (end[1] - start[1]) * (step + 1) / 5,
+      }));
+    });
+
+    internal.onPointerDown(pointer(vertices[0][0], { clientY: vertices[0][1] }));
+    for (const point of path.slice(0, -1)) internal.onPointerMove(pointer(point.x, { clientY: point.y }));
+    const last = path[path.length - 1];
+    internal.onPointerUp(pointer(last.x, { clientY: last.y }));
+
+    expect(page.strokes).toEqual([]);
+    expect(page.deletedStrokeIds).toContain("word-line");
+    expect(page.deletedStrokeIds).toHaveLength(2);
+    internal.undo();
+    expect(page.strokes).toHaveLength(1);
+    expect(page.strokes[0].id).not.toBe("word-line");
+    expect(page.strokes[0].points).toEqual(target.points);
+    internal.redo();
+    expect(page.strokes).toEqual([]);
+  });
+
+  it("keeps ordinary pen strokes and scribbles on blank areas as ink", () => {
+    const draw = (vertices: number[][], withTarget: boolean) => {
+      const { internal } = setup();
+      (internal as any).commitPreview = (InkView.prototype as any).commitPreview.bind(internal);
+      internal.state.pen.smooth = 0;
+      const page = internal.notebook.pages[0];
+      if (withTarget) page.strokes.push({
+        id: "existing", pageId: page.id, tool: "pen", color: "#000", width: 3, opacity: 1,
+        points: [{ x: 0.2, y: 0.5, pressure: 0.5, t: 1 }, { x: 0.8, y: 0.5, pressure: 0.5, t: 2 }],
+        createdAt: 1, updatedAt: 1,
+      });
+      const path = vertices.slice(1).flatMap((end, index) => {
+        const start = vertices[index];
+        return Array.from({ length: 5 }, (_, step) => ({
+          x: start[0] + (end[0] - start[0]) * (step + 1) / 5,
+          y: start[1] + (end[1] - start[1]) * (step + 1) / 5,
+        }));
+      });
+      internal.onPointerDown(pointer(vertices[0][0], { clientY: vertices[0][1] }));
+      for (const point of path.slice(0, -1)) internal.onPointerMove(pointer(point.x, { clientY: point.y }));
+      const last = path[path.length - 1];
+      internal.onPointerUp(pointer(last.x, { clientY: last.y }));
+      return page.strokes;
+    };
+
+    const normalWriting = draw([[25, 60], [35, 40], [45, 60], [55, 40], [65, 60]], true);
+    expect(normalWriting).toHaveLength(2);
+    expect(normalWriting.map((stroke) => stroke.id)).toContain("existing");
+    expect(normalWriting.some((stroke) => stroke.id.startsWith("stroke-"))).toBe(true);
+
+    const blankScribble = draw([[25, 40], [65, 60], [25, 60], [65, 40], [25, 40], [65, 60]], false);
+    expect(blankScribble).toHaveLength(1);
+    expect(blankScribble[0].id).toMatch(/^stroke-/);
+  });
+
   it("keeps rapid Pencil strokes on the overlay until input becomes idle", async () => {
     const { internal } = setup();
     (internal as any).commitPreview = (InkView.prototype as any).commitPreview.bind(internal);

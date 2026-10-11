@@ -24010,6 +24010,51 @@ function strokeIntersectsEraser(stroke, center, radius, mode, width, height) {
   }
   return false;
 }
+function isScribbleEraseGesture(points, eraserSize, width, height) {
+  if (points.length < 8) return false;
+  const filtered = [points[0]];
+  for (const point of points.slice(1)) {
+    const previous = filtered[filtered.length - 1];
+    if (Math.hypot((point.x - previous.x) * width, (point.y - previous.y) * height) >= 2) filtered.push(point);
+  }
+  if (filtered.length < 8) return false;
+  let pathLength = 0;
+  let distanceSinceTurn = 0;
+  let turns = 0;
+  for (let index = 1; index < filtered.length; index++) {
+    const previous = filtered[index - 1], point = filtered[index];
+    const segmentLength = Math.hypot((point.x - previous.x) * width, (point.y - previous.y) * height);
+    pathLength += segmentLength;
+    distanceSinceTurn += segmentLength;
+    if (index < 2) continue;
+    const before = filtered[index - 2];
+    const ax = (previous.x - before.x) * width, ay = (previous.y - before.y) * height;
+    const bx = (point.x - previous.x) * width, by = (point.y - previous.y) * height;
+    const lengths = Math.hypot(ax, ay) * Math.hypot(bx, by);
+    if (lengths > 0 && (ax * bx + ay * by) / lengths < -0.35 && distanceSinceTurn >= Math.max(8, eraserSize * 0.35)) {
+      turns++;
+      distanceSinceTurn = 0;
+    }
+  }
+  let minX = Number.POSITIVE_INFINITY, minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY, maxY = Number.NEGATIVE_INFINITY;
+  for (const point of filtered) {
+    const x = point.x * width, y = point.y * height;
+    minX = Math.min(minX, x);
+    minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x);
+    maxY = Math.max(maxY, y);
+  }
+  const boundsWidth = maxX - minX;
+  const boundsHeight = maxY - minY;
+  const boundsDiagonal = Math.hypot(boundsWidth, boundsHeight);
+  const duration = filtered[filtered.length - 1].t - filtered[0].t;
+  return turns >= 4 && pathLength >= Math.max(96, eraserSize * 3) && boundsDiagonal >= eraserSize && pathLength / Math.max(1, boundsDiagonal) >= 3.2 && duration >= 0 && duration <= 1200;
+}
+function strokeIntersectsScribble(stroke, path, radius, width, height) {
+  const samples = sampleStrokeForEraser(path, Math.max(1, radius / 2), width, height);
+  return samples.some((point) => strokeIntersectsEraser(stroke, point, radius + 1, "circle", width, height));
+}
 function eraseStrokeSegments(stroke, center, radius, mode, width, height) {
   const segments = [];
   let segment = [];
@@ -26242,7 +26287,7 @@ var InkWritingView = class extends import_obsidian3.FileView {
       });
       this.pushCommand(this.erasedStrokesCommand(page.id, this.erasedStrokes, this.eraserReplacements));
       this.drawInteractiveStrokes(page.strokes, true);
-    } else if (this.activeStroke) {
+    } else if (this.activeStroke && !(interaction.tool === "pen" && this.finishScribbleErase(page, this.activeStroke))) {
       this.markChanged(page);
       this.retainActivePreview();
       this.queueWorkerOperation({
@@ -26272,6 +26317,69 @@ var InkWritingView = class extends import_obsidian3.FileView {
     this.applyPendingMergedNotebook();
     this.scheduleSave();
     this.afterInputFullySettled();
+  }
+  finishScribbleErase(page, gesture) {
+    var _a, _b, _c, _d;
+    if (!isScribbleEraseGesture(gesture.points, this.state.eraserSize, this.canvasLogicalWidth, this.canvasLogicalHeight)) return false;
+    const radius = this.state.eraserSize / 2;
+    let minX = Number.POSITIVE_INFINITY, minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY, maxY = Number.NEGATIVE_INFINITY;
+    for (const point of gesture.points) {
+      minX = Math.min(minX, point.x * this.canvasLogicalWidth);
+      minY = Math.min(minY, point.y * this.canvasLogicalHeight);
+      maxX = Math.max(maxX, point.x * this.canvasLogicalWidth);
+      maxY = Math.max(maxY, point.y * this.canvasLogicalHeight);
+    }
+    const left = Math.max(0, minX - radius), top = Math.max(0, minY - radius);
+    const right = Math.min(this.canvasLogicalWidth, maxX + radius);
+    const bottom = Math.min(this.canvasLogicalHeight, maxY + radius);
+    const search = {
+      x: left,
+      y: top,
+      width: right - left,
+      height: bottom - top
+    };
+    const indexed = ((_a = this.tiles) == null ? void 0 : _a.query) ? this.tiles.query(search) : page.strokes;
+    const candidates = [...new Map([
+      ...indexed,
+      ...this.pendingInkStrokes,
+      ...(_b = this.committingInkStrokes) != null ? _b : []
+    ].map((stroke) => [stroke.id, stroke])).values()].filter((stroke) => stroke.id !== gesture.id);
+    const removed = candidates.filter((stroke) => strokeIntersectsScribble(
+      stroke,
+      gesture.points,
+      radius,
+      this.canvasLogicalWidth,
+      this.canvasLogicalHeight
+    ));
+    if (removed.length === 0) return false;
+    const removedIds = [gesture.id, ...removed.map((stroke) => stroke.id)];
+    this.deleteStrokes(page, removedIds);
+    this.pendingInkStrokes = this.pendingInkStrokes.filter((stroke) => stroke.id !== gesture.id);
+    if (this.pendingInkStrokes.length === 0) this.pendingInkPageId = null;
+    (_c = this.confirmedStrokeOutlines) == null ? void 0 : _c.delete(gesture.id);
+    this.markChanged(page);
+    this.queueWorkerOperation({
+      type: "complete-stroke",
+      pageId: page.id,
+      strokeId: gesture.id,
+      pageUpdatedAt: page.updatedAt,
+      notebookUpdatedAt: this.currentNotebook().updatedAt
+    });
+    this.queueWorkerOperation({
+      type: "patch-strokes",
+      pageId: page.id,
+      upsert: [],
+      remove: removedIds,
+      deletedStrokeIds: [...page.deletedStrokeIds],
+      pageUpdatedAt: page.updatedAt,
+      notebookUpdatedAt: this.currentNotebook().updatedAt
+    });
+    (_d = this.tiles) == null ? void 0 : _d.patchStrokes([], removedIds, page.strokes);
+    this.pushCommand(this.erasedStrokesCommand(page.id, removed.map(cloneStroke), []));
+    this.activeStroke = null;
+    this.drawInteractiveStrokes(page.strokes, true);
+    return true;
   }
   // -------------------------------------------------------- history stack
   undo() {
@@ -26811,6 +26919,10 @@ var TileRenderer = class {
   queryNear(point, radius) {
     var _a, _b;
     return (_b = (_a = this.active) == null ? void 0 : _a.index.queryNear(point, radius)) != null ? _b : [];
+  }
+  query(rect) {
+    var _a, _b;
+    return (_b = (_a = this.active) == null ? void 0 : _a.index.query(rect)) != null ? _b : [];
   }
   previewInteractiveCells(cells, viewport, density) {
     if (!this.active || this.disposed || cells.length === 0) return;
