@@ -117,6 +117,8 @@ describe("plugin event synchronization", () => {
     expect(revealLeaf).toHaveBeenCalledWith(leaf);
     handler({ vault: "Other vault", file: file.path, page: "p", sticky: "n" });
     expect(revealSticky).toHaveBeenCalledOnce();
+    handler({ vault: "Vault A", file: file.path, page: "p", sticky: "n", block: "definition-1" });
+    await vi.waitFor(() => expect(revealSticky).toHaveBeenCalledWith("p", "n", "definition-1"));
     handler({ file: file.path }); expect(notice).toHaveBeenCalledWith("Sticky note link is incomplete");
     handler({ file: "missing.ink", page: "p", sticky: "n" });
     await vi.waitFor(() => expect(notice).toHaveBeenCalledWith(expect.stringContaining("Notebook or PDF not found")));

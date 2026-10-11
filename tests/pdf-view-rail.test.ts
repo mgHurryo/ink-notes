@@ -168,8 +168,8 @@ it("persists PDF sticky notes independently, locates their page and preserves co
   await view.navigatePages(1); expect(document.querySelectorAll(".ink-sticky-note")).toHaveLength(0);
   await view.revealSticky(pageId, note.id); expect(document.querySelectorAll(".ink-sticky-note")).toHaveLength(1);
   await expect(view.revealSticky("missing-page", note.id)).rejects.toThrow("no longer exists");
-  expect(document.querySelector('[aria-label="Edit sticky note"]')).not.toBeNull();
-  Array.from(document.querySelectorAll<HTMLButtonElement>('.ink-sticky-editor button')).find((button) => button.textContent === "Cancel")!.click();
+  expect(document.querySelector('[aria-label="Type on sticky note"]')).not.toBeNull();
+  expect(document.querySelector(".ink-sticky-editor")).toBeNull();
   editor.setReadingMode(true); editor.changeSticky(sidecar.notebook.pages[0].stickyNotes![0], { ...original, text: "Blocked" });
   expect(sidecar.notebook.pages[0].stickyNotes![0].text).toBe("PDF text");
 });
@@ -198,7 +198,7 @@ it("keeps erased sticky ink removed after repeated undo, redo and stale saves", 
   expect(page.stickyNotes![0].strokes).toHaveLength(1);
   expect(mergeNotebooks(sidecar.notebook, JSON.parse(JSON.stringify(sidecar.notebook))).pages[0].stickyNotes![0].strokes).toHaveLength(1);
   await view.revealSticky(pageId, note.id);
-  expect(document.querySelector('.ink-sticky-editor')).not.toBeNull();
+  expect(document.querySelector('.ink-sticky-note')).not.toBeNull();
   await view.onUnloadFile(view.file!);
   expect(document.querySelector('.ink-sticky-editor')).toBeNull();
   expect(document.querySelector('.ink-sticky-layer')).toBeNull();
@@ -1140,4 +1140,34 @@ describe("pdf page preview rail", () => {
     expect(host.pageWrap.style.transform).toBe("");
     await view.onClose();
   });
+});
+
+
+it("routes PDF Pencil ink between page and sticky, preserves peer ink through undo and redo", async () => {
+  vi.stubGlobal("Path2D", class { moveTo() {} lineTo() {} closePath() {} });
+  const { view, internal, sidecar } = await setup(); internal.renderAll();
+  const editor = view as any, page = sidecar.notebook.pages[0];
+  vi.spyOn(editor, "capturePointer").mockImplementation(() => undefined);
+  vi.spyOn(editor, "releasePointer").mockImplementation(() => undefined);
+  vi.spyOn(editor, "inputRect").mockReturnValue(new DOMRect(0, 0, 1000, 1000));
+  editor.canvasLogicalWidth = editor.canvasLogicalHeight = 1000;
+  editor.changeSticky(undefined, { id: "inline-note", pageId: page.id, x: .2, y: .2, width: .5, height: .5, boardPageWidth: 1000,
+    title: "Inline", keywords: "", text: "", textUpdatedAt: 1, color: "#fff1a8", collapsed: false, preview: true,
+    scrollX: 0, scrollY: 0, strokes: [], deletedStrokeIds: [], createdAt: 1, updatedAt: 1 });
+  const sample = (x: number) => ({ pointerType: "pen", pointerId: 78, clientX: x, clientY: 400, pressure: .5, timeStamp: Date.now(), preventDefault() {} });
+  editor.state.tool = "pen"; editor.state.scribbleErase = false;
+  editor.onPointerDown(sample(100)); editor.onPointerMove(sample(400)); editor.onPointerUp(sample(400));
+  expect(page.strokes).toHaveLength(1); expect(page.stickyNotes![0].strokes).toHaveLength(1);
+  expect(page.strokes.every((stroke) => stroke.pageId === page.id)).toBe(true);
+  const peer = { ...page.stickyNotes![0].strokes[0], id: "peer-ink" };
+  page.stickyNotes![0].strokes.push(peer);
+  editor.undo(); expect(page.strokes).toHaveLength(0); expect(page.stickyNotes![0].strokes.map((s) => s.id)).toEqual(["peer-ink"]);
+  editor.redo(); expect(page.strokes).toHaveLength(1); expect(page.stickyNotes![0].strokes).toHaveLength(2);
+  const undoSnapshot = structuredClone(sidecar.notebook);
+  editor.undo();
+  expect(mergeNotebooks(sidecar.notebook, undoSnapshot).pages[0].stickyNotes![0].strokes.map((s) => s.id)).toEqual(["peer-ink"]);
+  editor.state.tool = "eraser";
+  editor.onPointerDown(sample(320)); editor.onPointerUp(sample(320));
+  expect(page.stickyNotes![0].strokes).toHaveLength(0);
+  editor.undo(); expect(page.stickyNotes![0].strokes).toHaveLength(1);
 });
