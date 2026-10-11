@@ -23629,16 +23629,22 @@ var PageImageLayer = class {
     el.style.height = `${image.height * 100}%`;
   }
   bind(el, resize) {
-    const start = (id, touch, x, y, e) => {
-      var _a;
-      if (!this.context.editable()) return;
+    const start = (id, touch, x, y, e, type) => {
+      var _a, _b, _c;
+      if (!this.context.editable() || ((_b = (_a = this.context).canInteract) == null ? void 0 : _b.call(_a, type)) === false) {
+        if (type === "pen" && this.selectedId) {
+          this.clear();
+          this.sync();
+        }
+        return;
+      }
       if (this.drag) {
         e.preventDefault();
         e.stopPropagation();
         return;
       }
       const page = this.context.page();
-      const image = (_a = page.images) == null ? void 0 : _a.find((i) => {
+      const image = (_c = page.images) == null ? void 0 : _c.find((i) => {
         var _a2;
         return i.id === ((_a2 = el.dataset.imageId) != null ? _a2 : this.selectedId);
       });
@@ -23649,13 +23655,20 @@ var PageImageLayer = class {
       this.drag = { id, touch, pageId: page.id, original: { ...image }, preview: { ...image }, x, y, rect: this.host.getBoundingClientRect(), resize };
     };
     el.addEventListener("pointerdown", (e) => {
-      if (e.pointerType !== "mouse" || e.button !== 0) return;
-      start(e.pointerId, false, e.clientX, e.clientY, e);
+      if (e.pointerType !== "mouse" && e.pointerType !== "pen" || e.button !== 0) return;
+      start(e.pointerId, false, e.clientX, e.clientY, e, e.pointerType);
     });
     el.addEventListener("touchstart", (e) => {
-      if (e.touches.length === 1 && e.touches[0].touchType !== "stylus") {
-        const t = e.touches[0];
-        start(t.identifier, true, t.clientX, t.clientY, e);
+      if (e.touches.length === 1) {
+        const t = e.touches[0], type = t.touchType === "stylus" ? "pen" : "touch";
+        if (this.drag && type === "pen" && !this.drag.touch) {
+          e.preventDefault();
+          e.stopPropagation();
+          this.drag.id = t.identifier;
+          this.drag.touch = true;
+          return;
+        }
+        start(t.identifier, true, t.clientX, t.clientY, e, type);
       }
     }, { passive: false });
     el.addEventListener("dragstart", (e) => e.preventDefault());
@@ -23722,7 +23735,7 @@ var INK_COLORS = [
 ];
 var PRESET_PALETTE_MIN = 1;
 var PRESET_PALETTE_MAX = 10;
-var LONG_PRESS_MS = 550;
+var LONG_PRESS_MS = 600;
 var PICKER_ARM_MS = 400;
 var PICKER_SETTLE_MS = 800;
 var POPOVER_TRANSITION_MS = 150;
@@ -23774,7 +23787,7 @@ var BrushPopoverController = class {
     /** The tool whose panel was last shown; a switch resets the shared scroll
      *  container so the shorter panel is not left scrolled out of view. */
     this.visiblePanel = null;
-    var _a;
+    var _a, _b;
     this.options = options;
     this.root = parent.createDiv({
       cls: options.extraClass ? `ink-size-popover ${options.extraClass}` : "ink-size-popover",
@@ -23788,8 +23801,16 @@ var BrushPopoverController = class {
     }
     const body = this.root.createDiv({ cls: "ink-popover-body" });
     this.body = body;
+    this.root.addEventListener("touchstart", (event) => {
+      if (event.touches.length > 1) this.cancelPresetHold();
+    }, { capture: true });
+    (_a = options.registerCleanup) == null ? void 0 : _a.call(options, () => {
+      var _a2;
+      this.cancelPresetHold();
+      (_a2 = this.presetMenu) == null ? void 0 : _a2.hide();
+    });
     for (const spec of options.tools) this.buildToolPanel(body, spec);
-    (_a = options.buildExtras) == null ? void 0 : _a.call(options, body, {
+    (_b = options.buildExtras) == null ? void 0 : _b.call(options, body, {
       addRange: (parent2, name, min, max, step, value, onChange) => this.addRange(parent2, name, min, max, step, value, onChange)
     });
     this.update();
@@ -23919,6 +23940,9 @@ var BrushPopoverController = class {
   }
   /** Rebuilds the swatch row from the live palette (after add/edit/remove). */
   buildSwatchesInto(spec) {
+    var _a;
+    this.cancelPresetHold();
+    (_a = this.presetMenu) == null ? void 0 : _a.hide();
     const swatches = this.root.querySelector(`.ink-color-control[data-brush-tool="${spec.tool}"] .ink-color-swatches`);
     if (!swatches) return;
     swatches.empty();
@@ -23933,7 +23957,7 @@ var BrushPopoverController = class {
       const slot = swatches.createDiv({ cls: "ink-swatch-slot" });
       const swatch = slot.createEl("button", { cls: "ink-color-swatch", attr: {
         type: "button",
-        title: `${label} \u2014 double-tap to change, hold to remove`,
+        title: `${label} \u2014 double-tap to change, hold for options`,
         "aria-label": `${spec.label} ${label.toLowerCase()}`,
         "aria-pressed": String(settings.color.toLowerCase() === value.toLowerCase()),
         "data-color": value,
@@ -23979,31 +24003,63 @@ var BrushPopoverController = class {
         swatch.dataset.color = picker.value;
         picker.dataset.color = picker.value;
         swatch.setAttribute("aria-label", `${spec.label} ${newLabel.toLowerCase()}`);
-        swatch.title = `${newLabel} \u2014 double-tap to change, hold to remove`;
+        swatch.title = `${newLabel} \u2014 double-tap to change, hold for options`;
         current = picker.value;
         this.update();
       };
       picker.addEventListener("input", applyPick);
       picker.addEventListener("change", applyPick);
-      let pressTimer;
-      const cancelPress = () => {
-        if (pressTimer !== void 0) {
-          window.clearTimeout(pressTimer);
-          pressTimer = void 0;
-        }
+      const options = (event) => {
+        var _a2;
+        this.cancelPresetHold();
+        (_a2 = this.presetMenu) == null ? void 0 : _a2.hide();
+        const menu = new import_obsidian3.Menu();
+        this.presetMenu = menu;
+        menu.addItem((item) => {
+          var _a3, _b2, _c2;
+          return item.setTitle("Remove preset color").setIcon("trash-2").setDisabled(((_c2 = (_b2 = (_a3 = this.options).palette) == null ? void 0 : _b2.call(_a3).length) != null ? _c2 : 1) <= PRESET_PALETTE_MIN).onClick(() => this.removePresetColor(spec, current));
+        });
+        menu.onHide(() => {
+          if (this.presetMenu === menu) this.presetMenu = void 0;
+        });
+        menu.showAtMouseEvent(event);
       };
-      swatch.addEventListener("pointerdown", () => {
-        cancelPress();
-        pressTimer = window.setTimeout(() => {
-          pressTimer = void 0;
+      let origin = { x: 0, y: 0 };
+      swatch.addEventListener("pointerdown", (event) => {
+        this.cancelPresetHold();
+        if (event.button !== 0) return;
+        suppressClick = false;
+        origin = { x: event.clientX, y: event.clientY };
+        this.presetPressTimer = window.setTimeout(() => {
+          this.presetPressTimer = void 0;
+          if (!this.isOpen || !swatch.isConnected) return;
           suppressClick = true;
-          this.removePresetColor(spec, current);
+          options(event);
         }, LONG_PRESS_MS);
       });
-      swatch.addEventListener("pointerup", cancelPress);
-      swatch.addEventListener("pointercancel", cancelPress);
-      swatch.addEventListener("pointerleave", cancelPress);
+      swatch.addEventListener("pointermove", (event) => {
+        if (Math.hypot(event.clientX - origin.x, event.clientY - origin.y) > 10) this.cancelPresetHold();
+      });
+      for (const type of ["pointerup", "pointercancel", "pointerleave"]) swatch.addEventListener(type, () => this.cancelPresetHold());
+      swatch.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        if (!suppressClick || !this.presetMenu) options(event);
+      });
+      swatch.addEventListener("keydown", (event) => {
+        if (event.key === "ContextMenu" || event.shiftKey && event.key === "F10") {
+          event.preventDefault();
+          const rect = swatch.getBoundingClientRect();
+          options(new MouseEvent("contextmenu", { clientX: rect.left, clientY: rect.bottom }));
+        }
+      });
     }
+  }
+  cancelPresetHold() {
+    if (this.presetPressTimer !== void 0) window.clearTimeout(this.presetPressTimer);
+    this.presetPressTimer = void 0;
+  }
+  get optionsOpen() {
+    return this.presetMenu !== void 0;
   }
   /** Deletes one palette entry outright (the one-swatch minimum holds). */
   removePresetColor(spec, value) {
@@ -24067,6 +24123,8 @@ var BrushPopoverController = class {
     const resetButton = resetRow.createEl("button", { text: "Reset", attr: { type: "button" } });
     resetButton.addEventListener("click", () => {
       settings.pressureCurve = void 0;
+      selectedIndex = dragIndex = -1;
+      removePoint.disabled = true;
       this.update();
     });
     const editor = curveBody.createDiv({ cls: "ink-curve-editor", attr: { "aria-label": "Pressure mapping curve" } });
@@ -24078,6 +24136,18 @@ var BrushPopoverController = class {
     };
     const curve = () => settings.pressureCurve ? settings.pressureCurve.map((point) => [...point]) : [[0, 0], [1, 1]];
     let dragIndex = -1;
+    let selectedIndex = -1;
+    const removePoint = resetRow.createEl("button", { text: "Remove point", attr: { type: "button" } });
+    removePoint.disabled = true;
+    removePoint.addEventListener("click", () => {
+      const points = curve();
+      if (selectedIndex <= 0 || selectedIndex >= points.length - 1) return;
+      points.splice(selectedIndex, 1);
+      settings.pressureCurve = points;
+      selectedIndex = dragIndex = -1;
+      removePoint.disabled = true;
+      this.update();
+    });
     canvas.addEventListener("pointerdown", (event) => {
       const position = hit(event.clientX, event.clientY);
       const points = curve();
@@ -24090,11 +24160,7 @@ var BrushPopoverController = class {
           nearestDistance = d;
         }
       }
-      if (event.detail >= 2 && nearest > 0 && nearest < points.length - 1 && points.length > 2) {
-        points.splice(nearest, 1);
-        settings.pressureCurve = points;
-        dragIndex = -1;
-      } else if (nearest >= 0) {
+      if (nearest >= 0) {
         dragIndex = nearest;
       } else if (points.length < 6) {
         const insertAt = points.findIndex((point) => point[0] > position.x);
@@ -24105,6 +24171,8 @@ var BrushPopoverController = class {
         settings.pressureCurve = points;
         dragIndex = index;
       }
+      selectedIndex = dragIndex;
+      removePoint.disabled = selectedIndex <= 0 || selectedIndex >= curve().length - 1;
       canvas.setPointerCapture(event.pointerId);
       this.update();
       event.preventDefault();
@@ -24122,11 +24190,6 @@ var BrushPopoverController = class {
         const low = points[dragIndex - 1][0] + 0.02;
         const high = points[dragIndex + 1][0] - 0.02;
         point[0] = Math.max(low, Math.min(high, position.x));
-      }
-      settings.pressureCurve = points;
-      if (!isEnd && dragIndex > 0 && dragIndex < points.length - 1 && point[1] <= 0.02) {
-        points.splice(dragIndex, 1);
-        dragIndex = -1;
       }
       settings.pressureCurve = points;
       this.update();
@@ -24159,6 +24222,9 @@ var BrushPopoverController = class {
     });
   }
   close() {
+    var _a;
+    this.cancelPresetHold();
+    (_a = this.presetMenu) == null ? void 0 : _a.hide();
     if (!this.openState) return;
     this.openState = false;
     for (const flush of this.customPickers) flush();
@@ -24673,6 +24739,7 @@ function sameInput(left, right) {
 function defaultToolState() {
   return {
     tool: "pen",
+    fingerAsPen: false,
     pen: { color: "#1b1b1b", width: 3, opacity: 1, smooth: 0, taper: 0, pressureGain: 100, speedGain: 0, pressureCurve: void 0 },
     highlighter: { color: "#f2c94c", width: 18, opacity: 0.4 },
     eraserMode: "stroke",
@@ -24693,6 +24760,7 @@ function sanitizeToolState(raw) {
   const lasso = isRecord(source.lasso) ? source.lasso : {};
   return {
     tool: defaults.tool,
+    fingerAsPen: source.fingerAsPen === true,
     pen: sanitizeBrush(source.pen, defaults.pen, PEN_WIDTH_RANGE, true),
     highlighter: sanitizeBrush(source.highlighter, defaults.highlighter, HIGHLIGHTER_WIDTH_RANGE, false),
     eraserMode: isEraserMode(source.eraserMode) ? source.eraserMode : defaults.eraserMode,
@@ -24703,6 +24771,7 @@ function sanitizeToolState(raw) {
 }
 function storedToolState(state) {
   return {
+    fingerAsPen: state.fingerAsPen,
     pen: storedBrush(state.pen),
     highlighter: storedBrush(state.highlighter),
     eraserMode: state.eraserMode,
@@ -24899,6 +24968,16 @@ function stylusTouchSample(touch, timeStamp) {
     // Touch objects carry no per-sample timestamp; the owning TouchEvent's is
     // per-event, which is exactly the per-sample time for stylus input.
     timeStamp: typeof timeStamp === "number" && Number.isFinite(timeStamp) ? timeStamp : void 0
+  };
+}
+function fingerTouchSample(touch, timeStamp) {
+  return {
+    pointerId: touch.identifier,
+    pointerType: "touch",
+    clientX: touch.clientX,
+    clientY: touch.clientY,
+    pressure: 0.5,
+    timeStamp
   };
 }
 function clampLiftPressure(point, previous) {
@@ -25226,7 +25305,8 @@ var InkWritingView = class extends import_obsidian4.FileView {
       (_b = this.pageImages) == null ? void 0 : _b.dispose();
       this.pageImages = new PageImageLayer(host, this.toolbarRoot(), this.imageLibrary, {
         page: () => this.currentPage(),
-        editable: () => this.state.tool === "pointer" && !this.inputLocked(),
+        editable: () => !this.inputLocked(),
+        canInteract: (type) => !this.inputLocked() && this.activePointerId === null && (type === "touch" ? !this.state.fingerAsPen || this.state.tool === "pointer" : this.state.tool === "pointer"),
         select: () => {
           this.selectedStrokeIds.clear();
           this.hideSelectionActions();
@@ -25552,7 +25632,8 @@ var InkWritingView = class extends import_obsidian4.FileView {
         this.updateEraserControls();
         this.scheduleToolStateSave();
       },
-      anchor: () => this.activeSettingsAnchor()
+      anchor: () => this.activeSettingsAnchor(),
+      registerCleanup: (dispose) => this.register(dispose)
     });
     this.settingsPanel = this.brushPopover.root;
     this.registerPopoverDismiss();
@@ -25568,11 +25649,12 @@ var InkWritingView = class extends import_obsidian4.FileView {
   registerPopoverDismiss() {
     const popover = this.brushPopover;
     this.registerDomEvent(document, "pointerdown", (event) => {
-      var _a;
+      var _a, _b;
       if (!popover.isOpen) return;
       const target = event.target;
       if (target && ((_a = target.closest) == null ? void 0 : _a.call(target, ".ink-tool-button"))) return;
       if (target && popover.root.contains(target)) return;
+      if (popover.optionsOpen && ((_b = target == null ? void 0 : target.closest) == null ? void 0 : _b.call(target, ".menu"))) return;
       popover.close();
     });
     this.registerDomEvent(document, "keydown", (event) => {
@@ -25599,6 +25681,9 @@ var InkWritingView = class extends import_obsidian4.FileView {
     this.sharedToolSettings = shared;
     this.state = {
       tool: this.state.tool,
+      get fingerAsPen() {
+        return shared.config.fingerAsPen;
+      },
       pen: shared.config.pen,
       highlighter: shared.config.highlighter,
       eraserMode: shared.config.eraserMode,
@@ -25612,6 +25697,15 @@ var InkWritingView = class extends import_obsidian4.FileView {
   scheduleToolStateSave() {
     var _a;
     (_a = this.sharedToolSettings) == null ? void 0 : _a.scheduleSave(this.state);
+  }
+  /** Settings are shared live; finish the old contact before changing input ownership. */
+  refreshInputPreferences() {
+    var _a;
+    this.cancelPasteHold();
+    this.finishFingerInput();
+    this.touchGesture = null;
+    (_a = this.pageImages) == null ? void 0 : _a.clear();
+    this.syncPageImages();
   }
   /** Shared drawing tools in the centre, with history next to page navigation. */
   buildWritingSections(toolbar, historyParent) {
@@ -25764,6 +25858,23 @@ var InkWritingView = class extends import_obsidian4.FileView {
       this.pasteTarget = null;
     }, true);
     this.registerDomEvent(doc, "touchend", () => this.cancelPasteHold(), true);
+    this.registerDomEvent(scroller, "contextmenu", (event) => {
+      var _a2;
+      if (this.inputLocked() || this.nativeMenuOpen() || !((_a2 = this.inputHost()) == null ? void 0 : _a2.contains(event.target)) || event.target.closest("button, input, .ink-placed-image, .ink-image-outline")) return;
+      event.preventDefault();
+      this.cancelPasteHold();
+      this.hideSelectionActions();
+      const point = this.toPoint({ clientX: event.clientX, clientY: event.clientY, pressure: 0.5, pointerId: 0, pointerType: "mouse" }, this.inputRect());
+      if (this.isPointInSelection(point)) this.showSelectionActions();
+      else {
+        this.clearSelection();
+        this.drawStrokes(this.currentPage().strokes);
+        if (this.availableClipboard()) {
+          this.pasteTarget = point;
+          this.showSelectionActions(true);
+        }
+      }
+    });
     this.registerDomEvent(scroller, "scroll", () => {
       this.cancelPasteHold();
       this.hideSelectionActions();
@@ -25819,6 +25930,8 @@ var InkWritingView = class extends import_obsidian4.FileView {
       this.cancelPasteHold();
       this.hideSelectionActions();
       this.pasteTarget = null;
+      this.finishFingerInput();
+      this.touchGesture = null;
       this.desktopSpaceDown = false;
       scroller.classList.remove("ink-pan-ready");
       this.endDesktopPan();
@@ -26013,9 +26126,10 @@ var InkWritingView = class extends import_obsidian4.FileView {
     if (event.pointerType === "mouse" && (((_a = event.button) != null ? _a : 0) !== 0 || this.desktopPan)) return;
     if (this.inputLocked()) return;
     if (this.nativeMenuOpen()) return;
-    if (event.pointerType === "touch") return;
+    if (event.pointerType === "touch" && source !== "finger-touch") return;
     if (this.state.tool === "pointer") return;
     if (source === "pointer" && event.pointerType === "pen" && ((_b = this.interaction) == null ? void 0 : _b.source) === "stylus-touch") return;
+    if (event.pointerType === "pen") this.finishFingerInput(true);
     this.onInputStarting();
     this.interactionGeneration += 1;
     if (this.activePointerId !== null) this.finishPointerInput(false);
@@ -26124,7 +26238,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
   onPointerMove(event, source = "pointer") {
     var _a, _b, _c, _d, _e, _f;
     this.devPointerEvents += 1;
-    if (event.pointerType === "touch") return;
+    if (event.pointerType === "touch" && source !== "finger-touch") return;
     if (((_a = this.desktopPan) == null ? void 0 : _a.pointerId) === event.pointerId) {
       const scroller = this.inputScroller();
       const pan = this.desktopPan;
@@ -26559,12 +26673,12 @@ var InkWritingView = class extends import_obsidian4.FileView {
     if (this.activePointerId !== event.pointerId) return;
   }
   onDocumentPointerEnd(event) {
-    var _a, _b;
+    var _a, _b, _c;
     if (((_a = this.desktopPan) == null ? void 0 : _a.pointerId) === event.pointerId) {
       this.endDesktopPan();
       return;
     }
-    if (((_b = this.interaction) == null ? void 0 : _b.source) !== "stylus-touch" && this.activePointerId === event.pointerId) this.finishPointerInput(false);
+    if (((_c = (_b = this.interaction) == null ? void 0 : _b.source) != null ? _c : "pointer") === "pointer" && this.activePointerId === event.pointerId) this.finishPointerInput(false);
   }
   capturePointer(pointerId) {
     const host = this.inputHost();
@@ -26595,6 +26709,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
     const sample = stylusTouchSample(touch, event.timeStamp);
     const interaction = this.interaction;
     if (event.type === "touchstart") {
+      this.finishFingerInput(true);
       if ((interaction == null ? void 0 : interaction.source) === "pointer" && interaction.pointerType === "pen") {
         const pointerId = interaction.pointerId;
         interaction.source = "stylus-touch";
@@ -26613,14 +26728,43 @@ var InkWritingView = class extends import_obsidian4.FileView {
     }
     return true;
   }
+  finishFingerInput(discardChanges = false) {
+    var _a;
+    if (((_a = this.interaction) == null ? void 0 : _a.source) !== "finger-touch") return;
+    const undoBefore = discardChanges ? [...this.undoStack] : null;
+    const redoBefore = discardChanges ? this.redoStack : null;
+    if (this.interaction.tool === "lasso") {
+      this.pendingLassoPoint = null;
+      this.lassoPath = [];
+      this.lassoDrag = null;
+    }
+    this.finishPointerInput(false);
+    const command = this.undoStack[this.undoStack.length - 1];
+    if (undoBefore && command && command !== undoBefore[undoBefore.length - 1]) {
+      command.undo();
+      this.undoStack = undoBefore;
+      this.redoStack = redoBefore;
+      this.afterCommand(command);
+    }
+    this.hideSelectionActions();
+    this.hideLassoPreview();
+  }
+  onTouchCancel(event) {
+    this.cancelPasteHold();
+    this.finishFingerInput(true);
+    this.onStylusTouch(event);
+    this.scheduleZoomHudHide();
+    this.cancelPageFlip();
+    this.touchGesture = null;
+  }
   // ---------------------------------------------------------------- touch
   onTouchStart(event) {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d, _e, _f, _g;
     this.cancelPasteHold();
     if (event.type === "touchstart") {
       this.hideSelectionActions();
       this.pasteTarget = null;
-      if (this.activePointerId === null && this.selectedStrokeIds.size && !Array.from((_a = event.changedTouches) != null ? _a : []).some((touch) => touch.touchType === "stylus")) {
+      if (this.state.tool !== "lasso" && this.activePointerId === null && this.selectedStrokeIds.size && !Array.from((_a = event.changedTouches) != null ? _a : []).some((touch) => touch.touchType === "stylus")) {
         this.clearSelection();
         this.drawStrokes(this.currentPage().strokes);
       }
@@ -26640,11 +26784,16 @@ var InkWritingView = class extends import_obsidian4.FileView {
     }
     this.settlePageFlip(event);
     this.touchGesture = null;
-    this.healStaleInteraction(Array.from(event.touches));
     const touches = Array.from(event.touches).filter((touch) => {
       var _a2;
       return touch.touchType !== "stylus" && !((_a2 = this.zoomHud) == null ? void 0 : _a2.contains(touch.target));
     });
+    if (((_e = this.interaction) == null ? void 0 : _e.source) === "finger-touch") {
+      const touch = Array.from(event.changedTouches).find((t) => t.identifier === this.interaction.pointerId);
+      if (event.type === "touchend" && touch) this.onPointerUp(fingerTouchSample(touch, event.timeStamp), "finger-touch");
+      else if (touches.length !== 1) this.finishFingerInput(true);
+    }
+    this.healStaleInteraction(Array.from(event.touches));
     if (touches.length < 1 || touches.length > 2) return;
     if (this.flipSettling && touches.length === 2) return;
     if (this.activePointerId !== null) return;
@@ -26671,14 +26820,22 @@ var InkWritingView = class extends import_obsidian4.FileView {
       pageY: (y - rect.top) / rect.height
     };
     if (b) this.showZoomHud();
-    else if (event.type === "touchstart" && !this.inputLocked() && this.availableClipboard() && ((_e = this.inputHost()) == null ? void 0 : _e.contains(a.target)) && pointInsideRect(a, rect)) {
+    else if (event.type === "touchstart" && !this.inputLocked() && (this.state.fingerAsPen || this.state.tool === "lasso") && this.state.tool !== "pointer" && ((_f = this.inputHost()) == null ? void 0 : _f.contains(a.target)) && pointInsideRect(a, rect)) {
+      this.onPointerDown(fingerTouchSample(a, event.timeStamp), "finger-touch");
+    }
+    if (!b && event.type === "touchstart" && !this.inputLocked() && (this.availableClipboard() || this.selectedStrokeIds.size) && ((_g = this.inputHost()) == null ? void 0 : _g.contains(a.target)) && pointInsideRect(a, rect)) {
       const page = this.currentPage(), gesture = this.touchGesture;
       const point = { x: gesture.pageX, y: gesture.pageY };
       this.pasteHold = { x, y, timer: window.setTimeout(() => {
+        var _a2;
         this.pasteHold = null;
-        if (this.touchGesture !== gesture || this.currentPage() !== page || this.activePointerId !== null || this.inputLocked() || this.nativeMenuOpen() || !this.availableClipboard()) return;
-        this.pasteTarget = point;
-        this.showSelectionActions(true);
+        if (this.touchGesture !== gesture || this.currentPage() !== page || this.activePointerId !== null && ((_a2 = this.interaction) == null ? void 0 : _a2.source) !== "finger-touch" || this.inputLocked() || this.nativeMenuOpen()) return;
+        this.finishFingerInput(true);
+        if (this.selectedStrokeIds.size && this.isPointInSelection({ ...point, pressure: 0.5, t: event.timeStamp })) this.showSelectionActions();
+        else if (this.availableClipboard()) {
+          this.pasteTarget = point;
+          this.showSelectionActions(true);
+        }
       }, PASTE_HOLD_DELAY_MS) };
     }
   }
@@ -26697,9 +26854,10 @@ var InkWritingView = class extends import_obsidian4.FileView {
    * samples at frame rate, so silence means the pointer is gone).
    */
   healStaleInteraction(touches) {
+    var _a;
     const interaction = this.interaction;
     if (!interaction || this.activePointerId === null) return;
-    if (interaction.source === "stylus-touch") {
+    if (((_a = interaction.source) != null ? _a : "pointer") !== "pointer") {
       const alive = touches.some((touch) => touch.identifier === interaction.pointerId);
       if (!alive) this.finishPointerInput(false);
       return;
@@ -26707,13 +26865,25 @@ var InkWritingView = class extends import_obsidian4.FileView {
     if (Date.now() - this.lastPointerActivityAt > 2500) this.finishPointerInput(false);
   }
   onTouchMove(event) {
-    var _a, _b;
+    var _a, _b, _c;
     if (this.nativeMenuOpen()) {
       this.touchGesture = null;
       return;
     }
     (_a = event.stopPropagation) == null ? void 0 : _a.call(event);
     if (this.onStylusTouch(event)) return;
+    if (((_b = this.interaction) == null ? void 0 : _b.source) === "finger-touch") {
+      const touch = Array.from(event.touches).find((t) => t.identifier === this.interaction.pointerId);
+      if (touch && event.touches.length === 1) {
+        if (this.pasteHold && Math.hypot(touch.clientX - this.pasteHold.x, touch.clientY - this.pasteHold.y) > PASTE_HOLD_SLOP_PX) this.cancelPasteHold();
+        if (!this.pasteHold) this.onPointerMove(fingerTouchSample(touch, event.timeStamp), "finger-touch");
+        event.preventDefault();
+        return;
+      }
+      this.finishFingerInput(true);
+      this.onTouchStart(event);
+      return;
+    }
     if (this.activePointerId !== null) {
       this.touchGesture = null;
       return;
@@ -26737,7 +26907,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
         return;
       }
     }
-    if (((_b = this.selectionActions) == null ? void 0 : _b.dataset.pasteOnly) && Math.hypot(a.clientX - gesture.startX, a.clientY - gesture.startY) > PASTE_HOLD_SLOP_PX) this.hideSelectionActions();
+    if (((_c = this.selectionActions) == null ? void 0 : _c.dataset.pasteOnly) && Math.hypot(a.clientX - gesture.startX, a.clientY - gesture.startY) > PASTE_HOLD_SLOP_PX) this.hideSelectionActions();
     event.preventDefault();
     if (!b) {
       const scroller = this.inputScroller();
@@ -28026,15 +28196,16 @@ var InkWritingView = class extends import_obsidian4.FileView {
     });
   }
   selectWritingTool(tool) {
-    var _a, _b;
+    var _a, _b, _c;
     this.finishPointerInput(false);
     this.onToolSelected(tool);
+    (_a = this.pageImages) == null ? void 0 : _a.clear();
     this.state.tool = tool;
     if (tool !== "lasso") this.clearSelection();
-    if (!isBrushTool(tool)) (_a = this.brushPopover) == null ? void 0 : _a.close();
+    if (!isBrushTool(tool)) (_b = this.brushPopover) == null ? void 0 : _b.close();
     this.closeEraserPopover();
     this.closeLassoSettings();
-    (_b = this.brushPopover) == null ? void 0 : _b.update();
+    (_c = this.brushPopover) == null ? void 0 : _c.update();
     this.updateToolButtons();
     this.refreshEraserCursor();
     this.syncPageImages();
@@ -29364,11 +29535,8 @@ var InkView = class extends InkWritingView {
     this.registerDomEvent(this.pageScroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchcancel", (event) => {
-      this.scheduleZoomHudHide();
       this.finishPinchRender();
-      this.onStylusTouch(event);
-      this.cancelPageFlip();
-      this.touchGesture = null;
+      this.onTouchCancel(event);
     }, { passive: false });
     const observer = new ResizeObserver(() => this.resizeCanvas());
     observer.observe(this.pageScroller);
@@ -30356,8 +30524,8 @@ page: ${this.currentPage().id}
   }
   /**
    * 2D multi-point pressure mapping editor: drag points (endpoints move
-   * vertically), click empty space to add one, double-click a point to
-   * remove it. The curve maps raw pen pressure to the response input and is
+   * vertically), click empty space to add one, select a point and use
+   * Remove point to delete it. The curve maps raw pen pressure to the response input and is
    * captured per stroke; the sample preview re-renders on every change.
    */
   /** Renders the pressure mapping editor: grid, identity guide, curve and
@@ -31620,10 +31788,7 @@ var PdfInkView = class extends InkWritingView {
     this.registerDomEvent(scroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
     this.registerDomEvent(scroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(scroller, "touchcancel", (event) => {
-      this.scheduleZoomHudHide();
-      this.onStylusTouch(event);
-      this.cancelPageFlip();
-      this.touchGesture = null;
+      this.onTouchCancel(event);
     }, { passive: false });
     const observer = new ResizeObserver(() => {
       var _a;
@@ -33423,6 +33588,18 @@ var InkNotesPlugin = class extends import_obsidian11.Plugin {
   async persistSettings() {
     await this.saveData({ pdfOpenMode: this.config.pdfOpenMode, toolState: storedToolState(this.toolState) });
   }
+  get fingerAsPen() {
+    return this.toolState.fingerAsPen;
+  }
+  async setFingerAsPen(enabled) {
+    for (const type of [VIEW_TYPE_INK, VIEW_TYPE_PDF_INK]) {
+      for (const leaf of this.app.workspace.getLeavesOfType(type)) {
+        if (leaf.view instanceof InkView || leaf.view instanceof PdfInkView) leaf.view.refreshInputPreferences();
+      }
+    }
+    this.toolState.fingerAsPen = enabled;
+    await this.persistSettings();
+  }
   /** Open a PDF tab in the handwriting view on explicit request. */
   async openPdfHandwriting(file) {
     const leaf = this.app.workspace.getLeaf("tab");
@@ -33491,6 +33668,16 @@ var InkSettingTab = class extends import_obsidian11.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
+    new import_obsidian11.Setting(containerEl).setName("Input and gestures").setHeading();
+    new import_obsidian11.Setting(containerEl).setName("Use finger as pen").setDesc(
+      "Off: use a pen to write and fingers to select or move images and handwriting. On: one finger uses the current writing, eraser or selection tool; two fingers move and zoom the page. Use Pointer to move images while finger writing is on. Hold still for clipboard options."
+    ).addToggle((toggle) => toggle.setValue(this.plugin.fingerAsPen).onChange(async (value) => {
+      try {
+        await this.plugin.setFingerAsPen(value);
+      } catch (error) {
+        new import_obsidian11.Notice(`Ink Notes could not save input settings: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }));
     new import_obsidian11.Setting(containerEl).setName("PDF handwriting").setHeading();
     new import_obsidian11.Setting(containerEl).setName("Default PDF viewer").setDesc(
       "PDF handwriting is stored in A_pdfinkwrittern/. Choose which viewer opens ordinary PDFs. Compatibility mode keeps the native viewer when PDF extensions are enabled. Ink Notes first opens handwriting even with PDF++ enabled; its native-view tools remain available after returning to the built-in viewer. Page, search and selection links always keep the native viewer. Reopen existing tabs to apply the choice."

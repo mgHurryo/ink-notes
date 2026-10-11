@@ -10,6 +10,7 @@ export function constrainImage(image: InkImage): InkImage {
 interface ImageEditorContext {
   page: () => InkPage;
   editable: () => boolean;
+  canInteract?: (type: "touch" | "pen" | "mouse") => boolean;
   change: (before: InkImage[], after: InkImage[]) => void;
   select: () => void;
 }
@@ -104,8 +105,11 @@ export class PageImageLayer {
   }
   private bind(el: HTMLElement, resize: boolean): void {
     // Element listeners die with their nodes; document listeners use the view's abort signal.
-    const start = (id: number, touch: boolean, x: number, y: number, e: Event) => {
-      if (!this.context.editable()) return;
+    const start = (id: number, touch: boolean, x: number, y: number, e: Event, type: "touch" | "pen" | "mouse") => {
+      if (!this.context.editable() || this.context.canInteract?.(type) === false) {
+        if (type === "pen" && this.selectedId) { this.clear(); this.sync(); }
+        return;
+      }
       if (this.drag) { e.preventDefault(); e.stopPropagation(); return; }
       const page = this.context.page();
       const image = page.images?.find((i) => i.id === (el.dataset.imageId ?? this.selectedId)); if (!image) return;
@@ -113,10 +117,16 @@ export class PageImageLayer {
       this.select(image.id);
       this.drag = { id, touch, pageId: page.id, original: { ...image }, preview: { ...image }, x, y, rect: this.host.getBoundingClientRect(), resize };
     };
-    el.addEventListener("pointerdown", (e) => { if (e.pointerType !== "mouse" || e.button !== 0) return; start(e.pointerId, false, e.clientX, e.clientY, e); });
+    el.addEventListener("pointerdown", (e) => { if ((e.pointerType !== "mouse" && e.pointerType !== "pen") || e.button !== 0) return;
+      start(e.pointerId, false, e.clientX, e.clientY, e, e.pointerType); });
     el.addEventListener("touchstart", (e) => {
-      if (e.touches.length === 1 && e.touches[0].touchType !== "stylus") {
-        const t = e.touches[0]; start(t.identifier, true, t.clientX, t.clientY, e);
+      if (e.touches.length === 1) {
+        const t = e.touches[0], type = t.touchType === "stylus" ? "pen" : "touch";
+        // iPad can report both Pointer and native stylus Touch for one contact.
+        if (this.drag && type === "pen" && !this.drag.touch) {
+          e.preventDefault(); e.stopPropagation(); this.drag.id = t.identifier; this.drag.touch = true; return;
+        }
+        start(t.identifier, true, t.clientX, t.clientY, e, type);
       }
     }, { passive: false });
     el.addEventListener("dragstart", (e) => e.preventDefault());
