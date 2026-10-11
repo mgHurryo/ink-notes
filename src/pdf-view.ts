@@ -1712,6 +1712,13 @@ export class PdfInkView extends InkWritingView {
     this.finishPointerInput(false);
     this.discardPendingInkPreview();
     this.pendingMergedSidecar = null;
+    this.disposeWorkerSession();
+    // A workspace leaf can be reused for another PDF. Never let the previous
+    // document's notes remain editable while the next sidecar is resolving.
+    this.sidecar = null;
+    this.sidecarRaw = "";
+    this.sidecarFile = null;
+    this.tiles?.setPage(EMPTY_NOTEBOOK.pages[0]!, this.canvasLogicalWidth, this.canvasLogicalHeight);
     this.pdfDoc = null;
     this.sourcePages = [];
     this.noteIndex = 0;
