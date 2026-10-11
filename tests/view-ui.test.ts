@@ -368,6 +368,21 @@ describe("reference-style editor", () => {
     button("Delete current page").click();
     expect(document.querySelector(".ink-page-status")?.textContent).toBe("2 / 2");
   });
+  it("selects and deletes multiple notebook pages as one undoable action", () => {
+    const host = view as unknown as { addPage(): void; notebook: ReturnType<typeof createNotebook> };
+    host.addPage();
+    host.addPage();
+    button("Pages").click();
+    button("Manage pages").click();
+    button("1: Page 1").click();
+    button("3: Page 3").click();
+    expect(document.querySelector(".ink-rail-count")?.textContent).toBe("2 selected");
+    button("Delete selected pages").click();
+    expect(host.notebook.pages.map((page) => page.title)).toEqual(["Page 2"]);
+    button("Undo").click();
+    expect(host.notebook.pages).toHaveLength(3);
+    expect(host.notebook.pages.map((page) => page.title)).toEqual(["Page 1", "Page 2", "Page 3"]);
+  });
   it("synchronizes preset, slider and custom-color selection", () => {
     button("Pen").click();   // re-tap opens the brush panel (lazy mount)
     button("Pen 8 px").click();

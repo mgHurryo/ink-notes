@@ -102,6 +102,8 @@ export class InkView extends InkWritingView {
   private railResize: { pointerId: number; startWidth: number; startX: number } | null = null;
   /** Deferred thumbnail redraw while the rail's expand transition runs. */
   private railRevealTimer: number | undefined;
+  private pageManagement = false;
+  private selectedPageIds = new Set<string>();
 
   constructor(leaf: WorkspaceLeaf, store: NotebookStore, workers?: InkWorkerService, toolState?: SharedToolState) {
     super(leaf);
@@ -328,28 +330,42 @@ export class InkView extends InkWritingView {
   private renderPageRail(): void {
     let rail = this.root.querySelector<HTMLElement>(".ink-page-rail");
     if (!rail) return;
+    const pageIds = new Set(this.notebook.pages.map((page) => page.id));
+    this.selectedPageIds.forEach((pageId) => { if (!pageIds.has(pageId)) this.selectedPageIds.delete(pageId); });
     rail.empty();
     const header = rail.createDiv({ cls: "ink-rail-header" });
     header.createDiv({ cls: "ink-rail-heading", text: "Pages" });
-    header.createSpan({ cls: "ink-rail-count", text: `${this.pageIndex + 1} / ${this.notebook.pages.length}` });
+    header.createSpan({ cls: "ink-rail-count", text: this.pageManagement
+      ? `${this.selectedPageIds.size} selected` : `${this.pageIndex + 1} / ${this.notebook.pages.length}` });
     const actions = rail.createDiv({ cls: "ink-rail-actions", attr: { role: "group", "aria-label": "Current page actions" } });
-    this.addIconButton(actions, "chevron-up", "Move current page up", () => this.moveCurrentPage(-1), this.pageIndex === 0);
-    this.addIconButton(actions, "chevron-down", "Move current page down", () => this.moveCurrentPage(1), this.pageIndex === this.notebook.pages.length - 1);
-    this.addIconButton(actions, "copy", "Duplicate current page", () => this.duplicateCurrentPage());
-    this.addIconButton(actions, "trash-2", "Delete current page", () => this.deleteCurrentPage(), this.notebook.pages.length <= 1);
+    if (this.pageManagement) {
+      this.addIconButton(actions, "trash-2", "Delete selected pages", () => this.deleteSelectedPages(),
+        this.selectedPageIds.size === 0 || this.selectedPageIds.size >= this.notebook.pages.length);
+      this.addIconButton(actions, "x", "Done managing pages", () => this.setPageManagement(false));
+    } else {
+      this.addIconButton(actions, "chevron-up", "Move current page up", () => this.moveCurrentPage(-1), this.pageIndex === 0);
+      this.addIconButton(actions, "chevron-down", "Move current page down", () => this.moveCurrentPage(1), this.pageIndex === this.notebook.pages.length - 1);
+      this.addIconButton(actions, "copy", "Duplicate current page", () => this.duplicateCurrentPage());
+      this.addIconButton(actions, "trash-2", "Delete current page", () => this.deleteCurrentPage(), this.notebook.pages.length <= 1);
+      this.addIconButton(actions, "list-checks", "Manage pages", () => this.setPageManagement(true), this.readingMode);
+    }
     const thumbs = rail.createDiv({ cls: "ink-rail-thumbs" });
     this.notebook.pages.forEach((page, index) => {
       const button = thumbs.createEl("button", { cls: "ink-page-thumb", attr: { type: "button", title: page.title } });
       if (index === this.pageIndex) button.addClass("is-active");
+      if (this.pageManagement && this.selectedPageIds.has(page.id)) button.addClass("is-selected");
       button.setAttribute("aria-label", String(index + 1) + ": " + page.title);
       button.setAttribute("aria-current", String(index === this.pageIndex));
+      button.setAttribute("aria-pressed", String(this.pageManagement && this.selectedPageIds.has(page.id)));
+      if (this.pageManagement) button.setAttribute("aria-selected", String(this.selectedPageIds.has(page.id)));
       // Paper class stays on the background layer; the canvas above it carries
       // a vector snapshot of the page's ink (transparent where unwritten).
       button.createDiv({ cls: `ink-page-thumb-paper ink-paper-${page.paper}` });
       const canvas = button.createEl("canvas", { cls: "ink-page-thumb-canvas", attr: { "aria-hidden": "true" } });
       button.createSpan({ text: String(index + 1), cls: "ink-page-thumb-number" });
       button.createSpan({ text: page.title, cls: "ink-page-thumb-title" });
-      button.addEventListener("click", () => this.navigateToPage(page.id));
+      button.addEventListener("click", () => this.pageManagement
+        ? this.togglePageSelection(page.id) : this.navigateToPage(page.id));
       this.drawPageThumbnail(canvas, page);
     });
     this.mountRailResizer(rail);
@@ -578,6 +594,11 @@ export class InkView extends InkWritingView {
   protected onReadingModeChanged(): void {
     this.destroySwipeStage();
     this.touchGesture = null;
+    if (this.readingMode) {
+      this.pageManagement = false;
+      this.selectedPageIds.clear();
+      if (this.root) this.renderPageRail();
+    }
   }
   protected pagePixelSize(): { width: number; height: number } {
     return { width: this.notebook.pageWidth, height: this.notebook.pageHeight };
@@ -1092,6 +1113,51 @@ export class InkView extends InkWritingView {
     this.finishPageOrderChange(now, { type: "page-operation", action: "delete", pageId: deleted.id, deletedAt: now,
       pageOrder: this.notebook.pages.map((candidate) => candidate.id), pageOrderUpdatedAt: now, notebookUpdatedAt: now });
     this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, this.currentPage().id);
+    this.clearSelection();
+    this.renderAll();
+    this.scheduleSave();
+  }
+
+  private setPageManagement(enabled: boolean): void {
+    this.pageManagement = enabled && !this.readingMode;
+    this.selectedPageIds.clear();
+    this.renderPageRail();
+  }
+
+  private togglePageSelection(pageId: string): void {
+    if (!this.pageManagement || this.readingMode) return;
+    if (this.selectedPageIds.has(pageId)) this.selectedPageIds.delete(pageId);
+    else this.selectedPageIds.add(pageId);
+    this.renderPageRail();
+  }
+
+  private deleteSelectedPages(): void {
+    if (this.readingMode || !this.pageManagement) return;
+    const selected = new Set(this.selectedPageIds);
+    if (selected.size === 0 || selected.size >= this.notebook.pages.length) return;
+    this.finishPointerInput(false);
+    const before = cloneNotebook(this.notebook);
+    const beforePageId = this.currentPage().id;
+    const removedBeforeCurrent = this.notebook.pages
+      .slice(0, this.pageIndex).filter((page) => selected.has(page.id)).length;
+    const now = Date.now();
+    this.notebook.pages = this.notebook.pages.filter((page) => {
+      if (!selected.has(page.id)) return true;
+      this.notebook.deletedPages[page.id] = now;
+      return false;
+    });
+    this.pageIndex = this.notebook.pages.some((page) => page.id === beforePageId)
+      ? this.notebook.pages.findIndex((page) => page.id === beforePageId)
+      : Math.max(0, Math.min(this.pageIndex - removedBeforeCurrent, this.notebook.pages.length - 1));
+    this.notebook.pageOrder = this.notebook.pages.map((page) => page.id);
+    this.notebook.pageOrderUpdatedAt = now;
+    this.notebook.updatedAt = now;
+    this.dirtyRevision += 1;
+    this.queueWorkerOperation({ type: "history-restore", notebook: cloneNotebook(this.notebook) });
+    this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, this.currentPage().id);
+    this.selectedPageIds.clear();
+    this.pageManagement = false;
+    this.resetPageView();
     this.clearSelection();
     this.renderAll();
     this.scheduleSave();
