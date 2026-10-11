@@ -676,6 +676,23 @@ describe("pdf page preview rail", () => {
     await view.onClose();
   });
 
+  it("hides selected source pages from the handwriting sidecar without changing the PDF", async () => {
+    const { view, internal, sidecar, fakeDoc } = await setup(3);
+    internal.renderAll();
+    document.querySelector<HTMLButtonElement>('[aria-label="Manage pages"]')!.click();
+    thumbAt(0).click();
+    thumbAt(2).click();
+    expect(document.querySelector<HTMLElement>(".ink-rail-count")!.textContent).toBe("2 selected");
+    document.querySelector<HTMLButtonElement>('[aria-label="Delete selected pages"]')!.click();
+    expect(sidecar.notePages.map((page) => page.id)).toEqual([sourcePageId(1)]);
+    expect(sidecar.deletedNotePages).toMatchObject({ [sourcePageId(0)]: expect.any(Number), [sourcePageId(2)]: expect.any(Number) });
+    expect(fakeDoc.doc.numPages).toBe(3);
+    document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')!.click();
+    expect(internal.sidecar.notePages.map((page) => page.id)).toEqual([sourcePageId(0), sourcePageId(1), sourcePageId(2)]);
+    expect(fakeDoc.doc.numPages).toBe(3);
+    await view.onClose();
+  });
+
   it("renders thumbnails on demand for the visible range at thumbnail scale, and serves repaints from the cache", async () => {
     const { view, internal, fakeDoc } = await setupExpanded(8);
     internal.renderAll();

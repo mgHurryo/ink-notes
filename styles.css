@@ -621,7 +621,7 @@
   padding: 6px 8px;
   font-size: 12px;
 }
-.ink-selection-actions .ink-icon-button[aria-label="Delete"] { color: var(--ink-danger); }
+.ink-selection-actions .ink-icon-button.is-danger { color: var(--ink-danger); }
 .ink-lasso-clipboard-toggle { display: flex; align-items: center; gap: 8px; min-height: 44px; }
 .ink-lasso-hint { color: var(--ink-muted); font-size: 12px; line-height: 1.5; }
 .ink-lasso-settings > button { min-height: 44px; }
@@ -773,7 +773,7 @@
   position: relative;
   z-index: 1;
   display: grid;
-  grid-template-columns: repeat(2, minmax(44px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(44px, 1fr));
   gap: 6px;
   margin: 0 0 14px;
 }
@@ -814,6 +814,22 @@
 
 .ink-page-thumb:hover { box-shadow: 0 4px 12px rgb(0 0 0 / 20%); }
 .ink-page-thumb.is-active { border-color: var(--ink-accent); box-shadow: 0 0 0 2px var(--ink-panel), 0 0 0 4px var(--ink-accent), 0 4px 12px rgb(0 0 0 / 18%); }
+.ink-page-thumb.is-selected { border-color: var(--ink-danger); box-shadow: 0 0 0 2px var(--ink-panel), 0 0 0 4px var(--ink-danger), 0 4px 12px rgb(0 0 0 / 18%); }
+.ink-page-thumb.is-selected::after {
+  content: "✓";
+  position: absolute;
+  top: 6px;
+  left: 6px;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--ink-panel);
+  background: var(--ink-danger);
+  font-size: 13px;
+  font-weight: 700;
+}
 .ink-page-thumb-paper { position: absolute; inset: 0; border-radius: 2px; }
 /* Vector snapshot of the page's ink; transparent where the page is blank. */
 .ink-page-thumb-canvas {

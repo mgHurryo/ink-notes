@@ -82,16 +82,17 @@ describe("reference-style editor", () => {
   });
 
   it("cuts selected ink and allows paste onto empty paper; delete does not replace copied ink", () => {
-    const { host, page } = selectSampleInk();
+    const { page } = selectSampleInk();
     button("Cut").click();
     expect(page.strokes).toHaveLength(0);
     expect(page.deletedStrokeIds).toContain("selected");
-    host.lassoPath = [{ x: 0.7, y: 0.7, pressure: 0.5, t: 1 }];
-    host.finishLasso(page);
+    // The strip must survive a cut/delete so paste stays reachable without re-lassoing.
+    expect(document.querySelector(".ink-selection-actions")).not.toBeNull();
     button("Paste").click();
     expect(page.strokes).toHaveLength(1);
     button("Delete").click();
     expect(page.strokes).toHaveLength(0);
+    expect(document.querySelector(".ink-selection-actions")).not.toBeNull();
     button("Undo").click();
     expect(page.strokes).toHaveLength(1);
   });
@@ -450,6 +451,21 @@ describe("reference-style editor", () => {
     expect(document.querySelector(".ink-page-status")?.textContent).toBe("3 / 3");
     button("Delete current page").click();
     expect(document.querySelector(".ink-page-status")?.textContent).toBe("2 / 2");
+  });
+  it("selects and deletes multiple notebook pages as one undoable action", () => {
+    const host = view as unknown as { addPage(): void; notebook: ReturnType<typeof createNotebook> };
+    host.addPage();
+    host.addPage();
+    button("Pages").click();
+    button("Manage pages").click();
+    button("1: Page 1").click();
+    button("3: Page 3").click();
+    expect(document.querySelector(".ink-rail-count")?.textContent).toBe("2 selected");
+    button("Delete selected pages").click();
+    expect(host.notebook.pages.map((page) => page.title)).toEqual(["Page 2"]);
+    button("Undo").click();
+    expect(host.notebook.pages).toHaveLength(3);
+    expect(host.notebook.pages.map((page) => page.title)).toEqual(["Page 1", "Page 2", "Page 3"]);
   });
   it("synchronizes preset, slider and custom-color selection", () => {
     button("Pen").click();   // re-tap opens the brush panel (lazy mount)

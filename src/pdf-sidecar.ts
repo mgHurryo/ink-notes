@@ -335,7 +335,21 @@ export function insertBlankNotePageAt(sidecar: PdfSidecar, index: number): strin
 export function deleteBlankNotePage(sidecar: PdfSidecar, id: string): boolean {
   const index = sidecar.notePages.findIndex((notePage) => notePage.id === id);
   if (index < 0 || isSourcePageId(id)) return false;
-  sidecar.notePages.splice(index, 1);
+  return deleteNotePageAt(sidecar, index);
+}
+
+/** Hide a note-page record from the handwriting view without changing its source PDF. */
+export function deleteNotePage(sidecar: PdfSidecar, id: string): boolean {
+  const index = sidecar.notePages.findIndex((notePage) => notePage.id === id);
+  if (index < 0) return false;
+  return deleteNotePageAt(sidecar, index);
+}
+
+function deleteNotePageAt(sidecar: PdfSidecar, index: number): boolean {
+  if (sidecar.notePages.length <= 1) return false;
+  const [deleted] = sidecar.notePages.splice(index, 1);
+  if (!deleted) return false;
+  const id = deleted.id;
   sidecar.notebook.pages = sidecar.notebook.pages.filter((page) => page.id !== id);
   sidecar.notebook.pageOrder = sidecar.notePages.map((entry) => entry.id);
   sidecar.deletedNotePages[id] = Date.now();

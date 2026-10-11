@@ -257,6 +257,10 @@ export class TileRenderer {
     return this.active?.index.queryNear(point, radius) ?? [];
   }
 
+  query(rect: Rect): InkStroke[] {
+    return this.active?.index.query(rect) ?? [];
+  }
+
   previewInteractiveCells(cells: readonly string[], viewport: Rect, density: number): void {
     if (!this.active || this.disposed || cells.length === 0) return;
     this.viewport = viewport;
