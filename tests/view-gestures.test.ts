@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("obsidian", () => ({ FileView: class {} }));
+vi.mock("obsidian", () => ({ Modal: class {}, FileView: class {} }));
 
 import { InkView } from "../src/view";
 

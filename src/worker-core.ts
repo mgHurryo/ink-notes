@@ -524,6 +524,12 @@ export function applyNotebookOperation(notebook: InkNotebook, operation: Noteboo
       stroke.points = stroke.points.map((point) => ({ ...point, x: point.x + operation.dx, y: point.y + operation.dy }));
       stroke.updatedAt = operation.pageUpdatedAt;
     }
+  } else if (operation.type === "patch-images") {
+    const removed = new Set(operation.remove);
+    const upsert = new Map(operation.upsert.map((image) => [image.id, { ...image }]));
+    page.deletedImageIds = [...new Set([...(page.deletedImageIds ?? []), ...operation.deletedImageIds])];
+    page.images = [...(page.images ?? []).filter((image) => !removed.has(image.id) && !upsert.has(image.id)), ...upsert.values()]
+      .filter((image) => !page.deletedImageIds!.includes(image.id));
   } else {
     if (operation.title !== undefined) page.title = operation.title;
     if (operation.paper !== undefined) page.paper = operation.paper;

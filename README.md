@@ -55,6 +55,14 @@ Enable **Copy and paste across files** in Lasso settings to paste handwriting fr
 
 On desktop, Select supports **Ctrl/Cmd+C**, **Ctrl/Cmd+X**, **Ctrl/Cmd+V**, and **Delete/Backspace**. The handwriting clipboard is held in memory for the running plugin instance and clears on restart or plugin reload. It is not the system clipboard and does not sync between devices.
 
+### Insert and arrange images
+
+In editing mode, click **Image library** beside Select. Batch-import with **Photos / files** (the native photo/file picker on mobile), **From vault**, or **Enter vault paths** (one path per line). You can also drop multiple files or paste copied images into the library. Create or rename groups, select multiple images, and use **Move selected to…** to organize them. Importing adds images to the library; select them and click **Insert selected** to place them on the current Ink or PDF handwriting page.
+
+Images start below handwriting so you can write on them. In **Select** mode, drag an image to move it, drag its bottom-right handle to resize with its aspect ratio preserved, or use the position/width percentage controls. **Above handwriting / Below handwriting** changes its layer; **Delete image** removes that instance. These edits support undo/redo. Switch back to Pen to write over images; Reading mode disables image editing. Images appear in page previews, Markdown embeds and exported PDFs.
+
+The library stores managed PNG copies in `Ink Notes/Images/assets/` and groups in `Ink Notes/Images/library.json`. Notes and PDF sidecars store only image references and geometry; the source PDF and original images are preserved. Sync the managed assets together with your notes. Removing a placed image keeps its library asset for other pages. Imports are sequential, limited to 30 MB and 16 megapixels per image, and report unsupported or damaged files individually. Supported formats depend on the WebView; HEIC may require conversion first. Animated images are imported as a still frame. Missing assets are reported during export so a PDF is not silently saved without images. Older plugin versions do not understand image metadata; keep a vault backup before downgrading.
+
 ## UI Preview
 
 Run `npm run preview` and open http://127.0.0.1:4173 to exercise the actual editor view with a lightweight browser host. Preview notes are in memory only; Vault storage and sync must be verified in Obsidian. The layout responds to the editor pane width, including split panes and mobile screens.

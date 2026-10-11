@@ -11,6 +11,7 @@ import {
 } from "./model";
 import { NotebookStore } from "./storage";
 import { exportNotebookPdf, exportPathFor, notebookHasInk } from "./pdf-export";
+import { paintPageImages } from "./image-library";
 import { registerDocumentPointerEndEvents } from "./ink-input";
 import { InkWritingView, InkPointerSample, cloneStroke, SPARSE_SAMPLE_INTERVAL_MS } from "./ink-writing";
 import type { EditCommand } from "./ink-writing";
@@ -262,7 +263,7 @@ export class InkView extends InkWritingView {
       return;
     }
     try {
-      const output = await exportNotebookPdf(this.notebook, this.file.basename, this.canvasLogicalWidth);
+      const output = await exportNotebookPdf(this.notebook, this.file.basename, this.canvasLogicalWidth, this.imageLibrary?.bytes);
       const target = exportPathFor(this.file.path, (candidate) => this.app.vault.getAbstractFileByPath(candidate) !== null);
       await this.app.vault.createBinary(target, output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength) as ArrayBuffer);
       new Notice(`Exported ${target}`);
@@ -403,7 +404,11 @@ export class InkView extends InkWritingView {
       // instead of a sparse re-flow.
       const paper = canvas.closest(".ink-page-thumb")?.querySelector<HTMLElement>(".ink-page-thumb-paper");
       if (paper) paper.style.setProperty("--ink-page-scale", String(scale));
-      for (const stroke of page.strokes) drawInkStroke(ctx, scaledStroke(stroke, scale), width, height);
+      paintPageImages(this.imageLibrary, canvas, page, (context) => context.clearRect(0, 0, canvas.width, canvas.height), (context) => {
+        context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
+        for (const stroke of page.strokes) drawInkStroke(context, scaledStroke(stroke, scale), width, height);
+        context.setTransform(1, 0, 0, 1, 0, 0);
+      });
     } catch (error) {
       console.warn("Ink Notes could not render a page thumbnail", error);
     }
@@ -749,7 +754,12 @@ export class InkView extends InkWritingView {
     const ctx = canvas.getContext("2d");
     if (ctx) {
       ctx.setTransform(canvas.width / this.canvasLogicalWidth, 0, 0, canvas.height / this.canvasLogicalHeight, 0, 0);
-      for (const stroke of neighbor!.strokes) drawInkStroke(ctx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
+      const width = this.canvasLogicalWidth, height = this.canvasLogicalHeight;
+      paintPageImages(this.imageLibrary, canvas, neighbor!, (context) => context.clearRect(0, 0, canvas.width, canvas.height), (context) => {
+        context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
+        for (const stroke of neighbor!.strokes) drawInkStroke(context, stroke, width, height);
+        context.setTransform(1, 0, 0, 1, 0, 0);
+      });
     }
     this.swipeStage = stage;
   }
@@ -1507,13 +1517,15 @@ function cloneNotebook(notebook: InkNotebook): InkNotebook {
     pages: notebook.pages.map((page) => ({
       ...page,
       strokes: page.strokes.map(cloneStroke),
+      images: page.images?.map((image) => ({ ...image })),
+      deletedImageIds: [...(page.deletedImageIds ?? [])],
       deletedStrokeIds: [...page.deletedStrokeIds],
     })),
   };
 }
 
 function clonePage(page: InkPage): InkPage {
-  return { ...page, strokes: page.strokes.map(cloneStroke), deletedStrokeIds: [...page.deletedStrokeIds] };
+  return { ...page, images: page.images?.map((image) => ({ ...image })), deletedImageIds: [...(page.deletedImageIds ?? [])], strokes: page.strokes.map(cloneStroke), deletedStrokeIds: [...page.deletedStrokeIds] };
 }
 
 function clonePageAsNew(page: InkPage, title: string, now = Date.now()): InkPage {
@@ -1522,6 +1534,8 @@ function clonePageAsNew(page: InkPage, title: string, now = Date.now()): InkPage
     ...clonePage(page),
     id: pageId,
     title,
+    images: page.images?.map((image) => ({ ...image, id: newId("placed-image"), pageId, createdAt: now, updatedAt: now })),
+    deletedImageIds: [],
     strokes: page.strokes.map((stroke) => ({ ...cloneStroke(stroke), id: newId("stroke"), pageId, createdAt: now, updatedAt: now })),
     deletedStrokeIds: [],
     createdAt: now,
@@ -1584,6 +1598,9 @@ function reconcileNotebook(target: InkNotebook, incoming: InkNotebook, selectedP
 }
 
 function reconcilePage(target: InkPage, incoming: InkPage): boolean {
+  const imagesChanged = JSON.stringify(target.images ?? []) !== JSON.stringify(incoming.images ?? []);
+  if (imagesChanged) target.images = incoming.images?.map((image) => ({ ...image }));
+  target.deletedImageIds = [...(incoming.deletedImageIds ?? [])];
   const previousStrokes = target.strokes;
   const previousById = new Map(previousStrokes.map((stroke) => [stroke.id, stroke]));
   const strokes = incoming.strokes.map((incomingStroke) => {
@@ -1603,7 +1620,7 @@ function reconcilePage(target: InkPage, incoming: InkPage): boolean {
     ? target.deletedStrokeIds : [...incoming.deletedStrokeIds];
   target.createdAt = incoming.createdAt;
   target.updatedAt = incoming.updatedAt;
-  return inkChanged;
+  return inkChanged || imagesChanged;
 }
 
 function strokeAppearanceEqual(left: InkStroke, right: InkStroke): boolean {

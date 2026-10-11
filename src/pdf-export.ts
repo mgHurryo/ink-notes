@@ -1,5 +1,5 @@
-import { PDFDocument, PDFPage, degrees, rgb } from "pdf-lib";
-import { InkNotebook, InkStroke } from "./model";
+import { PDFDocument, PDFImage, PDFPage, degrees, rgb } from "pdf-lib";
+import { InkImage, InkNotebook, InkStroke } from "./model";
 import { PdfSidecar, PdfSidecarNotePage } from "./pdf-sidecar";
 import { penOutlineRings } from "./rendering";
 
@@ -113,28 +113,48 @@ export function displayToPdfPoint(nx: number, ny: number, page: PdfSidecarNotePa
  * notebook's own dimensions, handwriting drawn as vector paths. Shares the
  * stroke drawing with the PDF sidecar exporter.
  */
-export async function exportNotebookPdf(notebook: InkNotebook, sourceName: string, renderWidth?: number): Promise<Uint8Array> {
+export type ImageBytes = (path: string) => Promise<ArrayBuffer>;
+
+function imageDrawer(output: PDFDocument, read?: ImageBytes) {
+  const cache = new Map<string, Promise<PDFImage>>();
+  return async (page: PDFPage, images: InkImage[], geometry: PdfSidecarNotePage, foreground: boolean) => {
+    for (const image of images.filter((i) => i.foreground === foreground)) {
+      if (!read) throw new Error("Image library unavailable; cannot export inserted images");
+      let embedded = cache.get(image.assetPath);
+      if (!embedded) { embedded = read(image.assetPath).then((bytes) => output.embedPng(bytes)); cache.set(image.assetPath, embedded); }
+      const origin = displayToPdfPoint(image.x, image.y + image.height, geometry);
+      const rotated = geometry.rotation === 90 || geometry.rotation === 270;
+      page.drawImage(await embedded, { x: origin.x, y: origin.y, width: image.width * (rotated ? geometry.height : geometry.width),
+        height: image.height * (rotated ? geometry.width : geometry.height), rotate: degrees(geometry.rotation) });
+    }
+  };
+}
+
+export async function exportNotebookPdf(notebook: InkNotebook, sourceName: string, renderWidth?: number, readImages?: ImageBytes): Promise<Uint8Array> {
   const output = await PDFDocument.create();
   output.setTitle(`${sourceName} (handwritten)`);
+  const drawImages = imageDrawer(output, readImages);
   for (const page of notebook.pages) {
     const geometry = { id: page.id, width: notebook.pageWidth, height: notebook.pageHeight, rotation: 0 as const };
     const pdfPage = output.addPage([notebook.pageWidth, notebook.pageHeight]);
+    await drawImages(pdfPage, page.images ?? [], geometry, false);
     for (const stroke of page.strokes) drawStroke(pdfPage, stroke, geometry, renderWidth);
+    await drawImages(pdfPage, page.images ?? [], geometry, true);
   }
   return output.save();
 }
 
 /** True when the notebook contains at least one stroke to export. */
 export function notebookHasInk(notebook: InkNotebook): boolean {
-  return notebook.pages.some((page) => page.strokes.length > 0);
+  return notebook.pages.some((page) => page.strokes.length > 0 || (page.images?.length ?? 0) > 0);
 }
 
 /** True when the note sequence contains at least one stroke to export. */
 export function sidecarHasInk(sidecar: PdfSidecar): boolean {
-  return sidecar.notebook.pages.some((page) => page.strokes.length > 0);
+  return notebookHasInk(sidecar.notebook);
 }
 
-export async function exportHandwrittenPdf(sourceBytes: ArrayBuffer, sidecar: PdfSidecar, sourceName: string, renderWidth?: number): Promise<Uint8Array> {
+export async function exportHandwrittenPdf(sourceBytes: ArrayBuffer, sidecar: PdfSidecar, sourceName: string, renderWidth?: number, readImages?: ImageBytes): Promise<Uint8Array> {
   if (looksDigitallySigned(sourceBytes)) {
     throw new PdfExportError("signed", "This PDF is digitally signed; exporting would invalidate the signature");
   }
@@ -151,7 +171,8 @@ export async function exportHandwrittenPdf(sourceBytes: ArrayBuffer, sidecar: Pd
   const output = await PDFDocument.create();
   output.setTitle(`${sourceName} (handwritten)`);
 
-  const strokesByPage = new Map(sidecar.notebook.pages.map((page) => [page.id, page.strokes]));
+  const drawImages = imageDrawer(output, readImages);
+  const pagesById = new Map(sidecar.notebook.pages.map((page) => [page.id, page]));
   for (const notePage of sidecar.notePages) {
     let page: PDFPage;
     if (notePage.sourceIndex !== undefined) {
@@ -164,9 +185,12 @@ export async function exportHandwrittenPdf(sourceBytes: ArrayBuffer, sidecar: Pd
       page = output.addPage([notePage.width, notePage.height]);
       if (notePage.rotation !== 0) page.setRotation(degrees(notePage.rotation));
     }
-    for (const stroke of strokesByPage.get(notePage.id) ?? []) {
+    const note = pagesById.get(notePage.id);
+    await drawImages(page, note?.images ?? [], notePage, false);
+    for (const stroke of note?.strokes ?? []) {
       drawStroke(page, stroke, notePage, renderWidth);
     }
+    await drawImages(page, note?.images ?? [], notePage, true);
   }
   return output.save();
 }

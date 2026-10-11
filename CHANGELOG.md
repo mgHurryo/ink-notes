@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add a grouped image library with batch photo/file, vault, path-list, paste and drop imports. Insert reusable managed image copies into Ink and PDF handwriting pages; move, resize, change their layer above/below handwriting and delete individual placements with undo/redo. Images default below handwriting and appear in previews, Markdown embeds and PDF exports. Existing note files remain readable without migration; sync managed image assets with notes and back up before downgrading to an older plugin.
+
 - Add Freehand and Rectangle selection modes in lasso settings for both Ink and PDF handwriting. Freehand remains the default; rectangle drags work in every direction, select crossing strokes, and retain the existing move/copy/cut/delete/paste actions. The mode persists across sessions; older settings default to Freehand.
 - Add floating lasso Copy / Cut / Delete / Paste actions for Ink notebooks and PDF handwriting. Actions stay inside the editor pane, wrap on narrow screens, and support undo/redo and desktop shortcuts. Selection and placement targets clear on page/file changes.
 - Add an opt-in Copy and paste across files setting in the lasso panel. A plugin-scoped in-memory clipboard preserves handwriting proportions, pressure and brush settings across Ink/PDF pages; copied contents clear on reload and never use the system clipboard or modify the original PDF.

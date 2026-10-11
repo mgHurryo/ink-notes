@@ -13,6 +13,7 @@ import type { NotebookStore } from "../src/storage";
 import { InkClipboard } from "../src/lasso-clipboard";
 import { defaultToolState, type SharedToolState } from "../src/tool-state";
 import type { InkNotebook, InkStroke } from "../src/model";
+import type { ImageLibraryStore } from "../src/image-library";
 
 const FINGERPRINT = { sha256: "a".repeat(64), byteLength: 100 };
 const views = new Set<PdfInkView>();
@@ -48,7 +49,7 @@ function fakePdfDoc(pageCount: number) {
   return { renderedPages, getPage, doc: { numPages: pageCount, getPage, destroy: async () => undefined } };
 }
 
-async function setup(sourcePageCount = 3) {
+async function setup(sourcePageCount = 3, imageLibrary?: ImageLibraryStore) {
   const sidecar = createSidecar("docs/lecture.pdf", FINGERPRINT,
     Array.from({ length: sourcePageCount }, () => ({ width: 595.28, height: 841.89, rotation: 0 })));
   const raw = serializeSidecar(sidecar);
@@ -69,6 +70,7 @@ async function setup(sourcePageCount = 3) {
   };
   const workers = { createSession: vi.fn(() => session) } as unknown as InkWorkerService;
   const view = new PdfInkView({} as WorkspaceLeaf);
+  if (imageLibrary) view.useImageLibrary(imageLibrary);
   views.add(view);
   view.configure({
     store: store as unknown as PdfSidecarStore,
@@ -89,6 +91,32 @@ async function setup(sourcePageCount = 3) {
 
 const thumbs = () => document.querySelectorAll<HTMLButtonElement>(".ink-pdf-view .ink-page-thumb");
 const thumbAt = (index: number) => thumbs()[index]!;
+
+it("edits PDF page images, restores deletion with fresh IDs, and keeps images separate across pages", async () => {
+  const { view, internal, sidecar } = await setup(2, { url: () => "data:image/png;base64,", image: async () => document.createElement("img") } as unknown as ImageLibraryStore);
+  internal.renderAll();
+  expect(document.querySelector('[aria-label="Image library"]')).not.toBeNull();
+  document.querySelector<HTMLButtonElement>('[aria-label="Select"]')!.click();
+  const editor = view as any, pageId = sidecar.notebook.pages[0].id;
+  editor.changeImages(pageId, [], [{ id: "pdf-image", pageId, assetPath: "Ink Notes/Images/assets/a.png", x: .1, y: .1, width: .3, height: .3,
+    foreground: false, createdAt: 1, updatedAt: 1 }]);
+  editor.pageImages.select("pdf-image");
+  expect(document.querySelectorAll(".ink-placed-image")).toHaveLength(1);
+  const input = document.querySelector<HTMLInputElement>('[aria-label="Image X percent"]')!;
+  input.value = "40"; input.dispatchEvent(new Event("change"));
+  expect(sidecar.notebook.pages[0].images![0].x).toBe(.4);
+  editor.undo(); expect(sidecar.notebook.pages[0].images![0].x).toBe(.1);
+  editor.redo(); expect(sidecar.notebook.pages[0].images![0].x).toBe(.4);
+  editor.pageImages.select("pdf-image");
+  const remove = Array.from(document.querySelectorAll<HTMLButtonElement>(".ink-image-inspector button")).find((b) => b.textContent === "Delete image")!;
+  remove.click(); expect(sidecar.notebook.pages[0].images).toHaveLength(0);
+  editor.undo(); expect(sidecar.notebook.pages[0].images).toHaveLength(1);
+  expect(sidecar.notebook.pages[0].images![0].id).not.toBe("pdf-image");
+  await view.navigatePages(1); expect(document.querySelectorAll(".ink-placed-image")).toHaveLength(0);
+  await view.navigatePages(-1); expect(document.querySelectorAll(".ink-placed-image")).toHaveLength(1);
+  editor.setReadingMode(true); editor.drawSelection(100, 100);
+  expect((document.querySelector(".ink-placed-image") as HTMLElement).style.pointerEvents).toBe("none");
+});
 
 interface SwipeInternals {
   scroller: HTMLElement;

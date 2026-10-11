@@ -44,6 +44,20 @@ export interface StrokeDynamics {
   pressureCurve?: number[][];
 }
 
+export interface InkImage {
+  id: string;
+  pageId: string;
+  /** Immutable managed vault copy, independent of the original file. */
+  assetPath: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  foreground: boolean;
+  createdAt: number;
+  updatedAt: number;
+}
+
 export interface InkPage {
   id: string;
   title: string;
@@ -51,6 +65,8 @@ export interface InkPage {
   strokes: InkStroke[];
   /** Stroke ids removed locally; retained so sync cannot resurrect them. */
   deletedStrokeIds: string[];
+  images?: InkImage[];
+  deletedImageIds?: string[];
   createdAt: number;
   updatedAt: number;
 }
@@ -185,6 +201,14 @@ function compareNotebookOrder(left: InkNotebook, right: InkNotebook): number {
 }
 
 function mergePages(base: InkPage, incoming: InkPage): InkPage {
+  const images = new Map<string, InkImage>();
+  for (const image of [...(base.images ?? []), ...(incoming.images ?? [])]) {
+    const previous = images.get(image.id);
+    if (!previous || image.updatedAt > previous.updatedAt
+      || image.updatedAt === previous.updatedAt && JSON.stringify(image) > JSON.stringify(previous)) images.set(image.id, image);
+  }
+  const deletedImageIds = [...new Set([...(base.deletedImageIds ?? []), ...(incoming.deletedImageIds ?? [])])];
+  for (const id of deletedImageIds) images.delete(id);
   const strokes = new Map<string, InkStroke>();
   for (const stroke of base.strokes) strokes.set(stroke.id, stroke);
   for (const stroke of incoming.strokes) {
@@ -200,6 +224,9 @@ function mergePages(base: InkPage, incoming: InkPage): InkPage {
     paper: incoming.updatedAt >= base.updatedAt ? incoming.paper : base.paper,
     strokes: [...strokes.values()].sort((a, b) => a.createdAt - b.createdAt),
     deletedStrokeIds,
+    ...(base.images || incoming.images || base.deletedImageIds || incoming.deletedImageIds ? {
+      images: [...images.values()].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)), deletedImageIds,
+    } : {}),
     updatedAt: Math.max(base.updatedAt, incoming.updatedAt),
   };
 }
@@ -210,15 +237,36 @@ function normalizePage(value: unknown): InkPage | null {
   const strokes = Array.isArray(raw.strokes) ? raw.strokes : [];
   const deletedStrokeIds = Array.isArray(raw.deletedStrokeIds) ? raw.deletedStrokeIds.filter((id): id is string => typeof id === "string") : [];
   const deleted = new Set(deletedStrokeIds);
+  const pageId = typeof raw.id === "string" ? raw.id : newId("page");
+  const deletedImageIds = Array.isArray(raw.deletedImageIds) ? raw.deletedImageIds.filter((id): id is string => typeof id === "string") : [];
   return {
-    id: typeof raw.id === "string" ? raw.id : newId("page"),
+    id: pageId,
     title: typeof raw.title === "string" ? raw.title : "Untitled",
     paper: isPaperStyle(raw.paper) ? raw.paper : "ruled",
     strokes: strokes.map(normalizeStroke).filter((stroke): stroke is InkStroke => stroke !== null && !deleted.has(stroke.id)),
     deletedStrokeIds,
+    ...(Array.isArray(raw.images) || Array.isArray(raw.deletedImageIds) ? {
+      images: (Array.isArray(raw.images) ? raw.images : []).map((image) => normalizeImage(image, pageId))
+        .filter((image): image is InkImage => !!image && !deletedImageIds.includes(image.id)),
+      deletedImageIds,
+    } : {}),
     createdAt: finitePositive(raw.createdAt, Date.now()),
     updatedAt: finitePositive(raw.updatedAt, Date.now()),
   };
+}
+
+export function isManagedImagePath(path: unknown): path is string {
+  return typeof path === "string" && /^Ink Notes\/Images\/assets\/[a-zA-Z0-9-]+\.png$/.test(path);
+}
+
+function normalizeImage(value: unknown, pageId: string): InkImage | null {
+  if (!value || typeof value !== "object") return null;
+  const raw = value as Partial<InkImage>;
+  if (typeof raw.id !== "string" || !isManagedImagePath(raw.assetPath)) return null;
+  if (![raw.x, raw.y, raw.width, raw.height].every((n) => typeof n === "number" && Number.isFinite(n))) return null;
+  const width = clamp(raw.width!, 0.01, 1), height = clamp(raw.height!, 0.01, 1);
+  return { id: raw.id, pageId, assetPath: raw.assetPath, x: clamp(raw.x!, 0, 1 - width), y: clamp(raw.y!, 0, 1 - height),
+    width, height, foreground: raw.foreground === true, createdAt: finitePositive(raw.createdAt, Date.now()), updatedAt: finitePositive(raw.updatedAt, Date.now()) };
 }
 
 function normalizeStroke(value: unknown): InkStroke | null {
