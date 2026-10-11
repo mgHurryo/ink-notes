@@ -30267,7 +30267,6 @@ var PdfInkView = class extends InkWritingView {
     if (!this.sidecar) return;
     this.finishPointerInput(false);
     this.writeBlockedReason = "The source PDF changed. Reopen it to check the notes against the new revision.";
-    this.pendingMergedSidecar = null;
     this.updateToolButtons();
     this.setStatus(this.writeBlockedReason, true);
   }
@@ -31394,12 +31393,13 @@ var PdfInkView = class extends InkWritingView {
    * awaited, and newer changes trigger a follow-up flush.
    */
   async flushSaveNow() {
-    if (!this.dirty || !this.sidecar || !this.sidecarFile) return { status: "saved" };
     if (this.activeSave) {
       const previous = await this.activeSave;
       if (previous.status !== "saved") return previous;
       return this.flushSaveNow();
     }
+    if (this.writeBlockedReason && this.dirty) return { status: "failed", message: this.writeBlockedReason };
+    if (!this.dirty || !this.sidecar || !this.sidecarFile) return { status: "saved" };
     const save = this.performSave().catch((error) => ({ status: "failed", message: messageOf(error) })).finally(() => {
       this.activeSave = null;
     });
@@ -31417,6 +31417,7 @@ var PdfInkView = class extends InkWritingView {
   async performSave() {
     let latestRaw = this.sidecarRaw;
     for (let attempt = 0; attempt <= SAVE_CONFLICT_RETRIES2; attempt++) {
+      if (this.writeBlockedReason) return { status: "failed", message: this.writeBlockedReason };
       const revision = this.editRevision;
       const snapshot = this.pendingMergedSidecar ? mergeSidecars(this.pendingMergedSidecar, this.sidecar) : this.sidecar;
       const next = { ...snapshot, updatedAt: Date.now() };
@@ -31424,7 +31425,7 @@ var PdfInkView = class extends InkWritingView {
       if (await this.store.writeIfUnchanged(this.sidecarFile, this.sidecarRaw, nextRaw)) {
         this.sidecarRaw = nextRaw;
         this.dirty = this.editRevision !== revision;
-        this.receiveMergedSidecar(next);
+        if (this.pendingMergedSidecar) this.receiveMergedSidecar(next);
         return { status: "saved" };
       }
       try {
@@ -31432,6 +31433,7 @@ var PdfInkView = class extends InkWritingView {
       } catch (error) {
         return { status: "failed", message: messageOf(error) };
       }
+      if (this.writeBlockedReason) return { status: "failed", message: this.writeBlockedReason };
       let latest;
       try {
         latest = normalizeSidecar(JSON.parse(latestRaw));
@@ -31462,7 +31464,8 @@ var PdfInkView = class extends InkWritingView {
     try {
       const revision = this.editRevision;
       const conflictPath = `${this.sidecarFile.path.replace(/\.pdfink\.json$/, "")}.conflict-${Date.now()}.pdfink.json`;
-      const sidecar = { ...this.sidecar, updatedAt: Date.now() };
+      const snapshot = this.pendingMergedSidecar ? mergeSidecars(this.pendingMergedSidecar, this.sidecar) : this.sidecar;
+      const sidecar = { ...snapshot, updatedAt: Date.now() };
       await this.app.vault.create(conflictPath, serializeSidecar(sidecar));
       this.sidecarRaw = diskRaw;
       this.dirty = this.editRevision !== revision;

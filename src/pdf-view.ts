@@ -434,7 +434,6 @@ export class PdfInkView extends InkWritingView {
     if (!this.sidecar) return;
     this.finishPointerInput(false);
     this.writeBlockedReason = "The source PDF changed. Reopen it to check the notes against the new revision.";
-    this.pendingMergedSidecar = null;
     this.updateToolButtons();
     this.setStatus(this.writeBlockedReason, true);
   }
@@ -1627,12 +1626,13 @@ export class PdfInkView extends InkWritingView {
    * awaited, and newer changes trigger a follow-up flush.
    */
   async flushSaveNow(): Promise<SaveOutcome> {
-    if (!this.dirty || !this.sidecar || !this.sidecarFile) return { status: "saved" };
     if (this.activeSave) {
       const previous = await this.activeSave;
       if (previous.status !== "saved") return previous;
       return this.flushSaveNow();
     }
+    if (this.writeBlockedReason && this.dirty) return { status: "failed", message: this.writeBlockedReason };
+    if (!this.dirty || !this.sidecar || !this.sidecarFile) return { status: "saved" };
     const save = this.performSave()
       .catch((error): SaveOutcome => ({ status: "failed", message: messageOf(error) }))
       .finally(() => { this.activeSave = null; });
@@ -1652,6 +1652,7 @@ export class PdfInkView extends InkWritingView {
   private async performSave(): Promise<SaveOutcome> {
     let latestRaw = this.sidecarRaw;
     for (let attempt = 0; attempt <= SAVE_CONFLICT_RETRIES; attempt++) {
+      if (this.writeBlockedReason) return { status: "failed", message: this.writeBlockedReason };
       const revision = this.editRevision;
       // Pending peer state must also reach disk when a save finishes mid-stroke.
       const snapshot = this.pendingMergedSidecar ? mergeSidecars(this.pendingMergedSidecar, this.sidecar!) : this.sidecar!;
@@ -1660,7 +1661,7 @@ export class PdfInkView extends InkWritingView {
       if (await this.store.writeIfUnchanged(this.sidecarFile!, this.sidecarRaw, nextRaw)) {
         this.sidecarRaw = nextRaw;
         this.dirty = this.editRevision !== revision;
-        this.receiveMergedSidecar(next);
+        if (this.pendingMergedSidecar) this.receiveMergedSidecar(next);
         return { status: "saved" };
       }
       // CAS mismatch: re-read, merge, retry. Unreadable or foreign content
@@ -1670,6 +1671,8 @@ export class PdfInkView extends InkWritingView {
       } catch (error) {
         return { status: "failed", message: messageOf(error) };
       }
+      // A source change while awaiting disk must stop the next CAS attempt.
+      if (this.writeBlockedReason) return { status: "failed", message: this.writeBlockedReason };
       let latest: PdfSidecar;
       try {
         latest = normalizeSidecar(JSON.parse(latestRaw));
@@ -1704,7 +1707,9 @@ export class PdfInkView extends InkWritingView {
     try {
       const revision = this.editRevision;
       const conflictPath = `${this.sidecarFile!.path.replace(/\.pdfink\.json$/, "")}.conflict-${Date.now()}.pdfink.json`;
-      const sidecar = { ...this.sidecar!, updatedAt: Date.now() };
+      const snapshot = this.pendingMergedSidecar
+        ? mergeSidecars(this.pendingMergedSidecar, this.sidecar!) : this.sidecar!;
+      const sidecar = { ...snapshot, updatedAt: Date.now() };
       await this.app.vault.create(conflictPath, serializeSidecar(sidecar));
       this.sidecarRaw = diskRaw;
       this.dirty = this.editRevision !== revision;

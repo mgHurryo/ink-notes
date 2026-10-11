@@ -14,6 +14,7 @@ const SOURCE_PAGES = [{ width: 595.28, height: 841.89, rotation: 0 }];
 
 interface VaultCalls {
   created: string[];
+  createdContents: string[];
 }
 
 interface PdfViewInternals {
@@ -22,6 +23,7 @@ interface PdfViewInternals {
   mode: string;
   sidecar: PdfSidecar;
   sidecarRaw: string;
+  pendingMergedSidecar: PdfSidecar | null;
   dirty: boolean;
   writeBlockedReason: string | null;
   canEdit(): boolean;
@@ -86,10 +88,11 @@ function setup() {
   };
   const workers = { createSession: vi.fn(() => session) } as unknown as InkWorkerService;
 
-  const vaultCalls: VaultCalls = { created: [] };
+  const vaultCalls: VaultCalls = { created: [], createdContents: [] };
   const vault = {
-    async create(path: string) {
+    async create(path: string, data?: string) {
       vaultCalls.created.push(path);
+      if (typeof data === "string") vaultCalls.createdContents.push(data);
       return { path };
     },
     getAbstractFileByPath: () => null,
@@ -331,6 +334,50 @@ describe("split-pane sidecar synchronization", () => {
     await refresh;
     expect(right.internal.sidecar).toBeNull();
   });
+
+  it("blocks stale saves after a source revision change and keeps deferred peer ink in recovery", async () => {
+    const { panes: [left, right], draw, refresh, disk } = split();
+    draw(right, 160);
+    right.internal.onPointerDown(pointer(260, 60));
+    const localIds = right.internal.sidecar.notebook.pages[0].strokes.map((stroke) => stroke.id);
+    draw(left, 60);
+    await left.internal.flushSaveNow();
+    await refresh();
+    const peerStrokeId = disk().notebook.pages[0].strokes[0].id;
+    await right.internal.flushSaveNow();
+    expect(right.internal.sidecar.notebook.pages[0].strokes.map((stroke) => stroke.id)).not.toContain(peerStrokeId);
+    expect(disk().notebook.pages[0].strokes.map((stroke) => stroke.id)).toContain(peerStrokeId);
+    const writesBeforeBlock = right.store.writeIfUnchanged.mock.calls.length;
+
+    right.view.sourcePdfModified();
+    expect(right.internal.writeBlockedReason).toContain("source PDF changed");
+    expect(right.internal.pendingMergedSidecar?.notebook.pages[0].strokes.map((stroke) => stroke.id))
+      .toContain(peerStrokeId);
+
+    await expect(right.internal.flushSaveNow()).resolves.toMatchObject({ status: "failed" });
+    expect(right.store.writeIfUnchanged.mock.calls.length).toBe(writesBeforeBlock);
+    expect(disk().notebook.pages[0].strokes.map((stroke) => stroke.id))
+      .toEqual(expect.arrayContaining([...localIds, peerStrokeId]));
+
+    await right.view.onClose();
+    expect(right.vaultCalls.created).toHaveLength(1);
+    const recovery = JSON.parse(right.vaultCalls.createdContents[0]) as PdfSidecar;
+    expect(recovery.notebook.pages[0].strokes.map((stroke) => stroke.id))
+      .toEqual(expect.arrayContaining([...localIds, peerStrokeId]));
+  });
+
+  it("ignores external sidecar refreshes after the source revision is blocked", async () => {
+    const { panes: [left, right], draw, refresh, disk } = split();
+    right.view.sourcePdfModified();
+    draw(left, 60);
+    await left.internal.flushSaveNow();
+    await refresh();
+    expect(disk().notebook.pages[0].strokes).toHaveLength(1);
+    expect(right.internal.sidecar.notebook.pages[0].strokes).toHaveLength(0);
+    expect(right.internal.pendingMergedSidecar).toBeNull();
+    await expect(right.internal.flushSaveNow()).resolves.toMatchObject({ status: "saved" });
+    expect(right.store.writeIfUnchanged).not.toHaveBeenCalled();
+  });
 });
 
 describe("pen pipeline", () => {
@@ -391,6 +438,38 @@ describe("save gating", () => {
       expect.stringContaining('"format": 1'),
     );
     expect(internal.dirty).toBe(false);
+  });
+
+  it("stops CAS retries if the source changes during the disk read", async () => {
+    const { view, internal, store } = setup();
+    let release!: (raw: string) => void;
+    store.writeIfUnchanged.mockResolvedValue(false);
+    store.readRaw.mockImplementationOnce(() => new Promise<string>((resolve) => { release = resolve; }));
+    internal.markSidecarChanged();
+    const saving = internal.flushSaveNow();
+    for (let i = 0; i < 10 && !release; i++) await Promise.resolve();
+    expect(release).toBeDefined();
+    view.sourcePdfModified();
+    release(serializeSidecar(internal.sidecar));
+    await expect(saving).resolves.toMatchObject({ status: "failed" });
+    expect(store.writeIfUnchanged).toHaveBeenCalledTimes(1);
+    expect(internal.dirty).toBe(true);
+  });
+
+  it("waits for an in-flight write before closing a blocked pane", async () => {
+    const { view, internal, store, session } = setup();
+    let release!: (saved: boolean) => void;
+    store.writeIfUnchanged.mockImplementationOnce(() => new Promise<boolean>((resolve) => { release = resolve; }));
+    internal.markSidecarChanged();
+    const saving = internal.flushSaveNow();
+    view.sourcePdfModified();
+    const closing = view.onClose();
+    await Promise.resolve();
+    expect(session.dispose).not.toHaveBeenCalled();
+    release(true);
+    await Promise.all([saving, closing]);
+    expect(session.dispose).toHaveBeenCalled();
+    expect(store.writeIfUnchanged).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a conflict copy and reports conflict when the disk keeps changing", async () => {
