@@ -65,6 +65,18 @@ Images start below handwriting so you can write on them. Inserting switches to t
 
 The library stores managed PNG copies in `Ink Notes/Images/assets/` and groups in `Ink Notes/Images/library.json`. Notes and PDF sidecars store only image references and geometry; the source PDF and original images are preserved. Sync the managed assets together with your notes. Removing a placed image keeps its library asset for other pages. Imports are sequential, limited to 30 MB and 16 megapixels per image, and report unsupported or damaged files individually. Supported formats depend on the WebView; HEIC may require conversion first. Animated images are imported as a still frame. Missing assets are reported during export so a PDF is not silently saved without images. Older plugin versions do not understand image metadata; keep a vault backup before downgrading.
 
+### Sticky notes
+
+In editing mode, choose **Add sticky note** in the toolbar. The new note opens its editor: set a title, keywords and color, type text, or write with a pen/stylus (mouse writing is also supported). **Write / Erase / Pan** and **Undo ink / Redo ink** operate inside the board. Fingers scroll the board; **More space right / below** extends its working area. Click **Save note** to apply the draft. Cancel, Escape or closing the editor discards unsaved edits.
+
+Choose **Pointer** to move a note by its header using a finger or mouse, or resize it with the bottom-right handle. The editor also provides position and size percentage controls. Resizing changes the visible window only: handwriting coordinates and text size stay fixed, and text wraps only at explicit newlines. Content outside the window is retained; scroll inside the editor to find it. Fold the note with its header button; **Preview when folded** chooses a small content preview or title only. Reading mode lets you open and scroll notes without modifying them. Page-level edits support undo/redo.
+
+Use **Ink Notes: Find sticky notes** to search titles, typed text and manual keywords across Ink notebooks and PDF handwriting. **Copy Markdown link** gives a link you can paste into an external Markdown note; clicking it opens the exact file, page and sticky-note editor. Links include the vault name and file path, so copy a new link after renaming/moving the notebook or vault. Search uses current open-view state and stored note files, including PDF sidecars; it does not maintain a separate index database.
+
+Sticky notes appear in page previews, Ink Markdown embeds and exported PDFs. PDF export captures their current visible window and folded state; offscreen board content stays in the note data rather than being expanded into the PDF. Notes are stored in the `.ink` file or PDF sidecar, and the source PDF is preserved. Keep a backup before downgrading: older plugin versions may discard sticky metadata when saving.
+
+Handwriting recognition is not bundled. An optional [handwriting index interface](docs/sticky-handwriting-index.md) allows another integration to provide recognized search terms. Without an integration, Ink Notes does not send handwriting anywhere or run recognition.
+
 ## UI Preview
 
 Run `npm run preview` and open http://127.0.0.1:4173 to exercise the actual editor view with a lightweight browser host. Preview notes are in memory only; Vault storage and sync must be verified in Obsidian. The layout responds to the editor pane width, including split panes and mobile screens.

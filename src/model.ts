@@ -1,3 +1,6 @@
+import { mergeSticky, normalizeSticky } from "./sticky-model";
+import type { StickyNote } from "./sticky-model";
+
 export type InkTool = "pen" | "highlighter" | "eraser" | "lasso" | "pointer";
 export type PaperStyle = "blank" | "ruled" | "grid" | "dot";
 
@@ -67,6 +70,8 @@ export interface InkPage {
   deletedStrokeIds: string[];
   images?: InkImage[];
   deletedImageIds?: string[];
+  stickyNotes?: StickyNote[];
+  deletedStickyNotes?: Record<string, number>;
   createdAt: number;
   updatedAt: number;
 }
@@ -201,6 +206,13 @@ function compareNotebookOrder(left: InkNotebook, right: InkNotebook): number {
 }
 
 function mergePages(base: InkPage, incoming: InkPage): InkPage {
+  const stickyNotes = new Map<string, StickyNote>();
+  for (const note of [...(base.stickyNotes ?? []), ...(incoming.stickyNotes ?? [])]) {
+    const previous = stickyNotes.get(note.id); stickyNotes.set(note.id, previous ? mergeSticky(previous, note) : note);
+  }
+  const deletedStickyNotes = { ...base.deletedStickyNotes };
+  for (const [id, time] of Object.entries(incoming.deletedStickyNotes ?? {})) deletedStickyNotes[id] = Math.max(deletedStickyNotes[id] ?? 0, time);
+  for (const [id, note] of stickyNotes) if (note.updatedAt <= (deletedStickyNotes[id] ?? 0)) stickyNotes.delete(id);
   const images = new Map<string, InkImage>();
   for (const image of [...(base.images ?? []), ...(incoming.images ?? [])]) {
     const previous = images.get(image.id);
@@ -224,6 +236,9 @@ function mergePages(base: InkPage, incoming: InkPage): InkPage {
     paper: incoming.updatedAt >= base.updatedAt ? incoming.paper : base.paper,
     strokes: [...strokes.values()].sort((a, b) => a.createdAt - b.createdAt),
     deletedStrokeIds,
+    ...(base.stickyNotes || incoming.stickyNotes || base.deletedStickyNotes || incoming.deletedStickyNotes ? {
+      stickyNotes: [...stickyNotes.values()].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)), deletedStickyNotes,
+    } : {}),
     ...(base.images || incoming.images || base.deletedImageIds || incoming.deletedImageIds ? {
       images: [...images.values()].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)), deletedImageIds,
     } : {}),
@@ -239,12 +254,17 @@ function normalizePage(value: unknown): InkPage | null {
   const deleted = new Set(deletedStrokeIds);
   const pageId = typeof raw.id === "string" ? raw.id : newId("page");
   const deletedImageIds = Array.isArray(raw.deletedImageIds) ? raw.deletedImageIds.filter((id): id is string => typeof id === "string") : [];
+  const deletedStickyNotes = Object.fromEntries(Object.entries(raw.deletedStickyNotes ?? {}).filter(([id, time]) => typeof id === "string" && Number.isFinite(time)));
   return {
     id: pageId,
     title: typeof raw.title === "string" ? raw.title : "Untitled",
     paper: isPaperStyle(raw.paper) ? raw.paper : "ruled",
     strokes: strokes.map(normalizeStroke).filter((stroke): stroke is InkStroke => stroke !== null && !deleted.has(stroke.id)),
     deletedStrokeIds,
+    ...(Array.isArray(raw.stickyNotes) || raw.deletedStickyNotes ? {
+      stickyNotes: (Array.isArray(raw.stickyNotes) ? raw.stickyNotes : []).map((note) => normalizeSticky(note, pageId))
+        .filter((note): note is StickyNote => !!note && note.updatedAt > (deletedStickyNotes[note.id] ?? 0)), deletedStickyNotes,
+    } : {}),
     ...(Array.isArray(raw.images) || Array.isArray(raw.deletedImageIds) ? {
       images: (Array.isArray(raw.images) ? raw.images : []).map((image) => normalizeImage(image, pageId))
         .filter((image): image is InkImage => !!image && !deletedImageIds.includes(image.id)),
@@ -288,7 +308,7 @@ function normalizeStroke(value: unknown): InkStroke | null {
   };
 }
 
-function normalizeDynamics(value: unknown): StrokeDynamics | undefined {
+export function normalizeDynamics(value: unknown): StrokeDynamics | undefined {
   if (!value || typeof value !== "object") return undefined;
   const raw = value as Partial<StrokeDynamics>;
   const percent = (candidate: unknown, fallback: number): number =>

@@ -10,6 +10,10 @@ import { NotebookSuggestModal } from "../src/notebook-modal";
 import type { WorkspaceLeaf } from "obsidian";
 import { ImageLibraryStore } from "../src/image-library";
 import { imageVaultApp } from "./image-vault";
+import { StickySearchModal } from "../src/sticky-index";
+import { exportNotebookPdf, exportHandwrittenPdf } from "../src/pdf-export";
+import { createSidecar } from "../src/pdf-sidecar";
+import { PDFDocument, degrees } from "pdf-lib";
 
 type RendererComparisonMode = "pen" | "highlighter" | "stroke-eraser" | "circle-eraser" | "square-eraser" | "lasso";
 
@@ -155,8 +159,23 @@ void (async () => {
     return { compared, different, inkPixels, expectedInkPixels, totalPixels };
   };
   (globalThis as typeof globalThis & { __inkNotesPreview?: { view: InkView; compareRenderer(mode?: RendererComparisonMode): Promise<{
-    compared: number; different: number; inkPixels: number; expectedInkPixels: number; totalPixels: number }> } })
-    .__inkNotesPreview = { view, compareRenderer };
+    compared: number; different: number; inkPixels: number; expectedInkPixels: number; totalPixels: number }>;
+    findStickies(): void; exportStickies(rotation?: 0 | 90 | 180 | 270): Promise<{ bytes: number; images: number }> } })
+    .__inkNotesPreview = { view, compareRenderer, findStickies: () => new StickySearchModal((view as any).imageLibrary.app,
+      (entry) => view.revealSticky(entry.pageId, entry.note.id), () => ({ files: ["Ink Notes/Preview.ink"], entries: view.stickyIndexEntries() })).open(),
+      exportStickies: async (rotation) => {
+        const book = (view as any).notebook;
+        let bytes: Uint8Array;
+        if (rotation !== undefined) {
+          const source = await PDFDocument.create(); source.addPage([600, 800]).setRotation(degrees(rotation));
+          const sidecar = createSidecar("Sample.pdf", { sha256: "a".repeat(64), byteLength: 2 }, [{ width: 600, height: 800, rotation }]);
+          sidecar.notebook.pages[0].stickyNotes = structuredClone(book.pages[0].stickyNotes);
+          bytes = await exportHandwrittenPdf((await source.save()).buffer as ArrayBuffer, sidecar, "Sample");
+        } else bytes = await exportNotebookPdf(book, "Sticky export");
+        const pdf = await PDFDocument.load(bytes), resources = pdf.getPage(0).node.Resources();
+        const images = resources?.lookupMaybe((await import("pdf-lib")).PDFName.of("XObject"), (await import("pdf-lib")).PDFDict)?.keys().length ?? 0;
+        return { bytes: bytes.length, images };
+      } };
   document.documentElement.dataset.inkReady = "true";
   if (new URLSearchParams(location.search).has("notebooks")) {
     const files = new URLSearchParams(location.search).has("empty") ? [] : ["Class notes", "Sketchbook"].map((name) =>

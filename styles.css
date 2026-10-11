@@ -1421,6 +1421,28 @@
 .ink-image-library-confirm { width: min(440px, 95vw); }
 .ink-image-library-confirm .modal-content { overflow-y: auto; max-height: 75vh; overflow-wrap: anywhere; }
 .ink-image-library-confirm button { min-height: 44px; }
+.ink-sticky-layer { position: absolute; inset: 0; pointer-events: none; z-index: 9; }
+.ink-sticky-note { position: absolute; pointer-events: auto; display: flex; flex-direction: column; overflow: hidden; color: #202020; border-radius: 5px; box-shadow: 0 3px 10px #0003; }
+.ink-sticky-header { display: flex; align-items: center; gap: 4px; min-height: 32px; height: 32px; flex-shrink: 0; touch-action: none; cursor: grab; padding: 0 4px; }
+.ink-sticky-header > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.ink-sticky-header button { padding: 2px 4px; min-height: 28px; font-size: 10px; }
+.ink-sticky-header button svg { width: 16px; height: 16px; }
+.ink-sticky-note canvas { width: 100%; min-height: 0; flex: 1; object-fit: fill; cursor: pointer; }
+.ink-sticky-resize { position: absolute; right: 0; bottom: 0; min-width: 44px; min-height: 44px; opacity: .8; touch-action: none; cursor: nwse-resize; font-size: 9px; }
+.ink-sticky-editor, .ink-sticky-search { width: min(850px, 95vw); }
+.ink-sticky-editor .modal-content, .ink-sticky-search .modal-content { max-height: 80vh; overflow: auto; }
+.ink-sticky-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
+.ink-sticky-tools label { display: flex; flex-direction: column; gap: 4px; max-width: 100%; }
+.ink-sticky-tools input { max-width: 180px; }
+.ink-sticky-tools input[type=number] { width: 90px; }
+.ink-sticky-editor button, .ink-sticky-editor input:not([type=checkbox]), .ink-sticky-search button, .ink-sticky-search input { min-height: 44px; }
+.ink-sticky-viewport { position: relative; height: 280px; margin: 12px 0; background: var(--background-secondary); }
+.ink-sticky-scroll { position: absolute; inset: 0; overflow: auto; touch-action: pan-x pan-y; overscroll-behavior: contain; }
+.ink-sticky-viewport > canvas { position: absolute; top: 0; left: 0; pointer-events: none; }
+.ink-sticky-editor textarea { width: 100%; min-height: 100px; resize: vertical; }
+.ink-sticky-editor > .modal-content > input, .ink-sticky-search input { width: 100%; }
+.ink-sticky-results button { width: 100%; height: auto; text-align: left; white-space: normal; overflow-wrap: anywhere; }
+.ink-embed-stickies { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; pointer-events: none; }
 .ink-image-library-tools { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .ink-image-library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(125px, 1fr)); gap: 12px; margin: 12px 0; }
 .ink-image-library-card { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--background-modifier-border); border-radius: 8px; overflow-wrap: anywhere; cursor: pointer; }

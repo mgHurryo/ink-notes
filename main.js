@@ -18022,12 +18022,12 @@ var require_appearances = __commonJS({
         }
       };
     };
-    exports2.defaultButtonAppearanceProvider = function(button2, widget, font) {
+    exports2.defaultButtonAppearanceProvider = function(button3, widget, font) {
       var _a, _b, _c, _d, _e;
       var widgetColor = getDefaultColor(widget);
-      var fieldColor = getDefaultColor(button2.acroField);
+      var fieldColor = getDefaultColor(button3.acroField);
       var widgetFontSize = getDefaultFontSize(widget);
-      var fieldFontSize = getDefaultFontSize(button2.acroField);
+      var fieldFontSize = getDefaultFontSize(button3.acroField);
       var rectangle = widget.getRectangle();
       var ap = widget.getAppearanceCharacteristics();
       var bs = widget.getBorderStyle();
@@ -18065,7 +18065,7 @@ var require_appearances = __commonJS({
       if (widgetColor || widgetFontSize !== void 0) {
         updateDefaultAppearance(widget, textColor, font, fontSize);
       } else {
-        updateDefaultAppearance(button2.acroField, textColor, font, fontSize);
+        updateDefaultAppearance(button3.acroField, textColor, font, fontSize);
       }
       var options = {
         x: 0 + borderWidth / 2,
@@ -19879,10 +19879,10 @@ var require_PDFForm = __commonJS({
           utils_1.assertIs(name, "name", ["string"]);
           var nameParts = splitFieldName(name);
           var parent = this.findOrCreateNonTerminals(nameParts.nonTerminal);
-          var button2 = core_1.PDFAcroPushButton.create(this.doc.context);
-          button2.setPartialName(nameParts.terminal);
-          addFieldToParent(parent, [button2, button2.ref], nameParts.terminal);
-          return PDFButton_1.default.of(button2, button2.ref, this.doc);
+          var button3 = core_1.PDFAcroPushButton.create(this.doc.context);
+          button3.setPartialName(nameParts.terminal);
+          addFieldToParent(parent, [button3, button3.ref], nameParts.terminal);
+          return PDFButton_1.default.of(button3, button3.ref, this.doc);
         };
         PDFForm2.prototype.createCheckBox = function(name) {
           utils_1.assertIs(name, "name", ["string"]);
@@ -22028,7 +22028,7 @@ __export(main_exports, {
   default: () => InkNotesPlugin
 });
 module.exports = __toCommonJS(main_exports);
-var import_obsidian11 = require("obsidian");
+var import_obsidian13 = require("obsidian");
 
 // src/notebook-modal.ts
 var import_obsidian = require("obsidian");
@@ -22049,16 +22049,16 @@ var NotebookSuggestModal = class extends import_obsidian.SuggestModal {
     this.actions = this.modalEl.createDiv({ cls: "ink-notebook-picker-actions" });
     this.modalEl.prepend(this.actions);
     this.actions.createEl("span", { text: "Ink notebooks" });
-    const button2 = this.actions.createEl("button", { cls: "ink-notebook-create", attr: {
+    const button3 = this.actions.createEl("button", { cls: "ink-notebook-create", attr: {
       type: "button",
       title: "Create Ink notebook",
       "aria-label": "Create Ink notebook"
     } });
-    (0, import_obsidian.setIcon)(button2.createSpan({ attr: { "aria-hidden": "true" } }), "plus");
-    button2.addEventListener("keydown", (event) => {
+    (0, import_obsidian.setIcon)(button3.createSpan({ attr: { "aria-hidden": "true" } }), "plus");
+    button3.addEventListener("keydown", (event) => {
       if (event.key === "Enter" || event.key === " ") event.stopPropagation();
     });
-    button2.addEventListener("click", () => {
+    button3.addEventListener("click", () => {
       this.close();
       new NotebookNameModal(this.app, "Create Ink notebook", "Ink Notebook", "Create", this.create).open();
     });
@@ -22155,7 +22155,7 @@ var NotebookNameModal = class extends import_obsidian.Modal {
 };
 
 // src/view.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 
 // src/diagnostics.ts
 function intervalStats(intervals) {
@@ -22177,6 +22177,93 @@ var MAX_RAW_POINT_SAMPLES = 8192;
 function pushStrokeRecord(records, record) {
   records.push(record);
   if (records.length > MAX_RECORDED_STROKES) records.splice(0, records.length - MAX_RECORDED_STROKES);
+}
+
+// src/sticky-model.ts
+var STICKY_UNIT = 1e3;
+function cloneSticky(note) {
+  return { ...note, deletedStrokeIds: [...note.deletedStrokeIds], strokes: note.strokes.map((stroke) => {
+    var _a;
+    return {
+      ...stroke,
+      points: stroke.points.map((point) => ({ ...point })),
+      dynamics: stroke.dynamics ? {
+        ...stroke.dynamics,
+        pressureCurve: (_a = stroke.dynamics.pressureCurve) == null ? void 0 : _a.map((point) => [...point])
+      } : void 0
+    };
+  }) };
+}
+function mergeSticky(a, b) {
+  const latest = b.updatedAt > a.updatedAt || b.updatedAt === a.updatedAt && JSON.stringify(b) > JSON.stringify(a) ? b : a;
+  const text = b.textUpdatedAt > a.textUpdatedAt || b.textUpdatedAt === a.textUpdatedAt && b.text > a.text ? b : a;
+  const removed = /* @__PURE__ */ new Set([...a.deletedStrokeIds, ...b.deletedStrokeIds]);
+  const strokes = /* @__PURE__ */ new Map();
+  for (const stroke of [...a.strokes, ...b.strokes]) {
+    const previous = strokes.get(stroke.id);
+    if (!removed.has(stroke.id) && (!previous || stroke.updatedAt > previous.updatedAt || stroke.updatedAt === previous.updatedAt && JSON.stringify(stroke) > JSON.stringify(previous))) strokes.set(stroke.id, stroke);
+  }
+  return {
+    ...latest,
+    text: text.text,
+    textUpdatedAt: text.textUpdatedAt,
+    strokes: [...strokes.values()].sort((x, y) => x.createdAt - y.createdAt || x.id.localeCompare(y.id)),
+    deletedStrokeIds: [...removed]
+  };
+}
+function normalizeSticky(value, pageId) {
+  if (!value || typeof value !== "object") return null;
+  const raw = value;
+  if (typeof raw.id !== "string" || ![raw.x, raw.y, raw.width, raw.height].every((n) => typeof n === "number" && Number.isFinite(n))) return null;
+  const positive = (n, fallback) => typeof n === "number" && Number.isFinite(n) && n > 0 ? n : fallback;
+  const string = (n) => typeof n === "string" ? n : "";
+  const width = Math.min(1, Math.max(0.05, raw.width)), height = Math.min(1, Math.max(0.05, raw.height));
+  const removed = Array.isArray(raw.deletedStrokeIds) ? raw.deletedStrokeIds.filter((id) => typeof id === "string") : [];
+  const strokes = (Array.isArray(raw.strokes) ? raw.strokes : []).filter((stroke) => stroke && typeof stroke.id === "string" && Array.isArray(stroke.points)).map((stroke) => ({
+    ...stroke,
+    pageId: raw.id,
+    tool: stroke.tool === "highlighter" ? "highlighter" : "pen",
+    color: /^#[0-9a-f]{6}$/i.test(stroke.color) ? stroke.color : "#202020",
+    width: positive(stroke.width, 3),
+    opacity: Math.min(1, positive(stroke.opacity, 1)),
+    dynamics: normalizeDynamics(stroke.dynamics),
+    points: stroke.points.filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y)).map((point) => ({
+      x: Math.max(0, point.x),
+      y: Math.max(0, point.y),
+      pressure: Math.min(1, Math.max(0.05, positive(point.pressure, 0.5))),
+      t: positive(point.t, 1),
+      tiltX: typeof point.tiltX === "number" && Number.isFinite(point.tiltX) ? point.tiltX : void 0,
+      tiltY: typeof point.tiltY === "number" && Number.isFinite(point.tiltY) ? point.tiltY : void 0
+    })),
+    createdAt: positive(stroke.createdAt, 1),
+    updatedAt: positive(stroke.updatedAt, 1)
+  })).filter((stroke) => !removed.includes(stroke.id));
+  return {
+    id: raw.id,
+    pageId,
+    x: Math.max(0, Math.min(1 - width, raw.x)),
+    y: Math.max(0, Math.min(1 - height, raw.y)),
+    width,
+    height,
+    title: string(raw.title),
+    keywords: string(raw.keywords),
+    text: string(raw.text),
+    textUpdatedAt: positive(raw.textUpdatedAt, 1),
+    color: typeof raw.color === "string" && /^#[0-9a-f]{6}$/i.test(raw.color) ? raw.color : "#fff1a8",
+    collapsed: raw.collapsed === true,
+    preview: raw.preview !== false,
+    scrollX: Math.max(0, positive(raw.scrollX, 0)),
+    scrollY: Math.max(0, positive(raw.scrollY, 0)),
+    boardPageWidth: positive(raw.boardPageWidth, STICKY_UNIT),
+    strokes,
+    deletedStrokeIds: removed,
+    createdAt: positive(raw.createdAt, 1),
+    updatedAt: positive(raw.updatedAt, 1)
+  };
+}
+function stickyLink(file, page, note, vault) {
+  const params = new URLSearchParams({ vault, file, page, sticky: note });
+  return `obsidian://ink-notes-sticky?${params.toString()}`;
 }
 
 // src/model.ts
@@ -22297,13 +22384,21 @@ function compareNotebookOrder(left, right) {
   return leftOrder < rightOrder ? -1 : leftOrder > rightOrder ? 1 : 0;
 }
 function mergePages(base, incoming) {
-  var _a, _b, _c, _d, _e, _f;
+  var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+  const stickyNotes = /* @__PURE__ */ new Map();
+  for (const note of [...(_a = base.stickyNotes) != null ? _a : [], ...(_b = incoming.stickyNotes) != null ? _b : []]) {
+    const previous = stickyNotes.get(note.id);
+    stickyNotes.set(note.id, previous ? mergeSticky(previous, note) : note);
+  }
+  const deletedStickyNotes = { ...base.deletedStickyNotes };
+  for (const [id, time] of Object.entries((_c = incoming.deletedStickyNotes) != null ? _c : {})) deletedStickyNotes[id] = Math.max((_d = deletedStickyNotes[id]) != null ? _d : 0, time);
+  for (const [id, note] of stickyNotes) if (note.updatedAt <= ((_e = deletedStickyNotes[id]) != null ? _e : 0)) stickyNotes.delete(id);
   const images = /* @__PURE__ */ new Map();
-  for (const image of [...(_a = base.images) != null ? _a : [], ...(_b = incoming.images) != null ? _b : []]) {
+  for (const image of [...(_f = base.images) != null ? _f : [], ...(_g = incoming.images) != null ? _g : []]) {
     const previous = images.get(image.id);
     if (!previous || image.updatedAt > previous.updatedAt || image.updatedAt === previous.updatedAt && JSON.stringify(image) > JSON.stringify(previous)) images.set(image.id, image);
   }
-  const deletedImageIds = [.../* @__PURE__ */ new Set([...(_c = base.deletedImageIds) != null ? _c : [], ...(_d = incoming.deletedImageIds) != null ? _d : []])];
+  const deletedImageIds = [.../* @__PURE__ */ new Set([...(_h = base.deletedImageIds) != null ? _h : [], ...(_i = incoming.deletedImageIds) != null ? _i : []])];
   for (const id of deletedImageIds) images.delete(id);
   const strokes = /* @__PURE__ */ new Map();
   for (const stroke of base.strokes) strokes.set(stroke.id, stroke);
@@ -22311,7 +22406,7 @@ function mergePages(base, incoming) {
     const existing = strokes.get(stroke.id);
     if (!existing || stroke.updatedAt >= existing.updatedAt) strokes.set(stroke.id, stroke);
   }
-  const deletedStrokeIds = [.../* @__PURE__ */ new Set([...(_e = base.deletedStrokeIds) != null ? _e : [], ...(_f = incoming.deletedStrokeIds) != null ? _f : []])];
+  const deletedStrokeIds = [.../* @__PURE__ */ new Set([...(_j = base.deletedStrokeIds) != null ? _j : [], ...(_k = incoming.deletedStrokeIds) != null ? _k : []])];
   for (const id of deletedStrokeIds) strokes.delete(id);
   return {
     ...base,
@@ -22320,6 +22415,10 @@ function mergePages(base, incoming) {
     paper: incoming.updatedAt >= base.updatedAt ? incoming.paper : base.paper,
     strokes: [...strokes.values()].sort((a, b) => a.createdAt - b.createdAt),
     deletedStrokeIds,
+    ...base.stickyNotes || incoming.stickyNotes || base.deletedStickyNotes || incoming.deletedStickyNotes ? {
+      stickyNotes: [...stickyNotes.values()].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)),
+      deletedStickyNotes
+    } : {},
     ...base.images || incoming.images || base.deletedImageIds || incoming.deletedImageIds ? {
       images: [...images.values()].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)),
       deletedImageIds
@@ -22328,6 +22427,7 @@ function mergePages(base, incoming) {
   };
 }
 function normalizePage(value) {
+  var _a;
   if (!value || typeof value !== "object") return null;
   const raw = value;
   const strokes = Array.isArray(raw.strokes) ? raw.strokes : [];
@@ -22335,12 +22435,20 @@ function normalizePage(value) {
   const deleted = new Set(deletedStrokeIds);
   const pageId = typeof raw.id === "string" ? raw.id : newId("page");
   const deletedImageIds = Array.isArray(raw.deletedImageIds) ? raw.deletedImageIds.filter((id) => typeof id === "string") : [];
+  const deletedStickyNotes = Object.fromEntries(Object.entries((_a = raw.deletedStickyNotes) != null ? _a : {}).filter(([id, time]) => typeof id === "string" && Number.isFinite(time)));
   return {
     id: pageId,
     title: typeof raw.title === "string" ? raw.title : "Untitled",
     paper: isPaperStyle(raw.paper) ? raw.paper : "ruled",
     strokes: strokes.map(normalizeStroke).filter((stroke) => stroke !== null && !deleted.has(stroke.id)),
     deletedStrokeIds,
+    ...Array.isArray(raw.stickyNotes) || raw.deletedStickyNotes ? {
+      stickyNotes: (Array.isArray(raw.stickyNotes) ? raw.stickyNotes : []).map((note) => normalizeSticky(note, pageId)).filter((note) => {
+        var _a2;
+        return !!note && note.updatedAt > ((_a2 = deletedStickyNotes[note.id]) != null ? _a2 : 0);
+      }),
+      deletedStickyNotes
+    } : {},
     ...Array.isArray(raw.images) || Array.isArray(raw.deletedImageIds) ? {
       images: (Array.isArray(raw.images) ? raw.images : []).map((image) => normalizeImage(image, pageId)).filter((image) => !!image && !deletedImageIds.includes(image.id)),
       deletedImageIds
@@ -22694,6 +22802,64 @@ function drawSmoothPath(ctx, points, width, height) {
   ctx.lineTo(last.x * width, last.y * height);
 }
 
+// src/sticky-rendering.ts
+function stickyTextLines(text) {
+  return text.replace(/\r/g, "").split("\n");
+}
+function paintStickyBoard(ctx, note, width, height, scale = 1) {
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(0, 0, width, height);
+  ctx.clip();
+  ctx.fillStyle = note.color;
+  ctx.fillRect(0, 0, width, height);
+  ctx.scale(scale, scale);
+  ctx.translate(-note.scrollX, -note.scrollY);
+  ctx.fillStyle = "#202020";
+  ctx.font = "20px sans-serif";
+  ctx.textBaseline = "top";
+  const lines = stickyTextLines(note.text);
+  const first = Math.max(0, Math.floor((note.scrollY - 16) / 28));
+  for (let index = first; index < Math.min(lines.length, first + Math.ceil(height / scale / 28) + 2); index++) ctx.fillText(lines[index], 16, 16 + index * 28);
+  for (const stroke of note.strokes) drawInkStroke(ctx, stroke, STICKY_UNIT, STICKY_UNIT);
+  ctx.restore();
+}
+function stickyFrameHeight(note, pageWidth, pageHeight) {
+  return note.collapsed ? (note.preview ? 132 : 32) * pageWidth / note.boardPageWidth : note.height * pageHeight;
+}
+function paintStickyFrame(ctx, note, pageWidth, pageHeight) {
+  const width = note.width * pageWidth, height = stickyFrameHeight(note, pageWidth, pageHeight), scale = pageWidth / note.boardPageWidth;
+  ctx.save();
+  ctx.translate(note.x * pageWidth, note.y * pageHeight);
+  ctx.fillStyle = note.color;
+  ctx.fillRect(0, 0, width, height);
+  ctx.fillStyle = "#202020";
+  ctx.font = `bold ${16 * scale}px sans-serif`;
+  ctx.textBaseline = "top";
+  ctx.fillText(note.title || "Sticky note", 8 * scale, 8 * scale, Math.max(1, width - 16 * scale));
+  if (!note.collapsed || note.preview) {
+    ctx.translate(0, 32 * scale);
+    paintStickyBoard(ctx, note, width, Math.max(1, height - 32 * scale), scale);
+  }
+  ctx.restore();
+}
+function paintPageStickies(ctx, notes, pageWidth, pageHeight) {
+  for (const note of notes != null ? notes : []) paintStickyFrame(ctx, note, pageWidth, pageHeight);
+}
+async function stickyPng(note, pageWidth, pageHeight) {
+  const width = note.width * pageWidth, height = stickyFrameHeight(note, pageWidth, pageHeight);
+  const scale = Math.min(2, 4096 / Math.max(width, height), Math.sqrt(4e6 / (width * height)));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.max(1, Math.ceil(width * scale));
+  canvas.height = Math.max(1, Math.ceil(height * scale));
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("Sticky note rendering is unavailable");
+  ctx.scale(scale, scale);
+  paintStickyFrame(ctx, { ...note, x: 0, y: 0 }, pageWidth, pageHeight);
+  const blob = await new Promise((resolve, reject) => canvas.toBlob((value) => value ? resolve(value) : reject(new Error("Could not render sticky note")), "image/png"));
+  return blob.arrayBuffer();
+}
+
 // src/pdf-export.ts
 var PdfExportError = class extends Error {
   constructor(reason, message) {
@@ -22787,8 +22953,18 @@ function imageDrawer(output, read) {
     }
   };
 }
+async function drawStickies(output, page, notes, geometry) {
+  const rotated = geometry.rotation === 90 || geometry.rotation === 270;
+  const width = rotated ? geometry.height : geometry.width, height = rotated ? geometry.width : geometry.height;
+  for (const note of notes) {
+    const image = await output.embedPng(await stickyPng(note, width, height));
+    const frameHeight = stickyFrameHeight(note, width, height);
+    const origin = displayToPdfPoint(note.x, note.y + frameHeight / height, geometry);
+    page.drawImage(image, { x: origin.x, y: origin.y, width: note.width * width, height: frameHeight, rotate: (0, import_pdf_lib.degrees)(geometry.rotation) });
+  }
+}
 async function exportNotebookPdf(notebook, sourceName, renderWidth, readImages) {
-  var _a, _b;
+  var _a, _b, _c;
   const output = await import_pdf_lib.PDFDocument.create();
   output.setTitle(`${sourceName} (handwritten)`);
   const drawImages = imageDrawer(output, readImages);
@@ -22798,20 +22974,21 @@ async function exportNotebookPdf(notebook, sourceName, renderWidth, readImages) 
     await drawImages(pdfPage, (_a = page.images) != null ? _a : [], geometry, false);
     for (const stroke of page.strokes) drawStroke(pdfPage, stroke, geometry, renderWidth);
     await drawImages(pdfPage, (_b = page.images) != null ? _b : [], geometry, true);
+    await drawStickies(output, pdfPage, (_c = page.stickyNotes) != null ? _c : [], geometry);
   }
   return output.save();
 }
 function notebookHasInk(notebook) {
   return notebook.pages.some((page) => {
-    var _a, _b;
-    return page.strokes.length > 0 || ((_b = (_a = page.images) == null ? void 0 : _a.length) != null ? _b : 0) > 0;
+    var _a, _b, _c, _d;
+    return page.strokes.length > 0 || ((_b = (_a = page.images) == null ? void 0 : _a.length) != null ? _b : 0) > 0 || ((_d = (_c = page.stickyNotes) == null ? void 0 : _c.length) != null ? _d : 0) > 0;
   });
 }
 function sidecarHasInk(sidecar) {
   return notebookHasInk(sidecar.notebook);
 }
 async function exportHandwrittenPdf(sourceBytes, sidecar, sourceName, renderWidth, readImages) {
-  var _a, _b, _c, _d;
+  var _a, _b, _c, _d, _e;
   if (looksDigitallySigned(sourceBytes)) {
     throw new PdfExportError("signed", "This PDF is digitally signed; exporting would invalidate the signature");
   }
@@ -22845,6 +23022,7 @@ async function exportHandwrittenPdf(sourceBytes, sidecar, sourceName, renderWidt
       drawStroke(page, stroke, notePage, renderWidth);
     }
     await drawImages(page, (_d = note == null ? void 0 : note.images) != null ? _d : [], notePage, true);
+    await drawStickies(output, page, (_e = note == null ? void 0 : note.stickyNotes) != null ? _e : [], notePage);
   }
   return output.save();
 }
@@ -23138,6 +23316,7 @@ function paintPageImages(store, canvas, page, base, ink) {
     layer(false);
     ink(ctx);
     layer(true);
+    paintPageStickies(ctx, page.stickyNotes, canvas.width, canvas.height);
     ctx.restore();
   };
   draw([]);
@@ -23442,7 +23621,7 @@ function registerDocumentPointerEndEvents(element, register, onEnd) {
 }
 
 // src/ink-writing.ts
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 
 // src/page-images.ts
 function constrainImage(image) {
@@ -23678,8 +23857,451 @@ var PageImageLayer = class {
   }
 };
 
-// src/brush-popover.ts
+// src/sticky-notes.ts
 var import_obsidian3 = require("obsidian");
+function button2(parent, text, run) {
+  const el = parent.createEl("button", { text, attr: { type: "button" } });
+  el.onclick = run;
+  return el;
+}
+function movedNote(note, dx, dy, resize) {
+  return resize ? { ...note, width: Math.max(0.05, Math.min(1 - note.x, note.width + dx)), height: Math.max(0.05, Math.min(1 - note.y, note.height + dy)) } : { ...note, x: Math.max(0, Math.min(1 - note.width, note.x + dx)), y: Math.max(0, Math.min(1 - note.height, note.y + dy)) };
+}
+var StickyNoteLayer = class {
+  constructor(host, app, context) {
+    this.host = host;
+    this.app = app;
+    this.context = context;
+    this.events = new AbortController();
+    this.cards = new AbortController();
+    var _a;
+    this.layer = host.createDiv({ cls: "ink-sticky-layer" });
+    const signal = this.events.signal, doc = host.ownerDocument;
+    doc.addEventListener("touchstart", (event) => {
+      if (this.drag && event.touches.length > 1) {
+        this.drag = void 0;
+        this.last = void 0;
+        this.sync();
+      }
+    }, { signal, capture: true });
+    doc.addEventListener("pointermove", (event) => {
+      const drag = this.drag;
+      if (!drag || drag.touch || drag.pointer !== event.pointerId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      const dx = (event.clientX - drag.x) / drag.rect.width, dy = (event.clientY - drag.y) / drag.rect.height;
+      const note = movedNote(drag.note, dx, dy, drag.resize);
+      this.position(drag.element, note);
+    }, { signal, passive: false });
+    const finish = (event) => {
+      const drag = this.drag;
+      if (!drag || drag.touch || drag.pointer !== event.pointerId) return;
+      this.drag = void 0;
+      if (event.type === "pointerup" && this.context.editable() && this.context.page().id === drag.page) {
+        const dx = (event.clientX - drag.x) / drag.rect.width, dy = (event.clientY - drag.y) / drag.rect.height;
+        const after = movedNote(drag.note, dx, dy, drag.resize);
+        this.context.change(drag.note, after);
+      }
+      this.last = void 0;
+      this.sync();
+      event.stopPropagation();
+    };
+    doc.addEventListener("pointerup", finish, { signal });
+    doc.addEventListener("pointercancel", finish, { signal });
+    doc.addEventListener("touchmove", (event) => {
+      const drag = this.drag;
+      if (!(drag == null ? void 0 : drag.touch)) return;
+      const touch = Array.from(event.touches).find((t) => t.identifier === drag.pointer);
+      if (!touch || event.touches.length !== 1) {
+        this.drag = void 0;
+        this.last = void 0;
+        this.sync();
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      const dx = (touch.clientX - drag.x) / drag.rect.width, dy = (touch.clientY - drag.y) / drag.rect.height;
+      const note = movedNote(drag.note, dx, dy, drag.resize);
+      this.position(drag.element, note);
+    }, { signal, passive: false });
+    doc.addEventListener("touchend", (event) => {
+      const drag = this.drag;
+      if (!(drag == null ? void 0 : drag.touch)) return;
+      const touch = Array.from(event.changedTouches).find((t) => t.identifier === drag.pointer);
+      if (!touch) return;
+      this.drag = void 0;
+      if (this.context.editable() && this.context.page().id === drag.page) {
+        const dx = (touch.clientX - drag.x) / drag.rect.width, dy = (touch.clientY - drag.y) / drag.rect.height;
+        this.context.change(drag.note, movedNote(drag.note, dx, dy, drag.resize));
+      }
+      this.last = void 0;
+      this.sync();
+      event.stopPropagation();
+    }, { signal });
+    doc.addEventListener("touchcancel", () => {
+      this.drag = void 0;
+      this.last = void 0;
+      this.sync();
+    }, { signal });
+    (_a = doc.defaultView) == null ? void 0 : _a.addEventListener("blur", () => {
+      this.drag = void 0;
+      this.last = void 0;
+      this.sync();
+    }, { signal });
+  }
+  dispose() {
+    var _a;
+    this.events.abort();
+    this.cards.abort();
+    (_a = this.editor) == null ? void 0 : _a.close();
+    this.layer.remove();
+  }
+  position(el, note) {
+    el.style.left = `${note.x * 100}%`;
+    el.style.top = `${note.y * 100}%`;
+    el.style.width = `${note.width * 100}%`;
+    el.style.height = note.collapsed ? `${(note.preview ? 132 : 32) * this.host.clientWidth / note.boardPageWidth}px` : `${note.height * 100}%`;
+    el.style.backgroundColor = note.color;
+  }
+  open(id) {
+    var _a, _b;
+    const note = (_a = this.context.page().stickyNotes) == null ? void 0 : _a.find((note2) => note2.id === id);
+    if (!note) return;
+    (_b = this.editor) == null ? void 0 : _b.close();
+    const page = this.context.page();
+    const editor = new StickyEditor(this.app, note, this.context.editable(), this.context.brush(), this.context.link(note), (after) => {
+      var _a2;
+      if (this.context.page() !== page || !this.context.editable()) {
+        new import_obsidian3.Notice("The page changed; reopen the sticky note to edit it");
+        return false;
+      }
+      const current = (_a2 = page.stickyNotes) == null ? void 0 : _a2.find((candidate) => candidate.id === note.id);
+      if (!current || current.updatedAt !== note.updatedAt) {
+        new import_obsidian3.Notice("This sticky note changed in another pane. Copy your draft and reopen it before saving.");
+        return false;
+      }
+      this.context.change(note, after);
+      return true;
+    });
+    this.editor = editor;
+    editor.open();
+  }
+  sync() {
+    var _a, _b, _c;
+    const page = this.context.page(), editable = this.context.editable(), width = this.host.clientWidth;
+    if (this.drag && (!editable || !this.context.pointer() || this.drag.page !== page.id)) {
+      this.drag = void 0;
+      this.last = void 0;
+    }
+    if (((_a = this.last) == null ? void 0 : _a.page) === page.id && this.last.notes === page.stickyNotes && this.last.editable === editable && this.last.width === width) return;
+    if (this.last && this.last.page !== page.id) {
+      (_b = this.editor) == null ? void 0 : _b.close();
+      this.drag = void 0;
+    }
+    this.last = { page: page.id, notes: page.stickyNotes, editable, width };
+    this.cards.abort();
+    this.cards = new AbortController();
+    this.layer.empty();
+    const geometry = this.context.geometry();
+    for (const note of (_c = page.stickyNotes) != null ? _c : []) {
+      const card = this.layer.createDiv({ cls: "ink-sticky-note", attr: { "data-sticky-id": note.id, "aria-label": note.title || "Sticky note" } });
+      this.position(card, note);
+      for (const type of ["pointerdown", "touchstart", "touchmove", "wheel"]) card.addEventListener(type, (e) => e.stopPropagation(), { signal: this.cards.signal });
+      const header = card.createDiv({ cls: "ink-sticky-header" });
+      header.createSpan({ text: note.title || "Sticky note" });
+      header.style.height = `${32 * width / note.boardPageWidth}px`;
+      const bindDrag = (element, resize) => element.addEventListener("pointerdown", (e) => {
+        if (!editable || !this.context.pointer() || e.pointerType === "pen" || e.button !== 0 || !resize && e.target.closest("button")) return;
+        e.preventDefault();
+        e.stopPropagation();
+        this.drag = { pointer: e.pointerId, touch: false, page: page.id, note: cloneSticky(note), rect: this.host.getBoundingClientRect(), x: e.clientX, y: e.clientY, resize, element: card };
+      }, { signal: this.cards.signal });
+      const bindTouch = (element, resize) => element.addEventListener("touchstart", (e) => {
+        if (this.drag || !editable || !this.context.pointer() || e.touches.length !== 1 || !resize && e.target.closest("button")) return;
+        const t = e.touches[0];
+        if (t.touchType === "stylus") return;
+        e.preventDefault();
+        e.stopPropagation();
+        this.drag = { pointer: t.identifier, touch: true, page: page.id, note: cloneSticky(note), rect: this.host.getBoundingClientRect(), x: t.clientX, y: t.clientY, resize, element: card };
+      }, { signal: this.cards.signal, passive: false });
+      bindDrag(header, false);
+      bindTouch(header, false);
+      const fold = button2(header, "", () => {
+        if (this.context.editable()) this.context.change(note, { ...note, collapsed: !note.collapsed });
+      });
+      fold.setAttribute("aria-label", note.collapsed ? "Expand" : "Fold");
+      (0, import_obsidian3.setIcon)(fold, note.collapsed ? "chevron-down" : "chevron-up");
+      fold.disabled = !editable;
+      const edit = button2(header, "", () => this.open(note.id));
+      edit.setAttribute("aria-label", editable ? "Edit note" : "Read note");
+      (0, import_obsidian3.setIcon)(edit, "square-pen");
+      if (!note.collapsed || note.preview) {
+        const canvas = card.createEl("canvas", { attr: { "aria-label": "Sticky note content" } });
+        const viewScale = width / note.boardPageWidth;
+        const headerHeight = Math.max(32, 32 * viewScale);
+        const frameHeight = note.collapsed ? 132 * viewScale : note.height * geometry.height;
+        const logicalWidth = note.width * note.boardPageWidth, logicalHeight = Math.max(1, (frameHeight - headerHeight) / Math.max(1e-3, viewScale));
+        const scale = Math.min(2, 2048 / Math.max(1, logicalWidth, logicalHeight));
+        canvas.width = Math.max(1, Math.round(logicalWidth * scale));
+        canvas.height = Math.max(1, Math.round(logicalHeight * scale));
+        const ctx = canvas.getContext("2d");
+        if (ctx) paintStickyBoard(ctx, note, canvas.width, canvas.height, scale);
+        canvas.onclick = () => this.open(note.id);
+      }
+      if (editable && !note.collapsed && note.height * this.host.clientHeight >= 76 && note.width * width >= 72) {
+        const handle = button2(card, "Resize note", () => void 0);
+        handle.className = "ink-sticky-resize";
+        bindDrag(handle, true);
+        bindTouch(handle, true);
+      }
+    }
+  }
+};
+var StickyEditor = class extends import_obsidian3.Modal {
+  constructor(app, note, editable, brush, link, save) {
+    super(app);
+    this.editable = editable;
+    this.brush = brush;
+    this.link = link;
+    this.save = save;
+    this.events = new AbortController();
+    this.draft = cloneSticky(note);
+  }
+  onOpen() {
+    this.setTitle(this.editable ? "Edit sticky note" : "Read sticky note");
+    this.modalEl.addClass("ink-sticky-editor");
+    const el = this.contentEl, tools = el.createDiv({ cls: "ink-sticky-tools" }), note = this.draft;
+    const textInput = (label, value, run) => {
+      const wrap = tools.createEl("label", { text: label });
+      const input = wrap.createEl("input", { value, attr: { "aria-label": label } });
+      input.disabled = !this.editable;
+      input.oninput = () => run(input.value);
+      return input;
+    };
+    textInput("Note title", note.title, (value) => note.title = value);
+    textInput("Note keywords", note.keywords, (value) => note.keywords = value);
+    const color = textInput("Note color", note.color, (value) => {
+      note.color = value;
+      paint();
+    });
+    color.type = "color";
+    for (const key of ["x", "y", "width", "height"]) {
+      const input = textInput(`Note ${key} percent`, String(Math.round(note[key] * 1e3) / 10), (value) => {
+        const n = Number(value) / 100;
+        if (!Number.isFinite(n)) return;
+        note[key] = Math.max(key === "x" || key === "y" ? 0 : 0.05, Math.min(1, n));
+        note.x = Math.min(note.x, 1 - note.width);
+        note.y = Math.min(note.y, 1 - note.height);
+      });
+      input.type = "number";
+      input.min = key === "x" || key === "y" ? "0" : "5";
+      input.max = "100";
+    }
+    const previewLabel = tools.createEl("label", { text: "Preview when folded" }), preview = previewLabel.createEl("input", { type: "checkbox" });
+    preview.checked = note.preview;
+    preview.disabled = !this.editable;
+    preview.onchange = () => note.preview = preview.checked;
+    el.createEl("p", { text: "Frame size changes only the visible window. Content stays at its original size. Scroll inside the board; add space to continue writing. Save applies your edits." });
+    const modes = el.createDiv({ cls: "ink-sticky-tools" });
+    let mode = this.editable ? "Write" : "Pan";
+    const modeButtons = [];
+    for (const name of ["Write", "Erase", "Pan"]) {
+      const btn = button2(modes, name, () => {
+        mode = name;
+        modeButtons.forEach((b) => b.setAttribute("aria-pressed", String(b.textContent === mode)));
+      });
+      btn.disabled = !this.editable && name !== "Pan";
+      btn.setAttribute("aria-pressed", String(name === mode));
+      modeButtons.push(btn);
+    }
+    const frame = el.createDiv({ cls: "ink-sticky-viewport" }), scroll = frame.createDiv({ cls: "ink-sticky-scroll", attr: { tabindex: "0", "aria-label": "Sticky handwriting board" } });
+    const spacer = scroll.createDiv(), canvas = frame.createEl("canvas");
+    let extraWidth = 0, extraHeight = 0, active, pointer;
+    const history = [], redo = [];
+    const checkpoint = () => {
+      history.push(cloneSticky(note));
+      redo.length = 0;
+    };
+    const paint = () => {
+      note.scrollX = scroll.scrollLeft;
+      note.scrollY = scroll.scrollTop;
+      const w = scroll.clientWidth, h = scroll.clientHeight, ratio = Math.min(2, window.devicePixelRatio || 1);
+      canvas.width = Math.max(1, Math.ceil(w * ratio));
+      canvas.height = Math.max(1, Math.ceil(h * ratio));
+      canvas.style.width = `${w}px`;
+      canvas.style.height = `${h}px`;
+      const ctx = canvas.getContext("2d");
+      if (ctx) paintStickyBoard(ctx, { ...note, strokes: active ? [...note.strokes, active] : note.strokes }, canvas.width, canvas.height, ratio);
+    };
+    const extent = () => {
+      let w = Math.max(1e3, extraWidth, note.scrollX + scroll.clientWidth + 200), h = Math.max(1e3, extraHeight, note.scrollY + scroll.clientHeight + 200, note.text.split("\n").length * 28 + 200);
+      for (const stroke of note.strokes) for (const p of stroke.points) {
+        w = Math.max(w, p.x * STICKY_UNIT + 300);
+        h = Math.max(h, p.y * STICKY_UNIT + 300);
+      }
+      for (const line of note.text.split("\n")) w = Math.max(w, Array.from(line).length * 24 + 40);
+      spacer.style.width = `${w}px`;
+      spacer.style.height = `${h}px`;
+    };
+    button2(modes, "More space right", () => {
+      extraWidth = scroll.scrollWidth + 1e3;
+      extent();
+    });
+    button2(modes, "More space below", () => {
+      extraHeight = scroll.scrollHeight + 1e3;
+      extent();
+    });
+    const restore = (value) => {
+      const copy = cloneSticky(value);
+      note.strokes = copy.strokes;
+      note.deletedStrokeIds = copy.deletedStrokeIds;
+      extent();
+      paint();
+    };
+    button2(modes, "Undo ink", () => {
+      if (!active && history.length) {
+        redo.push(cloneSticky(note));
+        restore(history.pop());
+      }
+    }).disabled = !this.editable;
+    button2(modes, "Redo ink", () => {
+      if (!active && redo.length) {
+        history.push(cloneSticky(note));
+        restore(redo.pop());
+      }
+    }).disabled = !this.editable;
+    const signal = this.events.signal;
+    scroll.addEventListener("scroll", paint, { signal });
+    let frameRequest = 0;
+    const queuePaint = () => {
+      if (!frameRequest) frameRequest = requestAnimationFrame(() => {
+        frameRequest = 0;
+        paint();
+      });
+    };
+    const sample = (x, y, pressure) => {
+      const r = scroll.getBoundingClientRect();
+      return {
+        x: Math.max(0, x - r.left + scroll.scrollLeft) / STICKY_UNIT,
+        y: Math.max(0, y - r.top + scroll.scrollTop) / STICKY_UNIT,
+        pressure: Math.max(0.05, pressure || 0.5),
+        t: Date.now()
+      };
+    };
+    const erase = (point) => {
+      const hit = (stroke) => stroke.points.some((p, index) => {
+        const q = stroke.points[Math.max(0, index - 1)], dx = p.x - q.x, dy = p.y - q.y;
+        const t = Math.max(0, Math.min(1, ((point.x - q.x) * dx + (point.y - q.y) * dy) / (dx * dx + dy * dy || 1)));
+        return Math.hypot(point.x - q.x - t * dx, point.y - q.y - t * dy) * STICKY_UNIT < 12 + stroke.width / 2;
+      });
+      const removed = note.strokes.filter(hit);
+      note.deletedStrokeIds = [.../* @__PURE__ */ new Set([...note.deletedStrokeIds, ...removed.map((s) => s.id)])];
+      note.strokes = note.strokes.filter((s) => !hit(s));
+    };
+    const start = (id, p) => {
+      if (pointer !== void 0 || !this.editable || mode === "Pan") return false;
+      checkpoint();
+      pointer = id;
+      if (mode === "Erase") erase(p);
+      else {
+        const now = Date.now();
+        active = { id: newId("sticky-ink"), pageId: note.id, tool: "pen", ...this.brush, points: [p], createdAt: now, updatedAt: now };
+      }
+      paint();
+      return true;
+    };
+    const move = (p) => {
+      if (active) active.points.push(p);
+      else if (mode === "Erase") erase(p);
+      queuePaint();
+    };
+    const finish = (cancel) => {
+      if (pointer === void 0) return;
+      if (cancel) {
+        active = void 0;
+        if (history.length) restore(history.pop());
+      } else if (active) note.strokes.push(active);
+      active = void 0;
+      pointer = void 0;
+      extent();
+      paint();
+    };
+    scroll.addEventListener("pointerdown", (e) => {
+      var _a;
+      if (e.pointerType === "touch" || e.button !== 0) return;
+      if (start(e.pointerId, sample(e.clientX, e.clientY, e.pressure))) {
+        e.preventDefault();
+        (_a = scroll.setPointerCapture) == null ? void 0 : _a.call(scroll, e.pointerId);
+      }
+    }, { signal });
+    scroll.addEventListener("pointermove", (e) => {
+      var _a;
+      if (e.pointerId !== pointer) return;
+      e.preventDefault();
+      for (const p of ((_a = e.getCoalescedEvents) == null ? void 0 : _a.call(e).length) ? e.getCoalescedEvents() : [e]) move(sample(p.clientX, p.clientY, p.pressure));
+    }, { signal });
+    scroll.addEventListener("pointerup", (e) => {
+      if (e.pointerId === pointer) finish(false);
+    }, { signal });
+    scroll.addEventListener("pointercancel", () => finish(true), { signal });
+    const stylus = (e) => Array.from(e.changedTouches).find((t) => t.touchType === "stylus");
+    scroll.addEventListener("touchstart", (e) => {
+      const t = stylus(e);
+      if (t && start(t.identifier, sample(t.clientX, t.clientY, t.force))) e.preventDefault();
+    }, { signal, passive: false });
+    scroll.addEventListener("touchmove", (e) => {
+      const t = stylus(e);
+      if (t && t.identifier === pointer) {
+        move(sample(t.clientX, t.clientY, t.force));
+        e.preventDefault();
+      }
+    }, { signal, passive: false });
+    scroll.addEventListener("touchend", (e) => {
+      const t = stylus(e);
+      if ((t == null ? void 0 : t.identifier) === pointer) finish(false);
+    }, { signal });
+    scroll.addEventListener("touchcancel", () => finish(true), { signal });
+    const text = el.createEl("textarea", { attr: { "aria-label": "Sticky note text", placeholder: "Type text (each line keeps its position on the board)" } });
+    text.value = note.text;
+    text.readOnly = !this.editable;
+    text.oninput = () => {
+      note.text = text.value;
+      extent();
+      paint();
+    };
+    const link = el.createEl("input", { value: this.link, attr: { readonly: "", "aria-label": "Sticky note Markdown link" } });
+    button2(el, "Copy Markdown link", () => {
+      link.select();
+      void navigator.clipboard.writeText(this.link).catch(() => new import_obsidian3.Notice("Select and copy the link above"));
+    });
+    const actions = el.createDiv({ cls: "ink-sticky-tools" });
+    button2(actions, "Cancel", () => this.close());
+    if (this.editable) button2(actions, "Save note", () => {
+      finish(false);
+      if (this.save(note)) this.close();
+    });
+    extent();
+    scroll.scrollLeft = note.scrollX;
+    scroll.scrollTop = note.scrollY;
+    paint();
+    const observer = new ResizeObserver(paint);
+    observer.observe(scroll);
+    this.events.signal.addEventListener("abort", () => {
+      observer.disconnect();
+      cancelAnimationFrame(frameRequest);
+    });
+  }
+  onClose() {
+    this.events.abort();
+    this.contentEl.empty();
+  }
+};
+function markdownStickyLink(file, note, vault) {
+  return `[${(note.title || "Sticky note").replace(/[\[\]\\\n]/g, " ")}](${stickyLink(file, note.pageId, note.id, vault)})`;
+}
+
+// src/brush-popover.ts
+var import_obsidian4 = require("obsidian");
 var INK_COLORS = [
   { value: "#1b1b1b", label: "Black" },
   { value: "#195bff", label: "Blue" },
@@ -23842,7 +24464,7 @@ var BrushPopoverController = class {
     const swatches = control.createDiv({ cls: "ink-color-swatches" });
     this.buildSwatches(swatches, spec);
     const custom = control.createEl("label", { cls: "ink-custom-color", attr: { title: "Add a preset color" } });
-    (0, import_obsidian3.setIcon)(custom.createSpan({ cls: "ink-button-icon" }), "plus");
+    (0, import_obsidian4.setIcon)(custom.createSpan({ cls: "ink-button-icon" }), "plus");
     const input = custom.createEl("input", { attr: {
       type: "color",
       value: settings.color,
@@ -23984,7 +24606,7 @@ var BrushPopoverController = class {
     if (settings.color.toLowerCase() === removed.toLowerCase()) settings.color = (_c = palette[0]) != null ? _c : removed;
     this.buildSwatchesInto(spec);
     this.update();
-    new import_obsidian3.Notice("Preset color removed");
+    new import_obsidian4.Notice("Preset color removed");
   }
   updateColorSwatches(tool, color) {
     this.root.querySelectorAll(`.ink-color-swatch[data-brush-tool="${tool}"]`).forEach((swatch) => {
@@ -24020,11 +24642,11 @@ var BrushPopoverController = class {
       }
     });
     const curveIcon = curveToggle.createSpan({ cls: "ink-button-icon" });
-    (0, import_obsidian3.setIcon)(curveIcon, this.curveOpen ? "chevron-up" : "chevron-down");
+    (0, import_obsidian4.setIcon)(curveIcon, this.curveOpen ? "chevron-up" : "chevron-down");
     curveToggle.addEventListener("click", () => {
       this.curveOpen = !this.curveOpen;
       curveToggle.setAttribute("aria-expanded", String(this.curveOpen));
-      (0, import_obsidian3.setIcon)(curveIcon, this.curveOpen ? "chevron-up" : "chevron-down");
+      (0, import_obsidian4.setIcon)(curveIcon, this.curveOpen ? "chevron-up" : "chevron-down");
       curveBody.toggleClass("is-collapsed", !this.curveOpen);
       if (this.curveOpen) requestAnimationFrame(() => this.drawPressureCurve(settings));
     });
@@ -24169,8 +24791,8 @@ var BrushPopoverController = class {
       const panel = this.root.querySelector(`.ink-brush-settings[data-brush-tool="${spec.tool}"]`);
       const input = panel == null ? void 0 : panel.querySelector('input[data-control="size"]');
       if (input) input.value = String(settings.width);
-      this.root.querySelectorAll(`.ink-width-preset[data-brush-tool="${spec.tool}"]`).forEach((button2) => {
-        button2.setAttribute("aria-pressed", String(Number(button2.dataset.width) === settings.width));
+      this.root.querySelectorAll(`.ink-width-preset[data-brush-tool="${spec.tool}"]`).forEach((button3) => {
+        button3.setAttribute("aria-pressed", String(Number(button3.dataset.width) === settings.width));
       });
     }
     this.title.textContent = active && isBrushTool(active) ? `${(_b = (_a = this.options.tools.find((spec) => spec.tool === active)) == null ? void 0 : _a.label) != null ? _b : "Brush"} settings \xB7 ${formatControlValue("Size", this.options.getSettings(active).width)}` : "Brush settings";
@@ -25067,7 +25689,7 @@ function isPointerCaptureError(error) {
   const name = error.name;
   return name === "NotFoundError" || name === "InvalidStateError";
 }
-var InkWritingView = class extends import_obsidian4.FileView {
+var InkWritingView = class extends import_obsidian5.FileView {
   constructor() {
     super(...arguments);
     /** Defaults come from the persistence module so saved settings restore
@@ -25178,11 +25800,147 @@ var InkWritingView = class extends import_obsidian4.FileView {
     this.desktopWheelTravel = 0;
     this.desktopWheelFlipped = false;
   }
+  disposeStickyNotes() {
+    var _a;
+    (_a = this.stickies) == null ? void 0 : _a.dispose();
+    this.stickies = void 0;
+  }
+  stickyIndexEntries() {
+    return this.currentNotebook().pages.flatMap((page) => {
+      var _a;
+      return ((_a = page.stickyNotes) != null ? _a : []).map((note) => {
+        var _a2, _b;
+        return {
+          file: (_b = (_a2 = this.file) == null ? void 0 : _a2.path) != null ? _b : "",
+          pageId: page.id,
+          pageTitle: page.title,
+          note: cloneSticky(note)
+        };
+      });
+    });
+  }
+  async revealSticky(pageId, id) {
+    var _a, _b;
+    const file = this.file;
+    await this.revealStickyPage(pageId);
+    if (file !== this.file || !this.viewReady) throw new Error("The notebook changed before the link opened");
+    if (this.currentPage().id !== pageId || !((_a = this.currentPage().stickyNotes) == null ? void 0 : _a.some((note) => note.id === id))) throw new Error("Sticky note no longer exists on this page");
+    this.syncStickyNotes();
+    (_b = this.stickies) == null ? void 0 : _b.open(id);
+  }
+  syncStickyNotes() {
+    var _a, _b;
+    if (!this.viewReady) return;
+    const host = this.inputHost();
+    if (!host) return;
+    if (((_a = this.stickies) == null ? void 0 : _a.host) !== host) {
+      (_b = this.stickies) == null ? void 0 : _b.dispose();
+      this.stickies = new StickyNoteLayer(host, this.app, {
+        page: () => this.currentPage(),
+        geometry: () => ({ width: this.canvasLogicalWidth, height: this.canvasLogicalHeight }),
+        editable: () => !this.inputLocked(),
+        pointer: () => this.state.tool === "pointer",
+        brush: () => ({ color: this.state.pen.color, width: this.state.pen.width, opacity: this.state.pen.opacity }),
+        link: (note) => {
+          var _a2, _b2, _c, _d, _e;
+          return markdownStickyLink((_b2 = (_a2 = this.file) == null ? void 0 : _a2.path) != null ? _b2 : "", note, (_e = (_d = (_c = this.app.vault) == null ? void 0 : _c.getName) == null ? void 0 : _d.call(_c)) != null ? _e : "");
+        },
+        change: (before, after) => this.changeSticky(before, after)
+      });
+    }
+    this.stickies.sync();
+  }
+  addSticky() {
+    var _a;
+    if (this.inputLocked()) return;
+    this.finishPointerInput(false);
+    const now = Date.now(), page = this.currentPage();
+    const note = {
+      id: newId("sticky"),
+      pageId: page.id,
+      x: 0.2,
+      y: 0.2,
+      width: 0.5,
+      height: 0.35,
+      title: "Sticky note",
+      keywords: "",
+      text: "",
+      textUpdatedAt: now,
+      color: "#fff1a8",
+      collapsed: false,
+      preview: true,
+      scrollX: 0,
+      scrollY: 0,
+      boardPageWidth: this.canvasLogicalWidth,
+      strokes: [],
+      deletedStrokeIds: [],
+      createdAt: now,
+      updatedAt: now
+    };
+    this.selectWritingTool("pointer");
+    this.changeSticky(void 0, note);
+    (_a = this.stickies) == null ? void 0 : _a.open(note.id);
+  }
+  changeSticky(before, after) {
+    var _a, _b, _c;
+    if (this.inputLocked()) return;
+    const pageId = (before != null ? before : after).pageId, id = (before != null ? before : after).id;
+    if (before && ((_c = (_b = (_a = this.pageById(pageId)) == null ? void 0 : _a.stickyNotes) == null ? void 0 : _b.find((note) => note.id === id)) == null ? void 0 : _c.updatedAt) !== before.updatedAt) {
+      new import_obsidian5.Notice("This sticky note changed in another pane. Reopen it before editing.");
+      return;
+    }
+    const restoredIds = /* @__PURE__ */ new Map();
+    const apply = (template) => {
+      var _a2, _b2, _c2, _d, _e, _f;
+      const page = this.pageById(pageId);
+      if (!page) return;
+      const existing = (_a2 = page.stickyNotes) == null ? void 0 : _a2.find((note2) => note2.id === id);
+      const now = Math.max(Date.now(), page.updatedAt + 1, (_b2 = existing == null ? void 0 : existing.updatedAt) != null ? _b2 : 0, ((_d = (_c2 = page.deletedStickyNotes) == null ? void 0 : _c2[id]) != null ? _d : 0) + 1);
+      const note = template ? { ...cloneSticky(template), updatedAt: now, textUpdatedAt: template.text === (existing == null ? void 0 : existing.text) ? existing.textUpdatedAt : now } : void 0;
+      if (note && existing) {
+        const removed = new Set(existing.deletedStrokeIds);
+        note.strokes = note.strokes.map((stroke) => {
+          var _a3;
+          let strokeId = (_a3 = restoredIds.get(stroke.id)) != null ? _a3 : stroke.id;
+          if (removed.has(strokeId)) strokeId = newId("sticky-ink");
+          restoredIds.set(stroke.id, strokeId);
+          return strokeId === stroke.id ? stroke : { ...stroke, id: strokeId, updatedAt: now };
+        });
+        const desiredIds = new Set(note.strokes.map((stroke) => stroke.id));
+        note.deletedStrokeIds = [.../* @__PURE__ */ new Set([
+          ...note.deletedStrokeIds,
+          ...existing.deletedStrokeIds,
+          ...existing.strokes.filter((stroke) => !desiredIds.has(stroke.id)).map((stroke) => stroke.id)
+        ])];
+      }
+      page.stickyNotes = [...((_e = page.stickyNotes) != null ? _e : []).filter((note2) => note2.id !== id), ...note ? [note] : []];
+      if (!note) page.deletedStickyNotes = { ...page.deletedStickyNotes, [id]: now };
+      this.markChanged(page);
+      page.updatedAt = now;
+      this.currentNotebook().updatedAt = now;
+      this.queueWorkerOperation({
+        type: "patch-sticky-notes",
+        pageId,
+        upsert: note ? [note] : [],
+        remove: [id],
+        deletedStickyNotes: (_f = page.deletedStickyNotes) != null ? _f : {},
+        pageUpdatedAt: now,
+        notebookUpdatedAt: now
+      });
+      this.syncStickyNotes();
+      this.scheduleSave();
+      this.afterInputFullySettled();
+    };
+    const original = before ? cloneSticky(before) : void 0, desired = after ? cloneSticky(after) : void 0;
+    apply(desired);
+    this.pushCommand({ undo: () => apply(original), redo: () => apply(desired) });
+  }
   useImageLibrary(store) {
     this.imageLibrary = store;
   }
   syncPageImages() {
     var _a, _b;
+    this.syncStickyNotes();
     if (!this.imageLibrary || !this.viewReady) return;
     const host = this.inputHost();
     if (!host) return;
@@ -25209,7 +25967,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
     new ImageLibraryModal(this.imageLibrary, (assets) => {
       var _a;
       if (this.file !== file || this.currentNotebook() !== notebook || this.currentPage().id !== pageId || this.inputLocked()) {
-        new import_obsidian4.Notice("The page changed. Open the image library again to insert here.");
+        new import_obsidian5.Notice("The page changed. Open the image library again to insert here.");
         return;
       }
       const images = assets.map((asset, index) => placedImage(asset, pageId, this.canvasLogicalWidth / this.canvasLogicalHeight, index));
@@ -25277,15 +26035,15 @@ var InkWritingView = class extends import_obsidian4.FileView {
   updateZoomHud() {
     const value = `${Math.round(this.zoomLevel() * 100)}%`;
     if (this.zoomHudValue && this.zoomHudValue.textContent !== value) this.zoomHudValue.textContent = value;
-    const button2 = this.zoomLockButton;
-    if (!button2) return;
+    const button3 = this.zoomLockButton;
+    if (!button3) return;
     const label = this.zoomLocked ? "Unlock zoom" : "Lock zoom";
-    if (button2.getAttribute("aria-label") !== label) {
-      button2.setAttribute("aria-label", label);
-      button2.setAttribute("title", label);
-      button2.setAttribute("aria-pressed", String(this.zoomLocked));
-      button2.replaceChildren();
-      (0, import_obsidian4.setIcon)(button2, this.zoomLocked ? "lock-keyhole" : "lock-keyhole-open");
+    if (button3.getAttribute("aria-label") !== label) {
+      button3.setAttribute("aria-label", label);
+      button3.setAttribute("title", label);
+      button3.setAttribute("aria-pressed", String(this.zoomLocked));
+      button3.replaceChildren();
+      (0, import_obsidian5.setIcon)(button3, this.zoomLocked ? "lock-keyhole" : "lock-keyhole-open");
     }
   }
   showZoomHud() {
@@ -25352,7 +26110,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
     stage.dataset.insert = "true";
     const hint = stage.createDiv({ cls: "ink-page-insert-hint", attr: { "aria-hidden": "true" } });
     hint.setCssStyles(side < 0 ? { right: "24px" } : { left: "24px" });
-    (0, import_obsidian4.setIcon)(hint, "plus");
+    (0, import_obsidian5.setIcon)(hint, "plus");
   }
   updatePageInsertPreview(stage, offset) {
     if (stage == null ? void 0 : stage.dataset.insert) stage.toggleClass("is-ready", Math.abs(offset) >= this.pageInsertThreshold());
@@ -25589,10 +26347,11 @@ var InkWritingView = class extends import_obsidian4.FileView {
     this.addToolButton(draw, "lasso-select", "Select", "lasso");
     if (this.imageLibrary) this.addToolButton(draw, "mouse-pointer-2", "Pointer", "pointer");
     if (this.imageLibrary) this.addIconButton(draw, "image-plus", "Image library", () => this.openImageLibrary());
+    this.addIconButton(draw, "sticky-note", "Add sticky note", () => this.addSticky());
   }
   buildReadingModeButton(parent) {
-    const button2 = this.addIconButton(parent, "book-open", "Reading mode", () => this.setReadingMode(!this.readingMode));
-    button2.classList.add("ink-reading-toggle");
+    const button3 = this.addIconButton(parent, "book-open", "Reading mode", () => this.setReadingMode(!this.readingMode));
+    button3.classList.add("ink-reading-toggle");
     this.updateReadingModeButton();
   }
   setReadingMode(reading) {
@@ -25611,14 +26370,15 @@ var InkWritingView = class extends import_obsidian4.FileView {
     this.updateReadingModeButton();
     this.updateHistoryButtons();
     this.refreshEraserCursor();
+    this.syncStickyNotes();
   }
   onReadingModeChanged() {
   }
   updateReadingModeButton() {
-    const button2 = this.toolbarRoot().querySelector(".ink-reading-toggle");
-    if (!button2) return;
-    button2.setAttribute("aria-pressed", String(this.readingMode));
-    button2.title = this.readingMode ? "Switch to editing mode" : "Switch to reading mode";
+    const button3 = this.toolbarRoot().querySelector(".ink-reading-toggle");
+    if (!button3) return;
+    button3.setAttribute("aria-pressed", String(this.readingMode));
+    button3.title = this.readingMode ? "Switch to editing mode" : "Switch to reading mode";
   }
   /** Whether the diagnostics panel wants raw point samples retained. */
   diagnosticsCaptureRawPoints() {
@@ -25659,7 +26419,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
       return null;
     }
     this.closePageOptionsMenu();
-    const menu = new import_obsidian4.Menu();
+    const menu = new import_obsidian5.Menu();
     const opened = { menu, trigger };
     this.pageOptionsMenu = opened;
     trigger == null ? void 0 : trigger.setAttribute("aria-haspopup", "menu");
@@ -25696,9 +26456,11 @@ var InkWritingView = class extends import_obsidian4.FileView {
   registerDesktopInput() {
     var _a;
     this.register(() => {
-      var _a2;
+      var _a2, _b;
       (_a2 = this.pageImages) == null ? void 0 : _a2.dispose();
       this.pageImages = void 0;
+      (_b = this.stickies) == null ? void 0 : _b.dispose();
+      this.stickies = void 0;
     });
     const scroller = this.inputScroller();
     const doc = this.containerEl.ownerDocument;
@@ -25710,7 +26472,9 @@ var InkWritingView = class extends import_obsidian4.FileView {
     });
     scroller.tabIndex = 0;
     this.registerDomEvent(scroller, "pointerdown", (event) => {
+      var _a2, _b;
       if (event.pointerType !== "mouse" || this.nativeMenuOpen()) return;
+      if ((_b = (_a2 = event.target) == null ? void 0 : _a2.closest) == null ? void 0 : _b.call(_a2, ".ink-sticky-note")) return;
       scroller.focus({ preventScroll: true });
       if (this.beginDesktopPan(event)) event.stopPropagation();
     }, true);
@@ -25857,8 +26621,8 @@ var InkWritingView = class extends import_obsidian4.FileView {
   beginDesktopPan(event) {
     var _a, _b;
     if (event.pointerType !== "mouse" || this.activePointerId !== null || this.nativeMenuOpen()) return false;
-    const button2 = (_a = event.button) != null ? _a : 0;
-    if (button2 !== 1 && !(button2 === 0 && (this.desktopSpaceDown || this.readingMode))) return false;
+    const button3 = (_a = event.button) != null ? _a : 0;
+    if (button3 !== 1 && !(button3 === 0 && (this.desktopSpaceDown || this.readingMode))) return false;
     this.desktopPan = {
       pointerId: event.pointerId,
       x: event.clientX,
@@ -26932,9 +27696,9 @@ var InkWritingView = class extends import_obsidian4.FileView {
     this.selectionActions = pop;
     for (const type of ["pointerdown", "touchstart", "touchmove"]) pop.addEventListener(type, (event) => event.stopPropagation());
     const add = (icon, label, action, disabled, cls = "") => {
-      const button2 = this.addIconButton(pop, icon, label, action, disabled);
-      if (cls) button2.addClass(cls);
-      button2.createSpan({ text: label });
+      const button3 = this.addIconButton(pop, icon, label, action, disabled);
+      if (cls) button3.addClass(cls);
+      button3.createSpan({ text: label });
     };
     if (selected) {
       add("copy", "Copy", () => this.copySelection(), false);
@@ -27665,7 +28429,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
     this.workerSession = null;
     if (this.workerFallbackReported || ((_d = this.workers) == null ? void 0 : _d.isDisabled())) return;
     this.workerFallbackReported = true;
-    new import_obsidian4.Notice(`Ink Notes background processing is unavailable; using reduced-performance mode: ${error instanceof Error ? error.message : String(error)}`);
+    new import_obsidian5.Notice(`Ink Notes background processing is unavailable; using reduced-performance mode: ${error instanceof Error ? error.message : String(error)}`);
   }
   // --------------------------------------------------------------- brushes
   brushSettings(tool) {
@@ -27694,7 +28458,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
     const modes = pop.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
     for (const [mode, label, shortLabel, iconName] of [["stroke", "Stroke eraser", "Stroke", "eraser"], ["circle", "Circle eraser", "Circle", "circle"], ["square", "Square eraser", "Square", "square"]]) {
       const modeButton = modes.createEl("button", { cls: "ink-eraser-mode", attr: { type: "button", role: "radio", title: label, "aria-label": label, "aria-checked": String(this.state.eraserMode === mode), "data-eraser-mode": mode } });
-      (0, import_obsidian4.setIcon)(modeButton.createSpan({ cls: "ink-button-icon" }), iconName);
+      (0, import_obsidian5.setIcon)(modeButton.createSpan({ cls: "ink-button-icon" }), iconName);
       modeButton.createSpan({ cls: "ink-eraser-mode-label", text: shortLabel });
       modeButton.addEventListener("click", () => {
         this.state.eraserMode = mode;
@@ -27787,16 +28551,16 @@ var InkWritingView = class extends import_obsidian4.FileView {
     pop.createDiv({ cls: "ink-size-popover-title", text: "Lasso" });
     const modes = pop.createDiv({ cls: "ink-eraser-modes ink-lasso-modes", attr: { role: "radiogroup", "aria-label": "Selection shape" } });
     for (const [mode, label, icon] of [["freehand", "Freehand", "lasso-select"], ["rectangle", "Rectangle", "square-dashed"]]) {
-      const button2 = modes.createEl("button", { cls: "ink-eraser-mode", attr: {
+      const button3 = modes.createEl("button", { cls: "ink-eraser-mode", attr: {
         type: "button",
         role: "radio",
         "aria-label": `${label} selection`,
         "aria-checked": String(this.state.lasso.mode === mode),
         "data-lasso-mode": mode
       } });
-      (0, import_obsidian4.setIcon)(button2.createSpan({ cls: "ink-button-icon" }), icon);
-      button2.createSpan({ cls: "ink-eraser-mode-label", text: label });
-      button2.addEventListener("click", () => {
+      (0, import_obsidian5.setIcon)(button3.createSpan({ cls: "ink-button-icon" }), icon);
+      button3.createSpan({ cls: "ink-eraser-mode-label", text: label });
+      button3.addEventListener("click", () => {
         this.finishPointerInput(false);
         this.state.lasso.mode = mode;
         this.clearSelection();
@@ -27827,18 +28591,18 @@ var InkWritingView = class extends import_obsidian4.FileView {
     const doc = pop.ownerDocument, win = (_b = doc.defaultView) != null ? _b : window;
     const place = () => {
       if (!anchor) return;
-      const root = this.toolbarRoot().getBoundingClientRect(), button2 = anchor.getBoundingClientRect();
+      const root = this.toolbarRoot().getBoundingClientRect(), button3 = anchor.getBoundingClientRect();
       const leftEdge = Math.max(8, root.left + 8), rightEdge = Math.min(win.innerWidth - 8, root.right - 8);
       const topEdge = Math.max(8, root.top + 8), bottomEdge = Math.min(win.innerHeight - 8, root.bottom - 8);
       pop.style.maxWidth = `${Math.max(44, rightEdge - leftEdge)}px`;
       pop.style.maxHeight = `${Math.max(44, bottomEdge - topEdge)}px`;
       const width = pop.offsetWidth, height = pop.offsetHeight;
-      const left = Math.max(leftEdge, Math.min(rightEdge - width, button2.left + button2.width / 2 - width / 2));
-      const below = button2.bottom + 10;
-      const top = below + height <= bottomEdge ? below : Math.max(topEdge, button2.top - height - 10);
+      const left = Math.max(leftEdge, Math.min(rightEdge - width, button3.left + button3.width / 2 - width / 2));
+      const below = button3.bottom + 10;
+      const top = below + height <= bottomEdge ? below : Math.max(topEdge, button3.top - height - 10);
       pop.style.left = `${left - root.left}px`;
       pop.style.top = `${top - root.top}px`;
-      pop.style.setProperty("--ink-popover-origin-x", `${button2.left + button2.width / 2 - left}px`);
+      pop.style.setProperty("--ink-popover-origin-x", `${button3.left + button3.width / 2 - left}px`);
       pop.style.setProperty("--ink-popover-origin-y", `${top === below ? 0 : height}px`);
     };
     const outside = (event) => {
@@ -27880,17 +28644,17 @@ var InkWritingView = class extends import_obsidian4.FileView {
     return section.createDiv({ cls: "ink-toolbar-section-controls" });
   }
   addIconButton(parent, icon, label, callback, disabled = false) {
-    const button2 = parent.createEl("button", { cls: "ink-icon-button", attr: { type: "button", title: label, "aria-label": label } });
-    button2.disabled = disabled;
-    if (label === "Undo") button2.title = "Undo (Ctrl/Command+Z)";
-    if (label === "Redo") button2.title = "Redo (Ctrl/Command+Shift+Z, Ctrl/Command+Y)";
-    const iconHolder = button2.createSpan({ cls: "ink-button-icon" });
-    (0, import_obsidian4.setIcon)(iconHolder, icon);
-    button2.addEventListener("click", callback);
-    return button2;
+    const button3 = parent.createEl("button", { cls: "ink-icon-button", attr: { type: "button", title: label, "aria-label": label } });
+    button3.disabled = disabled;
+    if (label === "Undo") button3.title = "Undo (Ctrl/Command+Z)";
+    if (label === "Redo") button3.title = "Redo (Ctrl/Command+Shift+Z, Ctrl/Command+Y)";
+    const iconHolder = button3.createSpan({ cls: "ink-button-icon" });
+    (0, import_obsidian5.setIcon)(iconHolder, icon);
+    button3.addEventListener("click", callback);
+    return button3;
   }
   addToolButton(parent, icon, label, tool) {
-    const button2 = parent.createEl("button", { cls: "ink-tool-button", attr: {
+    const button3 = parent.createEl("button", { cls: "ink-tool-button", attr: {
       type: "button",
       title: label,
       "aria-label": label,
@@ -27899,14 +28663,14 @@ var InkWritingView = class extends import_obsidian4.FileView {
       ...tool === "pointer" ? {} : { "aria-haspopup": "dialog", "aria-expanded": "false" }
     } });
     const shortcut = { pen: "B", highlighter: "H", eraser: "E", lasso: "V", pointer: "A" };
-    button2.title = `${label} (${shortcut[tool]})`;
-    const iconHolder = button2.createSpan({ cls: "ink-button-icon" });
-    (0, import_obsidian4.setIcon)(iconHolder, icon);
-    button2.addEventListener("click", () => {
+    button3.title = `${label} (${shortcut[tool]})`;
+    const iconHolder = button3.createSpan({ cls: "ink-button-icon" });
+    (0, import_obsidian5.setIcon)(iconHolder, icon);
+    button3.addEventListener("click", () => {
       if (this.readingMode) return;
       this.finishPointerInput(false);
       if (this.state.tool === tool) {
-        if (tool !== "pointer") this.toggleToolSettings(button2);
+        if (tool !== "pointer") this.toggleToolSettings(button3);
         return;
       }
       this.selectWritingTool(tool);
@@ -27944,8 +28708,8 @@ var InkWritingView = class extends import_obsidian4.FileView {
   updateEraserControls() {
     this.refreshEraserCursor();
     if (this.eraserPopover) {
-      this.eraserPopover.querySelectorAll(".ink-eraser-mode").forEach((button2) => {
-        button2.setAttribute("aria-checked", String(button2.dataset.eraserMode === this.state.eraserMode));
+      this.eraserPopover.querySelectorAll(".ink-eraser-mode").forEach((button3) => {
+        button3.setAttribute("aria-checked", String(button3.dataset.eraserMode === this.state.eraserMode));
       });
     }
   }
@@ -28635,7 +29399,7 @@ function isStaleRenderError(error) {
 }
 
 // ink-worker:ink-worker-source
-var ink_worker_source_default = '(() => {\n  // src/model.ts\n  var DEFAULT_PAGE_WIDTH = 1600;\n  var DEFAULT_PAGE_HEIGHT = 2200;\n  function newId(prefix) {\n    const random = Math.random().toString(36).slice(2, 10);\n    return `${prefix}-${Date.now().toString(36)}-${random}`;\n  }\n  function createNotebook(title = "Ink Notebook") {\n    const now = Date.now();\n    const page = createPage("Page 1", "ruled", now);\n    return {\n      schema: 2,\n      title,\n      pageWidth: DEFAULT_PAGE_WIDTH,\n      pageHeight: DEFAULT_PAGE_HEIGHT,\n      pages: [page],\n      pageOrder: [page.id],\n      deletedPages: {},\n      pageOrderUpdatedAt: now,\n      updatedAt: now\n    };\n  }\n  function createPage(title, paper = "ruled", now = Date.now()) {\n    return { id: newId("page"), title, paper, strokes: [], deletedStrokeIds: [], createdAt: now, updatedAt: now };\n  }\n  function normalizeNotebook(value) {\n    if (!value || typeof value !== "object") return createNotebook();\n    const raw = value;\n    const pages = Array.isArray(raw.pages) ? raw.pages : [];\n    const normalizedPages = pages.map(normalizePage).filter((page) => page !== null);\n    const pageIds = new Set(normalizedPages.map((page) => page.id));\n    const legacyOrder = [...normalizedPages].sort((a, b) => a.createdAt - b.createdAt).map((page) => page.id);\n    const requestedOrder = Array.isArray(raw.pageOrder) ? raw.pageOrder.filter((id) => typeof id === "string") : legacyOrder;\n    const pageOrder = [.../* @__PURE__ */ new Set([...requestedOrder.filter((id) => pageIds.has(id)), ...legacyOrder.filter((id) => !requestedOrder.includes(id))])];\n    const deletedPages = raw.deletedPages && typeof raw.deletedPages === "object" ? Object.fromEntries(Object.entries(raw.deletedPages).filter((entry) => typeof entry[0] === "string" && typeof entry[1] === "number" && Number.isFinite(entry[1]))) : {};\n    const visiblePages = normalizedPages.filter((page) => !(page.id in deletedPages));\n    const visibleIds = new Set(visiblePages.map((page) => page.id));\n    const byId = new Map(visiblePages.map((page) => [page.id, page]));\n    const orderedPages = pageOrder.map((id) => byId.get(id)).filter((page) => page !== void 0);\n    if (orderedPages.length === 0) orderedPages.push(createPage("Page 1"));\n    return {\n      schema: 2,\n      title: typeof raw.title === "string" ? raw.title : "Ink Notebook",\n      pageWidth: finitePositive(raw.pageWidth, DEFAULT_PAGE_WIDTH),\n      pageHeight: finitePositive(raw.pageHeight, DEFAULT_PAGE_HEIGHT),\n      pages: orderedPages,\n      pageOrder: orderedPages.map((page) => page.id).filter((id) => visibleIds.has(id) || orderedPages.length === 1),\n      deletedPages,\n      pageOrderUpdatedAt: finitePositive(raw.pageOrderUpdatedAt, finitePositive(raw.updatedAt, Date.now())),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function mergeNotebooks(base, incoming) {\n    var _a, _b, _c, _d, _e, _f, _g;\n    const pages = /* @__PURE__ */ new Map();\n    for (const page of base.pages) pages.set(page.id, page);\n    for (const page of incoming.pages) {\n      const existing = pages.get(page.id);\n      pages.set(page.id, existing ? mergePages(existing, page) : page);\n    }\n    const deletedPages = { ...(_a = base.deletedPages) != null ? _a : {} };\n    for (const [id, timestamp] of Object.entries((_b = incoming.deletedPages) != null ? _b : {})) deletedPages[id] = Math.max((_c = deletedPages[id]) != null ? _c : 0, timestamp);\n    for (const id of Object.keys(deletedPages)) pages.delete(id);\n    const orderSource = incoming.pageOrderUpdatedAt > base.pageOrderUpdatedAt || incoming.pageOrderUpdatedAt === base.pageOrderUpdatedAt && compareNotebookOrder(incoming, base) >= 0 ? incoming : base;\n    const preferred = (_d = orderSource.pageOrder) != null ? _d : [];\n    const known = preferred.map((id) => pages.get(id)).filter((page) => page !== void 0);\n    const additions = [...pages.values()].filter((page) => !preferred.includes(page.id)).sort((a, b) => a.createdAt - b.createdAt);\n    const ordered = [...known];\n    for (const page of additions) {\n      const inBase = ((_e = base.pageOrder) != null ? _e : []).includes(page.id);\n      const inIncoming = ((_f = incoming.pageOrder) != null ? _f : []).includes(page.id);\n      const source = inBase && !inIncoming ? base : incoming;\n      const sourceOrder = (_g = source.pageOrder) != null ? _g : source.pages.map((candidate) => candidate.id);\n      const sourceIndex = sourceOrder.indexOf(page.id);\n      let inserted = false;\n      for (let index = sourceIndex - 1; index >= 0; index--) {\n        const anchor = ordered.findIndex((candidate) => candidate.id === sourceOrder[index]);\n        if (anchor >= 0) {\n          ordered.splice(anchor + 1, 0, page);\n          inserted = true;\n          break;\n        }\n      }\n      if (!inserted) for (let index = sourceIndex + 1; index < sourceOrder.length; index++) {\n        const anchor = ordered.findIndex((candidate) => candidate.id === sourceOrder[index]);\n        if (anchor >= 0) {\n          ordered.splice(anchor, 0, page);\n          inserted = true;\n          break;\n        }\n      }\n      if (!inserted) {\n        const at = ordered.findIndex((candidate) => page.createdAt < candidate.createdAt);\n        ordered.splice(at < 0 ? ordered.length : at, 0, page);\n      }\n    }\n    const safePages = ordered.length ? ordered : [createPage("Page 1")];\n    const pageOrder = safePages.map((page) => page.id);\n    return {\n      ...incoming,\n      schema: 2,\n      title: incoming.updatedAt >= base.updatedAt ? incoming.title : base.title,\n      pageWidth: incoming.pageWidth || base.pageWidth,\n      pageHeight: incoming.pageHeight || base.pageHeight,\n      pages: safePages,\n      pageOrder,\n      deletedPages,\n      pageOrderUpdatedAt: Math.max(base.pageOrderUpdatedAt, incoming.pageOrderUpdatedAt),\n      updatedAt: Math.max(base.updatedAt, incoming.updatedAt)\n    };\n  }\n  function compareNotebookOrder(left, right) {\n    var _a, _b;\n    const leftOrder = JSON.stringify((_a = left.pageOrder) != null ? _a : []);\n    const rightOrder = JSON.stringify((_b = right.pageOrder) != null ? _b : []);\n    return leftOrder < rightOrder ? -1 : leftOrder > rightOrder ? 1 : 0;\n  }\n  function mergePages(base, incoming) {\n    var _a, _b, _c, _d, _e, _f;\n    const images = /* @__PURE__ */ new Map();\n    for (const image of [...(_a = base.images) != null ? _a : [], ...(_b = incoming.images) != null ? _b : []]) {\n      const previous = images.get(image.id);\n      if (!previous || image.updatedAt > previous.updatedAt || image.updatedAt === previous.updatedAt && JSON.stringify(image) > JSON.stringify(previous)) images.set(image.id, image);\n    }\n    const deletedImageIds = [.../* @__PURE__ */ new Set([...(_c = base.deletedImageIds) != null ? _c : [], ...(_d = incoming.deletedImageIds) != null ? _d : []])];\n    for (const id of deletedImageIds) images.delete(id);\n    const strokes = /* @__PURE__ */ new Map();\n    for (const stroke of base.strokes) strokes.set(stroke.id, stroke);\n    for (const stroke of incoming.strokes) {\n      const existing = strokes.get(stroke.id);\n      if (!existing || stroke.updatedAt >= existing.updatedAt) strokes.set(stroke.id, stroke);\n    }\n    const deletedStrokeIds = [.../* @__PURE__ */ new Set([...(_e = base.deletedStrokeIds) != null ? _e : [], ...(_f = incoming.deletedStrokeIds) != null ? _f : []])];\n    for (const id of deletedStrokeIds) strokes.delete(id);\n    return {\n      ...base,\n      ...incoming,\n      title: incoming.updatedAt >= base.updatedAt ? incoming.title : base.title,\n      paper: incoming.updatedAt >= base.updatedAt ? incoming.paper : base.paper,\n      strokes: [...strokes.values()].sort((a, b) => a.createdAt - b.createdAt),\n      deletedStrokeIds,\n      ...base.images || incoming.images || base.deletedImageIds || incoming.deletedImageIds ? {\n        images: [...images.values()].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)),\n        deletedImageIds\n      } : {},\n      updatedAt: Math.max(base.updatedAt, incoming.updatedAt)\n    };\n  }\n  function normalizePage(value) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    const strokes = Array.isArray(raw.strokes) ? raw.strokes : [];\n    const deletedStrokeIds = Array.isArray(raw.deletedStrokeIds) ? raw.deletedStrokeIds.filter((id) => typeof id === "string") : [];\n    const deleted = new Set(deletedStrokeIds);\n    const pageId = typeof raw.id === "string" ? raw.id : newId("page");\n    const deletedImageIds = Array.isArray(raw.deletedImageIds) ? raw.deletedImageIds.filter((id) => typeof id === "string") : [];\n    return {\n      id: pageId,\n      title: typeof raw.title === "string" ? raw.title : "Untitled",\n      paper: isPaperStyle(raw.paper) ? raw.paper : "ruled",\n      strokes: strokes.map(normalizeStroke).filter((stroke) => stroke !== null && !deleted.has(stroke.id)),\n      deletedStrokeIds,\n      ...Array.isArray(raw.images) || Array.isArray(raw.deletedImageIds) ? {\n        images: (Array.isArray(raw.images) ? raw.images : []).map((image) => normalizeImage(image, pageId)).filter((image) => !!image && !deletedImageIds.includes(image.id)),\n        deletedImageIds\n      } : {},\n      createdAt: finitePositive(raw.createdAt, Date.now()),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function isManagedImagePath(path) {\n    return typeof path === "string" && /^Ink Notes\\/Images\\/assets\\/[a-zA-Z0-9-]+\\.png$/.test(path);\n  }\n  function normalizeImage(value, pageId) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    if (typeof raw.id !== "string" || !isManagedImagePath(raw.assetPath)) return null;\n    if (![raw.x, raw.y, raw.width, raw.height].every((n) => typeof n === "number" && Number.isFinite(n))) return null;\n    const width = clamp(raw.width, 0.01, 1), height = clamp(raw.height, 0.01, 1);\n    return {\n      id: raw.id,\n      pageId,\n      assetPath: raw.assetPath,\n      x: clamp(raw.x, 0, 1 - width),\n      y: clamp(raw.y, 0, 1 - height),\n      width,\n      height,\n      foreground: raw.foreground === true,\n      createdAt: finitePositive(raw.createdAt, Date.now()),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function normalizeStroke(value) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    if (typeof raw.id !== "string" || typeof raw.pageId !== "string") return null;\n    const points = Array.isArray(raw.points) ? raw.points : [];\n    return {\n      id: raw.id,\n      pageId: raw.pageId,\n      tool: raw.tool === "highlighter" ? "highlighter" : "pen",\n      color: typeof raw.color === "string" ? raw.color : "#1b1b1b",\n      width: finitePositive(raw.width, 3),\n      opacity: clamp(finitePositive(raw.opacity, 1), 0.05, 1),\n      points: points.map(normalizePoint).filter((point) => point !== null),\n      dynamics: normalizeDynamics(raw.dynamics),\n      createdAt: finitePositive(raw.createdAt, Date.now()),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function normalizeDynamics(value) {\n    if (!value || typeof value !== "object") return void 0;\n    const raw = value;\n    const percent = (candidate, fallback) => typeof candidate === "number" && Number.isFinite(candidate) ? clamp(Math.round(candidate), 0, 100) : fallback;\n    const curve = Array.isArray(raw.pressureCurve) && raw.pressureCurve.length >= 2 ? raw.pressureCurve.map((point) => Array.isArray(point) ? [Number(point[0]), Number(point[1])] : [NaN, NaN]) : void 0;\n    const dynamics = {\n      taper: percent(raw.taper, 0),\n      pressure: percent(raw.pressure, 100),\n      speed: percent(raw.speed, 0)\n    };\n    if (curve) dynamics.pressureCurve = curve;\n    const defaults = { taper: 0, pressure: 100, speed: 0 };\n    const plain = dynamics.taper === defaults.taper && dynamics.pressure === defaults.pressure && dynamics.speed === defaults.speed;\n    return plain && !curve ? void 0 : dynamics;\n  }\n  function normalizePoint(value) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    if (typeof raw.x !== "number" || typeof raw.y !== "number") return null;\n    return {\n      x: clamp(raw.x, 0, 1),\n      y: clamp(raw.y, 0, 1),\n      pressure: clamp(typeof raw.pressure === "number" ? raw.pressure : 0.5, 0.05, 1),\n      tiltX: typeof raw.tiltX === "number" ? raw.tiltX : void 0,\n      tiltY: typeof raw.tiltY === "number" ? raw.tiltY : void 0,\n      t: finitePositive(raw.t, Date.now())\n    };\n  }\n  function finitePositive(value, fallback) {\n    return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;\n  }\n  function clamp(value, min, max) {\n    return Math.max(min, Math.min(max, value));\n  }\n  function isPaperStyle(value) {\n    return value === "blank" || value === "ruled" || value === "grid" || value === "dot";\n  }\n\n  // src/rendering.ts\n  var paths = /* @__PURE__ */ new WeakMap();\n  function penOutlineRings(stroke, width, height) {\n    var _a, _b, _c, _d;\n    const pressures = smoothPenPressures(stroke.points);\n    const centerline = smoothOutlineCenterline(\n      stroke.points.map((point, index) => [point.x * width, point.y * height, pressures[index], point.t]),\n      stroke.width * 0.925\n    );\n    const count = centerline.length;\n    if (count === 0) return [];\n    const speeds = new Array(count);\n    for (let index = 0; index < count; index++) {\n      const previous = centerline[Math.max(0, index - 1)];\n      const following = centerline[Math.min(count - 1, index + 1)];\n      const distance = Math.hypot(following[0] - previous[0], following[1] - previous[1]);\n      const dt = Math.max(1, (following[3] - previous[3]) / 2);\n      speeds[index] = distance / (dt / 1e3);\n    }\n    const sortedSpeeds = [...speeds].sort((a, b) => a - b);\n    const medianSpeed = sortedSpeeds[Math.floor(sortedSpeeds.length / 2)] || 0;\n    const speedReference = Math.max(medianSpeed * 2.5, 60);\n    const pressureGain = clampPercent((_a = stroke.dynamics) == null ? void 0 : _a.pressure, 100) / 100;\n    const speedGain = clampPercent((_b = stroke.dynamics) == null ? void 0 : _b.speed, 0) / 100;\n    const pressureCurve = normalizePressureCurve((_c = stroke.dynamics) == null ? void 0 : _c.pressureCurve);\n    const taper = clampPercent((_d = stroke.dynamics) == null ? void 0 : _d.taper, 0) / 100;\n    const brushWidth = stroke.width;\n    const fullDiameter = brushWidth * 1.3;\n    let totalLength = 0;\n    const cumulative = new Array(count);\n    cumulative[0] = 0;\n    for (let index = 1; index < count; index++) {\n      totalLength += Math.hypot(centerline[index][0] - centerline[index - 1][0], centerline[index][1] - centerline[index - 1][1]);\n      cumulative[index] = totalLength;\n    }\n    const rampLength = taper * Math.min(totalLength * 0.25, brushWidth * 2);\n    const envelopeAt = (distanceFromEnd) => {\n      if (rampLength <= 0) return 1;\n      const m = Math.min(1, distanceFromEnd / rampLength);\n      const smoothstep = m * m * (3 - 2 * m);\n      return 1 - taper * (1 - smoothstep);\n    };\n    const halfWidthAt = (index) => {\n      const point = centerline[index];\n      const pressure = samplePressureCurve(Math.max(0, Math.min(1, point[2])), pressureCurve);\n      const effectivePressure = 0.5 + (pressure - 0.5) * pressureGain;\n      const modulation = (0.55 + 0.75 * effectivePressure) / 1.3;\n      const speedNorm = Math.min(speeds[index] / speedReference, 1);\n      const speedFactor = 1 - speedGain * speedNorm * speedNorm * 0.35;\n      const envelope = envelopeAt(Math.min(cumulative[index], totalLength - cumulative[index]));\n      return Math.max(0.3, fullDiameter / 2 * envelope * modulation * speedFactor);\n    };\n    const normals = new Array(count);\n    for (let index = 0; index < count; index++) {\n      const point = centerline[index];\n      const previous = centerline[Math.max(0, index - 1)];\n      const following = centerline[Math.min(count - 1, index + 1)];\n      let dx = following[0] - previous[0];\n      let dy = following[1] - previous[1];\n      if (index === 0 && count > 1) {\n        dx = centerline[1][0] - point[0];\n        dy = centerline[1][1] - point[1];\n      } else if (index === count - 1 && count > 1) {\n        dx = point[0] - centerline[index - 1][0];\n        dy = point[1] - centerline[index - 1][1];\n      }\n      let length = Math.hypot(dx, dy);\n      if (length < 1e-6) {\n        dx = 1;\n        dy = 0;\n        length = 1;\n      }\n      normals[index] = [-dy / length, dx / length];\n    }\n    const discSegments = 12;\n    if (count === 1) {\n      const point = centerline[0];\n      const radius = halfWidthAt(0);\n      const ring = [];\n      for (let index = 0; index < discSegments; index++) {\n        const angle = index / discSegments * Math.PI * 2;\n        ring.push([point[0] + Math.cos(angle) * radius, point[1] + Math.sin(angle) * radius]);\n      }\n      let area = 0;\n      for (let index = 0; index < ring.length; index++) {\n        const a = ring[index];\n        const b = ring[(index + 1) % ring.length];\n        area += a[0] * b[1] - b[0] * a[1];\n      }\n      return [area < 0 ? ring.slice().reverse() : ring];\n    }\n    const rings = [];\n    const emitRing = (ring) => {\n      if (ring.length < 3) return;\n      let area = 0;\n      for (let index = 0; index < ring.length; index++) {\n        const a = ring[index];\n        const b = ring[(index + 1) % ring.length];\n        area += a[0] * b[1] - b[0] * a[1];\n      }\n      rings.push(area < 0 ? ring.slice().reverse() : ring);\n    };\n    for (let index = 0; index < count; index++) {\n      const point = centerline[index];\n      const radius = halfWidthAt(index);\n      const [nx, ny] = normals[index];\n      const ring = [];\n      for (let sample = 0; sample < discSegments; sample++) {\n        const angle = sample / discSegments * Math.PI * 2;\n        ring.push([point[0] + Math.cos(angle) * radius, point[1] + Math.sin(angle) * radius]);\n      }\n      emitRing(ring);\n      if (index === count - 1) continue;\n      const following = centerline[index + 1];\n      const followingRadius = halfWidthAt(index + 1);\n      const [fnx, fny] = normals[index + 1];\n      emitRing([\n        [point[0] + nx * radius, point[1] + ny * radius],\n        [following[0] + fnx * followingRadius, following[1] + fny * followingRadius],\n        [following[0] - fnx * followingRadius, following[1] - fny * followingRadius],\n        [point[0] - nx * radius, point[1] - ny * radius]\n      ]);\n    }\n    return rings;\n  }\n  function clampPercent(value, fallback) {\n    return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : fallback;\n  }\n  function normalizePressureCurve(raw) {\n    if (!Array.isArray(raw)) return void 0;\n    const cleaned = raw.filter((point) => Array.isArray(point) && point.length >= 2 && typeof point[0] === "number" && Number.isFinite(point[0]) && typeof point[1] === "number" && Number.isFinite(point[1])).map((point) => [Math.max(0, Math.min(1, point[0])), Math.max(0, Math.min(1, point[1]))].map((value) => Math.round(value * 1e3) / 1e3)).sort((a, b) => a[0] - b[0]);\n    if (cleaned.length < 2) return void 0;\n    cleaned[0][0] = 0;\n    cleaned[cleaned.length - 1][0] = 1;\n    const monotonic = [cleaned[0]];\n    for (let index = 1; index < cleaned.length; index++) {\n      if (cleaned[index][0] <= monotonic[monotonic.length - 1][0]) continue;\n      monotonic.push(cleaned[index]);\n    }\n    if (monotonic.length < 2) return void 0;\n    for (let index = 1; index < monotonic.length; index++) {\n      monotonic[index][1] = Math.max(monotonic[index][1], monotonic[index - 1][1]);\n    }\n    const identity = monotonic.every(([x, y]) => Math.abs(x - y) <= 1e-3);\n    return identity ? void 0 : monotonic;\n  }\n  function samplePressureCurve(pressure, curve) {\n    if (!curve || curve.length < 2) return pressure;\n    if (pressure <= curve[0][0]) return curve[0][1];\n    for (let index = 1; index < curve.length; index++) {\n      if (pressure <= curve[index][0]) {\n        const span = curve[index][0] - curve[index - 1][0];\n        const amount = span > 0 ? (pressure - curve[index - 1][0]) / span : 0;\n        return curve[index - 1][1] + (curve[index][1] - curve[index - 1][1]) * amount;\n      }\n    }\n    return curve[curve.length - 1][1];\n  }\n  function smoothOutlineCenterline(points, nib) {\n    if (points.length < 3) return points;\n    const maxSegment = nib * 0.75;\n    let current = points;\n    for (let pass = 0; pass < 2; pass++) {\n      const next = current.map((point) => point.slice());\n      for (let index = 1; index < current.length - 1; index++) {\n        const point = current[index];\n        const previous = current[index - 1];\n        const following = current[index + 1];\n        if (Math.hypot(point[0] - previous[0], point[1] - previous[1]) > maxSegment) continue;\n        if (Math.hypot(following[0] - point[0], following[1] - point[1]) > maxSegment) continue;\n        next[index][0] = (previous[0] + 2 * point[0] + following[0]) / 4;\n        next[index][1] = (previous[1] + 2 * point[1] + following[1]) / 4;\n        next[index][2] = (previous[2] + 2 * point[2] + following[2]) / 4;\n      }\n      current = next;\n    }\n    return current;\n  }\n  function smoothPenPressures(points) {\n    if (points.length < 3) return points.map((point) => point.pressure);\n    return points.map((point, index) => {\n      if (index === 0 || index === points.length - 1) return point.pressure;\n      return median3(points[index - 1].pressure, point.pressure, points[index + 1].pressure);\n    });\n  }\n  function median3(a, b, c) {\n    return Math.max(Math.min(a, b), Math.min(Math.max(a, b), c));\n  }\n  function drawInkStroke(ctx, stroke, width, height) {\n    var _a;\n    if (stroke.points.length === 0) return;\n    ctx.save();\n    ctx.globalAlpha = stroke.opacity;\n    ctx.fillStyle = stroke.color;\n    ctx.strokeStyle = stroke.color;\n    ctx.lineCap = "round";\n    ctx.lineJoin = "round";\n    ctx.globalCompositeOperation = stroke.tool === "highlighter" ? "multiply" : "source-over";\n    if (stroke.points.length === 1) {\n      const point = stroke.points[0];\n      const gain = clampPercent((_a = stroke.dynamics) == null ? void 0 : _a.pressure, 100) / 100;\n      const effectivePressure = 0.5 + (point.pressure - 0.5) * gain;\n      const diameter = stroke.tool === "highlighter" ? stroke.width : stroke.width * (0.55 + effectivePressure * 0.75);\n      ctx.beginPath();\n      ctx.arc(point.x * width, point.y * height, diameter / 2, 0, Math.PI * 2);\n      ctx.fill();\n    } else if (stroke.tool === "highlighter") {\n      ctx.lineWidth = stroke.width;\n      drawSmoothPath(ctx, stroke.points, width, height);\n      ctx.stroke();\n    } else {\n      let cached = paths.get(stroke);\n      if (!cached || cached.points !== stroke.points || cached.count !== stroke.points.length || cached.updatedAt !== stroke.updatedAt || cached.size !== stroke.width || cached.width !== width || cached.height !== height) {\n        cached = {\n          points: stroke.points,\n          count: stroke.points.length,\n          updatedAt: stroke.updatedAt,\n          size: stroke.width,\n          width,\n          height,\n          path: createPenPath(stroke, width, height)\n        };\n        paths.set(stroke, cached);\n      }\n      ctx.fill(cached.path);\n    }\n    ctx.restore();\n  }\n  function createPenPath(stroke, width, height) {\n    const path = new Path2D();\n    for (const ring of penOutlineRings(stroke, width, height)) {\n      path.moveTo(ring[0][0], ring[0][1]);\n      for (let index = 1; index < ring.length; index++) path.lineTo(ring[index][0], ring[index][1]);\n      path.closePath();\n    }\n    return path;\n  }\n  function drawSmoothPath(ctx, points, width, height) {\n    ctx.beginPath();\n    ctx.moveTo(points[0].x * width, points[0].y * height);\n    for (let index = 1; index < points.length; index++) {\n      const previous = points[index - 1];\n      const point = points[index];\n      const end = index === points.length - 1 ? point : { x: (previous.x + point.x) / 2, y: (previous.y + point.y) / 2 };\n      ctx.quadraticCurveTo(previous.x * width, previous.y * height, end.x * width, end.y * height);\n    }\n    const last = points[points.length - 1];\n    ctx.lineTo(last.x * width, last.y * height);\n  }\n\n  // src/worker-protocol.ts\n  function serializeNotebook(notebook) {\n    return `${JSON.stringify(notebook, null, 2)}\n`;\n  }\n  function cloneStrokeValue(stroke) {\n    return { ...stroke, points: stroke.points.map((point) => ({ ...point })) };\n  }\n  function clonePageValue(page) {\n    var _a, _b;\n    return { ...page, images: (_a = page.images) == null ? void 0 : _a.map((image) => ({ ...image })), deletedImageIds: [...(_b = page.deletedImageIds) != null ? _b : []], strokes: page.strokes.map(cloneStrokeValue), deletedStrokeIds: [...page.deletedStrokeIds] };\n  }\n\n  // src/worker-core.ts\n  var WorkerPageIndex = class {\n    constructor(width, height) {\n      this.width = width;\n      this.height = height;\n      this.entries = /* @__PURE__ */ new Map();\n      this.cells = /* @__PURE__ */ new Map();\n      this.strokeWidths = /* @__PURE__ */ new Map();\n      this.maximumStrokeWidth = 0;\n    }\n    sync(page) {\n      this.entries.clear();\n      this.cells.clear();\n      this.strokeWidths.clear();\n      this.maximumStrokeWidth = 0;\n      page.strokes.forEach((stroke, order) => this.upsert(stroke, order));\n    }\n    upsert(stroke, order) {\n      var _a;\n      this.remove(stroke.id);\n      const entry = { stroke, order, cells: workerStrokeCells(stroke, this.width, this.height) };\n      this.entries.set(stroke.id, entry);\n      this.strokeWidths.set(stroke.width, ((_a = this.strokeWidths.get(stroke.width)) != null ? _a : 0) + 1);\n      this.maximumStrokeWidth = Math.max(this.maximumStrokeWidth, stroke.width);\n      for (const cell of entry.cells) {\n        let bucket = this.cells.get(cell);\n        if (!bucket) this.cells.set(cell, bucket = /* @__PURE__ */ new Set());\n        bucket.add(entry);\n      }\n    }\n    remove(strokeId) {\n      var _a;\n      const entry = this.entries.get(strokeId);\n      if (!entry) return;\n      this.entries.delete(strokeId);\n      const widthCount = ((_a = this.strokeWidths.get(entry.stroke.width)) != null ? _a : 1) - 1;\n      if (widthCount > 0) this.strokeWidths.set(entry.stroke.width, widthCount);\n      else this.strokeWidths.delete(entry.stroke.width);\n      if (entry.stroke.width === this.maximumStrokeWidth && widthCount <= 0) {\n        this.maximumStrokeWidth = 0;\n        for (const width of this.strokeWidths.keys()) this.maximumStrokeWidth = Math.max(this.maximumStrokeWidth, width);\n      }\n      for (const cell of entry.cells) {\n        const bucket = this.cells.get(cell);\n        bucket == null ? void 0 : bucket.delete(entry);\n        if ((bucket == null ? void 0 : bucket.size) === 0) this.cells.delete(cell);\n      }\n    }\n    updateOrder(page) {\n      page.strokes.forEach((stroke, order) => {\n        const entry = this.entries.get(stroke.id);\n        if (entry) entry.order = order;\n      });\n    }\n    getStroke(strokeId) {\n      var _a;\n      return (_a = this.entries.get(strokeId)) == null ? void 0 : _a.stroke;\n    }\n    getOrder(strokeId) {\n      var _a;\n      return (_a = this.entries.get(strokeId)) == null ? void 0 : _a.order;\n    }\n    query(cell, queryWidth = this.width, queryHeight = this.height) {\n      var _a;\n      const [column, row] = cell.split(":").map(Number);\n      const x = column * 128;\n      const y = row * 128;\n      const padding = this.maximumStrokeWidth * 0.7 + 4;\n      const paddingX = padding * this.width / queryWidth;\n      const paddingY = padding * this.height / queryHeight;\n      const keys = workerCellKeys({\n        x: x * this.width / queryWidth - paddingX,\n        y: y * this.height / queryHeight - paddingY,\n        width: Math.min(128, queryWidth - x) * this.width / queryWidth + paddingX * 2,\n        height: Math.min(128, queryHeight - y) * this.height / queryHeight + paddingY * 2\n      }, this.width, this.height);\n      const found = /* @__PURE__ */ new Set();\n      for (const key of keys) for (const entry of (_a = this.cells.get(key)) != null ? _a : []) found.add(entry);\n      return [...found].sort((left, right) => left.order - right.order).map((entry) => entry.stroke);\n    }\n  };\n  var OUTLINE_CACHE_LIMIT = 512;\n  var ProtocolError = class extends Error {\n    constructor(code, message) {\n      super(message);\n      this.code = code;\n    }\n  };\n  var InkWorkerCore = class {\n    constructor(capabilities) {\n      this.capabilities = capabilities;\n      this.sessions = /* @__PURE__ */ new Map();\n    }\n    ready() {\n      return { type: "ready", requestId: 0, sessionId: "", generation: 0, notebookRevision: 0, capabilities: this.capabilities };\n    }\n    async handle(request) {\n      var _a, _b;\n      try {\n        const response = await this.dispatch(request);\n        return response.type === "tile-rendered" ? { response, transfer: [response.bitmap] } : response.type === "operation-applied" && response.outline ? { response, transfer: [response.outline.buffer] } : { response };\n      } catch (error) {\n        return { response: {\n          type: "error",\n          requestId: request.requestId,\n          sessionId: request.sessionId,\n          generation: request.generation,\n          notebookRevision: (_b = (_a = this.sessions.get(request.sessionId)) == null ? void 0 : _a.revision) != null ? _b : request.notebookRevision,\n          code: error instanceof ProtocolError ? error.code : "internal",\n          message: error instanceof Error ? error.message : String(error)\n        } };\n      }\n    }\n    async dispatch(request) {\n      if (request.type === "initialize-raw") {\n        if (request.notebookRevision !== request.revision) {\n          throw new ProtocolError("revision-gap", "Initialize request revision metadata does not match its notebook revision");\n        }\n        const notebook = parseNotebook(request.raw);\n        this.sessions.set(request.sessionId, {\n          generation: request.generation,\n          notebook,\n          revision: request.revision,\n          pendingSave: /* @__PURE__ */ new Map(),\n          indexes: workerIndexes(notebook),\n          outlineCache: /* @__PURE__ */ new Map()\n        });\n        return this.response(request, { type: "initialized", notebook, revision: request.revision });\n      }\n      if (request.type === "initialize-notebook") {\n        if (request.notebookRevision !== request.revision) {\n          throw new ProtocolError("revision-gap", "Initialize request revision metadata does not match its notebook revision");\n        }\n        const notebook = normalizeNotebook(request.notebook);\n        this.sessions.set(request.sessionId, {\n          generation: request.generation,\n          notebook,\n          revision: request.revision,\n          pendingSave: /* @__PURE__ */ new Map(),\n          indexes: workerIndexes(notebook),\n          outlineCache: /* @__PURE__ */ new Map()\n        });\n        return this.response(request, { type: "initialized", notebook, revision: request.revision });\n      }\n      const session = this.sessions.get(request.sessionId);\n      if (!session) throw new ProtocolError("missing-session", "Ink worker session is not initialized");\n      if (session.generation !== request.generation) throw new ProtocolError("stale-generation", "Ink worker request belongs to a stale file generation");\n      if (request.type !== "apply-operation" && request.notebookRevision > session.revision) {\n        throw new ProtocolError("revision-gap", `Worker revision ${session.revision} is behind request revision ${request.notebookRevision}`);\n      }\n      if (request.type === "apply-operation") {\n        if (request.notebookRevision !== request.revision) {\n          throw new ProtocolError("revision-gap", "Operation revision metadata does not match its notebook revision");\n        }\n        if (request.revision !== session.revision + 1) {\n          throw new ProtocolError("revision-gap", `Expected revision ${session.revision + 1}, received ${request.revision}`);\n        }\n        const operation = request.operation;\n        invalidateOperationOutlines(session.outlineCache, operation);\n        const operationIndex = "pageId" in operation && typeof operation.pageId === "string" ? session.indexes.get(operation.pageId) : void 0;\n        const outline = applyNotebookOperation(session.notebook, operation, session.outlineCache, operationIndex);\n        if (operation.type === "replace-notebook" || operation.type === "history-restore" || operation.type === "page-operation") {\n          session.indexes = workerIndexes(session.notebook);\n          session.outlineCache.clear();\n        } else {\n          const pageId = operation.pageId;\n          const page = session.notebook.pages.find((candidate) => candidate.id === pageId);\n          if (page) {\n            let index = session.indexes.get(pageId);\n            if (!index) session.indexes.set(pageId, index = new WorkerPageIndex(session.notebook.pageWidth, session.notebook.pageHeight));\n            updateWorkerIndex(index, page, operation, outline == null ? void 0 : outline.stroke);\n          }\n        }\n        session.revision = request.revision;\n        return this.response(request, {\n          type: "operation-applied",\n          revision: session.revision,\n          ...outline ? { strokeId: outline.strokeId, sampleCount: outline.sampleCount, outline: outline.points, outlineMode: outline.mode } : {}\n        });\n      }\n      if (request.type === "barrier") {\n        if (session.revision < request.minimumRevision) {\n          throw new ProtocolError("revision-gap", `Worker revision ${session.revision} is behind ${request.minimumRevision}`);\n        }\n        return this.response(request, { type: "barrier-complete", revision: session.revision });\n      }\n      if (request.type === "prepare-save") {\n        if (session.revision < request.minimumRevision) {\n          throw new ProtocolError("revision-gap", `Worker revision ${session.revision} is behind ${request.minimumRevision}`);\n        }\n        const disk = parseNotebook(request.raw);\n        const local = normalizeNotebook(session.notebook);\n        const merged = mergeNotebooks(disk, local);\n        const token = `${request.sessionId}:${request.generation}:${request.requestId}`;\n        session.pendingSave.clear();\n        session.pendingSave.set(token, {\n          notebook: normalizeNotebook(merged),\n          revision: session.revision,\n          reconcile: serializeNotebook(merged) !== serializeNotebook(local)\n        });\n        return this.response(request, { type: "save-prepared", token, content: serializeNotebook(merged), revision: session.revision });\n      }\n      if (request.type === "render-tile") {\n        const rendered = renderTile(\n          session.notebook,\n          session.indexes.get(request.pageId),\n          session.outlineCache,\n          request.pageId,\n          request.cell,\n          request.density,\n          request.revision,\n          request.renderGeneration,\n          request.width,\n          request.height\n        );\n        return this.response(request, { type: "tile-rendered", ...rendered });\n      }\n      if (request.type === "cancel-render-generation") {\n        return this.response(request, { type: "renders-cancelled", renderGeneration: request.renderGeneration });\n      }\n      if (request.type === "commit-save") {\n        const candidate = session.pendingSave.get(request.token);\n        if (!candidate) throw new ProtocolError("missing-session", "Prepared save is no longer available");\n        session.pendingSave.delete(request.token);\n        session.notebook = mergeNotebooks(candidate.notebook, session.notebook);\n        session.indexes = workerIndexes(session.notebook);\n        session.outlineCache.clear();\n        return this.response(request, {\n          type: "save-committed",\n          revision: candidate.revision,\n          merged: candidate.reconcile ? candidate.notebook : void 0\n        });\n      }\n      if (request.type === "abort-save") {\n        session.pendingSave.delete(request.token);\n        return this.response(request, { type: "save-aborted" });\n      }\n      if (request.type === "merge-external") {\n        const merged = mergeNotebooks(parseNotebook(request.raw), session.notebook);\n        const changed = serializeNotebook(merged) !== serializeNotebook(session.notebook);\n        session.notebook = normalizeNotebook(merged);\n        if (changed) {\n          session.indexes = workerIndexes(session.notebook);\n          session.outlineCache.clear();\n        }\n        return this.response(request, { type: "external-merged", notebook: changed ? session.notebook : void 0, revision: session.revision });\n      }\n      this.sessions.delete(request.sessionId);\n      return this.response(request, { type: "session-disposed" });\n    }\n    response(request, response) {\n      var _a, _b;\n      return {\n        ...response,\n        requestId: request.requestId,\n        sessionId: request.sessionId,\n        generation: request.generation,\n        notebookRevision: (_b = (_a = this.sessions.get(request.sessionId)) == null ? void 0 : _a.revision) != null ? _b : request.notebookRevision\n      };\n    }\n  };\n  function renderTile(notebook, index, outlineCache, pageId, cell, density, revision, renderGeneration, pageWidth, pageHeight) {\n    var _a;\n    const page = notebook.pages.find((candidate) => candidate.id === pageId);\n    if (!page) throw new Error(`Ink worker page is unavailable: ${pageId}`);\n    const Canvas = globalThis.OffscreenCanvas;\n    if (!Canvas) throw new Error("OffscreenCanvas is not supported by this device");\n    const [column, row] = cell.split(":").map(Number);\n    const x = column * 128;\n    const y = row * 128;\n    const width = Math.min(128, pageWidth - x);\n    const height = Math.min(128, pageHeight - y);\n    if (width <= 0 || height <= 0) throw new Error(`Ink worker tile is outside page bounds: ${cell}`);\n    const safeDensity = Math.max(0.5, Math.min(9, density));\n    const bleedPixels = Math.ceil(4 * safeDensity);\n    const canvasWidth = Math.ceil(width * safeDensity) + bleedPixels * 2;\n    const canvasHeight = Math.ceil(height * safeDensity) + bleedPixels * 2;\n    const canvas = new Canvas(canvasWidth, canvasHeight);\n    const ctx = canvas.getContext("2d");\n    if (!ctx) throw new Error("Ink worker could not create a 2D tile context");\n    ctx.setTransform(safeDensity, 0, 0, safeDensity, bleedPixels - x * safeDensity, bleedPixels - y * safeDensity);\n    const candidates = (_a = index == null ? void 0 : index.query(cell, pageWidth, pageHeight)) != null ? _a : [];\n    for (const stroke of candidates) drawWorkerStroke(ctx, stroke, pageWidth, pageHeight, outlineCache);\n    return {\n      pageId,\n      cell,\n      density: safeDensity,\n      revision,\n      renderGeneration,\n      x,\n      y,\n      width,\n      height,\n      canvasWidth,\n      canvasHeight,\n      bitmap: canvas.transferToImageBitmap()\n    };\n  }\n  function workerIndexes(notebook) {\n    const indexes = /* @__PURE__ */ new Map();\n    for (const page of notebook.pages) {\n      const index = new WorkerPageIndex(notebook.pageWidth, notebook.pageHeight);\n      index.sync(page);\n      indexes.set(page.id, index);\n    }\n    return indexes;\n  }\n  function workerStrokeCells(stroke, pageWidth, pageHeight) {\n    if (stroke.points.length === 0) return [];\n    const padding = stroke.width * 0.7 + 4;\n    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;\n    for (const point of stroke.points) {\n      minX = Math.min(minX, point.x * pageWidth);\n      minY = Math.min(minY, point.y * pageHeight);\n      maxX = Math.max(maxX, point.x * pageWidth);\n      maxY = Math.max(maxY, point.y * pageHeight);\n    }\n    return workerCellKeys({ x: minX - padding, y: minY - padding, width: maxX - minX + padding * 2, height: maxY - minY + padding * 2 }, pageWidth, pageHeight);\n  }\n  function workerCellKeys(rect, pageWidth, pageHeight) {\n    if (!Number.isFinite(rect.x + rect.y + rect.width + rect.height) || rect.width <= 0 || rect.height <= 0 || rect.x >= pageWidth || rect.y >= pageHeight || rect.x + rect.width <= 0 || rect.y + rect.height <= 0) return [];\n    const cells = [];\n    for (let row = Math.floor(Math.max(0, rect.y) / 128); row < Math.ceil(Math.min(pageHeight, rect.y + rect.height) / 128); row++) {\n      for (let column = Math.floor(Math.max(0, rect.x) / 128); column < Math.ceil(Math.min(pageWidth, rect.x + rect.width) / 128); column++) {\n        cells.push(`${column}:${row}`);\n      }\n    }\n    return cells;\n  }\n  function drawWorkerStroke(ctx, stroke, width, height, cache) {\n    if (stroke.tool !== "pen") {\n      drawInkStroke(ctx, stroke, width, height);\n      return;\n    }\n    const signature = `${stroke.updatedAt}:${stroke.points.length}:${stroke.width}:${width}:${height}`;\n    let cached = cache.get(stroke.id);\n    let outline = (cached == null ? void 0 : cached.signature) === signature ? cached.points : void 0;\n    if (!outline) {\n      const generated = penOutlineRings(stroke, width, height);\n      const separators = Math.max(0, generated.length - 1);\n      const buffer = new Float32Array((generated.reduce((total, ring) => total + ring.length, 0) + separators) * 2);\n      let cursor = 0;\n      generated.forEach((ring, ringIndex) => {\n        if (ringIndex > 0) {\n          buffer[cursor] = Number.NaN;\n          buffer[cursor + 1] = Number.NaN;\n          cursor += 2;\n        }\n        for (const [x, y] of ring) {\n          buffer[cursor] = x;\n          buffer[cursor + 1] = y;\n          cursor += 2;\n        }\n      });\n      outline = buffer;\n      cache.delete(stroke.id);\n      cache.set(stroke.id, { signature, points: outline });\n      while (cache.size > OUTLINE_CACHE_LIMIT) cache.delete(cache.keys().next().value);\n    } else {\n      cache.delete(stroke.id);\n      cache.set(stroke.id, cached);\n    }\n    ctx.save();\n    ctx.globalAlpha = stroke.opacity;\n    ctx.fillStyle = stroke.color;\n    ctx.globalCompositeOperation = "source-over";\n    if (outline.length >= 2) {\n      ctx.beginPath();\n      let tracing = false;\n      for (let index = 0; index < outline.length; index += 2) {\n        const x = outline[index];\n        const y = outline[index + 1];\n        if (!Number.isFinite(x) || !Number.isFinite(y)) {\n          tracing = false;\n          continue;\n        }\n        if (!tracing) {\n          tracing = true;\n          ctx.moveTo(x, y);\n          continue;\n        }\n        ctx.lineTo(x, y);\n      }\n      ctx.fill();\n    }\n    ctx.restore();\n  }\n  function parseNotebook(raw) {\n    try {\n      return normalizeNotebook(JSON.parse(raw));\n    } catch (e) {\n      throw new ProtocolError("invalid-format", "Existing ink notebook is not valid JSON");\n    }\n  }\n  function applyNotebookOperation(notebook, operation, cache, index) {\n    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;\n    if (operation.type === "replace-notebook" || operation.type === "history-restore") {\n      Object.assign(notebook, normalizeNotebook(operation.notebook));\n      return void 0;\n    }\n    if (operation.type === "page-operation") {\n      const page2 = operation.page;\n      if ((operation.action === "add" || operation.action === "duplicate" || operation.action === "restore") && page2) {\n        if (!(page2.id in notebook.deletedPages)) {\n          notebook.pages = notebook.pages.filter((candidate) => candidate.id !== page2.id);\n          notebook.pages.push(clonePageValue(page2));\n        }\n      } else if (operation.action === "delete" && operation.pageId) {\n        if (notebook.pages.length > 1) {\n          notebook.pages = notebook.pages.filter((candidate) => candidate.id !== operation.pageId);\n          notebook.deletedPages[operation.pageId] = Math.max((_a = notebook.deletedPages[operation.pageId]) != null ? _a : 0, (_b = operation.deletedAt) != null ? _b : Date.now());\n        }\n      }\n      const order = new Map(operation.pageOrder.map((id, index2) => [id, index2]));\n      notebook.pages.sort((left, right) => {\n        var _a2, _b2;\n        return ((_a2 = order.get(left.id)) != null ? _a2 : Number.MAX_SAFE_INTEGER) - ((_b2 = order.get(right.id)) != null ? _b2 : Number.MAX_SAFE_INTEGER);\n      });\n      notebook.pageOrder = notebook.pages.map((candidate) => candidate.id);\n      notebook.pageOrderUpdatedAt = operation.pageOrderUpdatedAt;\n      notebook.updatedAt = operation.notebookUpdatedAt;\n      return void 0;\n    }\n    const page = notebook.pages.find((candidate) => candidate.id === operation.pageId);\n    if (!page) return void 0;\n    let outlinedStroke;\n    if (operation.type === "start-stroke") {\n      const position = (_c = index == null ? void 0 : index.getOrder(operation.stroke.id)) != null ? _c : -1;\n      const stroke = cloneStrokeValue(operation.stroke);\n      if (position >= 0) page.strokes[position] = stroke;\n      else page.strokes.push(stroke);\n      outlinedStroke = stroke;\n    } else if (operation.type === "append-stroke-points") {\n      const stroke = (_d = index == null ? void 0 : index.getStroke(operation.strokeId)) != null ? _d : page.strokes.find((candidate) => candidate.id === operation.strokeId);\n      if (stroke) {\n        for (let index2 = 0; index2 + 5 < operation.points.length; index2 += 6) {\n          stroke.points.push({\n            x: operation.points[index2],\n            y: operation.points[index2 + 1],\n            pressure: operation.points[index2 + 2],\n            tiltX: Number.isNaN(operation.points[index2 + 3]) ? void 0 : operation.points[index2 + 3],\n            tiltY: Number.isNaN(operation.points[index2 + 4]) ? void 0 : operation.points[index2 + 4],\n            t: operation.points[index2 + 5]\n          });\n        }\n        outlinedStroke = stroke;\n      }\n    } else if (operation.type === "complete-stroke") {\n      const stroke = (_e = index == null ? void 0 : index.getStroke(operation.strokeId)) != null ? _e : page.strokes.find((candidate) => candidate.id === operation.strokeId);\n      if (stroke) stroke.updatedAt = operation.pageUpdatedAt;\n    } else if (operation.type === "finalize-stroke") {\n      const position = (_f = index == null ? void 0 : index.getOrder(operation.stroke.id)) != null ? _f : -1;\n      const stroke = cloneStrokeValue(operation.stroke);\n      if (position >= 0) page.strokes[position] = stroke;\n      else page.strokes.push(stroke);\n      page.strokes.sort((left, right) => left.createdAt - right.createdAt);\n      outlinedStroke = stroke;\n    } else if (operation.type === "patch-strokes") {\n      const removed = new Set(operation.remove);\n      const upsert = new Map(operation.upsert.map((stroke) => [stroke.id, cloneStrokeValue(stroke)]));\n      page.strokes = page.strokes.filter((stroke) => !removed.has(stroke.id) && !upsert.has(stroke.id));\n      page.strokes.push(...upsert.values());\n      page.strokes.sort((left, right) => left.createdAt - right.createdAt);\n      page.deletedStrokeIds = [.../* @__PURE__ */ new Set([...page.deletedStrokeIds, ...operation.deletedStrokeIds])];\n    } else if (operation.type === "translate-strokes") {\n      for (const strokeId of operation.strokeIds) {\n        const stroke = (_g = index == null ? void 0 : index.getStroke(strokeId)) != null ? _g : page.strokes.find((candidate) => candidate.id === strokeId);\n        if (!stroke) continue;\n        stroke.points = stroke.points.map((point) => ({ ...point, x: point.x + operation.dx, y: point.y + operation.dy }));\n        stroke.updatedAt = operation.pageUpdatedAt;\n      }\n    } else if (operation.type === "patch-images") {\n      const removed = new Set(operation.remove);\n      const upsert = new Map(operation.upsert.map((image) => [image.id, { ...image }]));\n      page.deletedImageIds = [.../* @__PURE__ */ new Set([...(_h = page.deletedImageIds) != null ? _h : [], ...operation.deletedImageIds])];\n      page.images = [...((_i = page.images) != null ? _i : []).filter((image) => !removed.has(image.id) && !upsert.has(image.id)), ...upsert.values()].filter((image) => !page.deletedImageIds.includes(image.id));\n    } else {\n      if (operation.title !== void 0) page.title = operation.title;\n      if (operation.paper !== void 0) page.paper = operation.paper;\n    }\n    page.updatedAt = operation.pageUpdatedAt;\n    notebook.updatedAt = operation.notebookUpdatedAt;\n    if (!outlinedStroke || outlinedStroke.tool !== "pen" && outlinedStroke.tool !== "highlighter") return void 0;\n    const previewWidth = operation.type === "start-stroke" || operation.type === "append-stroke-points" ? Math.max(1, (_j = operation.previewWidth) != null ? _j : notebook.pageWidth) : notebook.pageWidth;\n    const previewHeight = operation.type === "start-stroke" || operation.type === "append-stroke-points" ? Math.max(1, (_k = operation.previewHeight) != null ? _k : notebook.pageHeight) : notebook.pageHeight;\n    const signature = `${outlinedStroke.updatedAt}:${outlinedStroke.points.length}:${outlinedStroke.width}:${previewWidth}:${previewHeight}`;\n    if (outlinedStroke.tool === "highlighter") {\n      const line = new Float32Array(outlinedStroke.points.length * 2);\n      for (let index2 = 0; index2 < outlinedStroke.points.length; index2++) {\n        line[index2 * 2] = outlinedStroke.points[index2].x;\n        line[index2 * 2 + 1] = outlinedStroke.points[index2].y;\n      }\n      return { strokeId: outlinedStroke.id, sampleCount: outlinedStroke.points.length, points: line, mode: "highlighter", stroke: outlinedStroke };\n    }\n    const cached = cache == null ? void 0 : cache.get(outlinedStroke.id);\n    let outline = (cached == null ? void 0 : cached.signature) === signature ? cached.points : void 0;\n    if (!outline) {\n      const generated = penOutlineRings(outlinedStroke, previewWidth, previewHeight);\n      const separators = Math.max(0, generated.length - 1);\n      const buffer = new Float32Array((generated.reduce((total, ring) => total + ring.length, 0) + separators) * 2);\n      let cursor = 0;\n      generated.forEach((ring, ringIndex) => {\n        if (ringIndex > 0) {\n          buffer[cursor] = Number.NaN;\n          buffer[cursor + 1] = Number.NaN;\n          cursor += 2;\n        }\n        for (const [x, y] of ring) {\n          buffer[cursor] = x;\n          buffer[cursor + 1] = y;\n          cursor += 2;\n        }\n      });\n      outline = buffer;\n      if (cache) {\n        cache.delete(outlinedStroke.id);\n        cache.set(outlinedStroke.id, { signature, points: outline });\n        while (cache.size > OUTLINE_CACHE_LIMIT) cache.delete(cache.keys().next().value);\n      }\n    }\n    const normalized = new Float32Array(outline.length);\n    for (let index2 = 0; index2 < outline.length; index2 += 2) {\n      normalized[index2] = outline[index2] / previewWidth;\n      normalized[index2 + 1] = outline[index2 + 1] / previewHeight;\n    }\n    return { strokeId: outlinedStroke.id, sampleCount: outlinedStroke.points.length, points: normalized, mode: "pen", stroke: outlinedStroke };\n  }\n  function invalidateOperationOutlines(cache, operation) {\n    if (operation.type === "replace-notebook" || operation.type === "history-restore" || operation.type === "page-operation") {\n      cache.clear();\n      return;\n    }\n    if (operation.type === "start-stroke" || operation.type === "finalize-stroke") cache.delete(operation.stroke.id);\n    else if (operation.type === "append-stroke-points" || operation.type === "complete-stroke") cache.delete(operation.strokeId);\n    else if (operation.type === "patch-strokes") {\n      for (const id of operation.remove) cache.delete(id);\n      for (const stroke of operation.upsert) cache.delete(stroke.id);\n    } else if (operation.type === "translate-strokes") {\n      for (const id of operation.strokeIds) cache.delete(id);\n    }\n  }\n  function updateWorkerIndex(index, page, operation, outlinedStroke) {\n    var _a, _b, _c, _d;\n    if (operation.type === "start-stroke" || operation.type === "finalize-stroke") {\n      const stroke = outlinedStroke;\n      if (stroke) index.upsert(stroke, operation.type === "start-stroke" ? (_a = index.getOrder(stroke.id)) != null ? _a : page.strokes.length - 1 : Number.MAX_SAFE_INTEGER);\n      if (operation.type === "finalize-stroke") index.updateOrder(page);\n    } else if (operation.type === "complete-stroke") {\n      const stroke = outlinedStroke != null ? outlinedStroke : index.getStroke(operation.strokeId);\n      if (stroke) index.upsert(stroke, (_b = index.getOrder(operation.strokeId)) != null ? _b : page.strokes.length - 1);\n    } else if (operation.type === "append-stroke-points") {\n    } else if (operation.type === "patch-strokes") {\n      for (const id of operation.remove) index.remove(id);\n      const positions = new Map(page.strokes.map((stroke, position) => [stroke.id, position]));\n      const strokes = new Map(page.strokes.map((stroke) => [stroke.id, stroke]));\n      for (const replacement of operation.upsert) {\n        const stroke = strokes.get(replacement.id);\n        if (stroke) index.upsert(stroke, (_c = positions.get(stroke.id)) != null ? _c : Number.MAX_SAFE_INTEGER);\n      }\n      index.updateOrder(page);\n    } else if (operation.type === "translate-strokes") {\n      for (const id of operation.strokeIds) {\n        const stroke = index.getStroke(id);\n        if (stroke) index.upsert(stroke, (_d = index.getOrder(id)) != null ? _d : Number.MAX_SAFE_INTEGER);\n      }\n    }\n  }\n\n  // src/ink-worker.ts\n  var scope = self;\n  var core = new InkWorkerCore({\n    offscreenCanvas: typeof OffscreenCanvas !== "undefined",\n    imageBitmap: typeof ImageBitmap !== "undefined",\n    transferable: supportsTransferableBuffers()\n  });\n  var queue = [];\n  var running = false;\n  scope.onmessage = (event) => {\n    const request = event.data;\n    if (request.type === "cancel-render-generation") {\n      for (let index = queue.length - 1; index >= 0; index--) {\n        const queued = queue[index];\n        if (queued.type === "render-tile" && queued.sessionId === request.sessionId && queued.generation === request.generation && queued.renderGeneration < request.renderGeneration) {\n          queue.splice(index, 1);\n          scope.postMessage({\n            type: "error",\n            requestId: queued.requestId,\n            sessionId: queued.sessionId,\n            generation: queued.generation,\n            notebookRevision: queued.notebookRevision,\n            code: "stale-generation",\n            message: "Queued tile belongs to an obsolete render generation"\n          });\n        }\n      }\n    }\n    queue.push(request);\n    drain();\n  };\n  function drain() {\n    if (running || queue.length === 0) return;\n    queue.sort((left, right) => workerPriority(left) - workerPriority(right));\n    const request = queue.shift();\n    running = true;\n    void core.handle(request).then(({ response, transfer }) => scope.postMessage(response, transfer != null ? transfer : [])).finally(() => {\n      running = false;\n      drain();\n    });\n  }\n  function workerPriority(request) {\n    if (request.type === "cancel-render-generation" || request.type === "initialize-raw" || request.type === "initialize-notebook") return 0;\n    if (request.type === "apply-operation") return 1;\n    if (request.type === "render-tile") return request.priority === "visible" ? 2 : 3;\n    return 4;\n  }\n  scope.postMessage(core.ready());\n  function supportsTransferableBuffers() {\n    if (typeof MessageChannel === "undefined") return false;\n    try {\n      const channel = new MessageChannel();\n      const buffer = new ArrayBuffer(1);\n      channel.port1.postMessage(buffer, [buffer]);\n      channel.port1.close();\n      channel.port2.close();\n      return buffer.byteLength === 0;\n    } catch (e) {\n      return false;\n    }\n  }\n})();\n';
+var ink_worker_source_default = '(() => {\n  // src/sticky-model.ts\n  var STICKY_UNIT = 1e3;\n  function cloneSticky(note) {\n    return { ...note, deletedStrokeIds: [...note.deletedStrokeIds], strokes: note.strokes.map((stroke) => {\n      var _a;\n      return {\n        ...stroke,\n        points: stroke.points.map((point) => ({ ...point })),\n        dynamics: stroke.dynamics ? {\n          ...stroke.dynamics,\n          pressureCurve: (_a = stroke.dynamics.pressureCurve) == null ? void 0 : _a.map((point) => [...point])\n        } : void 0\n      };\n    }) };\n  }\n  function mergeSticky(a, b) {\n    const latest = b.updatedAt > a.updatedAt || b.updatedAt === a.updatedAt && JSON.stringify(b) > JSON.stringify(a) ? b : a;\n    const text = b.textUpdatedAt > a.textUpdatedAt || b.textUpdatedAt === a.textUpdatedAt && b.text > a.text ? b : a;\n    const removed = /* @__PURE__ */ new Set([...a.deletedStrokeIds, ...b.deletedStrokeIds]);\n    const strokes = /* @__PURE__ */ new Map();\n    for (const stroke of [...a.strokes, ...b.strokes]) {\n      const previous = strokes.get(stroke.id);\n      if (!removed.has(stroke.id) && (!previous || stroke.updatedAt > previous.updatedAt || stroke.updatedAt === previous.updatedAt && JSON.stringify(stroke) > JSON.stringify(previous))) strokes.set(stroke.id, stroke);\n    }\n    return {\n      ...latest,\n      text: text.text,\n      textUpdatedAt: text.textUpdatedAt,\n      strokes: [...strokes.values()].sort((x, y) => x.createdAt - y.createdAt || x.id.localeCompare(y.id)),\n      deletedStrokeIds: [...removed]\n    };\n  }\n  function normalizeSticky(value, pageId) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    if (typeof raw.id !== "string" || ![raw.x, raw.y, raw.width, raw.height].every((n) => typeof n === "number" && Number.isFinite(n))) return null;\n    const positive = (n, fallback) => typeof n === "number" && Number.isFinite(n) && n > 0 ? n : fallback;\n    const string = (n) => typeof n === "string" ? n : "";\n    const width = Math.min(1, Math.max(0.05, raw.width)), height = Math.min(1, Math.max(0.05, raw.height));\n    const removed = Array.isArray(raw.deletedStrokeIds) ? raw.deletedStrokeIds.filter((id) => typeof id === "string") : [];\n    const strokes = (Array.isArray(raw.strokes) ? raw.strokes : []).filter((stroke) => stroke && typeof stroke.id === "string" && Array.isArray(stroke.points)).map((stroke) => ({\n      ...stroke,\n      pageId: raw.id,\n      tool: stroke.tool === "highlighter" ? "highlighter" : "pen",\n      color: /^#[0-9a-f]{6}$/i.test(stroke.color) ? stroke.color : "#202020",\n      width: positive(stroke.width, 3),\n      opacity: Math.min(1, positive(stroke.opacity, 1)),\n      dynamics: normalizeDynamics(stroke.dynamics),\n      points: stroke.points.filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y)).map((point) => ({\n        x: Math.max(0, point.x),\n        y: Math.max(0, point.y),\n        pressure: Math.min(1, Math.max(0.05, positive(point.pressure, 0.5))),\n        t: positive(point.t, 1),\n        tiltX: typeof point.tiltX === "number" && Number.isFinite(point.tiltX) ? point.tiltX : void 0,\n        tiltY: typeof point.tiltY === "number" && Number.isFinite(point.tiltY) ? point.tiltY : void 0\n      })),\n      createdAt: positive(stroke.createdAt, 1),\n      updatedAt: positive(stroke.updatedAt, 1)\n    })).filter((stroke) => !removed.includes(stroke.id));\n    return {\n      id: raw.id,\n      pageId,\n      x: Math.max(0, Math.min(1 - width, raw.x)),\n      y: Math.max(0, Math.min(1 - height, raw.y)),\n      width,\n      height,\n      title: string(raw.title),\n      keywords: string(raw.keywords),\n      text: string(raw.text),\n      textUpdatedAt: positive(raw.textUpdatedAt, 1),\n      color: typeof raw.color === "string" && /^#[0-9a-f]{6}$/i.test(raw.color) ? raw.color : "#fff1a8",\n      collapsed: raw.collapsed === true,\n      preview: raw.preview !== false,\n      scrollX: Math.max(0, positive(raw.scrollX, 0)),\n      scrollY: Math.max(0, positive(raw.scrollY, 0)),\n      boardPageWidth: positive(raw.boardPageWidth, STICKY_UNIT),\n      strokes,\n      deletedStrokeIds: removed,\n      createdAt: positive(raw.createdAt, 1),\n      updatedAt: positive(raw.updatedAt, 1)\n    };\n  }\n\n  // src/model.ts\n  var DEFAULT_PAGE_WIDTH = 1600;\n  var DEFAULT_PAGE_HEIGHT = 2200;\n  function newId(prefix) {\n    const random = Math.random().toString(36).slice(2, 10);\n    return `${prefix}-${Date.now().toString(36)}-${random}`;\n  }\n  function createNotebook(title = "Ink Notebook") {\n    const now = Date.now();\n    const page = createPage("Page 1", "ruled", now);\n    return {\n      schema: 2,\n      title,\n      pageWidth: DEFAULT_PAGE_WIDTH,\n      pageHeight: DEFAULT_PAGE_HEIGHT,\n      pages: [page],\n      pageOrder: [page.id],\n      deletedPages: {},\n      pageOrderUpdatedAt: now,\n      updatedAt: now\n    };\n  }\n  function createPage(title, paper = "ruled", now = Date.now()) {\n    return { id: newId("page"), title, paper, strokes: [], deletedStrokeIds: [], createdAt: now, updatedAt: now };\n  }\n  function normalizeNotebook(value) {\n    if (!value || typeof value !== "object") return createNotebook();\n    const raw = value;\n    const pages = Array.isArray(raw.pages) ? raw.pages : [];\n    const normalizedPages = pages.map(normalizePage).filter((page) => page !== null);\n    const pageIds = new Set(normalizedPages.map((page) => page.id));\n    const legacyOrder = [...normalizedPages].sort((a, b) => a.createdAt - b.createdAt).map((page) => page.id);\n    const requestedOrder = Array.isArray(raw.pageOrder) ? raw.pageOrder.filter((id) => typeof id === "string") : legacyOrder;\n    const pageOrder = [.../* @__PURE__ */ new Set([...requestedOrder.filter((id) => pageIds.has(id)), ...legacyOrder.filter((id) => !requestedOrder.includes(id))])];\n    const deletedPages = raw.deletedPages && typeof raw.deletedPages === "object" ? Object.fromEntries(Object.entries(raw.deletedPages).filter((entry) => typeof entry[0] === "string" && typeof entry[1] === "number" && Number.isFinite(entry[1]))) : {};\n    const visiblePages = normalizedPages.filter((page) => !(page.id in deletedPages));\n    const visibleIds = new Set(visiblePages.map((page) => page.id));\n    const byId = new Map(visiblePages.map((page) => [page.id, page]));\n    const orderedPages = pageOrder.map((id) => byId.get(id)).filter((page) => page !== void 0);\n    if (orderedPages.length === 0) orderedPages.push(createPage("Page 1"));\n    return {\n      schema: 2,\n      title: typeof raw.title === "string" ? raw.title : "Ink Notebook",\n      pageWidth: finitePositive(raw.pageWidth, DEFAULT_PAGE_WIDTH),\n      pageHeight: finitePositive(raw.pageHeight, DEFAULT_PAGE_HEIGHT),\n      pages: orderedPages,\n      pageOrder: orderedPages.map((page) => page.id).filter((id) => visibleIds.has(id) || orderedPages.length === 1),\n      deletedPages,\n      pageOrderUpdatedAt: finitePositive(raw.pageOrderUpdatedAt, finitePositive(raw.updatedAt, Date.now())),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function mergeNotebooks(base, incoming) {\n    var _a, _b, _c, _d, _e, _f, _g;\n    const pages = /* @__PURE__ */ new Map();\n    for (const page of base.pages) pages.set(page.id, page);\n    for (const page of incoming.pages) {\n      const existing = pages.get(page.id);\n      pages.set(page.id, existing ? mergePages(existing, page) : page);\n    }\n    const deletedPages = { ...(_a = base.deletedPages) != null ? _a : {} };\n    for (const [id, timestamp] of Object.entries((_b = incoming.deletedPages) != null ? _b : {})) deletedPages[id] = Math.max((_c = deletedPages[id]) != null ? _c : 0, timestamp);\n    for (const id of Object.keys(deletedPages)) pages.delete(id);\n    const orderSource = incoming.pageOrderUpdatedAt > base.pageOrderUpdatedAt || incoming.pageOrderUpdatedAt === base.pageOrderUpdatedAt && compareNotebookOrder(incoming, base) >= 0 ? incoming : base;\n    const preferred = (_d = orderSource.pageOrder) != null ? _d : [];\n    const known = preferred.map((id) => pages.get(id)).filter((page) => page !== void 0);\n    const additions = [...pages.values()].filter((page) => !preferred.includes(page.id)).sort((a, b) => a.createdAt - b.createdAt);\n    const ordered = [...known];\n    for (const page of additions) {\n      const inBase = ((_e = base.pageOrder) != null ? _e : []).includes(page.id);\n      const inIncoming = ((_f = incoming.pageOrder) != null ? _f : []).includes(page.id);\n      const source = inBase && !inIncoming ? base : incoming;\n      const sourceOrder = (_g = source.pageOrder) != null ? _g : source.pages.map((candidate) => candidate.id);\n      const sourceIndex = sourceOrder.indexOf(page.id);\n      let inserted = false;\n      for (let index = sourceIndex - 1; index >= 0; index--) {\n        const anchor = ordered.findIndex((candidate) => candidate.id === sourceOrder[index]);\n        if (anchor >= 0) {\n          ordered.splice(anchor + 1, 0, page);\n          inserted = true;\n          break;\n        }\n      }\n      if (!inserted) for (let index = sourceIndex + 1; index < sourceOrder.length; index++) {\n        const anchor = ordered.findIndex((candidate) => candidate.id === sourceOrder[index]);\n        if (anchor >= 0) {\n          ordered.splice(anchor, 0, page);\n          inserted = true;\n          break;\n        }\n      }\n      if (!inserted) {\n        const at = ordered.findIndex((candidate) => page.createdAt < candidate.createdAt);\n        ordered.splice(at < 0 ? ordered.length : at, 0, page);\n      }\n    }\n    const safePages = ordered.length ? ordered : [createPage("Page 1")];\n    const pageOrder = safePages.map((page) => page.id);\n    return {\n      ...incoming,\n      schema: 2,\n      title: incoming.updatedAt >= base.updatedAt ? incoming.title : base.title,\n      pageWidth: incoming.pageWidth || base.pageWidth,\n      pageHeight: incoming.pageHeight || base.pageHeight,\n      pages: safePages,\n      pageOrder,\n      deletedPages,\n      pageOrderUpdatedAt: Math.max(base.pageOrderUpdatedAt, incoming.pageOrderUpdatedAt),\n      updatedAt: Math.max(base.updatedAt, incoming.updatedAt)\n    };\n  }\n  function compareNotebookOrder(left, right) {\n    var _a, _b;\n    const leftOrder = JSON.stringify((_a = left.pageOrder) != null ? _a : []);\n    const rightOrder = JSON.stringify((_b = right.pageOrder) != null ? _b : []);\n    return leftOrder < rightOrder ? -1 : leftOrder > rightOrder ? 1 : 0;\n  }\n  function mergePages(base, incoming) {\n    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;\n    const stickyNotes = /* @__PURE__ */ new Map();\n    for (const note of [...(_a = base.stickyNotes) != null ? _a : [], ...(_b = incoming.stickyNotes) != null ? _b : []]) {\n      const previous = stickyNotes.get(note.id);\n      stickyNotes.set(note.id, previous ? mergeSticky(previous, note) : note);\n    }\n    const deletedStickyNotes = { ...base.deletedStickyNotes };\n    for (const [id, time] of Object.entries((_c = incoming.deletedStickyNotes) != null ? _c : {})) deletedStickyNotes[id] = Math.max((_d = deletedStickyNotes[id]) != null ? _d : 0, time);\n    for (const [id, note] of stickyNotes) if (note.updatedAt <= ((_e = deletedStickyNotes[id]) != null ? _e : 0)) stickyNotes.delete(id);\n    const images = /* @__PURE__ */ new Map();\n    for (const image of [...(_f = base.images) != null ? _f : [], ...(_g = incoming.images) != null ? _g : []]) {\n      const previous = images.get(image.id);\n      if (!previous || image.updatedAt > previous.updatedAt || image.updatedAt === previous.updatedAt && JSON.stringify(image) > JSON.stringify(previous)) images.set(image.id, image);\n    }\n    const deletedImageIds = [.../* @__PURE__ */ new Set([...(_h = base.deletedImageIds) != null ? _h : [], ...(_i = incoming.deletedImageIds) != null ? _i : []])];\n    for (const id of deletedImageIds) images.delete(id);\n    const strokes = /* @__PURE__ */ new Map();\n    for (const stroke of base.strokes) strokes.set(stroke.id, stroke);\n    for (const stroke of incoming.strokes) {\n      const existing = strokes.get(stroke.id);\n      if (!existing || stroke.updatedAt >= existing.updatedAt) strokes.set(stroke.id, stroke);\n    }\n    const deletedStrokeIds = [.../* @__PURE__ */ new Set([...(_j = base.deletedStrokeIds) != null ? _j : [], ...(_k = incoming.deletedStrokeIds) != null ? _k : []])];\n    for (const id of deletedStrokeIds) strokes.delete(id);\n    return {\n      ...base,\n      ...incoming,\n      title: incoming.updatedAt >= base.updatedAt ? incoming.title : base.title,\n      paper: incoming.updatedAt >= base.updatedAt ? incoming.paper : base.paper,\n      strokes: [...strokes.values()].sort((a, b) => a.createdAt - b.createdAt),\n      deletedStrokeIds,\n      ...base.stickyNotes || incoming.stickyNotes || base.deletedStickyNotes || incoming.deletedStickyNotes ? {\n        stickyNotes: [...stickyNotes.values()].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)),\n        deletedStickyNotes\n      } : {},\n      ...base.images || incoming.images || base.deletedImageIds || incoming.deletedImageIds ? {\n        images: [...images.values()].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)),\n        deletedImageIds\n      } : {},\n      updatedAt: Math.max(base.updatedAt, incoming.updatedAt)\n    };\n  }\n  function normalizePage(value) {\n    var _a;\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    const strokes = Array.isArray(raw.strokes) ? raw.strokes : [];\n    const deletedStrokeIds = Array.isArray(raw.deletedStrokeIds) ? raw.deletedStrokeIds.filter((id) => typeof id === "string") : [];\n    const deleted = new Set(deletedStrokeIds);\n    const pageId = typeof raw.id === "string" ? raw.id : newId("page");\n    const deletedImageIds = Array.isArray(raw.deletedImageIds) ? raw.deletedImageIds.filter((id) => typeof id === "string") : [];\n    const deletedStickyNotes = Object.fromEntries(Object.entries((_a = raw.deletedStickyNotes) != null ? _a : {}).filter(([id, time]) => typeof id === "string" && Number.isFinite(time)));\n    return {\n      id: pageId,\n      title: typeof raw.title === "string" ? raw.title : "Untitled",\n      paper: isPaperStyle(raw.paper) ? raw.paper : "ruled",\n      strokes: strokes.map(normalizeStroke).filter((stroke) => stroke !== null && !deleted.has(stroke.id)),\n      deletedStrokeIds,\n      ...Array.isArray(raw.stickyNotes) || raw.deletedStickyNotes ? {\n        stickyNotes: (Array.isArray(raw.stickyNotes) ? raw.stickyNotes : []).map((note) => normalizeSticky(note, pageId)).filter((note) => {\n          var _a2;\n          return !!note && note.updatedAt > ((_a2 = deletedStickyNotes[note.id]) != null ? _a2 : 0);\n        }),\n        deletedStickyNotes\n      } : {},\n      ...Array.isArray(raw.images) || Array.isArray(raw.deletedImageIds) ? {\n        images: (Array.isArray(raw.images) ? raw.images : []).map((image) => normalizeImage(image, pageId)).filter((image) => !!image && !deletedImageIds.includes(image.id)),\n        deletedImageIds\n      } : {},\n      createdAt: finitePositive(raw.createdAt, Date.now()),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function isManagedImagePath(path) {\n    return typeof path === "string" && /^Ink Notes\\/Images\\/assets\\/[a-zA-Z0-9-]+\\.png$/.test(path);\n  }\n  function normalizeImage(value, pageId) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    if (typeof raw.id !== "string" || !isManagedImagePath(raw.assetPath)) return null;\n    if (![raw.x, raw.y, raw.width, raw.height].every((n) => typeof n === "number" && Number.isFinite(n))) return null;\n    const width = clamp(raw.width, 0.01, 1), height = clamp(raw.height, 0.01, 1);\n    return {\n      id: raw.id,\n      pageId,\n      assetPath: raw.assetPath,\n      x: clamp(raw.x, 0, 1 - width),\n      y: clamp(raw.y, 0, 1 - height),\n      width,\n      height,\n      foreground: raw.foreground === true,\n      createdAt: finitePositive(raw.createdAt, Date.now()),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function normalizeStroke(value) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    if (typeof raw.id !== "string" || typeof raw.pageId !== "string") return null;\n    const points = Array.isArray(raw.points) ? raw.points : [];\n    return {\n      id: raw.id,\n      pageId: raw.pageId,\n      tool: raw.tool === "highlighter" ? "highlighter" : "pen",\n      color: typeof raw.color === "string" ? raw.color : "#1b1b1b",\n      width: finitePositive(raw.width, 3),\n      opacity: clamp(finitePositive(raw.opacity, 1), 0.05, 1),\n      points: points.map(normalizePoint).filter((point) => point !== null),\n      dynamics: normalizeDynamics(raw.dynamics),\n      createdAt: finitePositive(raw.createdAt, Date.now()),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function normalizeDynamics(value) {\n    if (!value || typeof value !== "object") return void 0;\n    const raw = value;\n    const percent = (candidate, fallback) => typeof candidate === "number" && Number.isFinite(candidate) ? clamp(Math.round(candidate), 0, 100) : fallback;\n    const curve = Array.isArray(raw.pressureCurve) && raw.pressureCurve.length >= 2 ? raw.pressureCurve.map((point) => Array.isArray(point) ? [Number(point[0]), Number(point[1])] : [NaN, NaN]) : void 0;\n    const dynamics = {\n      taper: percent(raw.taper, 0),\n      pressure: percent(raw.pressure, 100),\n      speed: percent(raw.speed, 0)\n    };\n    if (curve) dynamics.pressureCurve = curve;\n    const defaults = { taper: 0, pressure: 100, speed: 0 };\n    const plain = dynamics.taper === defaults.taper && dynamics.pressure === defaults.pressure && dynamics.speed === defaults.speed;\n    return plain && !curve ? void 0 : dynamics;\n  }\n  function normalizePoint(value) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    if (typeof raw.x !== "number" || typeof raw.y !== "number") return null;\n    return {\n      x: clamp(raw.x, 0, 1),\n      y: clamp(raw.y, 0, 1),\n      pressure: clamp(typeof raw.pressure === "number" ? raw.pressure : 0.5, 0.05, 1),\n      tiltX: typeof raw.tiltX === "number" ? raw.tiltX : void 0,\n      tiltY: typeof raw.tiltY === "number" ? raw.tiltY : void 0,\n      t: finitePositive(raw.t, Date.now())\n    };\n  }\n  function finitePositive(value, fallback) {\n    return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;\n  }\n  function clamp(value, min, max) {\n    return Math.max(min, Math.min(max, value));\n  }\n  function isPaperStyle(value) {\n    return value === "blank" || value === "ruled" || value === "grid" || value === "dot";\n  }\n\n  // src/rendering.ts\n  var paths = /* @__PURE__ */ new WeakMap();\n  function penOutlineRings(stroke, width, height) {\n    var _a, _b, _c, _d;\n    const pressures = smoothPenPressures(stroke.points);\n    const centerline = smoothOutlineCenterline(\n      stroke.points.map((point, index) => [point.x * width, point.y * height, pressures[index], point.t]),\n      stroke.width * 0.925\n    );\n    const count = centerline.length;\n    if (count === 0) return [];\n    const speeds = new Array(count);\n    for (let index = 0; index < count; index++) {\n      const previous = centerline[Math.max(0, index - 1)];\n      const following = centerline[Math.min(count - 1, index + 1)];\n      const distance = Math.hypot(following[0] - previous[0], following[1] - previous[1]);\n      const dt = Math.max(1, (following[3] - previous[3]) / 2);\n      speeds[index] = distance / (dt / 1e3);\n    }\n    const sortedSpeeds = [...speeds].sort((a, b) => a - b);\n    const medianSpeed = sortedSpeeds[Math.floor(sortedSpeeds.length / 2)] || 0;\n    const speedReference = Math.max(medianSpeed * 2.5, 60);\n    const pressureGain = clampPercent((_a = stroke.dynamics) == null ? void 0 : _a.pressure, 100) / 100;\n    const speedGain = clampPercent((_b = stroke.dynamics) == null ? void 0 : _b.speed, 0) / 100;\n    const pressureCurve = normalizePressureCurve((_c = stroke.dynamics) == null ? void 0 : _c.pressureCurve);\n    const taper = clampPercent((_d = stroke.dynamics) == null ? void 0 : _d.taper, 0) / 100;\n    const brushWidth = stroke.width;\n    const fullDiameter = brushWidth * 1.3;\n    let totalLength = 0;\n    const cumulative = new Array(count);\n    cumulative[0] = 0;\n    for (let index = 1; index < count; index++) {\n      totalLength += Math.hypot(centerline[index][0] - centerline[index - 1][0], centerline[index][1] - centerline[index - 1][1]);\n      cumulative[index] = totalLength;\n    }\n    const rampLength = taper * Math.min(totalLength * 0.25, brushWidth * 2);\n    const envelopeAt = (distanceFromEnd) => {\n      if (rampLength <= 0) return 1;\n      const m = Math.min(1, distanceFromEnd / rampLength);\n      const smoothstep = m * m * (3 - 2 * m);\n      return 1 - taper * (1 - smoothstep);\n    };\n    const halfWidthAt = (index) => {\n      const point = centerline[index];\n      const pressure = samplePressureCurve(Math.max(0, Math.min(1, point[2])), pressureCurve);\n      const effectivePressure = 0.5 + (pressure - 0.5) * pressureGain;\n      const modulation = (0.55 + 0.75 * effectivePressure) / 1.3;\n      const speedNorm = Math.min(speeds[index] / speedReference, 1);\n      const speedFactor = 1 - speedGain * speedNorm * speedNorm * 0.35;\n      const envelope = envelopeAt(Math.min(cumulative[index], totalLength - cumulative[index]));\n      return Math.max(0.3, fullDiameter / 2 * envelope * modulation * speedFactor);\n    };\n    const normals = new Array(count);\n    for (let index = 0; index < count; index++) {\n      const point = centerline[index];\n      const previous = centerline[Math.max(0, index - 1)];\n      const following = centerline[Math.min(count - 1, index + 1)];\n      let dx = following[0] - previous[0];\n      let dy = following[1] - previous[1];\n      if (index === 0 && count > 1) {\n        dx = centerline[1][0] - point[0];\n        dy = centerline[1][1] - point[1];\n      } else if (index === count - 1 && count > 1) {\n        dx = point[0] - centerline[index - 1][0];\n        dy = point[1] - centerline[index - 1][1];\n      }\n      let length = Math.hypot(dx, dy);\n      if (length < 1e-6) {\n        dx = 1;\n        dy = 0;\n        length = 1;\n      }\n      normals[index] = [-dy / length, dx / length];\n    }\n    const discSegments = 12;\n    if (count === 1) {\n      const point = centerline[0];\n      const radius = halfWidthAt(0);\n      const ring = [];\n      for (let index = 0; index < discSegments; index++) {\n        const angle = index / discSegments * Math.PI * 2;\n        ring.push([point[0] + Math.cos(angle) * radius, point[1] + Math.sin(angle) * radius]);\n      }\n      let area = 0;\n      for (let index = 0; index < ring.length; index++) {\n        const a = ring[index];\n        const b = ring[(index + 1) % ring.length];\n        area += a[0] * b[1] - b[0] * a[1];\n      }\n      return [area < 0 ? ring.slice().reverse() : ring];\n    }\n    const rings = [];\n    const emitRing = (ring) => {\n      if (ring.length < 3) return;\n      let area = 0;\n      for (let index = 0; index < ring.length; index++) {\n        const a = ring[index];\n        const b = ring[(index + 1) % ring.length];\n        area += a[0] * b[1] - b[0] * a[1];\n      }\n      rings.push(area < 0 ? ring.slice().reverse() : ring);\n    };\n    for (let index = 0; index < count; index++) {\n      const point = centerline[index];\n      const radius = halfWidthAt(index);\n      const [nx, ny] = normals[index];\n      const ring = [];\n      for (let sample = 0; sample < discSegments; sample++) {\n        const angle = sample / discSegments * Math.PI * 2;\n        ring.push([point[0] + Math.cos(angle) * radius, point[1] + Math.sin(angle) * radius]);\n      }\n      emitRing(ring);\n      if (index === count - 1) continue;\n      const following = centerline[index + 1];\n      const followingRadius = halfWidthAt(index + 1);\n      const [fnx, fny] = normals[index + 1];\n      emitRing([\n        [point[0] + nx * radius, point[1] + ny * radius],\n        [following[0] + fnx * followingRadius, following[1] + fny * followingRadius],\n        [following[0] - fnx * followingRadius, following[1] - fny * followingRadius],\n        [point[0] - nx * radius, point[1] - ny * radius]\n      ]);\n    }\n    return rings;\n  }\n  function clampPercent(value, fallback) {\n    return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : fallback;\n  }\n  function normalizePressureCurve(raw) {\n    if (!Array.isArray(raw)) return void 0;\n    const cleaned = raw.filter((point) => Array.isArray(point) && point.length >= 2 && typeof point[0] === "number" && Number.isFinite(point[0]) && typeof point[1] === "number" && Number.isFinite(point[1])).map((point) => [Math.max(0, Math.min(1, point[0])), Math.max(0, Math.min(1, point[1]))].map((value) => Math.round(value * 1e3) / 1e3)).sort((a, b) => a[0] - b[0]);\n    if (cleaned.length < 2) return void 0;\n    cleaned[0][0] = 0;\n    cleaned[cleaned.length - 1][0] = 1;\n    const monotonic = [cleaned[0]];\n    for (let index = 1; index < cleaned.length; index++) {\n      if (cleaned[index][0] <= monotonic[monotonic.length - 1][0]) continue;\n      monotonic.push(cleaned[index]);\n    }\n    if (monotonic.length < 2) return void 0;\n    for (let index = 1; index < monotonic.length; index++) {\n      monotonic[index][1] = Math.max(monotonic[index][1], monotonic[index - 1][1]);\n    }\n    const identity = monotonic.every(([x, y]) => Math.abs(x - y) <= 1e-3);\n    return identity ? void 0 : monotonic;\n  }\n  function samplePressureCurve(pressure, curve) {\n    if (!curve || curve.length < 2) return pressure;\n    if (pressure <= curve[0][0]) return curve[0][1];\n    for (let index = 1; index < curve.length; index++) {\n      if (pressure <= curve[index][0]) {\n        const span = curve[index][0] - curve[index - 1][0];\n        const amount = span > 0 ? (pressure - curve[index - 1][0]) / span : 0;\n        return curve[index - 1][1] + (curve[index][1] - curve[index - 1][1]) * amount;\n      }\n    }\n    return curve[curve.length - 1][1];\n  }\n  function smoothOutlineCenterline(points, nib) {\n    if (points.length < 3) return points;\n    const maxSegment = nib * 0.75;\n    let current = points;\n    for (let pass = 0; pass < 2; pass++) {\n      const next = current.map((point) => point.slice());\n      for (let index = 1; index < current.length - 1; index++) {\n        const point = current[index];\n        const previous = current[index - 1];\n        const following = current[index + 1];\n        if (Math.hypot(point[0] - previous[0], point[1] - previous[1]) > maxSegment) continue;\n        if (Math.hypot(following[0] - point[0], following[1] - point[1]) > maxSegment) continue;\n        next[index][0] = (previous[0] + 2 * point[0] + following[0]) / 4;\n        next[index][1] = (previous[1] + 2 * point[1] + following[1]) / 4;\n        next[index][2] = (previous[2] + 2 * point[2] + following[2]) / 4;\n      }\n      current = next;\n    }\n    return current;\n  }\n  function smoothPenPressures(points) {\n    if (points.length < 3) return points.map((point) => point.pressure);\n    return points.map((point, index) => {\n      if (index === 0 || index === points.length - 1) return point.pressure;\n      return median3(points[index - 1].pressure, point.pressure, points[index + 1].pressure);\n    });\n  }\n  function median3(a, b, c) {\n    return Math.max(Math.min(a, b), Math.min(Math.max(a, b), c));\n  }\n  function drawInkStroke(ctx, stroke, width, height) {\n    var _a;\n    if (stroke.points.length === 0) return;\n    ctx.save();\n    ctx.globalAlpha = stroke.opacity;\n    ctx.fillStyle = stroke.color;\n    ctx.strokeStyle = stroke.color;\n    ctx.lineCap = "round";\n    ctx.lineJoin = "round";\n    ctx.globalCompositeOperation = stroke.tool === "highlighter" ? "multiply" : "source-over";\n    if (stroke.points.length === 1) {\n      const point = stroke.points[0];\n      const gain = clampPercent((_a = stroke.dynamics) == null ? void 0 : _a.pressure, 100) / 100;\n      const effectivePressure = 0.5 + (point.pressure - 0.5) * gain;\n      const diameter = stroke.tool === "highlighter" ? stroke.width : stroke.width * (0.55 + effectivePressure * 0.75);\n      ctx.beginPath();\n      ctx.arc(point.x * width, point.y * height, diameter / 2, 0, Math.PI * 2);\n      ctx.fill();\n    } else if (stroke.tool === "highlighter") {\n      ctx.lineWidth = stroke.width;\n      drawSmoothPath(ctx, stroke.points, width, height);\n      ctx.stroke();\n    } else {\n      let cached = paths.get(stroke);\n      if (!cached || cached.points !== stroke.points || cached.count !== stroke.points.length || cached.updatedAt !== stroke.updatedAt || cached.size !== stroke.width || cached.width !== width || cached.height !== height) {\n        cached = {\n          points: stroke.points,\n          count: stroke.points.length,\n          updatedAt: stroke.updatedAt,\n          size: stroke.width,\n          width,\n          height,\n          path: createPenPath(stroke, width, height)\n        };\n        paths.set(stroke, cached);\n      }\n      ctx.fill(cached.path);\n    }\n    ctx.restore();\n  }\n  function createPenPath(stroke, width, height) {\n    const path = new Path2D();\n    for (const ring of penOutlineRings(stroke, width, height)) {\n      path.moveTo(ring[0][0], ring[0][1]);\n      for (let index = 1; index < ring.length; index++) path.lineTo(ring[index][0], ring[index][1]);\n      path.closePath();\n    }\n    return path;\n  }\n  function drawSmoothPath(ctx, points, width, height) {\n    ctx.beginPath();\n    ctx.moveTo(points[0].x * width, points[0].y * height);\n    for (let index = 1; index < points.length; index++) {\n      const previous = points[index - 1];\n      const point = points[index];\n      const end = index === points.length - 1 ? point : { x: (previous.x + point.x) / 2, y: (previous.y + point.y) / 2 };\n      ctx.quadraticCurveTo(previous.x * width, previous.y * height, end.x * width, end.y * height);\n    }\n    const last = points[points.length - 1];\n    ctx.lineTo(last.x * width, last.y * height);\n  }\n\n  // src/worker-protocol.ts\n  function serializeNotebook(notebook) {\n    return `${JSON.stringify(notebook, null, 2)}\n`;\n  }\n  function cloneStrokeValue(stroke) {\n    return { ...stroke, points: stroke.points.map((point) => ({ ...point })) };\n  }\n  function clonePageValue(page) {\n    var _a, _b, _c;\n    return { ...page, stickyNotes: (_a = page.stickyNotes) == null ? void 0 : _a.map(cloneSticky), deletedStickyNotes: { ...page.deletedStickyNotes }, images: (_b = page.images) == null ? void 0 : _b.map((image) => ({ ...image })), deletedImageIds: [...(_c = page.deletedImageIds) != null ? _c : []], strokes: page.strokes.map(cloneStrokeValue), deletedStrokeIds: [...page.deletedStrokeIds] };\n  }\n\n  // src/worker-core.ts\n  var WorkerPageIndex = class {\n    constructor(width, height) {\n      this.width = width;\n      this.height = height;\n      this.entries = /* @__PURE__ */ new Map();\n      this.cells = /* @__PURE__ */ new Map();\n      this.strokeWidths = /* @__PURE__ */ new Map();\n      this.maximumStrokeWidth = 0;\n    }\n    sync(page) {\n      this.entries.clear();\n      this.cells.clear();\n      this.strokeWidths.clear();\n      this.maximumStrokeWidth = 0;\n      page.strokes.forEach((stroke, order) => this.upsert(stroke, order));\n    }\n    upsert(stroke, order) {\n      var _a;\n      this.remove(stroke.id);\n      const entry = { stroke, order, cells: workerStrokeCells(stroke, this.width, this.height) };\n      this.entries.set(stroke.id, entry);\n      this.strokeWidths.set(stroke.width, ((_a = this.strokeWidths.get(stroke.width)) != null ? _a : 0) + 1);\n      this.maximumStrokeWidth = Math.max(this.maximumStrokeWidth, stroke.width);\n      for (const cell of entry.cells) {\n        let bucket = this.cells.get(cell);\n        if (!bucket) this.cells.set(cell, bucket = /* @__PURE__ */ new Set());\n        bucket.add(entry);\n      }\n    }\n    remove(strokeId) {\n      var _a;\n      const entry = this.entries.get(strokeId);\n      if (!entry) return;\n      this.entries.delete(strokeId);\n      const widthCount = ((_a = this.strokeWidths.get(entry.stroke.width)) != null ? _a : 1) - 1;\n      if (widthCount > 0) this.strokeWidths.set(entry.stroke.width, widthCount);\n      else this.strokeWidths.delete(entry.stroke.width);\n      if (entry.stroke.width === this.maximumStrokeWidth && widthCount <= 0) {\n        this.maximumStrokeWidth = 0;\n        for (const width of this.strokeWidths.keys()) this.maximumStrokeWidth = Math.max(this.maximumStrokeWidth, width);\n      }\n      for (const cell of entry.cells) {\n        const bucket = this.cells.get(cell);\n        bucket == null ? void 0 : bucket.delete(entry);\n        if ((bucket == null ? void 0 : bucket.size) === 0) this.cells.delete(cell);\n      }\n    }\n    updateOrder(page) {\n      page.strokes.forEach((stroke, order) => {\n        const entry = this.entries.get(stroke.id);\n        if (entry) entry.order = order;\n      });\n    }\n    getStroke(strokeId) {\n      var _a;\n      return (_a = this.entries.get(strokeId)) == null ? void 0 : _a.stroke;\n    }\n    getOrder(strokeId) {\n      var _a;\n      return (_a = this.entries.get(strokeId)) == null ? void 0 : _a.order;\n    }\n    query(cell, queryWidth = this.width, queryHeight = this.height) {\n      var _a;\n      const [column, row] = cell.split(":").map(Number);\n      const x = column * 128;\n      const y = row * 128;\n      const padding = this.maximumStrokeWidth * 0.7 + 4;\n      const paddingX = padding * this.width / queryWidth;\n      const paddingY = padding * this.height / queryHeight;\n      const keys = workerCellKeys({\n        x: x * this.width / queryWidth - paddingX,\n        y: y * this.height / queryHeight - paddingY,\n        width: Math.min(128, queryWidth - x) * this.width / queryWidth + paddingX * 2,\n        height: Math.min(128, queryHeight - y) * this.height / queryHeight + paddingY * 2\n      }, this.width, this.height);\n      const found = /* @__PURE__ */ new Set();\n      for (const key of keys) for (const entry of (_a = this.cells.get(key)) != null ? _a : []) found.add(entry);\n      return [...found].sort((left, right) => left.order - right.order).map((entry) => entry.stroke);\n    }\n  };\n  var OUTLINE_CACHE_LIMIT = 512;\n  var ProtocolError = class extends Error {\n    constructor(code, message) {\n      super(message);\n      this.code = code;\n    }\n  };\n  var InkWorkerCore = class {\n    constructor(capabilities) {\n      this.capabilities = capabilities;\n      this.sessions = /* @__PURE__ */ new Map();\n    }\n    ready() {\n      return { type: "ready", requestId: 0, sessionId: "", generation: 0, notebookRevision: 0, capabilities: this.capabilities };\n    }\n    async handle(request) {\n      var _a, _b;\n      try {\n        const response = await this.dispatch(request);\n        return response.type === "tile-rendered" ? { response, transfer: [response.bitmap] } : response.type === "operation-applied" && response.outline ? { response, transfer: [response.outline.buffer] } : { response };\n      } catch (error) {\n        return { response: {\n          type: "error",\n          requestId: request.requestId,\n          sessionId: request.sessionId,\n          generation: request.generation,\n          notebookRevision: (_b = (_a = this.sessions.get(request.sessionId)) == null ? void 0 : _a.revision) != null ? _b : request.notebookRevision,\n          code: error instanceof ProtocolError ? error.code : "internal",\n          message: error instanceof Error ? error.message : String(error)\n        } };\n      }\n    }\n    async dispatch(request) {\n      if (request.type === "initialize-raw") {\n        if (request.notebookRevision !== request.revision) {\n          throw new ProtocolError("revision-gap", "Initialize request revision metadata does not match its notebook revision");\n        }\n        const notebook = parseNotebook(request.raw);\n        this.sessions.set(request.sessionId, {\n          generation: request.generation,\n          notebook,\n          revision: request.revision,\n          pendingSave: /* @__PURE__ */ new Map(),\n          indexes: workerIndexes(notebook),\n          outlineCache: /* @__PURE__ */ new Map()\n        });\n        return this.response(request, { type: "initialized", notebook, revision: request.revision });\n      }\n      if (request.type === "initialize-notebook") {\n        if (request.notebookRevision !== request.revision) {\n          throw new ProtocolError("revision-gap", "Initialize request revision metadata does not match its notebook revision");\n        }\n        const notebook = normalizeNotebook(request.notebook);\n        this.sessions.set(request.sessionId, {\n          generation: request.generation,\n          notebook,\n          revision: request.revision,\n          pendingSave: /* @__PURE__ */ new Map(),\n          indexes: workerIndexes(notebook),\n          outlineCache: /* @__PURE__ */ new Map()\n        });\n        return this.response(request, { type: "initialized", notebook, revision: request.revision });\n      }\n      const session = this.sessions.get(request.sessionId);\n      if (!session) throw new ProtocolError("missing-session", "Ink worker session is not initialized");\n      if (session.generation !== request.generation) throw new ProtocolError("stale-generation", "Ink worker request belongs to a stale file generation");\n      if (request.type !== "apply-operation" && request.notebookRevision > session.revision) {\n        throw new ProtocolError("revision-gap", `Worker revision ${session.revision} is behind request revision ${request.notebookRevision}`);\n      }\n      if (request.type === "apply-operation") {\n        if (request.notebookRevision !== request.revision) {\n          throw new ProtocolError("revision-gap", "Operation revision metadata does not match its notebook revision");\n        }\n        if (request.revision !== session.revision + 1) {\n          throw new ProtocolError("revision-gap", `Expected revision ${session.revision + 1}, received ${request.revision}`);\n        }\n        const operation = request.operation;\n        invalidateOperationOutlines(session.outlineCache, operation);\n        const operationIndex = "pageId" in operation && typeof operation.pageId === "string" ? session.indexes.get(operation.pageId) : void 0;\n        const outline = applyNotebookOperation(session.notebook, operation, session.outlineCache, operationIndex);\n        if (operation.type === "replace-notebook" || operation.type === "history-restore" || operation.type === "page-operation") {\n          session.indexes = workerIndexes(session.notebook);\n          session.outlineCache.clear();\n        } else {\n          const pageId = operation.pageId;\n          const page = session.notebook.pages.find((candidate) => candidate.id === pageId);\n          if (page) {\n            let index = session.indexes.get(pageId);\n            if (!index) session.indexes.set(pageId, index = new WorkerPageIndex(session.notebook.pageWidth, session.notebook.pageHeight));\n            updateWorkerIndex(index, page, operation, outline == null ? void 0 : outline.stroke);\n          }\n        }\n        session.revision = request.revision;\n        return this.response(request, {\n          type: "operation-applied",\n          revision: session.revision,\n          ...outline ? { strokeId: outline.strokeId, sampleCount: outline.sampleCount, outline: outline.points, outlineMode: outline.mode } : {}\n        });\n      }\n      if (request.type === "barrier") {\n        if (session.revision < request.minimumRevision) {\n          throw new ProtocolError("revision-gap", `Worker revision ${session.revision} is behind ${request.minimumRevision}`);\n        }\n        return this.response(request, { type: "barrier-complete", revision: session.revision });\n      }\n      if (request.type === "prepare-save") {\n        if (session.revision < request.minimumRevision) {\n          throw new ProtocolError("revision-gap", `Worker revision ${session.revision} is behind ${request.minimumRevision}`);\n        }\n        const disk = parseNotebook(request.raw);\n        const local = normalizeNotebook(session.notebook);\n        const merged = mergeNotebooks(disk, local);\n        const token = `${request.sessionId}:${request.generation}:${request.requestId}`;\n        session.pendingSave.clear();\n        session.pendingSave.set(token, {\n          notebook: normalizeNotebook(merged),\n          revision: session.revision,\n          reconcile: serializeNotebook(merged) !== serializeNotebook(local)\n        });\n        return this.response(request, { type: "save-prepared", token, content: serializeNotebook(merged), revision: session.revision });\n      }\n      if (request.type === "render-tile") {\n        const rendered = renderTile(\n          session.notebook,\n          session.indexes.get(request.pageId),\n          session.outlineCache,\n          request.pageId,\n          request.cell,\n          request.density,\n          request.revision,\n          request.renderGeneration,\n          request.width,\n          request.height\n        );\n        return this.response(request, { type: "tile-rendered", ...rendered });\n      }\n      if (request.type === "cancel-render-generation") {\n        return this.response(request, { type: "renders-cancelled", renderGeneration: request.renderGeneration });\n      }\n      if (request.type === "commit-save") {\n        const candidate = session.pendingSave.get(request.token);\n        if (!candidate) throw new ProtocolError("missing-session", "Prepared save is no longer available");\n        session.pendingSave.delete(request.token);\n        session.notebook = mergeNotebooks(candidate.notebook, session.notebook);\n        session.indexes = workerIndexes(session.notebook);\n        session.outlineCache.clear();\n        return this.response(request, {\n          type: "save-committed",\n          revision: candidate.revision,\n          merged: candidate.reconcile ? candidate.notebook : void 0\n        });\n      }\n      if (request.type === "abort-save") {\n        session.pendingSave.delete(request.token);\n        return this.response(request, { type: "save-aborted" });\n      }\n      if (request.type === "merge-external") {\n        const merged = mergeNotebooks(parseNotebook(request.raw), session.notebook);\n        const changed = serializeNotebook(merged) !== serializeNotebook(session.notebook);\n        session.notebook = normalizeNotebook(merged);\n        if (changed) {\n          session.indexes = workerIndexes(session.notebook);\n          session.outlineCache.clear();\n        }\n        return this.response(request, { type: "external-merged", notebook: changed ? session.notebook : void 0, revision: session.revision });\n      }\n      this.sessions.delete(request.sessionId);\n      return this.response(request, { type: "session-disposed" });\n    }\n    response(request, response) {\n      var _a, _b;\n      return {\n        ...response,\n        requestId: request.requestId,\n        sessionId: request.sessionId,\n        generation: request.generation,\n        notebookRevision: (_b = (_a = this.sessions.get(request.sessionId)) == null ? void 0 : _a.revision) != null ? _b : request.notebookRevision\n      };\n    }\n  };\n  function renderTile(notebook, index, outlineCache, pageId, cell, density, revision, renderGeneration, pageWidth, pageHeight) {\n    var _a;\n    const page = notebook.pages.find((candidate) => candidate.id === pageId);\n    if (!page) throw new Error(`Ink worker page is unavailable: ${pageId}`);\n    const Canvas = globalThis.OffscreenCanvas;\n    if (!Canvas) throw new Error("OffscreenCanvas is not supported by this device");\n    const [column, row] = cell.split(":").map(Number);\n    const x = column * 128;\n    const y = row * 128;\n    const width = Math.min(128, pageWidth - x);\n    const height = Math.min(128, pageHeight - y);\n    if (width <= 0 || height <= 0) throw new Error(`Ink worker tile is outside page bounds: ${cell}`);\n    const safeDensity = Math.max(0.5, Math.min(9, density));\n    const bleedPixels = Math.ceil(4 * safeDensity);\n    const canvasWidth = Math.ceil(width * safeDensity) + bleedPixels * 2;\n    const canvasHeight = Math.ceil(height * safeDensity) + bleedPixels * 2;\n    const canvas = new Canvas(canvasWidth, canvasHeight);\n    const ctx = canvas.getContext("2d");\n    if (!ctx) throw new Error("Ink worker could not create a 2D tile context");\n    ctx.setTransform(safeDensity, 0, 0, safeDensity, bleedPixels - x * safeDensity, bleedPixels - y * safeDensity);\n    const candidates = (_a = index == null ? void 0 : index.query(cell, pageWidth, pageHeight)) != null ? _a : [];\n    for (const stroke of candidates) drawWorkerStroke(ctx, stroke, pageWidth, pageHeight, outlineCache);\n    return {\n      pageId,\n      cell,\n      density: safeDensity,\n      revision,\n      renderGeneration,\n      x,\n      y,\n      width,\n      height,\n      canvasWidth,\n      canvasHeight,\n      bitmap: canvas.transferToImageBitmap()\n    };\n  }\n  function workerIndexes(notebook) {\n    const indexes = /* @__PURE__ */ new Map();\n    for (const page of notebook.pages) {\n      const index = new WorkerPageIndex(notebook.pageWidth, notebook.pageHeight);\n      index.sync(page);\n      indexes.set(page.id, index);\n    }\n    return indexes;\n  }\n  function workerStrokeCells(stroke, pageWidth, pageHeight) {\n    if (stroke.points.length === 0) return [];\n    const padding = stroke.width * 0.7 + 4;\n    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;\n    for (const point of stroke.points) {\n      minX = Math.min(minX, point.x * pageWidth);\n      minY = Math.min(minY, point.y * pageHeight);\n      maxX = Math.max(maxX, point.x * pageWidth);\n      maxY = Math.max(maxY, point.y * pageHeight);\n    }\n    return workerCellKeys({ x: minX - padding, y: minY - padding, width: maxX - minX + padding * 2, height: maxY - minY + padding * 2 }, pageWidth, pageHeight);\n  }\n  function workerCellKeys(rect, pageWidth, pageHeight) {\n    if (!Number.isFinite(rect.x + rect.y + rect.width + rect.height) || rect.width <= 0 || rect.height <= 0 || rect.x >= pageWidth || rect.y >= pageHeight || rect.x + rect.width <= 0 || rect.y + rect.height <= 0) return [];\n    const cells = [];\n    for (let row = Math.floor(Math.max(0, rect.y) / 128); row < Math.ceil(Math.min(pageHeight, rect.y + rect.height) / 128); row++) {\n      for (let column = Math.floor(Math.max(0, rect.x) / 128); column < Math.ceil(Math.min(pageWidth, rect.x + rect.width) / 128); column++) {\n        cells.push(`${column}:${row}`);\n      }\n    }\n    return cells;\n  }\n  function drawWorkerStroke(ctx, stroke, width, height, cache) {\n    if (stroke.tool !== "pen") {\n      drawInkStroke(ctx, stroke, width, height);\n      return;\n    }\n    const signature = `${stroke.updatedAt}:${stroke.points.length}:${stroke.width}:${width}:${height}`;\n    let cached = cache.get(stroke.id);\n    let outline = (cached == null ? void 0 : cached.signature) === signature ? cached.points : void 0;\n    if (!outline) {\n      const generated = penOutlineRings(stroke, width, height);\n      const separators = Math.max(0, generated.length - 1);\n      const buffer = new Float32Array((generated.reduce((total, ring) => total + ring.length, 0) + separators) * 2);\n      let cursor = 0;\n      generated.forEach((ring, ringIndex) => {\n        if (ringIndex > 0) {\n          buffer[cursor] = Number.NaN;\n          buffer[cursor + 1] = Number.NaN;\n          cursor += 2;\n        }\n        for (const [x, y] of ring) {\n          buffer[cursor] = x;\n          buffer[cursor + 1] = y;\n          cursor += 2;\n        }\n      });\n      outline = buffer;\n      cache.delete(stroke.id);\n      cache.set(stroke.id, { signature, points: outline });\n      while (cache.size > OUTLINE_CACHE_LIMIT) cache.delete(cache.keys().next().value);\n    } else {\n      cache.delete(stroke.id);\n      cache.set(stroke.id, cached);\n    }\n    ctx.save();\n    ctx.globalAlpha = stroke.opacity;\n    ctx.fillStyle = stroke.color;\n    ctx.globalCompositeOperation = "source-over";\n    if (outline.length >= 2) {\n      ctx.beginPath();\n      let tracing = false;\n      for (let index = 0; index < outline.length; index += 2) {\n        const x = outline[index];\n        const y = outline[index + 1];\n        if (!Number.isFinite(x) || !Number.isFinite(y)) {\n          tracing = false;\n          continue;\n        }\n        if (!tracing) {\n          tracing = true;\n          ctx.moveTo(x, y);\n          continue;\n        }\n        ctx.lineTo(x, y);\n      }\n      ctx.fill();\n    }\n    ctx.restore();\n  }\n  function parseNotebook(raw) {\n    try {\n      return normalizeNotebook(JSON.parse(raw));\n    } catch (e) {\n      throw new ProtocolError("invalid-format", "Existing ink notebook is not valid JSON");\n    }\n  }\n  function applyNotebookOperation(notebook, operation, cache, index) {\n    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;\n    if (operation.type === "replace-notebook" || operation.type === "history-restore") {\n      Object.assign(notebook, normalizeNotebook(operation.notebook));\n      return void 0;\n    }\n    if (operation.type === "page-operation") {\n      const page2 = operation.page;\n      if ((operation.action === "add" || operation.action === "duplicate" || operation.action === "restore") && page2) {\n        if (!(page2.id in notebook.deletedPages)) {\n          notebook.pages = notebook.pages.filter((candidate) => candidate.id !== page2.id);\n          notebook.pages.push(clonePageValue(page2));\n        }\n      } else if (operation.action === "delete" && operation.pageId) {\n        if (notebook.pages.length > 1) {\n          notebook.pages = notebook.pages.filter((candidate) => candidate.id !== operation.pageId);\n          notebook.deletedPages[operation.pageId] = Math.max((_a = notebook.deletedPages[operation.pageId]) != null ? _a : 0, (_b = operation.deletedAt) != null ? _b : Date.now());\n        }\n      }\n      const order = new Map(operation.pageOrder.map((id, index2) => [id, index2]));\n      notebook.pages.sort((left, right) => {\n        var _a2, _b2;\n        return ((_a2 = order.get(left.id)) != null ? _a2 : Number.MAX_SAFE_INTEGER) - ((_b2 = order.get(right.id)) != null ? _b2 : Number.MAX_SAFE_INTEGER);\n      });\n      notebook.pageOrder = notebook.pages.map((candidate) => candidate.id);\n      notebook.pageOrderUpdatedAt = operation.pageOrderUpdatedAt;\n      notebook.updatedAt = operation.notebookUpdatedAt;\n      return void 0;\n    }\n    const page = notebook.pages.find((candidate) => candidate.id === operation.pageId);\n    if (!page) return void 0;\n    let outlinedStroke;\n    if (operation.type === "start-stroke") {\n      const position = (_c = index == null ? void 0 : index.getOrder(operation.stroke.id)) != null ? _c : -1;\n      const stroke = cloneStrokeValue(operation.stroke);\n      if (position >= 0) page.strokes[position] = stroke;\n      else page.strokes.push(stroke);\n      outlinedStroke = stroke;\n    } else if (operation.type === "append-stroke-points") {\n      const stroke = (_d = index == null ? void 0 : index.getStroke(operation.strokeId)) != null ? _d : page.strokes.find((candidate) => candidate.id === operation.strokeId);\n      if (stroke) {\n        for (let index2 = 0; index2 + 5 < operation.points.length; index2 += 6) {\n          stroke.points.push({\n            x: operation.points[index2],\n            y: operation.points[index2 + 1],\n            pressure: operation.points[index2 + 2],\n            tiltX: Number.isNaN(operation.points[index2 + 3]) ? void 0 : operation.points[index2 + 3],\n            tiltY: Number.isNaN(operation.points[index2 + 4]) ? void 0 : operation.points[index2 + 4],\n            t: operation.points[index2 + 5]\n          });\n        }\n        outlinedStroke = stroke;\n      }\n    } else if (operation.type === "complete-stroke") {\n      const stroke = (_e = index == null ? void 0 : index.getStroke(operation.strokeId)) != null ? _e : page.strokes.find((candidate) => candidate.id === operation.strokeId);\n      if (stroke) stroke.updatedAt = operation.pageUpdatedAt;\n    } else if (operation.type === "finalize-stroke") {\n      const position = (_f = index == null ? void 0 : index.getOrder(operation.stroke.id)) != null ? _f : -1;\n      const stroke = cloneStrokeValue(operation.stroke);\n      if (position >= 0) page.strokes[position] = stroke;\n      else page.strokes.push(stroke);\n      page.strokes.sort((left, right) => left.createdAt - right.createdAt);\n      outlinedStroke = stroke;\n    } else if (operation.type === "patch-strokes") {\n      const removed = new Set(operation.remove);\n      const upsert = new Map(operation.upsert.map((stroke) => [stroke.id, cloneStrokeValue(stroke)]));\n      page.strokes = page.strokes.filter((stroke) => !removed.has(stroke.id) && !upsert.has(stroke.id));\n      page.strokes.push(...upsert.values());\n      page.strokes.sort((left, right) => left.createdAt - right.createdAt);\n      page.deletedStrokeIds = [.../* @__PURE__ */ new Set([...page.deletedStrokeIds, ...operation.deletedStrokeIds])];\n    } else if (operation.type === "translate-strokes") {\n      for (const strokeId of operation.strokeIds) {\n        const stroke = (_g = index == null ? void 0 : index.getStroke(strokeId)) != null ? _g : page.strokes.find((candidate) => candidate.id === strokeId);\n        if (!stroke) continue;\n        stroke.points = stroke.points.map((point) => ({ ...point, x: point.x + operation.dx, y: point.y + operation.dy }));\n        stroke.updatedAt = operation.pageUpdatedAt;\n      }\n    } else if (operation.type === "patch-sticky-notes") {\n      const removed = new Set(operation.remove), upsert = new Map(operation.upsert.map((note) => [note.id, cloneSticky(note)]));\n      page.deletedStickyNotes = { ...page.deletedStickyNotes };\n      for (const [id, time] of Object.entries(operation.deletedStickyNotes)) page.deletedStickyNotes[id] = Math.max((_h = page.deletedStickyNotes[id]) != null ? _h : 0, time);\n      page.stickyNotes = [...((_i = page.stickyNotes) != null ? _i : []).filter((note) => !removed.has(note.id) && !upsert.has(note.id)), ...upsert.values()].filter((note) => {\n        var _a2;\n        return note.updatedAt > ((_a2 = page.deletedStickyNotes[note.id]) != null ? _a2 : 0);\n      });\n    } else if (operation.type === "patch-images") {\n      const removed = new Set(operation.remove);\n      const upsert = new Map(operation.upsert.map((image) => [image.id, { ...image }]));\n      page.deletedImageIds = [.../* @__PURE__ */ new Set([...(_j = page.deletedImageIds) != null ? _j : [], ...operation.deletedImageIds])];\n      page.images = [...((_k = page.images) != null ? _k : []).filter((image) => !removed.has(image.id) && !upsert.has(image.id)), ...upsert.values()].filter((image) => !page.deletedImageIds.includes(image.id));\n    } else {\n      if (operation.title !== void 0) page.title = operation.title;\n      if (operation.paper !== void 0) page.paper = operation.paper;\n    }\n    page.updatedAt = operation.pageUpdatedAt;\n    notebook.updatedAt = operation.notebookUpdatedAt;\n    if (!outlinedStroke || outlinedStroke.tool !== "pen" && outlinedStroke.tool !== "highlighter") return void 0;\n    const previewWidth = operation.type === "start-stroke" || operation.type === "append-stroke-points" ? Math.max(1, (_l = operation.previewWidth) != null ? _l : notebook.pageWidth) : notebook.pageWidth;\n    const previewHeight = operation.type === "start-stroke" || operation.type === "append-stroke-points" ? Math.max(1, (_m = operation.previewHeight) != null ? _m : notebook.pageHeight) : notebook.pageHeight;\n    const signature = `${outlinedStroke.updatedAt}:${outlinedStroke.points.length}:${outlinedStroke.width}:${previewWidth}:${previewHeight}`;\n    if (outlinedStroke.tool === "highlighter") {\n      const line = new Float32Array(outlinedStroke.points.length * 2);\n      for (let index2 = 0; index2 < outlinedStroke.points.length; index2++) {\n        line[index2 * 2] = outlinedStroke.points[index2].x;\n        line[index2 * 2 + 1] = outlinedStroke.points[index2].y;\n      }\n      return { strokeId: outlinedStroke.id, sampleCount: outlinedStroke.points.length, points: line, mode: "highlighter", stroke: outlinedStroke };\n    }\n    const cached = cache == null ? void 0 : cache.get(outlinedStroke.id);\n    let outline = (cached == null ? void 0 : cached.signature) === signature ? cached.points : void 0;\n    if (!outline) {\n      const generated = penOutlineRings(outlinedStroke, previewWidth, previewHeight);\n      const separators = Math.max(0, generated.length - 1);\n      const buffer = new Float32Array((generated.reduce((total, ring) => total + ring.length, 0) + separators) * 2);\n      let cursor = 0;\n      generated.forEach((ring, ringIndex) => {\n        if (ringIndex > 0) {\n          buffer[cursor] = Number.NaN;\n          buffer[cursor + 1] = Number.NaN;\n          cursor += 2;\n        }\n        for (const [x, y] of ring) {\n          buffer[cursor] = x;\n          buffer[cursor + 1] = y;\n          cursor += 2;\n        }\n      });\n      outline = buffer;\n      if (cache) {\n        cache.delete(outlinedStroke.id);\n        cache.set(outlinedStroke.id, { signature, points: outline });\n        while (cache.size > OUTLINE_CACHE_LIMIT) cache.delete(cache.keys().next().value);\n      }\n    }\n    const normalized = new Float32Array(outline.length);\n    for (let index2 = 0; index2 < outline.length; index2 += 2) {\n      normalized[index2] = outline[index2] / previewWidth;\n      normalized[index2 + 1] = outline[index2 + 1] / previewHeight;\n    }\n    return { strokeId: outlinedStroke.id, sampleCount: outlinedStroke.points.length, points: normalized, mode: "pen", stroke: outlinedStroke };\n  }\n  function invalidateOperationOutlines(cache, operation) {\n    if (operation.type === "replace-notebook" || operation.type === "history-restore" || operation.type === "page-operation") {\n      cache.clear();\n      return;\n    }\n    if (operation.type === "start-stroke" || operation.type === "finalize-stroke") cache.delete(operation.stroke.id);\n    else if (operation.type === "append-stroke-points" || operation.type === "complete-stroke") cache.delete(operation.strokeId);\n    else if (operation.type === "patch-strokes") {\n      for (const id of operation.remove) cache.delete(id);\n      for (const stroke of operation.upsert) cache.delete(stroke.id);\n    } else if (operation.type === "translate-strokes") {\n      for (const id of operation.strokeIds) cache.delete(id);\n    }\n  }\n  function updateWorkerIndex(index, page, operation, outlinedStroke) {\n    var _a, _b, _c, _d;\n    if (operation.type === "start-stroke" || operation.type === "finalize-stroke") {\n      const stroke = outlinedStroke;\n      if (stroke) index.upsert(stroke, operation.type === "start-stroke" ? (_a = index.getOrder(stroke.id)) != null ? _a : page.strokes.length - 1 : Number.MAX_SAFE_INTEGER);\n      if (operation.type === "finalize-stroke") index.updateOrder(page);\n    } else if (operation.type === "complete-stroke") {\n      const stroke = outlinedStroke != null ? outlinedStroke : index.getStroke(operation.strokeId);\n      if (stroke) index.upsert(stroke, (_b = index.getOrder(operation.strokeId)) != null ? _b : page.strokes.length - 1);\n    } else if (operation.type === "append-stroke-points") {\n    } else if (operation.type === "patch-strokes") {\n      for (const id of operation.remove) index.remove(id);\n      const positions = new Map(page.strokes.map((stroke, position) => [stroke.id, position]));\n      const strokes = new Map(page.strokes.map((stroke) => [stroke.id, stroke]));\n      for (const replacement of operation.upsert) {\n        const stroke = strokes.get(replacement.id);\n        if (stroke) index.upsert(stroke, (_c = positions.get(stroke.id)) != null ? _c : Number.MAX_SAFE_INTEGER);\n      }\n      index.updateOrder(page);\n    } else if (operation.type === "translate-strokes") {\n      for (const id of operation.strokeIds) {\n        const stroke = index.getStroke(id);\n        if (stroke) index.upsert(stroke, (_d = index.getOrder(id)) != null ? _d : Number.MAX_SAFE_INTEGER);\n      }\n    }\n  }\n\n  // src/ink-worker.ts\n  var scope = self;\n  var core = new InkWorkerCore({\n    offscreenCanvas: typeof OffscreenCanvas !== "undefined",\n    imageBitmap: typeof ImageBitmap !== "undefined",\n    transferable: supportsTransferableBuffers()\n  });\n  var queue = [];\n  var running = false;\n  scope.onmessage = (event) => {\n    const request = event.data;\n    if (request.type === "cancel-render-generation") {\n      for (let index = queue.length - 1; index >= 0; index--) {\n        const queued = queue[index];\n        if (queued.type === "render-tile" && queued.sessionId === request.sessionId && queued.generation === request.generation && queued.renderGeneration < request.renderGeneration) {\n          queue.splice(index, 1);\n          scope.postMessage({\n            type: "error",\n            requestId: queued.requestId,\n            sessionId: queued.sessionId,\n            generation: queued.generation,\n            notebookRevision: queued.notebookRevision,\n            code: "stale-generation",\n            message: "Queued tile belongs to an obsolete render generation"\n          });\n        }\n      }\n    }\n    queue.push(request);\n    drain();\n  };\n  function drain() {\n    if (running || queue.length === 0) return;\n    queue.sort((left, right) => workerPriority(left) - workerPriority(right));\n    const request = queue.shift();\n    running = true;\n    void core.handle(request).then(({ response, transfer }) => scope.postMessage(response, transfer != null ? transfer : [])).finally(() => {\n      running = false;\n      drain();\n    });\n  }\n  function workerPriority(request) {\n    if (request.type === "cancel-render-generation" || request.type === "initialize-raw" || request.type === "initialize-notebook") return 0;\n    if (request.type === "apply-operation") return 1;\n    if (request.type === "render-tile") return request.priority === "visible" ? 2 : 3;\n    return 4;\n  }\n  scope.postMessage(core.ready());\n  function supportsTransferableBuffers() {\n    if (typeof MessageChannel === "undefined") return false;\n    try {\n      const channel = new MessageChannel();\n      const buffer = new ArrayBuffer(1);\n      channel.port1.postMessage(buffer, [buffer]);\n      channel.port1.close();\n      channel.port2.close();\n      return buffer.byteLength === 0;\n    } catch (e) {\n      return false;\n    }\n  }\n})();\n';
 
 // src/worker-service.ts
 var WORKER_READY_TIMEOUT = 2e3;
@@ -29043,7 +29807,7 @@ var InkView = class extends InkWritingView {
     this.store = store;
     this.workers = workers;
     if (toolState) this.useSharedToolState(toolState);
-    this.scope = new import_obsidian5.Scope(this.app.scope);
+    this.scope = new import_obsidian6.Scope(this.app.scope);
   }
   getViewType() {
     return VIEW_TYPE_INK;
@@ -29057,6 +29821,9 @@ var InkView = class extends InkWritingView {
   }
   revealPage(pageId) {
     this.navigateToPage(pageId);
+  }
+  revealStickyPage(pageId) {
+    return this.navigateToPage(pageId);
   }
   async onOpen() {
     this.root = this.containerEl.children[1];
@@ -29134,6 +29901,7 @@ var InkView = class extends InkWritingView {
   }
   async onUnloadFile(file) {
     var _a, _b, _c;
+    this.disposeStickyNotes();
     this.pageNavigationGeneration += 1;
     this.destroySwipeStage();
     this.finishPointerInput(false);
@@ -29196,16 +29964,16 @@ var InkView = class extends InkWritingView {
     var _a;
     if (!this.file) return;
     if (!notebookHasInk(this.notebook)) {
-      new import_obsidian5.Notice("This notebook has no handwriting to export yet");
+      new import_obsidian6.Notice("This notebook has no handwriting to export yet");
       return;
     }
     try {
       const output = await exportNotebookPdf(this.notebook, this.file.basename, this.canvasLogicalWidth, (_a = this.imageLibrary) == null ? void 0 : _a.bytes);
       const target = exportPathFor(this.file.path, (candidate) => this.app.vault.getAbstractFileByPath(candidate) !== null);
       await this.app.vault.createBinary(target, output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength));
-      new import_obsidian5.Notice(`Exported ${target}`);
+      new import_obsidian6.Notice(`Exported ${target}`);
     } catch (error) {
-      new import_obsidian5.Notice(`Export failed: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian6.Notice(`Export failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   activeToolButton() {
@@ -29292,18 +30060,18 @@ var InkView = class extends InkWritingView {
     }
     const thumbs = rail.createDiv({ cls: "ink-rail-thumbs" });
     this.notebook.pages.forEach((page, index) => {
-      const button2 = thumbs.createEl("button", { cls: "ink-page-thumb", attr: { type: "button", title: page.title } });
-      if (index === this.pageIndex) button2.addClass("is-active");
-      if (this.pageManagement && this.selectedPageIds.has(page.id)) button2.addClass("is-selected");
-      button2.setAttribute("aria-label", String(index + 1) + ": " + page.title);
-      button2.setAttribute("aria-current", String(index === this.pageIndex));
-      button2.setAttribute("aria-pressed", String(this.pageManagement && this.selectedPageIds.has(page.id)));
-      if (this.pageManagement) button2.setAttribute("aria-selected", String(this.selectedPageIds.has(page.id)));
-      button2.createDiv({ cls: `ink-page-thumb-paper ink-paper-${page.paper}` });
-      const canvas = button2.createEl("canvas", { cls: "ink-page-thumb-canvas", attr: { "aria-hidden": "true" } });
-      button2.createSpan({ text: String(index + 1), cls: "ink-page-thumb-number" });
-      button2.createSpan({ text: page.title, cls: "ink-page-thumb-title" });
-      button2.addEventListener("click", () => this.pageManagement ? this.togglePageSelection(page.id) : this.navigateToPage(page.id));
+      const button3 = thumbs.createEl("button", { cls: "ink-page-thumb", attr: { type: "button", title: page.title } });
+      if (index === this.pageIndex) button3.addClass("is-active");
+      if (this.pageManagement && this.selectedPageIds.has(page.id)) button3.addClass("is-selected");
+      button3.setAttribute("aria-label", String(index + 1) + ": " + page.title);
+      button3.setAttribute("aria-current", String(index === this.pageIndex));
+      button3.setAttribute("aria-pressed", String(this.pageManagement && this.selectedPageIds.has(page.id)));
+      if (this.pageManagement) button3.setAttribute("aria-selected", String(this.selectedPageIds.has(page.id)));
+      button3.createDiv({ cls: `ink-page-thumb-paper ink-paper-${page.paper}` });
+      const canvas = button3.createEl("canvas", { cls: "ink-page-thumb-canvas", attr: { "aria-hidden": "true" } });
+      button3.createSpan({ text: String(index + 1), cls: "ink-page-thumb-number" });
+      button3.createSpan({ text: page.title, cls: "ink-page-thumb-title" });
+      button3.addEventListener("click", () => this.pageManagement ? this.togglePageSelection(page.id) : this.navigateToPage(page.id));
       this.drawPageThumbnail(canvas, page);
     });
     this.mountRailResizer(rail);
@@ -29542,7 +30310,7 @@ var InkView = class extends InkWritingView {
     this.refreshCurrentPageThumbnail();
     if (this.externalRefreshPending && this.pendingInkStrokes.length === 0) {
       this.externalRefreshPending = false;
-      void this.reloadFromDisk().catch((error) => new import_obsidian5.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
+      void this.reloadFromDisk().catch((error) => new import_obsidian6.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
     }
   }
   afterCommand(command) {
@@ -29897,7 +30665,7 @@ var InkView = class extends InkWritingView {
     };
     const text = JSON.stringify(report, null, 2);
     if (toClipboard) {
-      void navigator.clipboard.writeText(text).then(() => new import_obsidian5.Notice("Ink diagnostics copied to the clipboard.")).catch((error) => new import_obsidian5.Notice(`Ink Notes could not copy diagnostics: ${error instanceof Error ? error.message : String(error)}`));
+      void navigator.clipboard.writeText(text).then(() => new import_obsidian6.Notice("Ink diagnostics copied to the clipboard.")).catch((error) => new import_obsidian6.Notice(`Ink Notes could not copy diagnostics: ${error instanceof Error ? error.message : String(error)}`));
       return;
     }
     const blob = new Blob([text], { type: "application/json" });
@@ -29907,7 +30675,7 @@ var InkView = class extends InkWritingView {
     anchor.download = `ink-diagnostics-${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}.json`;
     anchor.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
-    new import_obsidian5.Notice(`Exported ${report.strokes.length} stroke records.`);
+    new import_obsidian6.Notice(`Exported ${report.strokes.length} stroke records.`);
   }
   // ------------------------------------------------------------ page tools
   addPage(index = this.notebook.pages.length) {
@@ -29972,7 +30740,7 @@ var InkView = class extends InkWritingView {
         (window.devicePixelRatio || 1) * this.zoom
       );
     })().catch((error) => {
-      new import_obsidian5.Notice(`Ink Notes could not switch pages: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian6.Notice(`Ink Notes could not switch pages: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
   openPageMenu(event) {
@@ -30236,9 +31004,9 @@ page: ${this.currentPage().id}
 \`\`\``;
     try {
       await navigator.clipboard.writeText(syntax);
-      new import_obsidian5.Notice("Copied Ink page embed syntax");
+      new import_obsidian6.Notice("Copied Ink page embed syntax");
     } catch (error) {
-      new import_obsidian5.Notice(`Could not copy embed syntax: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian6.Notice(`Could not copy embed syntax: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   /**
@@ -30341,7 +31109,7 @@ page: ${this.currentPage().id}
     if (this.activeSave === saving) this.activeSave = null;
   }
   reportSaveFailure(file, error) {
-    new import_obsidian5.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
+    new import_obsidian6.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
   }
   async performSave(file) {
     this.syncing = true;
@@ -30354,7 +31122,7 @@ page: ${this.currentPage().id}
           this.savedRevision = Math.max(this.savedRevision, result.revision);
           if (result.merged && this.file === file) this.receiveMergedNotebook(result.merged);
         } catch (error) {
-          new import_obsidian5.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
+          new import_obsidian6.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
           break;
         }
       } while (this.saveRequested || this.dirtyRevision > this.savedRevision);
@@ -30362,7 +31130,7 @@ page: ${this.currentPage().id}
       this.syncing = false;
       if (this.externalRefreshPending && this.activePointerId === null) {
         this.externalRefreshPending = false;
-        void this.reloadFromDisk().catch((error) => new import_obsidian5.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
+        void this.reloadFromDisk().catch((error) => new import_obsidian6.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
       }
       if (this.dirtyRevision > this.savedRevision && this.saveRequested) this.scheduleSave();
     }
@@ -30440,23 +31208,25 @@ function cloneNotebook(notebook) {
     pageOrder: [...notebook.pageOrder],
     deletedPages: { ...notebook.deletedPages },
     pages: notebook.pages.map((page) => {
-      var _a, _b;
+      var _a, _b, _c;
       return {
         ...page,
         strokes: page.strokes.map(cloneStroke),
         images: (_a = page.images) == null ? void 0 : _a.map((image) => ({ ...image })),
-        deletedImageIds: [...(_b = page.deletedImageIds) != null ? _b : []],
+        stickyNotes: (_b = page.stickyNotes) == null ? void 0 : _b.map(cloneSticky),
+        deletedStickyNotes: { ...page.deletedStickyNotes },
+        deletedImageIds: [...(_c = page.deletedImageIds) != null ? _c : []],
         deletedStrokeIds: [...page.deletedStrokeIds]
       };
     })
   };
 }
 function clonePage(page) {
-  var _a, _b;
-  return { ...page, images: (_a = page.images) == null ? void 0 : _a.map((image) => ({ ...image })), deletedImageIds: [...(_b = page.deletedImageIds) != null ? _b : []], strokes: page.strokes.map(cloneStroke), deletedStrokeIds: [...page.deletedStrokeIds] };
+  var _a, _b, _c;
+  return { ...page, stickyNotes: (_a = page.stickyNotes) == null ? void 0 : _a.map(cloneSticky), deletedStickyNotes: { ...page.deletedStickyNotes }, images: (_b = page.images) == null ? void 0 : _b.map((image) => ({ ...image })), deletedImageIds: [...(_c = page.deletedImageIds) != null ? _c : []], strokes: page.strokes.map(cloneStroke), deletedStrokeIds: [...page.deletedStrokeIds] };
 }
 function clonePageAsNew(page, title, now = Date.now()) {
-  var _a;
+  var _a, _b;
   const pageId = newId("page");
   return {
     ...clonePage(page),
@@ -30464,6 +31234,18 @@ function clonePageAsNew(page, title, now = Date.now()) {
     title,
     images: (_a = page.images) == null ? void 0 : _a.map((image) => ({ ...image, id: newId("placed-image"), pageId, createdAt: now, updatedAt: now })),
     deletedImageIds: [],
+    stickyNotes: (_b = page.stickyNotes) == null ? void 0 : _b.map((note) => {
+      const copy = cloneSticky(note), id = newId("sticky");
+      return {
+        ...copy,
+        id,
+        pageId,
+        createdAt: now,
+        updatedAt: now,
+        strokes: copy.strokes.map((stroke) => ({ ...stroke, id: newId("sticky-ink"), pageId: id }))
+      };
+    }),
+    deletedStickyNotes: {},
     strokes: page.strokes.map((stroke) => ({ ...cloneStroke(stroke), id: newId("stroke"), pageId, createdAt: now, updatedAt: now })),
     deletedStrokeIds: [],
     createdAt: now,
@@ -30518,10 +31300,13 @@ function reconcileNotebook(target, incoming, selectedPageId, previousPageIndex) 
   };
 }
 function reconcilePage(target, incoming) {
-  var _a, _b, _c, _d;
-  const imagesChanged = JSON.stringify((_a = target.images) != null ? _a : []) !== JSON.stringify((_b = incoming.images) != null ? _b : []);
-  if (imagesChanged) target.images = (_c = incoming.images) == null ? void 0 : _c.map((image) => ({ ...image }));
-  target.deletedImageIds = [...(_d = incoming.deletedImageIds) != null ? _d : []];
+  var _a, _b, _c, _d, _e, _f, _g;
+  const stickyChanged = JSON.stringify((_a = target.stickyNotes) != null ? _a : []) !== JSON.stringify((_b = incoming.stickyNotes) != null ? _b : []);
+  if (stickyChanged) target.stickyNotes = (_c = incoming.stickyNotes) == null ? void 0 : _c.map(cloneSticky);
+  target.deletedStickyNotes = { ...incoming.deletedStickyNotes };
+  const imagesChanged = JSON.stringify((_d = target.images) != null ? _d : []) !== JSON.stringify((_e = incoming.images) != null ? _e : []);
+  if (imagesChanged) target.images = (_f = incoming.images) == null ? void 0 : _f.map((image) => ({ ...image }));
+  target.deletedImageIds = [...(_g = incoming.deletedImageIds) != null ? _g : []];
   const previousStrokes = target.strokes;
   const previousById = new Map(previousStrokes.map((stroke) => [stroke.id, stroke]));
   const strokes = incoming.strokes.map((incomingStroke) => {
@@ -30537,7 +31322,7 @@ function reconcilePage(target, incoming) {
   target.deletedStrokeIds = arraysEqual(target.deletedStrokeIds, incoming.deletedStrokeIds) ? target.deletedStrokeIds : [...incoming.deletedStrokeIds];
   target.createdAt = incoming.createdAt;
   target.updatedAt = incoming.updatedAt;
-  return inkChanged || imagesChanged;
+  return inkChanged || imagesChanged || stickyChanged;
 }
 function strokeAppearanceEqual(left, right) {
   if (left.id !== right.id || left.pageId !== right.pageId || left.tool !== right.tool || left.color !== right.color || left.width !== right.width || left.opacity !== right.opacity || left.createdAt !== right.createdAt || left.points.length !== right.points.length) return false;
@@ -30558,7 +31343,7 @@ function recordsEqual(left, right) {
 }
 
 // src/storage.ts
-var import_obsidian6 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 var INK_EXTENSION = "ink";
 var INK_FOLDER = "Ink Notes";
 var NotebookFormatError = class extends Error {
@@ -30633,7 +31418,7 @@ var NotebookStore = class {
   observe(onChange) {
     const timers = /* @__PURE__ */ new Map();
     const handler = (file) => {
-      if (!(file instanceof import_obsidian6.TFile) || file.extension !== INK_EXTENSION || !file.path.startsWith(`${INK_FOLDER}/`)) return;
+      if (!(file instanceof import_obsidian7.TFile) || file.extension !== INK_EXTENSION || !file.path.startsWith(`${INK_FOLDER}/`)) return;
       const expected = this.selfWrites.get(file.path);
       const notify = () => {
         timers.delete(file.path);
@@ -30670,7 +31455,7 @@ function serialize(notebook) {
 }
 
 // src/embed.ts
-var import_obsidian7 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 
 // src/embed-spec.ts
 function parseInkEmbed(source) {
@@ -30699,7 +31484,7 @@ function createInkEmbedProcessor(app, open, images) {
     context.addChild(new InkEmbedChild(app, el, spec, open, images));
   };
 }
-var InkEmbedChild = class extends import_obsidian7.MarkdownRenderChild {
+var InkEmbedChild = class extends import_obsidian8.MarkdownRenderChild {
   constructor(app, container, spec, open, images) {
     super(container);
     this.app = app;
@@ -30712,7 +31497,7 @@ var InkEmbedChild = class extends import_obsidian7.MarkdownRenderChild {
   onload() {
     this.unloaded = false;
     this.registerEvent(this.app.vault.on("modify", (file) => {
-      if (file instanceof import_obsidian7.TFile && file.path === this.spec.path) this.requestRender();
+      if (file instanceof import_obsidian8.TFile && file.path === this.spec.path) this.requestRender();
     }));
     this.requestRender();
   }
@@ -30725,11 +31510,11 @@ var InkEmbedChild = class extends import_obsidian7.MarkdownRenderChild {
     void this.render(revision).catch((error) => this.renderError(revision, error));
   }
   async render(revision) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     const el = this.containerEl;
     el.addClass("ink-embed");
     const file = this.app.vault.getAbstractFileByPath(this.spec.path);
-    if (!(file instanceof import_obsidian7.TFile)) {
+    if (!(file instanceof import_obsidian8.TFile)) {
       this.renderError(revision, new Error(`Ink notebook not found: ${this.spec.path}`));
       return;
     }
@@ -30764,11 +31549,22 @@ var InkEmbedChild = class extends import_obsidian7.MarkdownRenderChild {
       img.style.height = `${image.height * 100}%`;
       img.style.zIndex = image.foreground ? "2" : "0";
     }
-    const button2 = next.createEl("button", { cls: "ink-embed-open", attr: { type: "button", "aria-label": "Open Ink notebook" } });
-    (0, import_obsidian7.setIcon)(button2, "external-link");
-    button2.createSpan({ text: "Open notebook" });
-    button2.addEventListener("click", () => {
-      void this.open(file, page.id).catch((error) => new import_obsidian7.Notice(`Ink Notes could not open ${file.path}: ${error instanceof Error ? error.message : String(error)}`));
+    if ((_d = page.stickyNotes) == null ? void 0 : _d.length) {
+      const overlay = frame.createEl("canvas", { cls: "ink-embed-stickies" });
+      overlay.width = canvas.width;
+      overlay.height = canvas.height;
+      const ctx = overlay.getContext("2d");
+      if (ctx) {
+        const scale = overlay.width / notebook.pageWidth;
+        ctx.scale(scale, scale);
+        paintPageStickies(ctx, page.stickyNotes, notebook.pageWidth, notebook.pageHeight);
+      }
+    }
+    const button3 = next.createEl("button", { cls: "ink-embed-open", attr: { type: "button", "aria-label": "Open Ink notebook" } });
+    (0, import_obsidian8.setIcon)(button3, "external-link");
+    button3.createSpan({ text: "Open notebook" });
+    button3.addEventListener("click", () => {
+      void this.open(file, page.id).catch((error) => new import_obsidian8.Notice(`Ink Notes could not open ${file.path}: ${error instanceof Error ? error.message : String(error)}`));
     });
     if (!this.isCurrent(revision)) return;
     el.replaceChildren(...Array.from(next.childNodes));
@@ -30795,7 +31591,7 @@ function renderError(el, error) {
 }
 
 // src/pdf-view.ts
-var import_obsidian10 = require("obsidian");
+var import_obsidian11 = require("obsidian");
 
 // src/pdf-sidecar.ts
 var PDF_SIDECAR_FORMAT = 1;
@@ -31088,14 +31884,14 @@ function finitePositive2(value, fallback) {
 }
 
 // src/pdf-store.ts
-var import_obsidian8 = require("obsidian");
+var import_obsidian9 = require("obsidian");
 var PdfSidecarStore = class {
   constructor(app) {
     this.vault = app.vault;
   }
   sidecarFileFor(pdfPath) {
     const file = this.vault.getAbstractFileByPath(sidecarPathFor(pdfPath));
-    return file instanceof import_obsidian8.TFile && file.name.endsWith(`.${PDF_SIDECAR_EXTENSION}`) ? file : null;
+    return file instanceof import_obsidian9.TFile && file.name.endsWith(`.${PDF_SIDECAR_EXTENSION}`) ? file : null;
   }
   /**
    * Create the empty sidecar for a PDF if it does not exist yet. Opening a
@@ -31244,7 +32040,7 @@ function around1(obj, method, createWrapper) {
 }
 
 // src/pdf-takeover.ts
-var import_obsidian9 = require("obsidian");
+var import_obsidian10 = require("obsidian");
 var PDF_VIEW_ENHANCER_PLUGIN_IDS = [
   "annotations-everywhere",
   "book-note",
@@ -31328,7 +32124,7 @@ var PdfTabTakeover = class {
   get installed() {
     return this.uninstaller !== null;
   }
-  install(target = import_obsidian9.WorkspaceLeaf.prototype) {
+  install(target = import_obsidian10.WorkspaceLeaf.prototype) {
     if (this.uninstaller) return;
     const takeover = this;
     this.inert = false;
@@ -31470,7 +32266,7 @@ var PdfInkView = class extends InkWritingView {
     this.swipeLayer = null;
     /** Last drag offset; settle animations continue from it. */
     this.swipeDragOffset = 0;
-    this.scope = new import_obsidian10.Scope(this.app.scope);
+    this.scope = new import_obsidian11.Scope(this.app.scope);
   }
   /** Wired by the plugin right after construction. */
   configure(deps) {
@@ -31535,8 +32331,8 @@ var PdfInkView = class extends InkWritingView {
     if (outcome.status === "failed" && this.sidecar && this.sidecarFile) {
       outcome = await this.saveConflictCopy(this.sidecarRaw, outcome.message);
     }
-    if (outcome.status === "failed") new import_obsidian10.Notice(`Ink Notes could not save this PDF's latest notes: ${outcome.message}`);
-    if (outcome.status === "conflict") new import_obsidian10.Notice(`Ink Notes kept a conflict copy: ${outcome.message}`);
+    if (outcome.status === "failed") new import_obsidian11.Notice(`Ink Notes could not save this PDF's latest notes: ${outcome.message}`);
+    if (outcome.status === "conflict") new import_obsidian11.Notice(`Ink Notes kept a conflict copy: ${outcome.message}`);
     this.pendingMergedSidecar = null;
     this.loadGeneration += 1;
     this.cancelPdfRender();
@@ -31585,7 +32381,7 @@ var PdfInkView = class extends InkWritingView {
     if (generation !== this.loadGeneration) return;
     let pdfjs;
     try {
-      pdfjs = await (0, import_obsidian10.loadPdfJs)();
+      pdfjs = await (0, import_obsidian11.loadPdfJs)();
     } catch (error) {
       if (generation !== this.loadGeneration) return;
       this.setStatus(`Could not load the PDF renderer: ${messageOf(error)}`, true);
@@ -31617,6 +32413,7 @@ var PdfInkView = class extends InkWritingView {
   }
   async onUnloadFile(_file) {
     var _a;
+    this.disposeStickyNotes();
     this.finishPointerInput(false);
     this.clearSelection();
     this.closeLassoSettings();
@@ -31626,7 +32423,7 @@ var PdfInkView = class extends InkWritingView {
       if (outcome.status === "failed" && this.sidecar && this.sidecarFile) {
         outcome = await this.saveConflictCopy(this.sidecarRaw, outcome.message);
       }
-      if (outcome.status === "conflict") new import_obsidian10.Notice(`Ink Notes kept a conflict copy: ${outcome.message}`);
+      if (outcome.status === "conflict") new import_obsidian11.Notice(`Ink Notes kept a conflict copy: ${outcome.message}`);
     } catch (error) {
       outcome = { status: "failed", message: messageOf(error) };
     } finally {
@@ -31709,7 +32506,7 @@ var PdfInkView = class extends InkWritingView {
     this.finishPointerInput(false);
     const outcome = await this.flushSaveNow();
     if (outcome.status === "failed") {
-      new import_obsidian10.Notice(`Save failed, staying in the handwriting view: ${outcome.message}`);
+      new import_obsidian11.Notice(`Save failed, staying in the handwriting view: ${outcome.message}`);
       return;
     }
     if (!this.file) return;
@@ -31722,7 +32519,7 @@ var PdfInkView = class extends InkWritingView {
       );
     } catch (error) {
       this.takeover.releaseLeaf(this.leaf);
-      new import_obsidian10.Notice(`Could not return to the PDF viewer: ${messageOf(error)}`);
+      new import_obsidian11.Notice(`Could not return to the PDF viewer: ${messageOf(error)}`);
     }
   }
   setEphemeralState(state) {
@@ -31810,11 +32607,11 @@ var PdfInkView = class extends InkWritingView {
           const migrated = this.store.sidecarFileFor(file.path);
           if (migrated) await this.writeSidecar(migrated, serializeSidecar(sidecar), sidecar);
           this.attachSidecar(sidecar, serializeSidecar(sidecar), migrated != null ? migrated : recovered);
-          new import_obsidian10.Notice(`Restored handwriting notes from ${recovered.name}`);
+          new import_obsidian11.Notice(`Restored handwriting notes from ${recovered.name}`);
           return;
         }
       } catch (error) {
-        new import_obsidian10.Notice(`Recovered notes stayed at ${recovered.path}: ${messageOf(error)}`);
+        new import_obsidian11.Notice(`Recovered notes stayed at ${recovered.path}: ${messageOf(error)}`);
         this.attachSidecar(sidecar, serializeSidecar(sidecar), recovered);
         return;
       }
@@ -31857,7 +32654,7 @@ var PdfInkView = class extends InkWritingView {
         this.renderAll();
         void this.renderPdfPage();
       } catch (error) {
-        new import_obsidian10.Notice(`Could not restore the selected notes file: ${messageOf(error)}`);
+        new import_obsidian11.Notice(`Could not restore the selected notes file: ${messageOf(error)}`);
       }
     }).open();
   }
@@ -31939,8 +32736,8 @@ var PdfInkView = class extends InkWritingView {
     this.updatePageIndicator();
   }
   addTrackedIconButton(parent, key, icon, label, onClick, disabled = false) {
-    const button2 = this.addIconButton(parent, icon, label, onClick, disabled);
-    this.toolbarButtons.set(key, button2);
+    const button3 = this.addIconButton(parent, icon, label, onClick, disabled);
+    this.toolbarButtons.set(key, button3);
   }
   /** Scopes the PDF-surface popover rules (paper canvases, spacing). */
   brushPopoverExtraClass() {
@@ -32000,16 +32797,16 @@ var PdfInkView = class extends InkWritingView {
       if (!pageIds.has(pageId)) this.selectedPageIds.delete(pageId);
     });
     this.renderPageRailActions();
-    this.thumbButtons.forEach((button2, index) => {
+    this.thumbButtons.forEach((button3, index) => {
       var _a2;
       const pageId = (_a2 = pages == null ? void 0 : pages[index]) == null ? void 0 : _a2.id;
       const active = index === this.noteIndex;
       const selected = pageId !== void 0 && this.selectedPageIds.has(pageId);
-      button2.toggleClass("is-active", active);
-      button2.toggleClass("is-selected", this.pageManagement && selected);
-      button2.setAttribute("aria-current", String(active));
-      button2.setAttribute("aria-pressed", String(this.pageManagement && selected));
-      button2.setAttribute("aria-disabled", String(!pages || this.editingLocked()));
+      button3.toggleClass("is-active", active);
+      button3.toggleClass("is-selected", this.pageManagement && selected);
+      button3.setAttribute("aria-current", String(active));
+      button3.setAttribute("aria-pressed", String(this.pageManagement && selected));
+      button3.setAttribute("aria-disabled", String(!pages || this.editingLocked()));
     });
     if (this.railCount) this.railCount.textContent = this.pageManagement ? `${this.selectedPageIds.size} selected` : `${this.noteIndex + 1} / ${count}`;
     (_g = (_f = this.thumbButtons.get(this.noteIndex)) == null ? void 0 : _f.scrollIntoView) == null ? void 0 : _g.call(_f, { block: "nearest" });
@@ -32026,23 +32823,23 @@ var PdfInkView = class extends InkWritingView {
     const pages = (_a = this.sidecar) == null ? void 0 : _a.notePages;
     for (let index = 0; index < count; index++) {
       const display = this.rotatedSize((_b = pages == null ? void 0 : pages[index]) != null ? _b : null);
-      const button2 = thumbs.createEl("button", {
+      const button3 = thumbs.createEl("button", {
         cls: "ink-page-thumb",
         attr: { type: "button", "aria-label": `Page ${index + 1}` }
       });
       const pageId = (_c = pages == null ? void 0 : pages[index]) == null ? void 0 : _c.id;
-      if (pageId) button2.dataset.pageId = pageId;
-      button2.style.aspectRatio = `${Math.max(1, display.width)} / ${Math.max(1, display.height)}`;
-      button2.createEl("canvas", { cls: "ink-page-thumb-canvas", attr: { "aria-hidden": "true" } });
-      button2.createSpan({ text: String(index + 1), cls: "ink-page-thumb-number" });
-      button2.addEventListener("click", () => {
+      if (pageId) button3.dataset.pageId = pageId;
+      button3.style.aspectRatio = `${Math.max(1, display.width)} / ${Math.max(1, display.height)}`;
+      button3.createEl("canvas", { cls: "ink-page-thumb-canvas", attr: { "aria-hidden": "true" } });
+      button3.createSpan({ text: String(index + 1), cls: "ink-page-thumb-number" });
+      button3.addEventListener("click", () => {
         if (this.pageManagement) {
           if (pageId) this.toggleManagedPage(pageId);
           return;
         }
         void this.navigatePages(index - this.noteIndex);
       });
-      this.thumbButtons.set(index, button2);
+      this.thumbButtons.set(index, button3);
     }
   }
   renderPageRailActions() {
@@ -32051,10 +32848,10 @@ var PdfInkView = class extends InkWritingView {
     if (!actions) return;
     actions.empty();
     const add = (icon, label, callback, disabled = false) => {
-      const button2 = actions.createEl("button", { cls: "ink-icon-button", attr: { type: "button", "aria-label": label } });
-      (0, import_obsidian10.setIcon)(button2, icon);
-      button2.disabled = disabled;
-      button2.addEventListener("click", callback);
+      const button3 = actions.createEl("button", { cls: "ink-icon-button", attr: { type: "button", "aria-label": label } });
+      (0, import_obsidian11.setIcon)(button3, icon);
+      button3.disabled = disabled;
+      button3.addEventListener("click", callback);
     };
     if (this.pageManagement) {
       add(
@@ -32139,8 +32936,8 @@ var PdfInkView = class extends InkWritingView {
     const railRect = (_e = this.pageRail) == null ? void 0 : _e.getBoundingClientRect();
     if (!railRect || this.pageRail.clientHeight <= 0) return nearby;
     const visible = [];
-    for (const [index, button2] of this.thumbButtons) {
-      const rect = button2.getBoundingClientRect();
+    for (const [index, button3] of this.thumbButtons) {
+      const rect = button3.getBoundingClientRect();
       if (rect.bottom > railRect.top && rect.top < railRect.bottom) visible.push(index);
     }
     return (visible.length > 0 ? visible : nearby).sort((left, right) => Math.abs(left - this.noteIndex) - Math.abs(right - this.noteIndex));
@@ -32158,9 +32955,9 @@ var PdfInkView = class extends InkWritingView {
    */
   paintThumbnail(index) {
     var _a, _b, _c;
-    const button2 = this.thumbButtons.get(index);
-    const canvas = button2 == null ? void 0 : button2.querySelector("canvas");
-    if (!button2 || !canvas) return;
+    const button3 = this.thumbButtons.get(index);
+    const canvas = button3 == null ? void 0 : button3.querySelector("canvas");
+    if (!button3 || !canvas) return;
     const cached = this.thumbCache.get(index);
     if (cached) {
       this.paintThumbBitmap(canvas, cached, index);
@@ -32313,14 +33110,14 @@ var PdfInkView = class extends InkWritingView {
   withPageUndo(change, label) {
     var _a, _b;
     if (!this.sidecar || this.editingLocked()) {
-      new import_obsidian10.Notice(`Ink Notes could not ${label}: this view is read-only`);
+      new import_obsidian11.Notice(`Ink Notes could not ${label}: this view is read-only`);
       return;
     }
     this.finishPointerInput(false);
     const before = serializeSidecar(this.sidecar);
     const beforePageId = (_a = this.sidecar.notePages[this.noteIndex]) == null ? void 0 : _a.id;
     if (!change()) {
-      new import_obsidian10.Notice(`Ink Notes could not ${label}: source PDF pages are permanent`);
+      new import_obsidian11.Notice(`Ink Notes could not ${label}: source PDF pages are permanent`);
       return;
     }
     const after = serializeSidecar(this.sidecar);
@@ -32348,7 +33145,7 @@ var PdfInkView = class extends InkWritingView {
       this.renderAll();
       void this.renderPdfPage();
     } catch (error) {
-      new import_obsidian10.Notice(`Ink Notes could not restore the previous page state: ${messageOf(error)}`);
+      new import_obsidian11.Notice(`Ink Notes could not restore the previous page state: ${messageOf(error)}`);
     }
   }
   markSidecarChanged() {
@@ -32383,6 +33180,11 @@ var PdfInkView = class extends InkWritingView {
       this.viewport,
       (window.devicePixelRatio || 1) * this.zoom
     );
+  }
+  async revealStickyPage(pageId) {
+    var _a, _b;
+    const index = (_b = (_a = this.sidecar) == null ? void 0 : _a.notePages.findIndex((page) => page.id === pageId)) != null ? _b : -1;
+    if (index >= 0) await this.navigatePages(index - this.noteIndex);
   }
   setZoom(zoom, target, anchor) {
     if (this.zoomLocked || !Number.isFinite(zoom)) return;
@@ -33062,7 +33864,7 @@ var PdfInkView = class extends InkWritingView {
       await this.app.vault.create(conflictPath, serializeSidecar(sidecar));
       this.sidecarRaw = diskRaw;
       this.dirty = this.editRevision !== revision;
-      new import_obsidian10.Notice(`Ink Notes kept your notes in ${conflictPath}`);
+      new import_obsidian11.Notice(`Ink Notes kept your notes in ${conflictPath}`);
       return { status: "conflict", message: reason };
     } catch (error) {
       return { status: "failed", message: `${reason}; writing the conflict copy failed: ${messageOf(error)}` };
@@ -33074,12 +33876,12 @@ var PdfInkView = class extends InkWritingView {
     if (!this.file || !this.sidecar) return;
     this.finishPointerInput(false);
     if (!sidecarHasInk(this.sidecar)) {
-      new import_obsidian10.Notice("This PDF has no handwriting to export yet");
+      new import_obsidian11.Notice("This PDF has no handwriting to export yet");
       return;
     }
     const outcome = await this.flushSaveNow();
     if (outcome.status === "failed") {
-      new import_obsidian10.Notice(`Export cancelled: could not save notes (${outcome.message})`);
+      new import_obsidian11.Notice(`Export cancelled: could not save notes (${outcome.message})`);
       return;
     }
     try {
@@ -33087,26 +33889,26 @@ var PdfInkView = class extends InkWritingView {
       const fingerprint = await this.store.computeFingerprint(bytes);
       if (fingerprint.sha256 !== this.sidecar.source.sha256 || fingerprint.byteLength !== this.sidecar.source.byteLength) {
         this.sourcePdfModified();
-        new import_obsidian10.Notice("Export cancelled: the source PDF changed. Your notes still belong to the previous revision.");
+        new import_obsidian11.Notice("Export cancelled: the source PDF changed. Your notes still belong to the previous revision.");
         return;
       }
       const output = await exportHandwrittenPdf(bytes, this.sidecar, this.file.basename, this.canvasLogicalWidth, (_a = this.imageLibrary) == null ? void 0 : _a.bytes);
       const target = exportPathFor(this.file.path, (candidate) => this.app.vault.getAbstractFileByPath(candidate) !== null);
       await this.app.vault.createBinary(target, output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength));
-      new import_obsidian10.Notice(`Exported ${target}`);
+      new import_obsidian11.Notice(`Exported ${target}`);
     } catch (error) {
       if (error instanceof PdfExportError) {
-        new import_obsidian10.Notice(`Export failed: ${error.message}. Your notes are untouched.`);
+        new import_obsidian11.Notice(`Export failed: ${error.message}. Your notes are untouched.`);
         return;
       }
-      new import_obsidian10.Notice(`Export failed: ${messageOf(error)}`);
+      new import_obsidian11.Notice(`Export failed: ${messageOf(error)}`);
     }
   }
 };
 function messageOf(error) {
   return error instanceof Error ? error.message : String(error);
 }
-var RecoveryChoiceModal = class extends import_obsidian10.SuggestModal {
+var RecoveryChoiceModal = class extends import_obsidian11.SuggestModal {
   constructor(app, candidates, choose) {
     super(app);
     this.candidates = candidates;
@@ -33130,11 +33932,121 @@ var RecoveryChoiceModal = class extends import_obsidian10.SuggestModal {
   }
 };
 
+// src/sticky-index.ts
+var import_obsidian12 = require("obsidian");
+function filterStickyEntries(entries, query) {
+  const words = query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
+  return entries.filter((entry) => {
+    var _a;
+    const text = [entry.file, entry.pageTitle, entry.note.title, entry.note.text, entry.note.keywords, ...(_a = entry.handwritingTerms) != null ? _a : []].join("\n").toLocaleLowerCase();
+    return words.every((word) => text.includes(word));
+  });
+}
+async function collectStickyEntries(app, signal) {
+  var _a, _b, _c, _d;
+  const entries = [], errors = [];
+  for (const file of app.vault.getFiles()) {
+    if (signal.aborted) break;
+    const pdf = ((_a = file.parent) == null ? void 0 : _a.path) === PDF_INK_FOLDER && file.name.endsWith(`.${PDF_SIDECAR_EXTENSION}`);
+    if (file.extension !== "ink" && !pdf) continue;
+    try {
+      const raw = JSON.parse(await app.vault.read(file));
+      if (signal.aborted) break;
+      const sidecar = pdf ? normalizeSidecar(raw) : void 0;
+      if (!sidecar && (raw.schema !== 2 || !Array.isArray(raw.pages))) throw new Error("Invalid notebook format");
+      const notebook = (_b = sidecar == null ? void 0 : sidecar.notebook) != null ? _b : normalizeNotebook(raw), path = (_c = sidecar == null ? void 0 : sidecar.source.path) != null ? _c : file.path;
+      if (sidecar && !(app.vault.getAbstractFileByPath(path) instanceof import_obsidian12.TFile)) continue;
+      for (const page of notebook.pages) for (const note of (_d = page.stickyNotes) != null ? _d : []) entries.push({ file: path, pageId: page.id, pageTitle: page.title, note: cloneSticky(note) });
+    } catch (error) {
+      errors.push(`${file.path}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return { entries, errors };
+}
+var StickySearchModal = class extends import_obsidian12.Modal {
+  constructor(app, openNote, live, handwriting) {
+    super(app);
+    this.openNote = openNote;
+    this.live = live;
+    this.handwriting = handwriting;
+    this.events = new AbortController();
+    this.entries = [];
+  }
+  onOpen() {
+    this.setTitle("Find sticky notes");
+    this.modalEl.addClass("ink-sticky-search");
+    const search = this.contentEl.createEl("input", { type: "search", attr: { "aria-label": "Search sticky notes", placeholder: "Title, text or keywords" } });
+    const status = this.contentEl.createEl("p", { attr: { role: "status" }, text: "Reading notebook index\u2026" });
+    const list = this.contentEl.createDiv({ cls: "ink-sticky-results" });
+    const render = () => {
+      list.empty();
+      const matches = filterStickyEntries(this.entries, search.value);
+      status.textContent = `${matches.length} sticky notes`;
+      for (const entry of matches) {
+        const button3 = list.createEl("button", { text: `${entry.note.title || "Sticky note"} \u2014 ${entry.file} / ${entry.pageTitle}`, attr: { type: "button" } });
+        button3.onclick = () => {
+          void this.openNote(entry).then(() => this.close()).catch((error) => new import_obsidian12.Notice(`Could not locate sticky note: ${String(error)}`));
+        };
+        list.createEl("p", { text: (entry.note.text || entry.note.keywords || "Handwriting (add keywords to find it)").slice(0, 180) });
+      }
+    };
+    search.oninput = render;
+    search.focus();
+    void (async () => {
+      const { entries, errors } = await collectStickyEntries(this.app, this.events.signal);
+      if (this.events.signal.aborted) return;
+      const live = this.live(), paths2 = new Set(live.files);
+      this.entries = [...entries.filter((entry) => !paths2.has(entry.file)), ...live.entries];
+      render();
+      if (errors.length) new import_obsidian12.Notice(`Sticky index skipped ${errors.length} unreadable files: ${errors.join("\n")}`, 8e3);
+      if (!this.handwriting) return;
+      for (const entry of this.entries) {
+        if (this.events.signal.aborted) break;
+        if (!entry.note.strokes.length) continue;
+        const controller = new AbortController();
+        const abort = () => controller.abort();
+        this.events.signal.addEventListener("abort", abort, { once: true });
+        let timer;
+        try {
+          const terms = await Promise.race([this.handwriting(cloneSticky(entry.note), controller.signal), new Promise((_, reject) => {
+            timer = setTimeout(() => {
+              controller.abort();
+              reject(new Error("Handwriting index timed out"));
+            }, 5e3);
+            controller.signal.addEventListener("abort", () => reject(new Error("Handwriting index cancelled")), { once: true });
+          })]);
+          if (this.events.signal.aborted) break;
+          entry.handwritingTerms = Array.isArray(terms) ? terms.filter((term) => typeof term === "string").slice(0, 1e3) : [];
+          render();
+        } catch (error) {
+          if (!this.events.signal.aborted) {
+            new import_obsidian12.Notice(`Handwriting index unavailable: ${String(error)}`);
+            break;
+          }
+        } finally {
+          clearTimeout(timer);
+          controller.abort();
+          this.events.signal.removeEventListener("abort", abort);
+        }
+      }
+    })().catch((error) => {
+      if (!this.events.signal.aborted) {
+        status.textContent = "Could not read sticky index";
+        new import_obsidian12.Notice(String(error));
+      }
+    });
+  }
+  onClose() {
+    this.events.abort();
+    this.contentEl.empty();
+  }
+};
+
 // src/main.ts
 var DEFAULT_SETTINGS = {
   pdfOpenMode: "compatible"
 };
-var InkNotesPlugin = class extends import_obsidian11.Plugin {
+var InkNotesPlugin = class extends import_obsidian13.Plugin {
   constructor() {
     super(...arguments);
     this.config = { ...DEFAULT_SETTINGS };
@@ -33144,6 +34056,42 @@ var InkNotesPlugin = class extends import_obsidian11.Plugin {
     this.refreshTimers = /* @__PURE__ */ new Map();
     this.refreshing = /* @__PURE__ */ new Set();
     this.pendingRefresh = /* @__PURE__ */ new Set();
+  }
+  /** Optional adapter hook; registration alone never triggers recognition or sends data. */
+  setStickyHandwritingIndexer(indexer) {
+    this.stickyHandwritingIndexer = indexer;
+  }
+  liveStickyEntries() {
+    var _a, _b;
+    const entries = [], files = [];
+    for (const type of [VIEW_TYPE_INK, VIEW_TYPE_PDF_INK]) for (const leaf of this.app.workspace.getLeavesOfType(type)) {
+      if (leaf.view instanceof InkView || leaf.view instanceof PdfInkView) {
+        files.push((_b = (_a = leaf.view.file) == null ? void 0 : _a.path) != null ? _b : "");
+        entries.push(...leaf.view.stickyIndexEntries());
+      }
+    }
+    const byId = /* @__PURE__ */ new Map();
+    for (const entry of entries) {
+      const id = `${entry.file}\0${entry.pageId}\0${entry.note.id}`, previous = byId.get(id);
+      if (!previous || entry.note.updatedAt > previous.note.updatedAt) byId.set(id, entry);
+    }
+    return { files, entries: [...byId.values()] };
+  }
+  async locateSticky(filePath, page, sticky) {
+    const file = this.app.vault.getAbstractFileByPath(filePath);
+    if (!(file instanceof import_obsidian13.TFile) || !["pdf", INK_EXTENSION].includes(file.extension.toLowerCase())) throw new Error("Notebook or PDF not found");
+    let leaf = [...this.app.workspace.getLeavesOfType(VIEW_TYPE_INK), ...this.app.workspace.getLeavesOfType(VIEW_TYPE_PDF_INK)].find((leaf2) => {
+      var _a;
+      return (leaf2.view instanceof InkView || leaf2.view instanceof PdfInkView) && ((_a = leaf2.view.file) == null ? void 0 : _a.path) === file.path;
+    });
+    if (!leaf) {
+      leaf = this.app.workspace.getLeaf("tab");
+      if (file.extension.toLowerCase() === "pdf") await leaf.setViewState({ type: VIEW_TYPE_PDF_INK, state: { file: file.path } });
+      else await leaf.openFile(file);
+    }
+    await this.app.workspace.revealLeaf(leaf);
+    if (leaf.view instanceof InkView || leaf.view instanceof PdfInkView) await leaf.view.revealSticky(page, sticky);
+    else throw new Error("The handwriting view could not be opened");
   }
   async onload() {
     const saved = await this.loadData();
@@ -33159,11 +34107,25 @@ var InkNotesPlugin = class extends import_obsidian11.Plugin {
     };
     this.store = new NotebookStore(this.app);
     if (this.app.vault) this.imageLibrary = new ImageLibraryStore(this.app);
-    this.workers = new InkWorkerService((message) => new import_obsidian11.Notice(message));
+    this.workers = new InkWorkerService((message) => new import_obsidian13.Notice(message));
     this.register(() => this.workers.dispose());
     this.registerView(VIEW_TYPE_INK, (leaf) => this.createView(leaf));
     this.registerExtensions([INK_EXTENSION], VIEW_TYPE_INK);
     this.configurePdfSupport();
+    this.addCommand({ id: "find-sticky-notes", name: "Find sticky notes", callback: () => new StickySearchModal(
+      this.app,
+      (entry) => this.locateSticky(entry.file, entry.pageId, entry.note.id),
+      () => this.liveStickyEntries(),
+      this.stickyHandwritingIndexer
+    ).open() });
+    this.registerObsidianProtocolHandler("ink-notes-sticky", (params) => {
+      if (params.vault && params.vault !== this.app.vault.getName()) return;
+      if (!params.file || !params.page || !params.sticky) {
+        new import_obsidian13.Notice("Sticky note link is incomplete");
+        return;
+      }
+      this.runAsync(this.locateSticky(params.file, params.page, params.sticky), "locate sticky note");
+    });
     this.addRibbonIcon("pen-line", "Open Ink Notes", () => this.runAsync(this.openNotebook(), "open a notebook"));
     this.addCommand({
       id: "open-ink-notebook",
@@ -33216,7 +34178,7 @@ var InkNotesPlugin = class extends import_obsidian11.Plugin {
     });
     this.registerMarkdownCodeBlockProcessor("ink", createInkEmbedProcessor(this.app, (file, pageId) => this.openFile(file, pageId), this.imageLibrary));
     this.registerEvent(this.app.workspace.on("file-menu", (menu, file) => {
-      if (!(file instanceof import_obsidian11.TFile) || file.extension.toLowerCase() !== "pdf") return;
+      if (!(file instanceof import_obsidian13.TFile) || file.extension.toLowerCase() !== "pdf") return;
       menu.addItem((item) => item.setTitle("Open PDF with Ink Notes handwriting").setIcon("pen-line").onClick(() => this.runAsync(this.openPdfHandwriting(file), "open PDF handwriting")));
     }));
     this.addSettingTab(new InkSettingTab(this.app, this));
@@ -33254,7 +34216,7 @@ var InkNotesPlugin = class extends import_obsidian11.Plugin {
       }),
       isPdfFile: (path) => {
         const file = this.app.vault.getAbstractFileByPath(path);
-        return file instanceof import_obsidian11.TFile && file.extension.toLowerCase() === "pdf";
+        return file instanceof import_obsidian13.TFile && file.extension.toLowerCase() === "pdf";
       }
     }), VIEW_TYPE_PDF_INK);
     this.registerView(VIEW_TYPE_PDF_INK, (leaf) => {
@@ -33267,14 +34229,14 @@ var InkNotesPlugin = class extends import_obsidian11.Plugin {
       this.takeover.install();
       this.register(() => this.takeover.uninstall());
       this.registerEvent(this.app.vault.on("rename", (file, oldPath) => {
-        if (file instanceof import_obsidian11.TFile && file.extension === "pdf") {
+        if (file instanceof import_obsidian13.TFile && file.extension === "pdf") {
           void this.pdfStore.migrateForRename(file.path, oldPath).catch(() => {
           });
         }
       }));
       this.registerEvent(this.app.vault.on("modify", (file) => {
         var _a, _b;
-        if (!(file instanceof import_obsidian11.TFile)) return;
+        if (!(file instanceof import_obsidian13.TFile)) return;
         if (file.extension.toLowerCase() === "pdf") {
           for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_PDF_INK)) {
             if (leaf.view instanceof PdfInkView && ((_a = leaf.view.file) == null ? void 0 : _a.path) === file.path) void leaf.view.checkSourcePdfRevision();
@@ -33303,7 +34265,7 @@ var InkNotesPlugin = class extends import_obsidian11.Plugin {
     this.toolState.eraserMode = stored.eraserMode;
     this.toolState.eraserSize = stored.eraserSize;
     return this.saveData({ pdfOpenMode: this.config.pdfOpenMode, toolState: stored }).catch((error) => {
-      new import_obsidian11.Notice(`Ink Notes could not save tool settings: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian13.Notice(`Ink Notes could not save tool settings: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
   /** Persists the plugin settings together with the latest tool settings. */
@@ -33339,7 +34301,7 @@ var InkNotesPlugin = class extends import_obsidian11.Plugin {
     if (pageId && leaf.view instanceof InkView) leaf.view.revealPage(pageId);
   }
   runAsync(action, operation) {
-    void action.catch((error) => new import_obsidian11.Notice(`Ink Notes could not ${operation}: ${error instanceof Error ? error.message : String(error)}`));
+    void action.catch((error) => new import_obsidian13.Notice(`Ink Notes could not ${operation}: ${error instanceof Error ? error.message : String(error)}`));
   }
   queueRefresh(file) {
     const existing = this.refreshTimers.get(file.path);
@@ -33364,13 +34326,13 @@ var InkNotesPlugin = class extends import_obsidian11.Plugin {
         }
       } while (this.pendingRefresh.has(file.path));
     } catch (error) {
-      new import_obsidian11.Notice(`Ink Notes could not reload ${file.path}: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian13.Notice(`Ink Notes could not reload ${file.path}: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       this.refreshing.delete(file.path);
     }
   }
 };
-var InkSettingTab = class extends import_obsidian11.PluginSettingTab {
+var InkSettingTab = class extends import_obsidian13.PluginSettingTab {
   constructor(app, plugin) {
     super(app, plugin);
     this.plugin = plugin;
@@ -33378,8 +34340,8 @@ var InkSettingTab = class extends import_obsidian11.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
-    new import_obsidian11.Setting(containerEl).setName("PDF handwriting").setHeading();
-    new import_obsidian11.Setting(containerEl).setName("Default PDF viewer").setDesc(
+    new import_obsidian13.Setting(containerEl).setName("PDF handwriting").setHeading();
+    new import_obsidian13.Setting(containerEl).setName("Default PDF viewer").setDesc(
       "PDF handwriting is stored in A_pdfinkwrittern/. Choose which viewer opens ordinary PDFs. Compatibility mode keeps the native viewer when PDF extensions are enabled. Ink Notes first opens handwriting even with PDF++ enabled; its native-view tools remain available after returning to the built-in viewer. Page, search and selection links always keep the native viewer. Reopen existing tabs to apply the choice."
     ).addDropdown((dropdown) => dropdown.addOption("native", "Native PDF viewer").addOption("compatible", "Compatibility mode").addOption("ink", "Ink Notes first").setValue(this.plugin.config.pdfOpenMode).onChange(async (value) => {
       if (value !== "native" && value !== "compatible" && value !== "ink") return;
@@ -33388,13 +34350,13 @@ var InkSettingTab = class extends import_obsidian11.PluginSettingTab {
       try {
         await this.plugin.persistSettings();
       } catch (error) {
-        new import_obsidian11.Notice(`Ink Notes could not save PDF settings: ${error instanceof Error ? error.message : String(error)}`);
+        new import_obsidian13.Notice(`Ink Notes could not save PDF settings: ${error instanceof Error ? error.message : String(error)}`);
       }
     }));
-    new import_obsidian11.Setting(containerEl).setName("Diagnostics").setHeading();
-    new import_obsidian11.Setting(containerEl).setName("Export diagnostics").setDesc("Export local per-stroke records from open notebooks. Review handwriting data before sharing.").addButton((button2) => button2.setButtonText("Export JSON").onClick(() => this.eachView((view) => view.exportDiagnosticsJson(false)))).addButton((button2) => button2.setButtonText("Copy JSON").onClick(() => this.eachView((view) => view.exportDiagnosticsJson(true))));
-    new import_obsidian11.Setting(containerEl).setName("Developer panel").setHeading();
-    new import_obsidian11.Setting(containerEl).setName("Live diagnostics").setDesc("Show sample rate and per-stroke records inside open notebooks.").addButton((button2) => button2.setButtonText("Toggle panel").onClick(() => this.eachView((view) => view.toggleDevPanel())));
+    new import_obsidian13.Setting(containerEl).setName("Diagnostics").setHeading();
+    new import_obsidian13.Setting(containerEl).setName("Export diagnostics").setDesc("Export local per-stroke records from open notebooks. Review handwriting data before sharing.").addButton((button3) => button3.setButtonText("Export JSON").onClick(() => this.eachView((view) => view.exportDiagnosticsJson(false)))).addButton((button3) => button3.setButtonText("Copy JSON").onClick(() => this.eachView((view) => view.exportDiagnosticsJson(true))));
+    new import_obsidian13.Setting(containerEl).setName("Developer panel").setHeading();
+    new import_obsidian13.Setting(containerEl).setName("Live diagnostics").setDesc("Show sample rate and per-stroke records inside open notebooks.").addButton((button3) => button3.setButtonText("Toggle panel").onClick(() => this.eachView((view) => view.toggleDevPanel())));
   }
   eachView(run) {
     for (const leaf of this.app.workspace.getLeavesOfType(VIEW_TYPE_INK)) {

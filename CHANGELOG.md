@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add colored sticky notes to Ink and PDF handwriting pages with position/size controls, foldable previews, handwritten and typed content, and undo/redo. Frame resizing retains the fixed content coordinates; the editor can extend and scroll its board without allocating a board-sized canvas. Explicit Save applies drafts; reading mode prevents changes and stale drafts cannot overwrite another pane's note.
+- Add vault-wide sticky-note title/text/keyword search and Markdown links to exact notes. Provide an optional cancellable handwriting-index adapter with a five-second per-note timeout; no recognition service is bundled or invoked by default. Notes appear in previews, Ink embeds and PDF exports, which capture the visible window/fold state. Source PDFs remain unchanged; old versions may discard sticky metadata on save.
+
 - Add image-library batch deletion with a count/name confirmation and undo of the latest deletion while the library stays open. Existing multi-select group moves now disable with no selection; counts include selections hidden by search/group filters. Deletion removes catalog entries only, retaining managed files for placed images, previews and PDF exports; it does not reclaim disk space.
 
 - Add a dedicated Pointer arrow tool (desktop shortcut A) for image editing. Insertion selects the image immediately; a finger/mouse contact on an image opens its controls, and tapping outside dismisses them. Stylus Pointer and native stylus Touch input cannot select/drag images; handwriting and lasso tools keep their existing behavior. Pointer contacts on blank paper never create ink.
