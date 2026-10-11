@@ -25991,6 +25991,7 @@ var InkWritingView = class extends import_obsidian3.FileView {
     this.drawInteractiveStrokes(page.strokes, true);
     this.scheduleSave();
     this.afterInputFullySettled();
+    this.showSelectionActions();
   }
   pasteSelection() {
     var _a;
@@ -26030,14 +26031,15 @@ var InkWritingView = class extends import_obsidian3.FileView {
     const pop = this.toolbarRoot().createDiv({ cls: "ink-selection-actions", attr: { role: "group", "aria-label": "Selection actions" } });
     this.selectionActions = pop;
     for (const type of ["pointerdown", "touchstart", "touchmove"]) pop.addEventListener(type, (event) => event.stopPropagation());
-    const add = (icon, label, action, disabled) => {
+    const add = (icon, label, action, disabled, cls = "") => {
       const button = this.addIconButton(pop, icon, label, action, disabled);
+      if (cls) button.addClass(cls);
       button.createSpan({ text: label });
     };
     if (selected) {
       add("copy", "Copy", () => this.copySelection(), false);
       add("scissors", "Cut", () => this.copySelection(true), false);
-      add("trash-2", "Delete", () => this.deleteSelection(), false);
+      add("trash-2", "Delete", () => this.deleteSelection(), false, "is-danger");
     }
     add("clipboard-paste", "Paste", () => this.pasteSelection(), !this.availableClipboard());
     this.positionSelectionActions();

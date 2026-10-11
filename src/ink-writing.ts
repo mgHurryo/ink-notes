@@ -2256,6 +2256,7 @@ export abstract class InkWritingView extends FileView {
     this.drawInteractiveStrokes(page.strokes, true);
     this.scheduleSave();
     this.afterInputFullySettled();
+    this.showSelectionActions();
   }
 
   protected pasteSelection(): void {
@@ -2295,14 +2296,15 @@ export abstract class InkWritingView extends FileView {
     const pop = this.toolbarRoot().createDiv({ cls: "ink-selection-actions", attr: { role: "group", "aria-label": "Selection actions" } });
     this.selectionActions = pop;
     for (const type of ["pointerdown", "touchstart", "touchmove"] as const) pop.addEventListener(type, (event) => event.stopPropagation());
-    const add = (icon: string, label: string, action: () => void, disabled: boolean): void => {
+    const add = (icon: string, label: string, action: () => void, disabled: boolean, cls = ""): void => {
       const button = this.addIconButton(pop, icon, label, action, disabled);
+      if (cls) button.addClass(cls);
       button.createSpan({ text: label });
     };
     if (selected) {
       add("copy", "Copy", () => this.copySelection(), false);
       add("scissors", "Cut", () => this.copySelection(true), false);
-      add("trash-2", "Delete", () => this.deleteSelection(), false);
+      add("trash-2", "Delete", () => this.deleteSelection(), false, "is-danger");
     }
     add("clipboard-paste", "Paste", () => this.pasteSelection(), !this.availableClipboard());
     this.positionSelectionActions();

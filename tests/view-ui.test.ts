@@ -132,16 +132,17 @@ describe("reference-style editor", () => {
   });
 
   it("cuts selected ink and allows paste onto empty paper; delete does not replace copied ink", () => {
-    const { host, page } = selectSampleInk();
+    const { page } = selectSampleInk();
     button("Cut").click();
     expect(page.strokes).toHaveLength(0);
     expect(page.deletedStrokeIds).toContain("selected");
-    host.lassoPath = [{ x: 0.7, y: 0.7, pressure: 0.5, t: 1 }];
-    host.finishLasso(page);
+    // The strip must survive a cut/delete so paste stays reachable without re-lassoing.
+    expect(document.querySelector(".ink-selection-actions")).not.toBeNull();
     button("Paste").click();
     expect(page.strokes).toHaveLength(1);
     button("Delete").click();
     expect(page.strokes).toHaveLength(0);
+    expect(document.querySelector(".ink-selection-actions")).not.toBeNull();
     button("Undo").click();
     expect(page.strokes).toHaveLength(1);
   });

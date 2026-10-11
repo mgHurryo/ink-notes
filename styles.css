@@ -621,7 +621,7 @@
   padding: 6px 8px;
   font-size: 12px;
 }
-.ink-selection-actions .ink-icon-button[aria-label="Delete"] { color: var(--ink-danger); }
+.ink-selection-actions .ink-icon-button.is-danger { color: var(--ink-danger); }
 .ink-lasso-clipboard-toggle { display: flex; align-items: center; gap: 8px; min-height: 44px; }
 .ink-lasso-hint { color: var(--ink-muted); font-size: 12px; line-height: 1.5; }
 .ink-lasso-settings > button { min-height: 44px; }
