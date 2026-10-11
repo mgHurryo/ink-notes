@@ -10,6 +10,7 @@ import { PDF_INK_FOLDER, PDF_SIDECAR_EXTENSION } from "./pdf-sidecar";
 import { PDF_VIEW_ENHANCER_PLUGIN_IDS, PdfTabTakeover } from "./pdf-takeover";
 import { sanitizeToolState, storedToolState, ToolStateSaver, type SharedToolState, type StoredToolState } from "./tool-state";
 import type { ToolState } from "./ink-writing";
+import { InkClipboard } from "./lasso-clipboard";
 
 interface InkNotesSettings {
   pdfOpenMode: "native" | "compatible" | "ink";
@@ -50,6 +51,7 @@ export default class InkNotesPlugin extends Plugin {
     this.toolStateBinding = {
       config: this.toolState,
       scheduleSave: (state) => this.toolStateSaver.schedule(state),
+      clipboard: new InkClipboard(),
     };
     this.store = new NotebookStore(this.app);
     this.workers = new InkWorkerService((message) => new Notice(message));

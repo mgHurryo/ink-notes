@@ -148,6 +148,8 @@ export class InkView extends InkWritingView {
     if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
     if (this.desktopZoomTimer !== undefined) globalThis.clearTimeout(this.desktopZoomTimer);
     this.finishPointerInput(false);
+    this.clearSelection();
+    this.closeLassoSettings();
     this.cancelPendingInkCommitTimer();
     this.clearSaveTimers();
     this.destroySwipeStage();
@@ -198,6 +200,8 @@ export class InkView extends InkWritingView {
     this.pageNavigationGeneration += 1;
     this.destroySwipeStage();
     this.finishPointerInput(false);
+    this.clearSelection();
+    this.closeLassoSettings();
     this.cancelPendingInkCommitTimer();
     this.clearSaveTimers();
     if (this.dirtyRevision > this.savedRevision || this.activeSave) await this.save(file);
@@ -787,9 +791,11 @@ export class InkView extends InkWritingView {
     this.flipSettling = false;
   }
   protected settingsOpen(): boolean {
+    if (this.state.tool === "lasso") return this.lassoSettingsPopover !== null;
     return this.state.tool === "eraser" ? this.eraserPopover !== null : this.brushPopover?.isOpen ?? false;
   }
   protected toggleToolSettings(anchor: HTMLElement): void {
+    if (this.state.tool === "lasso") { this.toggleLassoSettings(anchor); return; }
     if (this.state.tool === "eraser") { this.toggleEraserPopover(anchor); return; }
     this.ensureBrushSettingsPopover();
     if (!this.brushPopover) return;
@@ -797,6 +803,7 @@ export class InkView extends InkWritingView {
     else this.brushPopover?.open();
   }
   protected reopenToolSettings(): void {
+    if (this.state.tool === "lasso") { if (!this.lassoSettingsPopover) this.toggleLassoSettings(this.activeSettingsAnchor()); return; }
     if (this.state.tool === "eraser") {
       if (!this.eraserPopover) this.toggleEraserPopover(this.activeToolButton());
       return;
@@ -1262,6 +1269,8 @@ export class InkView extends InkWritingView {
   }
 
   private resetPageView(): void {
+    this.clearSelection();
+    this.closeLassoSettings();
     if (this.desktopZoomTimer !== undefined) globalThis.clearTimeout(this.desktopZoomTimer);
     this.desktopZoomTimer = undefined;
     this.pinchRenderZoom = undefined;

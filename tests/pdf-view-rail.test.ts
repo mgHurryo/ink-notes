@@ -8,6 +8,11 @@ import type { PdfSidecar } from "../src/pdf-sidecar";
 import { InkWorkerService } from "../src/worker-service";
 import { PdfTabTakeover } from "../src/pdf-takeover";
 import type { TFile, WorkspaceLeaf } from "obsidian";
+import { InkView } from "../src/view";
+import type { NotebookStore } from "../src/storage";
+import { InkClipboard } from "../src/lasso-clipboard";
+import { defaultToolState, type SharedToolState } from "../src/tool-state";
+import type { InkNotebook, InkStroke } from "../src/model";
 
 const FINGERPRINT = { sha256: "a".repeat(64), byteLength: 100 };
 const views = new Set<PdfInkView>();
@@ -190,6 +195,39 @@ afterEach(async () => {
 });
 
 describe("pdf page preview rail", () => {
+  it("shares copied Ink strokes with PDF notes only when cross-file paste is enabled", async () => {
+    const { view: target, sidecar } = await setup(1);
+    const source = new InkView({} as WorkspaceLeaf, {} as NotebookStore);
+    source.file = { path: "source.ink" } as TFile;
+    const shared: SharedToolState = { config: defaultToolState(), clipboard: new InkClipboard(), scheduleSave: vi.fn() };
+    const sourceHost = source as unknown as { useSharedToolState(binding: SharedToolState): void; notebook: InkNotebook;
+      selectedStrokeIds: Set<string>; copySelection(): void; canvasLogicalWidth: number; canvasLogicalHeight: number };
+    const targetHost = target as unknown as { useSharedToolState(binding: SharedToolState): void; pasteSelection(): void;
+      canvasLogicalWidth: number; canvasLogicalHeight: number; state: ReturnType<typeof defaultToolState> };
+    sourceHost.useSharedToolState(shared); targetHost.useSharedToolState(shared);
+    const page = sourceHost.notebook.pages[0];
+    const ink: InkStroke = { id: "source-ink", pageId: page.id, tool: "pen", color: "#000", width: 3, opacity: 1,
+      points: [{ x: 0.1, y: 0.1, pressure: 0.6, t: 1 }, { x: 0.2, y: 0.2, pressure: 0.7, t: 2 }], createdAt: 1, updatedAt: 1 };
+    page.strokes.push(ink); sourceHost.selectedStrokeIds.add(ink.id);
+    sourceHost.canvasLogicalWidth = 100; sourceHost.canvasLogicalHeight = 100;
+    targetHost.canvasLogicalWidth = 100; targetHost.canvasLogicalHeight = 150;
+    sourceHost.copySelection();
+    targetHost.pasteSelection();
+    expect(sidecar.notebook.pages[0].strokes).toHaveLength(0);
+    document.querySelector<HTMLButtonElement>('[aria-label="Select"]')!.click();
+    document.querySelector<HTMLButtonElement>('[aria-label="Select"]')!.click();
+    const toggle = document.querySelector<HTMLInputElement>('[aria-label="Copy and paste across files"]')!;
+    toggle.checked = true; toggle.dispatchEvent(new Event("change"));
+    document.querySelector<HTMLButtonElement>('[aria-label="Paste handwriting"]')!.click();
+    expect(sidecar.notebook.pages[0].strokes).toHaveLength(1);
+    expect(sidecar.notebook.pages[0].strokes[0].pageId).toBe(sidecar.notebook.pages[0].id);
+    expect(sidecar.notebook.pages[0].strokes[0].id).not.toBe(ink.id);
+    expect(page.strokes).toHaveLength(1);
+    expect(shared.scheduleSave).toHaveBeenCalled();
+    document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')!.click();
+    expect(sidecar.notebook.pages[0].strokes).toHaveLength(0);
+    await target.onClose();
+  });
   it("switches PDF reading mode without changing navigation or sidecar writability", async () => {
     const { view, internal, sidecar } = await setup(2);
     const host = view as unknown as { readingMode: boolean; setReadingMode(value: boolean): void;

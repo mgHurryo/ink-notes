@@ -4,6 +4,7 @@
    unthemed icons). */
 .ink-notes-view,
 .ink-pdf-view {
+  position: relative;
   --ink-toolbar-height: 56px;
   --ink-touch-target: 44px;
   --ink-workspace: var(--background-primary, #f5f6f8);
@@ -594,6 +595,39 @@
 .ink-curve-body.is-collapsed { display: none; }
 .ink-lasso-preview-canvas { z-index: 2; will-change: transform; }
 .ink-selection-canvas { z-index: 3; }
+.ink-selection-actions {
+  position: absolute;
+  z-index: 20;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid var(--ink-border);
+  border-radius: var(--ink-radius-sm);
+  color: var(--ink-text);
+  background: var(--ink-panel);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 20%);
+  animation: ink-pop-in 150ms ease;
+}
+:is(.ink-notes-view, .ink-pdf-view) .ink-selection-actions .ink-icon-button {
+  display: flex;
+  flex: 0 0 auto;
+  width: auto;
+  min-width: 44px;
+  min-height: 44px;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  font-size: 12px;
+}
+.ink-selection-actions .ink-icon-button[aria-label="Delete"] { color: var(--ink-danger); }
+.ink-lasso-clipboard-toggle { display: flex; align-items: center; gap: 8px; min-height: 44px; }
+.ink-lasso-hint { color: var(--ink-muted); font-size: 12px; line-height: 1.5; }
+.ink-lasso-settings > button { min-height: 44px; }
+@media (prefers-reduced-motion: reduce) {
+  .ink-selection-actions { animation: none; }
+}
 .ink-confirmed-preview-canvas { z-index: 4; }
 .ink-preview-canvas { z-index: 5; }
 .ink-confirmed-preview-canvas.is-highlighter-preview,
@@ -1292,6 +1326,7 @@
 }
 
 .ink-eraser-popover input[type="range"] { width: 100%; touch-action: none; }
+.ink-lasso-settings { position: absolute; overflow: auto; }
 
 .ink-eraser-size-row { display: flex; flex-direction: column; }
 

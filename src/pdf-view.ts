@@ -216,6 +216,8 @@ export class PdfInkView extends InkWritingView {
     this.disposeZoomHud();
     this.closePageOptionsMenu();
     this.finishPointerInput(false);
+    this.clearSelection();
+    this.closeLassoSettings();
     let outcome = await this.flushSaveNow();
     if (outcome.status === "failed" && this.sidecar && this.sidecarFile) {
       outcome = await this.saveConflictCopy(this.sidecarRaw, outcome.message);
@@ -301,6 +303,8 @@ export class PdfInkView extends InkWritingView {
 
   async onUnloadFile(_file: TFile): Promise<void> {
     this.finishPointerInput(false);
+    this.clearSelection();
+    this.closeLassoSettings();
     let outcome: SaveOutcome = { status: "saved" };
     try {
       outcome = await this.flushSaveNow();
@@ -1018,6 +1022,8 @@ export class PdfInkView extends InkWritingView {
     if (next < 0 || next >= count) return;
     this.finishPointerInput(false);
     this.noteIndex = next;
+    this.clearSelection();
+    this.closeLassoSettings();
     this.zoomTouched = this.zoomLocked;
     if (this.scroller) {
       this.scroller.scrollLeft = 0;
@@ -1481,14 +1487,17 @@ export class PdfInkView extends InkWritingView {
     this.flipSettling = false;
   }
   protected settingsOpen(): boolean {
+    if (this.state.tool === "lasso") return this.lassoSettingsPopover !== null;
     return this.state.tool === "eraser" ? this.eraserPopover !== null : this.brushPopover?.isOpen ?? false;
   }
   protected toggleToolSettings(anchor: HTMLElement): void {
+    if (this.state.tool === "lasso") { this.toggleLassoSettings(anchor); return; }
     if (this.state.tool === "eraser") { this.toggleEraserPopover(anchor); return; }
     this.ensureBrushSettingsPopover();
     this.brushPopover?.toggle();
   }
   protected reopenToolSettings(): void {
+    if (this.state.tool === "lasso") { if (!this.lassoSettingsPopover) this.toggleLassoSettings(this.activeSettingsAnchor()); return; }
     if (this.state.tool === "eraser") {
       if (!this.eraserPopover) this.toggleEraserPopover(this.toolbarButtons.get(`tool-${this.state.tool}`) ?? null);
       return;
