@@ -216,6 +216,9 @@ describe("pdf page preview rail", () => {
     expect(sidecar.notebook.pages[0].strokes).toHaveLength(0);
     document.querySelector<HTMLButtonElement>('[aria-label="Select"]')!.click();
     document.querySelector<HTMLButtonElement>('[aria-label="Select"]')!.click();
+    document.querySelector<HTMLButtonElement>('[aria-label="Rectangle selection"]')!.click();
+    expect(shared.config.lasso.mode).toBe("rectangle");
+    expect(sourceHost.notebook.pages[0].strokes).toHaveLength(1);
     const toggle = document.querySelector<HTMLInputElement>('[aria-label="Copy and paste across files"]')!;
     toggle.checked = true; toggle.dispatchEvent(new Event("change"));
     document.querySelector<HTMLButtonElement>('[aria-label="Paste handwriting"]')!.click();

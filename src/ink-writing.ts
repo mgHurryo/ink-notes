@@ -48,10 +48,11 @@ export interface ToolState {
   /** Editable preset swatch colors, shared by both editors and persisted
    *  with the rest of the tool settings (1..10 entries). */
   palette: string[];
-  lasso: { crossFileClipboard: boolean };
+  lasso: { mode: LassoMode; crossFileClipboard: boolean };
 }
 
 export type EraserMode = "stroke" | "circle" | "square";
+export type LassoMode = "freehand" | "rectangle";
 
 export interface EditCommand {
   undo: () => void;
@@ -68,6 +69,7 @@ export interface InteractionContext {
   tool: InkTool;
   eraserMode?: EraserMode;
   eraserSize?: number;
+  lassoMode?: LassoMode;
 }
 
 export interface InkPointerSample {
@@ -1267,6 +1269,7 @@ export abstract class InkWritingView extends FileView {
       tool,
       eraserMode: tool === "eraser" ? this.state.eraserMode : undefined,
       eraserSize: tool === "eraser" ? this.state.eraserSize : undefined,
+      lassoMode: tool === "lasso" ? this.state.lasso.mode : undefined,
     };
     const point = this.toPoint(event, rect);
     this.erasedStrokeIds.clear();
@@ -2137,7 +2140,8 @@ export abstract class InkWritingView extends FileView {
     }
     const previous = this.lassoPath[this.lassoPath.length - 1];
     if (!previous || distance(point, previous) < 0.001) return false;
-    this.lassoPath.push(point);
+    if ((this.interaction?.lassoMode ?? this.state.lasso.mode) === "rectangle") this.lassoPath = [this.lassoPath[0], point];
+    else this.lassoPath.push(point);
     return true;
   }
 
@@ -2167,7 +2171,7 @@ export abstract class InkWritingView extends FileView {
     this.pasteTarget = null;
   }
 
-  private finishLasso(page: InkPage): void {
+  private finishLasso(page: InkPage, mode = this.state.lasso.mode): void {
     if (this.lassoDrag) {
       const drag = this.lassoDrag;
       const before = drag.before;
@@ -2203,7 +2207,16 @@ export abstract class InkWritingView extends FileView {
       this.showSelectionActions();
       return;
     }
-    if (this.lassoPath.length >= 3) {
+    if (mode === "rectangle" && this.lassoPath.length >= 2) {
+      const bounds = boundsForPointSets([this.lassoPath])!;
+      const spanX = bounds.maxX - bounds.minX, spanY = bounds.maxY - bounds.minY;
+      if (spanX > 0 && spanY > 0) {
+        const center = { ...this.lassoPath[0], x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
+        // Reuse the box segment test so a sparse stroke crossing the frame is selected too.
+        this.selectedStrokeIds = new Set(page.strokes.filter((stroke) =>
+          strokeIntersectsEraser(stroke, center, 1, "square", 2 / spanX, 2 / spanY)).map((stroke) => stroke.id));
+      }
+    } else if (mode === "freehand" && this.lassoPath.length >= 3) {
       this.selectedStrokeIds = new Set(page.strokes.filter((stroke) => stroke.points.some((point) => pointInPolygon(point, this.lassoPath))).map((stroke) => stroke.id));
     }
     const lastPoint = this.lassoPath[this.lassoPath.length - 1];
@@ -2591,11 +2604,16 @@ export abstract class InkWritingView extends FileView {
     ctx.lineWidth = 1.5;
     ctx.setLineDash([6, 4]);
     if (this.lassoPath.length > 1) {
-      ctx.beginPath();
-      ctx.moveTo(this.lassoPath[0].x * width, this.lassoPath[0].y * height);
-      for (const point of this.lassoPath.slice(1)) ctx.lineTo(point.x * width, point.y * height);
-      ctx.closePath();
-      ctx.stroke();
+      if ((this.interaction?.lassoMode ?? this.state.lasso.mode) === "rectangle") {
+        const bounds = boundsForPointSets([this.lassoPath])!;
+        ctx.strokeRect(bounds.minX * width, bounds.minY * height, (bounds.maxX - bounds.minX) * width, (bounds.maxY - bounds.minY) * height);
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(this.lassoPath[0].x * width, this.lassoPath[0].y * height);
+        for (const point of this.lassoPath.slice(1)) ctx.lineTo(point.x * width, point.y * height);
+        ctx.closePath();
+        ctx.stroke();
+      }
     }
     const bounds = selectionBounds(this.selectedStrokes());
     if (bounds) ctx.strokeRect(bounds.minX * width, bounds.minY * height, (bounds.maxX - bounds.minX) * width, (bounds.maxY - bounds.minY) * height);
@@ -2735,7 +2753,7 @@ export abstract class InkWritingView extends FileView {
       this.renderFrame = null;
     }
     if (interaction.tool === "lasso") {
-      this.finishLasso(page);
+      this.finishLasso(page, interaction.lassoMode);
       this.activePointerId = null;
       this.tiles?.resumeInkCommit();
       this.applyPendingMergedNotebook();
@@ -3150,6 +3168,23 @@ export abstract class InkWritingView extends FileView {
     this.lassoSettingsPopover = pop;
     for (const type of ["pointerdown", "touchstart", "touchmove"] as const) pop.addEventListener(type, (event) => event.stopPropagation());
     pop.createDiv({ cls: "ink-size-popover-title", text: "Lasso" });
+    const modes = pop.createDiv({ cls: "ink-eraser-modes ink-lasso-modes", attr: { role: "radiogroup", "aria-label": "Selection shape" } });
+    for (const [mode, label, icon] of [["freehand", "Freehand", "lasso-select"], ["rectangle", "Rectangle", "square-dashed"]] as const) {
+      const button = modes.createEl("button", { cls: "ink-eraser-mode", attr: { type: "button", role: "radio",
+        "aria-label": `${label} selection`, "aria-checked": String(this.state.lasso.mode === mode), "data-lasso-mode": mode } });
+      setIcon(button.createSpan({ cls: "ink-button-icon" }), icon);
+      button.createSpan({ cls: "ink-eraser-mode-label", text: label });
+      button.addEventListener("click", () => {
+        this.finishPointerInput(false);
+        this.state.lasso.mode = mode;
+        this.clearSelection();
+        this.drawStrokes(this.currentPage().strokes);
+        modes.querySelectorAll<HTMLElement>("[data-lasso-mode]").forEach((candidate) => {
+          candidate.setAttribute("aria-checked", String(candidate.dataset.lassoMode === mode));
+        });
+        this.scheduleToolStateSave();
+      });
+    }
     const row = pop.createEl("label", { cls: "ink-lasso-clipboard-toggle" });
     const toggle = row.createEl("input", { attr: { type: "checkbox", "aria-label": "Copy and paste across files" } });
     toggle.checked = this.state.lasso.crossFileClipboard;

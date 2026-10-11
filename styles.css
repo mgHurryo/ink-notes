@@ -625,6 +625,7 @@
 .ink-lasso-clipboard-toggle { display: flex; align-items: center; gap: 8px; min-height: 44px; }
 .ink-lasso-hint { color: var(--ink-muted); font-size: 12px; line-height: 1.5; }
 .ink-lasso-settings > button { min-height: 44px; }
+.ink-lasso-modes { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 @media (prefers-reduced-motion: reduce) {
   .ink-selection-actions { animation: none; }
 }
