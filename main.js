@@ -23830,7 +23830,7 @@ function defaultToolState() {
     eraserMode: "stroke",
     eraserSize: 32,
     palette: INK_COLORS.map((color) => color.value),
-    lasso: { crossFileClipboard: false }
+    lasso: { mode: "freehand", crossFileClipboard: false }
   };
 }
 var PEN_WIDTH_RANGE = [1, 24];
@@ -23842,6 +23842,7 @@ var CSS_HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
 function sanitizeToolState(raw) {
   const defaults = defaultToolState();
   const source = isRecord(raw) ? raw : {};
+  const lasso = isRecord(source.lasso) ? source.lasso : {};
   return {
     tool: defaults.tool,
     pen: sanitizeBrush(source.pen, defaults.pen, PEN_WIDTH_RANGE, true),
@@ -23849,7 +23850,7 @@ function sanitizeToolState(raw) {
     eraserMode: isEraserMode(source.eraserMode) ? source.eraserMode : defaults.eraserMode,
     eraserSize: sanitizeNumber(source.eraserSize, defaults.eraserSize, ERASER_SIZE_RANGE),
     palette: sanitizePalette(source.palette),
-    lasso: { crossFileClipboard: isRecord(source.lasso) && source.lasso.crossFileClipboard === true }
+    lasso: { mode: lasso.mode === "rectangle" ? "rectangle" : "freehand", crossFileClipboard: lasso.crossFileClipboard === true }
   };
 }
 function storedToolState(state) {
@@ -25069,7 +25070,8 @@ var InkWritingView = class extends import_obsidian3.FileView {
       pageId: page.id,
       tool,
       eraserMode: tool === "eraser" ? this.state.eraserMode : void 0,
-      eraserSize: tool === "eraser" ? this.state.eraserSize : void 0
+      eraserSize: tool === "eraser" ? this.state.eraserSize : void 0,
+      lassoMode: tool === "lasso" ? this.state.lasso.mode : void 0
     };
     const point = this.toPoint(event, rect);
     this.erasedStrokeIds.clear();
@@ -25865,7 +25867,7 @@ var InkWritingView = class extends import_obsidian3.FileView {
   }
   // ---------------------------------------------------------------- lasso
   applyLassoPoint(point) {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e, _f;
     if (this.lassoDrag) {
       const bounds = this.lassoDrag.bounds;
       const dx = constrainDelta(point.x - this.lassoDrag.start.x, (_a = bounds == null ? void 0 : bounds.minX) != null ? _a : 0, (_b = bounds == null ? void 0 : bounds.maxX) != null ? _b : 1);
@@ -25878,7 +25880,8 @@ var InkWritingView = class extends import_obsidian3.FileView {
     }
     const previous = this.lassoPath[this.lassoPath.length - 1];
     if (!previous || distance2(point, previous) < 1e-3) return false;
-    this.lassoPath.push(point);
+    if (((_f = (_e = this.interaction) == null ? void 0 : _e.lassoMode) != null ? _f : this.state.lasso.mode) === "rectangle") this.lassoPath = [this.lassoPath[0], point];
+    else this.lassoPath.push(point);
     return true;
   }
   flushPendingLassoPoint() {
@@ -25902,7 +25905,7 @@ var InkWritingView = class extends import_obsidian3.FileView {
     this.hideSelectionActions();
     this.pasteTarget = null;
   }
-  finishLasso(page) {
+  finishLasso(page, mode = this.state.lasso.mode) {
     if (this.lassoDrag) {
       const drag = this.lassoDrag;
       const before = drag.before;
@@ -25938,7 +25941,14 @@ var InkWritingView = class extends import_obsidian3.FileView {
       this.showSelectionActions();
       return;
     }
-    if (this.lassoPath.length >= 3) {
+    if (mode === "rectangle" && this.lassoPath.length >= 2) {
+      const bounds = boundsForPointSets([this.lassoPath]);
+      const spanX = bounds.maxX - bounds.minX, spanY = bounds.maxY - bounds.minY;
+      if (spanX > 0 && spanY > 0) {
+        const center = { ...this.lassoPath[0], x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
+        this.selectedStrokeIds = new Set(page.strokes.filter((stroke) => strokeIntersectsEraser(stroke, center, 1, "square", 2 / spanX, 2 / spanY)).map((stroke) => stroke.id));
+      }
+    } else if (mode === "freehand" && this.lassoPath.length >= 3) {
       this.selectedStrokeIds = new Set(page.strokes.filter((stroke) => stroke.points.some((point) => pointInPolygon(point, this.lassoPath))).map((stroke) => stroke.id));
     }
     const lastPoint = this.lassoPath[this.lassoPath.length - 1];
@@ -26312,6 +26322,7 @@ var InkWritingView = class extends import_obsidian3.FileView {
     this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
   drawSelection(width, height) {
+    var _a, _b;
     this.positionSelectionActions();
     const ctx = this.ctx;
     if (!ctx) return;
@@ -26320,11 +26331,16 @@ var InkWritingView = class extends import_obsidian3.FileView {
     ctx.lineWidth = 1.5;
     ctx.setLineDash([6, 4]);
     if (this.lassoPath.length > 1) {
-      ctx.beginPath();
-      ctx.moveTo(this.lassoPath[0].x * width, this.lassoPath[0].y * height);
-      for (const point of this.lassoPath.slice(1)) ctx.lineTo(point.x * width, point.y * height);
-      ctx.closePath();
-      ctx.stroke();
+      if (((_b = (_a = this.interaction) == null ? void 0 : _a.lassoMode) != null ? _b : this.state.lasso.mode) === "rectangle") {
+        const bounds2 = boundsForPointSets([this.lassoPath]);
+        ctx.strokeRect(bounds2.minX * width, bounds2.minY * height, (bounds2.maxX - bounds2.minX) * width, (bounds2.maxY - bounds2.minY) * height);
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(this.lassoPath[0].x * width, this.lassoPath[0].y * height);
+        for (const point of this.lassoPath.slice(1)) ctx.lineTo(point.x * width, point.y * height);
+        ctx.closePath();
+        ctx.stroke();
+      }
     }
     const bounds = selectionBounds(this.selectedStrokes());
     if (bounds) ctx.strokeRect(bounds.minX * width, bounds.minY * height, (bounds.maxX - bounds.minX) * width, (bounds.maxY - bounds.minY) * height);
@@ -26473,7 +26489,7 @@ var InkWritingView = class extends import_obsidian3.FileView {
       this.renderFrame = null;
     }
     if (interaction.tool === "lasso") {
-      this.finishLasso(page);
+      this.finishLasso(page, interaction.lassoMode);
       this.activePointerId = null;
       (_b = this.tiles) == null ? void 0 : _b.resumeInkCommit();
       this.applyPendingMergedNotebook();
@@ -26868,6 +26884,28 @@ var InkWritingView = class extends import_obsidian3.FileView {
     this.lassoSettingsPopover = pop;
     for (const type of ["pointerdown", "touchstart", "touchmove"]) pop.addEventListener(type, (event) => event.stopPropagation());
     pop.createDiv({ cls: "ink-size-popover-title", text: "Lasso" });
+    const modes = pop.createDiv({ cls: "ink-eraser-modes ink-lasso-modes", attr: { role: "radiogroup", "aria-label": "Selection shape" } });
+    for (const [mode, label, icon] of [["freehand", "Freehand", "lasso-select"], ["rectangle", "Rectangle", "square-dashed"]]) {
+      const button = modes.createEl("button", { cls: "ink-eraser-mode", attr: {
+        type: "button",
+        role: "radio",
+        "aria-label": `${label} selection`,
+        "aria-checked": String(this.state.lasso.mode === mode),
+        "data-lasso-mode": mode
+      } });
+      (0, import_obsidian3.setIcon)(button.createSpan({ cls: "ink-button-icon" }), icon);
+      button.createSpan({ cls: "ink-eraser-mode-label", text: label });
+      button.addEventListener("click", () => {
+        this.finishPointerInput(false);
+        this.state.lasso.mode = mode;
+        this.clearSelection();
+        this.drawStrokes(this.currentPage().strokes);
+        modes.querySelectorAll("[data-lasso-mode]").forEach((candidate) => {
+          candidate.setAttribute("aria-checked", String(candidate.dataset.lassoMode === mode));
+        });
+        this.scheduleToolStateSave();
+      });
+    }
     const row = pop.createEl("label", { cls: "ink-lasso-clipboard-toggle" });
     const toggle = row.createEl("input", { attr: { type: "checkbox", "aria-label": "Copy and paste across files" } });
     toggle.checked = this.state.lasso.crossFileClipboard;

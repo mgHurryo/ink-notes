@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add Freehand and Rectangle selection modes in lasso settings for both Ink and PDF handwriting. Freehand remains the default; rectangle drags work in every direction, select crossing strokes, and retain the existing move/copy/cut/delete/paste actions. The mode persists across sessions; older settings default to Freehand.
 - Add floating lasso Copy / Cut / Delete / Paste actions for Ink notebooks and PDF handwriting. Actions stay inside the editor pane, wrap on narrow screens, and support undo/redo and desktop shortcuts. Selection and placement targets clear on page/file changes.
 - Add an opt-in Copy and paste across files setting in the lasso panel. A plugin-scoped in-memory clipboard preserves handwriting proportions, pressure and brush settings across Ink/PDF pages; copied contents clear on reload and never use the system clipboard or modify the original PDF.
 - Add multi-select page management to both page rails. Bulk deletion is undoable; PDF deletions hide source-page note records only in the sidecar and never modify the source PDF. The final visible page is protected.

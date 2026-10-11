@@ -49,7 +49,9 @@ If the explicit command is missing, check that Ink Notes is enabled in this vaul
 
 Choose **Select** and circle handwriting to show **Copy**, **Cut**, **Delete** and **Paste**. The menu moves above or below the selection and wraps on narrow screens. Pasted handwriting stays selected so you can drag it into place. Cut, paste and delete support undo/redo; copying keeps the original strokes.
 
-Tap **Select** again to open **Lasso** settings. Enable **Copy and paste across files** to paste handwriting from any Ink notebook or PDF handwriting page into another file. This option is off by default; while off, pasting is limited to pages of the source file. In the destination, tap blank paper with Select to choose a paste location, or use **Paste handwriting** in Lasso settings to paste at the visible page center. This copies handwriting only; PDF text and page backgrounds are excluded.
+Tap **Select** again to open **Lasso** settings. Choose **Freehand** (the default) to draw a selection loop, or **Rectangle** to drag a box from one corner to the opposite corner in any direction. The rectangle selects whole strokes that lie inside or cross its boundary. Your mode is remembered and shared between Ink and PDF editors. Both modes support the same movement and clipboard actions.
+
+Enable **Copy and paste across files** in Lasso settings to paste handwriting from any Ink notebook or PDF handwriting page into another file. This option is off by default; while off, pasting is limited to pages of the source file. In the destination, tap blank paper with Select to choose a paste location, or use **Paste handwriting** in Lasso settings to paste at the visible page center. This copies handwriting only; PDF text and page backgrounds are excluded.
 
 On desktop, Select supports **Ctrl/Cmd+C**, **Ctrl/Cmd+X**, **Ctrl/Cmd+V**, and **Delete/Backspace**. The handwriting clipboard is held in memory for the running plugin instance and clears on restart or plugin reload. It is not the system clipboard and does not sync between devices.
 

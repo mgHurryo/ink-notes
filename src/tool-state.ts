@@ -25,7 +25,7 @@ export function defaultToolState(): ToolState {
     eraserMode: "stroke",
     eraserSize: 32,
     palette: INK_COLORS.map((color) => color.value),
-    lasso: { crossFileClipboard: false },
+    lasso: { mode: "freehand", crossFileClipboard: false },
   };
 }
 
@@ -49,6 +49,7 @@ const CSS_HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
 export function sanitizeToolState(raw: unknown): ToolState {
   const defaults = defaultToolState();
   const source = isRecord(raw) ? raw : {};
+  const lasso = isRecord(source.lasso) ? source.lasso : {};
   return {
     tool: defaults.tool,
     pen: sanitizeBrush(source.pen, defaults.pen, PEN_WIDTH_RANGE, true),
@@ -56,7 +57,7 @@ export function sanitizeToolState(raw: unknown): ToolState {
     eraserMode: isEraserMode(source.eraserMode) ? source.eraserMode : defaults.eraserMode,
     eraserSize: sanitizeNumber(source.eraserSize, defaults.eraserSize, ERASER_SIZE_RANGE),
     palette: sanitizePalette(source.palette),
-    lasso: { crossFileClipboard: isRecord(source.lasso) && source.lasso.crossFileClipboard === true },
+    lasso: { mode: lasso.mode === "rectangle" ? "rectangle" : "freehand", crossFileClipboard: lasso.crossFileClipboard === true },
   };
 }
 

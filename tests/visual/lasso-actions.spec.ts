@@ -61,3 +61,46 @@ for (const { width, split } of [{ width: 360, split: false }, { width: 1280, spl
     await page.screenshot({ path: `test-results/lasso-settings-${width}${split ? "-split" : ""}.png` });
   });
 }
+
+for (const width of [360, 1280]) {
+  test(`rectangle lasso previews a box and keeps selection actions at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 800 });
+    await page.goto("/");
+    await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+    await page.evaluate(() => {
+      const view = (window as any).__inkNotesPreview.view;
+      const ink = view.currentPage().strokes[0];
+      ink.points = [{ x: 0.2, y: 0.15, pressure: 0.5, t: 1 }, { x: 0.4, y: 0.2, pressure: 0.8, t: 2 }];
+      view.queueStrokePatch(view.currentPage(), [ink], []);
+      view.renderAll();
+    });
+    const select = page.getByRole("button", { name: "Select", exact: true });
+    await select.click(); await select.click();
+    await page.getByRole("radio", { name: "Rectangle selection" }).click();
+    await expect(page.getByRole("radio", { name: "Rectangle selection" })).toBeChecked();
+    await expect(page.getByRole("radio", { name: "Freehand selection" })).not.toBeChecked();
+    await page.getByRole("dialog", { name: "Lasso settings" }).evaluate((el) => Promise.all(el.getAnimations({ subtree: true }).map((animation) => animation.finished)));
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await page.screenshot({ path: `test-results/rectangle-lasso-mode-${width}.png` });
+    await select.click();
+    await expect(page.getByRole("dialog", { name: "Lasso settings" })).toHaveCount(0);
+    const rect = (await page.locator(".ink-page").boundingBox())!;
+    await page.mouse.move(rect.x + rect.width * 0.5, rect.y + rect.height * 0.25);
+    await page.mouse.down();
+    await page.mouse.move(rect.x + rect.width * 0.1, rect.y + rect.height * 0.1, { steps: 5 });
+    await expect.poll(() => page.evaluate(() => (window as any).__inkNotesPreview.view.lassoPath.length)).toBe(2);
+    await page.screenshot({ path: `test-results/rectangle-lasso-drag-${width}.png` });
+    await page.mouse.up();
+    const actions = page.getByRole("group", { name: "Selection actions" });
+    await expect(actions.getByRole("button", { name: "Copy", exact: true })).toBeVisible();
+    await actions.getByRole("button", { name: "Copy", exact: true }).click();
+    await actions.getByRole("button", { name: "Delete", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).__inkNotesPreview.view.currentPage().strokes.length)).toBe(0);
+    await page.getByRole("button", { name: "Undo", exact: true }).click();
+    await expect.poll(() => page.evaluate(() => (window as any).__inkNotesPreview.view.currentPage().strokes.length)).toBe(1);
+    await select.click();
+    await expect(page.getByRole("radio", { name: "Rectangle selection" })).toBeChecked();
+    await page.getByRole("radio", { name: "Freehand selection" }).click();
+    await expect(page.getByRole("radio", { name: "Freehand selection" })).toBeChecked();
+  });
+}

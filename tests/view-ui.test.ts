@@ -81,6 +81,56 @@ describe("reference-style editor", () => {
     expect(document.querySelector('[aria-label="Lasso settings"]')).not.toBeNull();
   });
 
+  it.each([
+    [0.1, 0.1, 0.5, 0.5], [0.5, 0.5, 0.1, 0.1],
+    [0.1, 0.5, 0.5, 0.1], [0.5, 0.1, 0.1, 0.5],
+  ])("selects a rectangle in any drag direction (%s, %s to %s, %s)", (x1, y1, x2, y2) => {
+    const { host, page } = selectSampleInk();
+    button("Select").click();
+    const freehand = document.querySelector<HTMLButtonElement>('[aria-label="Freehand selection"]')!;
+    const rectangle = document.querySelector<HTMLButtonElement>('[aria-label="Rectangle selection"]')!;
+    expect(freehand.getAttribute("aria-checked")).toBe("true");
+    rectangle.click();
+    expect(rectangle.getAttribute("aria-checked")).toBe("true");
+    expect(document.querySelector(".ink-selection-actions")).toBeNull();
+    const base = page.strokes[0];
+    const originalPoints = structuredClone(base.points);
+    const points = (pairs: number[][]) => pairs.map(([x, y]) => ({ x, y, pressure: 0.5, t: 1 }));
+    page.strokes.push(
+      { ...base, id: "crossing", points: points([[0, 0.35], [0.9, 0.35]]) },
+      { ...base, id: "miss", points: points([[0.3, 0.8], [0.8, 0.3]]) },
+      { ...base, id: "outside", points: points([[0.9, 0.9]]) });
+    const editor = host as unknown as { inputRect(): DOMRect; selectedStrokeIds: Set<string>; state: ReturnType<typeof defaultToolState>;
+      onPointerDown(event: unknown): void; onPointerMove(event: unknown): void; onPointerUp(event: unknown): void };
+    vi.spyOn(editor, "inputRect").mockReturnValue(new DOMRect(0, 0, 100, 100));
+    const inputHost = document.querySelector<HTMLElement>(".ink-page")!;
+    inputHost.hasPointerCapture = () => false;
+    inputHost.setPointerCapture = vi.fn();
+    inputHost.releasePointerCapture = vi.fn();
+    const event = (x: number, y: number) => ({ pointerId: 1, pointerType: "pen", clientX: x * 100, clientY: y * 100, pressure: 0.5 });
+    editor.onPointerDown(event(x1, y1));
+    // A different pane can change the shared setting during this drag.
+    editor.state.lasso.mode = "freehand";
+    editor.onPointerMove(event(x2, y2));
+    editor.onPointerUp(event(x2, y2));
+    expect([...editor.selectedStrokeIds].sort()).toEqual(["crossing", "selected"]);
+    button("Copy").click(); button("Paste").click();
+    expect(page.strokes).toHaveLength(6);
+    button("Undo").click();
+    expect(page.strokes).toHaveLength(4);
+    expect(base.points).toEqual(originalPoints);
+  });
+
+  it.each([[0.1, 0.1], [0.1, 0.5], [0.5, 0.1]])("does not select ink from a zero-area rectangle ending at %s, %s", (x, y) => {
+    const { host, page } = selectSampleInk();
+    button("Select").click();
+    document.querySelector<HTMLButtonElement>('[aria-label="Rectangle selection"]')!.click();
+    host.lassoPath = [{ x: 0.1, y: 0.1, pressure: 0.5, t: 1 }, { x, y, pressure: 0.5, t: 2 }];
+    host.finishLasso(page);
+    expect(document.querySelector(".ink-selection-actions")).toBeNull();
+    expect(page.strokes).toHaveLength(1);
+  });
+
   it("cuts selected ink and allows paste onto empty paper; delete does not replace copied ink", () => {
     const { page } = selectSampleInk();
     button("Cut").click();
