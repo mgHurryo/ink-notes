@@ -4,6 +4,8 @@
 
 - Close lasso/rectangle action menus after copy, cut, delete or paste and on outside presses; empty selections no longer show Paste just because the clipboard contains ink. In editing mode, hold one finger still on the page for 600ms to show a paste-only menu with any tool. Movement, early release, a second finger, stylus input, page changes and viewport interruption cancel the hold; paste retains the active tool and existing clipboard scope. Desktop shortcuts and Lasso settings remain available.
 
+- Simplify the image library with compact import/group menus, a scrollable thumbnail grid and a fixed insertion footer. Show batch management only when images are selected. Fix direct finger dragging and corner resizing in Ink and PDF pages by preserving native touch targets and routing active image gestures before page navigation; a second finger cancels the image preview and keeps page pinch zoom available.
+
 - Add image-library batch deletion with a count/name confirmation and undo of the latest deletion while the library stays open. Existing multi-select group moves now disable with no selection; counts include selections hidden by search/group filters. Deletion removes catalog entries only, retaining managed files for placed images, previews and PDF exports; it does not reclaim disk space.
 
 - Add a dedicated Pointer arrow tool (desktop shortcut A) for image editing. Insertion selects the image immediately; a finger/mouse contact on an image opens its controls, and tapping outside dismisses them. Stylus Pointer and native stylus Touch input cannot select/drag images; handwriting and lasso tools keep their existing behavior. Pointer contacts on blank paper never create ink.
