@@ -44,6 +44,7 @@ import { InkClipboard, pasteClipboardStrokes } from "./lasso-clipboard";
 
 const PASTE_HOLD_DELAY_MS = 600;
 const PASTE_HOLD_SLOP_PX = 10;
+const MAX_SCRIBBLE_GESTURE_POINTS = 2_048;
 
 export interface ToolState {
   tool: InkTool;
@@ -52,6 +53,7 @@ export interface ToolState {
   highlighter: BrushSettings;
   eraserMode: EraserMode;
   eraserSize: number;
+  scribbleErase: boolean;
   /** Editable preset swatch colors, shared by both editors and persisted
    *  with the rest of the tool settings (1..10 entries). */
   palette: string[];
@@ -244,7 +246,10 @@ function isScribbleEraseGesture(points: InkPoint[], eraserSize: number, width: n
     const bx = (point.x - previous.x) * width, by = (point.y - previous.y) * height;
     const lengths = Math.hypot(ax, ay) * Math.hypot(bx, by);
     // Only sharp, separated reversals count; handwriting corners and sample jitter do not.
-    if (lengths > 0 && (ax * bx + ay * by) / lengths < -0.35 && distanceSinceTurn >= Math.max(8, eraserSize * 0.35)) {
+    // The stroke modeler smooths and sparsifies Pencil samples. A reversal
+    // can therefore span several stored points, so use a shorter minimum
+    // distance and a softer angle than raw-pointer corner detection would.
+    if (lengths > 0 && (ax * bx + ay * by) / lengths < -0.15 && distanceSinceTurn >= Math.max(4, eraserSize * 0.15)) {
       turns++;
       distanceSinceTurn = 0;
     }
@@ -261,11 +266,11 @@ function isScribbleEraseGesture(points: InkPoint[], eraserSize: number, width: n
   const boundsHeight = maxY - minY;
   const boundsDiagonal = Math.hypot(boundsWidth, boundsHeight);
   const duration = filtered[filtered.length - 1].t - filtered[0].t;
-  return turns >= 4
-    && pathLength >= Math.max(96, eraserSize * 3)
-    && boundsDiagonal >= eraserSize
-    && pathLength / Math.max(1, boundsDiagonal) >= 3.2
-    && duration >= 0 && duration <= 1_200;
+  return turns >= 3
+    && pathLength >= Math.max(64, eraserSize * 2)
+    && boundsDiagonal >= eraserSize * 0.5
+    && pathLength / Math.max(1, boundsDiagonal) >= 2.4
+    && duration >= 0 && duration <= 1_800;
 }
 
 function strokeIntersectsScribble(stroke: InkStroke, path: InkPoint[], radius: number, width: number, height: number): boolean {
@@ -559,6 +564,9 @@ export abstract class InkWritingView extends FileView {
   protected interactionGeneration = 0;
   protected activePointerId: number | null = null;
   protected activeStroke: InkStroke | null = null;
+  /** Raw, session-only pen path for gesture recognition; rendered stroke
+   *  points are smoothed and may no longer retain small rapid reversals. */
+  private scribbleGesturePoints: InkPoint[] = [];
   protected workerStrokePointIndex = 0;
   protected lastPoint: InkPoint | null = null;
   protected touchGesture: {
@@ -1009,6 +1017,8 @@ export abstract class InkWritingView extends FileView {
     this.state = {
       tool: this.state.tool,
       get fingerAsPen() { return shared.config.fingerAsPen; },
+      get scribbleErase() { return shared.config.scribbleErase; },
+      set scribbleErase(value: boolean) { shared.config.scribbleErase = value; },
       pen: shared.config.pen,
       highlighter: shared.config.highlighter,
       eraserMode: shared.config.eraserMode,
@@ -1392,6 +1402,7 @@ export abstract class InkWritingView extends FileView {
       lassoMode: tool === "lasso" ? this.state.lasso.mode : undefined,
     };
     const point = this.toPoint(event, rect);
+    this.scribbleGesturePoints = tool === "pen" ? [{ ...point }] : [];
     this.erasedStrokeIds.clear();
     this.erasedCandidateIds.clear();
     this.erasedStrokes = [];
@@ -1610,6 +1621,16 @@ export abstract class InkWritingView extends FileView {
       if (feed.length === 0) return;
     }
     this.recordPenSampleIntervals(feed);
+    if (interaction.tool === "pen") {
+      for (const sample of feed) {
+        const point = this.toPoint(sample, rect);
+        const previous = this.scribbleGesturePoints[this.scribbleGesturePoints.length - 1];
+        if (this.scribbleGesturePoints.length < MAX_SCRIBBLE_GESTURE_POINTS && (!previous || Math.hypot((point.x - previous.x) * this.canvasLogicalWidth,
+          (point.y - previous.y) * this.canvasLogicalHeight) >= 2)) {
+          this.scribbleGesturePoints.push(point);
+        }
+      }
+    }
     this.devSamplesFed += feed.length;
     const record = this.currentStrokeRecord;
     if (record) {
@@ -2942,6 +2963,7 @@ export abstract class InkWritingView extends FileView {
     const page = this.pageById(interaction.pageId);
     if (!page) {
       this.interaction = null;
+      this.scribbleGesturePoints = [];
       this.refreshEraserCursor();
       this.activePointerId = null;
       this.penModeler = null;
@@ -2980,7 +3002,8 @@ export abstract class InkWritingView extends FileView {
       });
       this.pushCommand(this.erasedStrokesCommand(page.id, this.erasedStrokes, this.eraserReplacements));
       this.drawInteractiveStrokes(page.strokes, true);
-    } else if (this.activeStroke && !(interaction.tool === "pen" && this.finishScribbleErase(page, this.activeStroke))) {
+    } else if (this.activeStroke && !(interaction.tool === "pen" && this.state.scribbleErase
+      && this.finishScribbleErase(page, this.activeStroke, this.scribbleGesturePoints))) {
       this.markChanged(page);
       // Retain a complete vector preview without copying the full high-density
       // overlay. Late Worker responses update only the live stroke layer.
@@ -2991,6 +3014,7 @@ export abstract class InkWritingView extends FileView {
     }
     this.activePointerId = null;
     this.activeStroke = null;
+    this.scribbleGesturePoints = [];
     this.workerStrokePointIndex = 0;
     this.lastPoint = null;
     this.penModeler = null;
@@ -3009,12 +3033,12 @@ export abstract class InkWritingView extends FileView {
     this.afterInputFullySettled();
   }
 
-  private finishScribbleErase(page: InkPage, gesture: InkStroke): boolean {
-    if (!isScribbleEraseGesture(gesture.points, this.state.eraserSize, this.canvasLogicalWidth, this.canvasLogicalHeight)) return false;
+  private finishScribbleErase(page: InkPage, gesture: InkStroke, path: InkPoint[]): boolean {
+    if (!isScribbleEraseGesture(path, this.state.eraserSize, this.canvasLogicalWidth, this.canvasLogicalHeight)) return false;
     const radius = this.state.eraserSize / 2;
     let minX = Number.POSITIVE_INFINITY, minY = Number.POSITIVE_INFINITY;
     let maxX = Number.NEGATIVE_INFINITY, maxY = Number.NEGATIVE_INFINITY;
-    for (const point of gesture.points) {
+    for (const point of path) {
       minX = Math.min(minX, point.x * this.canvasLogicalWidth);
       minY = Math.min(minY, point.y * this.canvasLogicalHeight);
       maxX = Math.max(maxX, point.x * this.canvasLogicalWidth);
@@ -3037,7 +3061,7 @@ export abstract class InkWritingView extends FileView {
     ].map((stroke) => [stroke.id, stroke])).values()]
       .filter((stroke) => stroke.id !== gesture.id);
     const removed = candidates.filter((stroke) => strokeIntersectsScribble(
-      stroke, gesture.points, radius, this.canvasLogicalWidth, this.canvasLogicalHeight,
+      stroke, path, radius, this.canvasLogicalWidth, this.canvasLogicalHeight,
     ));
     if (removed.length === 0) return false;
 
@@ -3303,6 +3327,15 @@ export abstract class InkWritingView extends FileView {
     range.addEventListener("input", () => {
       this.state.eraserSize = Number(range.value);
       this.refreshEraserCursor();
+      this.scheduleToolStateSave();
+    });
+    const scribbleRow = pop.createDiv({ cls: "ink-eraser-scribble-row" });
+    const scribbleLabel = scribbleRow.createEl("label", { cls: "ink-eraser-scribble-toggle" });
+    const scribbleToggle = scribbleLabel.createEl("input", { attr: { type: "checkbox", "aria-label": "Scribble erase with pen" } });
+    scribbleToggle.checked = this.state.scribbleErase;
+    scribbleLabel.createSpan({ text: "Scribble erase with pen" });
+    scribbleToggle.addEventListener("change", () => {
+      this.state.scribbleErase = scribbleToggle.checked;
       this.scheduleToolStateSave();
     });
     // The stroke eraser ignores the size (fixed hit radius) - offer the

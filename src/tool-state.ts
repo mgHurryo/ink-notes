@@ -14,7 +14,7 @@ import type { EraserMode, ToolState } from "./ink-writing";
 import type { InkClipboard } from "./lasso-clipboard";
 
 /** The JSON shape persisted under `toolState` in the plugin data file. */
-export type StoredToolState = Pick<ToolState, "pen" | "highlighter" | "eraserMode" | "eraserSize" | "palette" | "lasso" | "fingerAsPen">;
+export type StoredToolState = Pick<ToolState, "pen" | "highlighter" | "eraserMode" | "eraserSize" | "scribbleErase" | "palette" | "lasso" | "fingerAsPen">;
 
 /** Single source of the pristine defaults both editors start from. */
 export function defaultToolState(): ToolState {
@@ -25,6 +25,7 @@ export function defaultToolState(): ToolState {
     highlighter: { color: "#f2c94c", width: 18, opacity: 0.4 },
     eraserMode: "stroke",
     eraserSize: 32,
+    scribbleErase: true,
     palette: INK_COLORS.map((color) => color.value),
     lasso: { mode: "freehand", crossFileClipboard: false },
   };
@@ -58,6 +59,7 @@ export function sanitizeToolState(raw: unknown): ToolState {
     highlighter: sanitizeBrush(source.highlighter, defaults.highlighter, HIGHLIGHTER_WIDTH_RANGE, false),
     eraserMode: isEraserMode(source.eraserMode) ? source.eraserMode : defaults.eraserMode,
     eraserSize: sanitizeNumber(source.eraserSize, defaults.eraserSize, ERASER_SIZE_RANGE),
+    scribbleErase: source.scribbleErase !== false,
     palette: sanitizePalette(source.palette),
     lasso: { mode: lasso.mode === "rectangle" ? "rectangle" : "freehand", crossFileClipboard: lasso.crossFileClipboard === true },
   };
@@ -71,6 +73,7 @@ export function storedToolState(state: ToolState): StoredToolState {
     highlighter: storedBrush(state.highlighter),
     eraserMode: state.eraserMode,
     eraserSize: state.eraserSize,
+    scribbleErase: state.scribbleErase,
     palette: [...state.palette],
     lasso: { ...state.lasso },
   };

@@ -729,6 +729,20 @@ describe("reference-style editor", () => {
     expect(cursor.classList.contains("is-square")).toBe(true);
     expect(button("Square eraser").getAttribute("aria-checked")).toBe("true");
   });
+  it("exposes a persistent scribble eraser toggle in eraser settings", () => {
+    const scheduleSave = vi.fn();
+    (view as unknown as { sharedToolSettings: unknown }).sharedToolSettings = {
+      config: defaultToolState(), scheduleSave,
+    };
+    button("Erase").click();
+    button("Erase").click();
+    const toggle = document.querySelector<HTMLInputElement>('input[aria-label="Scribble erase with pen"]')!;
+    expect(toggle.checked).toBe(true);
+    toggle.checked = false;
+    toggle.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(scheduleSave).toHaveBeenCalled();
+    expect((view as any).state.scribbleErase).toBe(false);
+  });
   it("toggles the eraser mini popover on re-tap without the reopen race", async () => {
     button("Erase").click();   // select the eraser
     button("Erase").click();   // re-tap opens the mini popover

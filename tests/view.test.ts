@@ -51,6 +51,7 @@ interface ViewInternals {
     highlighter: { color: string; width: number; opacity: number };
     eraserMode: "stroke" | "circle" | "square";
     eraserSize: number;
+    scribbleErase: boolean;
   };
   updateEraserHover(point: { x: number; y: number; pressure: number; t: number }, inside: boolean): void;
 }
@@ -438,7 +439,7 @@ describe("consecutive handwriting input", () => {
   it("turns a fast repeated pen scrub over existing ink into one undoable erase", () => {
     const { internal } = setup();
     (internal as any).commitPreview = (InkView.prototype as any).commitPreview.bind(internal);
-    internal.state.pen.smooth = 0;
+    internal.state.pen.smooth = 100;
     const page = internal.notebook.pages[0];
     const target: InkStroke = {
       id: "word-line", pageId: page.id, tool: "pen", color: "#000", width: 3, opacity: 1,
@@ -469,6 +470,35 @@ describe("consecutive handwriting input", () => {
     expect(page.strokes[0].points).toEqual(target.points);
     internal.redo();
     expect(page.strokes).toEqual([]);
+  });
+
+  it("keeps a pen scrub as ink when scribble erase is disabled", () => {
+    const { internal } = setup();
+    (internal as any).commitPreview = (InkView.prototype as any).commitPreview.bind(internal);
+    internal.state.pen.smooth = 0;
+    internal.state.scribbleErase = false;
+    const page = internal.notebook.pages[0];
+    page.strokes.push({
+      id: "existing", pageId: page.id, tool: "pen", color: "#000", width: 3, opacity: 1,
+      points: [{ x: 0.2, y: 0.5, pressure: 0.5, t: 1 }, { x: 0.8, y: 0.5, pressure: 0.5, t: 2 }],
+      createdAt: 1, updatedAt: 1,
+    });
+    const vertices = [[25, 40], [65, 60], [25, 60], [65, 40], [25, 40], [65, 60]];
+    const path = vertices.slice(1).flatMap((end, index) => {
+      const start = vertices[index];
+      return Array.from({ length: 5 }, (_, step) => ({
+        x: start[0] + (end[0] - start[0]) * (step + 1) / 5,
+        y: start[1] + (end[1] - start[1]) * (step + 1) / 5,
+      }));
+    });
+    internal.onPointerDown(pointer(vertices[0][0], { clientY: vertices[0][1] }));
+    for (const point of path.slice(0, -1)) internal.onPointerMove(pointer(point.x, { clientY: point.y }));
+    const last = path[path.length - 1];
+    internal.onPointerUp(pointer(last.x, { clientY: last.y }));
+
+    expect(page.strokes).toHaveLength(2);
+    expect(page.strokes.map((stroke) => stroke.id)).toContain("existing");
+    expect(page.deletedStrokeIds).toEqual([]);
   });
 
   it("keeps ordinary pen strokes and scribbles on blank areas as ink", () => {

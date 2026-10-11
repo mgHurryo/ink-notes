@@ -24744,6 +24744,7 @@ function defaultToolState() {
     highlighter: { color: "#f2c94c", width: 18, opacity: 0.4 },
     eraserMode: "stroke",
     eraserSize: 32,
+    scribbleErase: true,
     palette: INK_COLORS.map((color) => color.value),
     lasso: { mode: "freehand", crossFileClipboard: false }
   };
@@ -24765,6 +24766,7 @@ function sanitizeToolState(raw) {
     highlighter: sanitizeBrush(source.highlighter, defaults.highlighter, HIGHLIGHTER_WIDTH_RANGE, false),
     eraserMode: isEraserMode(source.eraserMode) ? source.eraserMode : defaults.eraserMode,
     eraserSize: sanitizeNumber(source.eraserSize, defaults.eraserSize, ERASER_SIZE_RANGE),
+    scribbleErase: source.scribbleErase !== false,
     palette: sanitizePalette(source.palette),
     lasso: { mode: lasso.mode === "rectangle" ? "rectangle" : "freehand", crossFileClipboard: lasso.crossFileClipboard === true }
   };
@@ -24776,6 +24778,7 @@ function storedToolState(state) {
     highlighter: storedBrush(state.highlighter),
     eraserMode: state.eraserMode,
     eraserSize: state.eraserSize,
+    scribbleErase: state.scribbleErase,
     palette: [...state.palette],
     lasso: { ...state.lasso }
   };
@@ -24924,6 +24927,7 @@ function pasteClipboardStrokes(content, pageId, width, height, target) {
 // src/ink-writing.ts
 var PASTE_HOLD_DELAY_MS = 600;
 var PASTE_HOLD_SLOP_PX = 10;
+var MAX_SCRIBBLE_GESTURE_POINTS = 2048;
 var STROKE_ERASER_HIT_RADIUS = 10;
 var OVERLAY_PIXEL_BUDGET = 12e6;
 var SAVE_IDLE_DELAY = 1500;
@@ -25015,7 +25019,7 @@ function isScribbleEraseGesture(points, eraserSize, width, height) {
     const ax = (previous.x - before.x) * width, ay = (previous.y - before.y) * height;
     const bx = (point.x - previous.x) * width, by = (point.y - previous.y) * height;
     const lengths = Math.hypot(ax, ay) * Math.hypot(bx, by);
-    if (lengths > 0 && (ax * bx + ay * by) / lengths < -0.35 && distanceSinceTurn >= Math.max(8, eraserSize * 0.35)) {
+    if (lengths > 0 && (ax * bx + ay * by) / lengths < -0.15 && distanceSinceTurn >= Math.max(4, eraserSize * 0.15)) {
       turns++;
       distanceSinceTurn = 0;
     }
@@ -25033,7 +25037,7 @@ function isScribbleEraseGesture(points, eraserSize, width, height) {
   const boundsHeight = maxY - minY;
   const boundsDiagonal = Math.hypot(boundsWidth, boundsHeight);
   const duration = filtered[filtered.length - 1].t - filtered[0].t;
-  return turns >= 4 && pathLength >= Math.max(96, eraserSize * 3) && boundsDiagonal >= eraserSize && pathLength / Math.max(1, boundsDiagonal) >= 3.2 && duration >= 0 && duration <= 1200;
+  return turns >= 3 && pathLength >= Math.max(64, eraserSize * 2) && boundsDiagonal >= eraserSize * 0.5 && pathLength / Math.max(1, boundsDiagonal) >= 2.4 && duration >= 0 && duration <= 1800;
 }
 function strokeIntersectsScribble(stroke, path, radius, width, height) {
   const samples = sampleStrokeForEraser(path, Math.max(1, radius / 2), width, height);
@@ -25223,6 +25227,9 @@ var InkWritingView = class extends import_obsidian4.FileView {
     this.interactionGeneration = 0;
     this.activePointerId = null;
     this.activeStroke = null;
+    /** Raw, session-only pen path for gesture recognition; rendered stroke
+     *  points are smoothed and may no longer retain small rapid reversals. */
+    this.scribbleGesturePoints = [];
     this.workerStrokePointIndex = 0;
     this.lastPoint = null;
     this.touchGesture = null;
@@ -25683,6 +25690,12 @@ var InkWritingView = class extends import_obsidian4.FileView {
       tool: this.state.tool,
       get fingerAsPen() {
         return shared.config.fingerAsPen;
+      },
+      get scribbleErase() {
+        return shared.config.scribbleErase;
+      },
+      set scribbleErase(value) {
+        shared.config.scribbleErase = value;
       },
       pen: shared.config.pen,
       highlighter: shared.config.highlighter,
@@ -26160,6 +26173,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
       lassoMode: tool === "lasso" ? this.state.lasso.mode : void 0
     };
     const point = this.toPoint(event, rect);
+    this.scribbleGesturePoints = tool === "pen" ? [{ ...point }] : [];
     this.erasedStrokeIds.clear();
     this.erasedCandidateIds.clear();
     this.erasedStrokes = [];
@@ -26364,6 +26378,18 @@ var InkWritingView = class extends import_obsidian4.FileView {
       if (feed.length === 0) return;
     }
     this.recordPenSampleIntervals(feed);
+    if (interaction.tool === "pen") {
+      for (const sample of feed) {
+        const point = this.toPoint(sample, rect);
+        const previous = this.scribbleGesturePoints[this.scribbleGesturePoints.length - 1];
+        if (this.scribbleGesturePoints.length < MAX_SCRIBBLE_GESTURE_POINTS && (!previous || Math.hypot(
+          (point.x - previous.x) * this.canvasLogicalWidth,
+          (point.y - previous.y) * this.canvasLogicalHeight
+        ) >= 2)) {
+          this.scribbleGesturePoints.push(point);
+        }
+      }
+    }
     this.devSamplesFed += feed.length;
     const record = this.currentStrokeRecord;
     if (record) {
@@ -27655,6 +27681,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
     const page = this.pageById(interaction.pageId);
     if (!page) {
       this.interaction = null;
+      this.scribbleGesturePoints = [];
       this.refreshEraserCursor();
       this.activePointerId = null;
       this.penModeler = null;
@@ -27693,7 +27720,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
       });
       this.pushCommand(this.erasedStrokesCommand(page.id, this.erasedStrokes, this.eraserReplacements));
       this.drawInteractiveStrokes(page.strokes, true);
-    } else if (this.activeStroke && !(interaction.tool === "pen" && this.finishScribbleErase(page, this.activeStroke))) {
+    } else if (this.activeStroke && !(interaction.tool === "pen" && this.state.scribbleErase && this.finishScribbleErase(page, this.activeStroke, this.scribbleGesturePoints))) {
       this.markChanged(page);
       this.retainActivePreview();
       this.queueWorkerOperation({
@@ -27707,6 +27734,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
     }
     this.activePointerId = null;
     this.activeStroke = null;
+    this.scribbleGesturePoints = [];
     this.workerStrokePointIndex = 0;
     this.lastPoint = null;
     this.penModeler = null;
@@ -27724,13 +27752,13 @@ var InkWritingView = class extends import_obsidian4.FileView {
     this.scheduleSave();
     this.afterInputFullySettled();
   }
-  finishScribbleErase(page, gesture) {
+  finishScribbleErase(page, gesture, path) {
     var _a, _b, _c, _d;
-    if (!isScribbleEraseGesture(gesture.points, this.state.eraserSize, this.canvasLogicalWidth, this.canvasLogicalHeight)) return false;
+    if (!isScribbleEraseGesture(path, this.state.eraserSize, this.canvasLogicalWidth, this.canvasLogicalHeight)) return false;
     const radius = this.state.eraserSize / 2;
     let minX = Number.POSITIVE_INFINITY, minY = Number.POSITIVE_INFINITY;
     let maxX = Number.NEGATIVE_INFINITY, maxY = Number.NEGATIVE_INFINITY;
-    for (const point of gesture.points) {
+    for (const point of path) {
       minX = Math.min(minX, point.x * this.canvasLogicalWidth);
       minY = Math.min(minY, point.y * this.canvasLogicalHeight);
       maxX = Math.max(maxX, point.x * this.canvasLogicalWidth);
@@ -27753,7 +27781,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
     ].map((stroke) => [stroke.id, stroke])).values()].filter((stroke) => stroke.id !== gesture.id);
     const removed = candidates.filter((stroke) => strokeIntersectsScribble(
       stroke,
-      gesture.points,
+      path,
       radius,
       this.canvasLogicalWidth,
       this.canvasLogicalHeight
@@ -27999,6 +28027,15 @@ var InkWritingView = class extends import_obsidian4.FileView {
     range.addEventListener("input", () => {
       this.state.eraserSize = Number(range.value);
       this.refreshEraserCursor();
+      this.scheduleToolStateSave();
+    });
+    const scribbleRow = pop.createDiv({ cls: "ink-eraser-scribble-row" });
+    const scribbleLabel = scribbleRow.createEl("label", { cls: "ink-eraser-scribble-toggle" });
+    const scribbleToggle = scribbleLabel.createEl("input", { attr: { type: "checkbox", "aria-label": "Scribble erase with pen" } });
+    scribbleToggle.checked = this.state.scribbleErase;
+    scribbleLabel.createSpan({ text: "Scribble erase with pen" });
+    scribbleToggle.addEventListener("change", () => {
+      this.state.scribbleErase = scribbleToggle.checked;
       this.scheduleToolStateSave();
     });
     const syncSizeVisibility = () => {
