@@ -44,6 +44,7 @@ import { InkClipboard, pasteClipboardStrokes } from "./lasso-clipboard";
 
 const PASTE_HOLD_DELAY_MS = 600;
 const PASTE_HOLD_SLOP_PX = 10;
+const MAX_SCRIBBLE_GESTURE_POINTS = 2_048;
 
 export interface ToolState {
   tool: InkTool;
@@ -52,6 +53,8 @@ export interface ToolState {
   highlighter: BrushSettings;
   eraserMode: EraserMode;
   eraserSize: number;
+  scribbleErase: boolean;
+  scribbleSensitivity: number;
   /** Editable preset swatch colors, shared by both editors and persisted
    *  with the rest of the tool settings (1..10 entries). */
   palette: string[];
@@ -221,7 +224,7 @@ export function strokeIntersectsEraser(stroke: InkStroke, center: InkPoint, radi
   return false;
 }
 
-function isScribbleEraseGesture(points: InkPoint[], eraserSize: number, width: number, height: number): boolean {
+function isScribbleEraseGesture(points: InkPoint[], eraserSize: number, width: number, height: number, sensitivity: number): boolean {
   if (points.length < 8) return false;
   const filtered = [points[0]];
   for (const point of points.slice(1)) {
@@ -243,8 +246,9 @@ function isScribbleEraseGesture(points: InkPoint[], eraserSize: number, width: n
     const ax = (previous.x - before.x) * width, ay = (previous.y - before.y) * height;
     const bx = (point.x - previous.x) * width, by = (point.y - previous.y) * height;
     const lengths = Math.hypot(ax, ay) * Math.hypot(bx, by);
-    // Only sharp, separated reversals count; handwriting corners and sample jitter do not.
-    if (lengths > 0 && (ax * bx + ay * by) / lengths < -0.35 && distanceSinceTurn >= Math.max(8, eraserSize * 0.35)) {
+    // These are raw pointer samples: ordinary corners and small backhooks
+    // must not count as deliberate scrubbing reversals.
+    if (lengths > 0 && (ax * bx + ay * by) / lengths < -0.35 && distanceSinceTurn >= Math.max(8, eraserSize * 0.25)) {
       turns++;
       distanceSinceTurn = 0;
     }
@@ -261,11 +265,31 @@ function isScribbleEraseGesture(points: InkPoint[], eraserSize: number, width: n
   const boundsHeight = maxY - minY;
   const boundsDiagonal = Math.hypot(boundsWidth, boundsHeight);
   const duration = filtered[filtered.length - 1].t - filtered[0].t;
-  return turns >= 4
+  const ease = Math.max(0, Math.min(100, sensitivity)) / 100;
+  const minimumTurns = Math.round(6 - 3 * ease);
+  // Connected writing often has many corners but advances across the page.
+  // Require repeated substantial traversals of the same bounding region,
+  // ignoring short backhooks and sample jitter between those traversals.
+  const horizontal = boundsWidth >= boundsHeight;
+  const span = horizontal ? boundsWidth : boundsHeight;
+  const coordinate = (point: InkPoint): number => horizontal ? point.x * width : point.y * height;
+  let extreme = coordinate(filtered[0]), direction = 0, traversals = 0;
+  const travel = Math.max(8, span * 0.6);
+  for (const point of filtered.slice(1)) {
+    const value = coordinate(point);
+    if (direction === 0) {
+      if (Math.abs(value - extreme) >= travel) { direction = Math.sign(value - extreme); extreme = value; traversals++; }
+    } else if ((value - extreme) * direction >= 0) {
+      extreme = value;
+    } else if ((extreme - value) * direction >= travel) {
+      direction *= -1; extreme = value; traversals++;
+    }
+  }
+  return turns >= minimumTurns && traversals >= minimumTurns + 1
     && pathLength >= Math.max(96, eraserSize * 3)
-    && boundsDiagonal >= eraserSize
-    && pathLength / Math.max(1, boundsDiagonal) >= 3.2
-    && duration >= 0 && duration <= 1_200;
+    && boundsDiagonal >= eraserSize * 0.5
+    && pathLength / Math.max(1, boundsDiagonal) >= 4.8 - 1.6 * ease
+    && duration >= 0 && duration <= 1_800;
 }
 
 function strokeIntersectsScribble(stroke: InkStroke, path: InkPoint[], radius: number, width: number, height: number): boolean {
@@ -559,6 +583,9 @@ export abstract class InkWritingView extends FileView {
   protected interactionGeneration = 0;
   protected activePointerId: number | null = null;
   protected activeStroke: InkStroke | null = null;
+  /** Raw, session-only pen path for gesture recognition; rendered stroke
+   *  points are smoothed and may no longer retain small rapid reversals. */
+  private scribbleGesturePoints: InkPoint[] = [];
   protected workerStrokePointIndex = 0;
   protected lastPoint: InkPoint | null = null;
   protected touchGesture: {
@@ -1009,6 +1036,10 @@ export abstract class InkWritingView extends FileView {
     this.state = {
       tool: this.state.tool,
       get fingerAsPen() { return shared.config.fingerAsPen; },
+      get scribbleErase() { return shared.config.scribbleErase; },
+      set scribbleErase(value: boolean) { shared.config.scribbleErase = value; },
+      get scribbleSensitivity() { return shared.config.scribbleSensitivity; },
+      set scribbleSensitivity(value: number) { shared.config.scribbleSensitivity = value; },
       pen: shared.config.pen,
       highlighter: shared.config.highlighter,
       eraserMode: shared.config.eraserMode,
@@ -1392,6 +1423,7 @@ export abstract class InkWritingView extends FileView {
       lassoMode: tool === "lasso" ? this.state.lasso.mode : undefined,
     };
     const point = this.toPoint(event, rect);
+    this.scribbleGesturePoints = tool === "pen" ? [{ ...point }] : [];
     this.erasedStrokeIds.clear();
     this.erasedCandidateIds.clear();
     this.erasedStrokes = [];
@@ -1610,6 +1642,16 @@ export abstract class InkWritingView extends FileView {
       if (feed.length === 0) return;
     }
     this.recordPenSampleIntervals(feed);
+    if (interaction.tool === "pen") {
+      for (const sample of feed) {
+        const point = this.toPoint(sample, rect);
+        const previous = this.scribbleGesturePoints[this.scribbleGesturePoints.length - 1];
+        if (this.scribbleGesturePoints.length < MAX_SCRIBBLE_GESTURE_POINTS && (!previous || Math.hypot((point.x - previous.x) * this.canvasLogicalWidth,
+          (point.y - previous.y) * this.canvasLogicalHeight) >= 2)) {
+          this.scribbleGesturePoints.push(point);
+        }
+      }
+    }
     this.devSamplesFed += feed.length;
     const record = this.currentStrokeRecord;
     if (record) {
@@ -2942,6 +2984,7 @@ export abstract class InkWritingView extends FileView {
     const page = this.pageById(interaction.pageId);
     if (!page) {
       this.interaction = null;
+      this.scribbleGesturePoints = [];
       this.refreshEraserCursor();
       this.activePointerId = null;
       this.penModeler = null;
@@ -2980,7 +3023,8 @@ export abstract class InkWritingView extends FileView {
       });
       this.pushCommand(this.erasedStrokesCommand(page.id, this.erasedStrokes, this.eraserReplacements));
       this.drawInteractiveStrokes(page.strokes, true);
-    } else if (this.activeStroke && !(interaction.tool === "pen" && this.finishScribbleErase(page, this.activeStroke))) {
+    } else if (this.activeStroke && !(interaction.tool === "pen" && this.state.scribbleErase
+      && this.finishScribbleErase(page, this.activeStroke, this.scribbleGesturePoints))) {
       this.markChanged(page);
       // Retain a complete vector preview without copying the full high-density
       // overlay. Late Worker responses update only the live stroke layer.
@@ -2991,6 +3035,7 @@ export abstract class InkWritingView extends FileView {
     }
     this.activePointerId = null;
     this.activeStroke = null;
+    this.scribbleGesturePoints = [];
     this.workerStrokePointIndex = 0;
     this.lastPoint = null;
     this.penModeler = null;
@@ -3009,12 +3054,12 @@ export abstract class InkWritingView extends FileView {
     this.afterInputFullySettled();
   }
 
-  private finishScribbleErase(page: InkPage, gesture: InkStroke): boolean {
-    if (!isScribbleEraseGesture(gesture.points, this.state.eraserSize, this.canvasLogicalWidth, this.canvasLogicalHeight)) return false;
+  private finishScribbleErase(page: InkPage, gesture: InkStroke, path: InkPoint[]): boolean {
+    if (!isScribbleEraseGesture(path, this.state.eraserSize, this.canvasLogicalWidth, this.canvasLogicalHeight, this.state.scribbleSensitivity)) return false;
     const radius = this.state.eraserSize / 2;
     let minX = Number.POSITIVE_INFINITY, minY = Number.POSITIVE_INFINITY;
     let maxX = Number.NEGATIVE_INFINITY, maxY = Number.NEGATIVE_INFINITY;
-    for (const point of gesture.points) {
+    for (const point of path) {
       minX = Math.min(minX, point.x * this.canvasLogicalWidth);
       minY = Math.min(minY, point.y * this.canvasLogicalHeight);
       maxX = Math.max(maxX, point.x * this.canvasLogicalWidth);
@@ -3037,7 +3082,7 @@ export abstract class InkWritingView extends FileView {
     ].map((stroke) => [stroke.id, stroke])).values()]
       .filter((stroke) => stroke.id !== gesture.id);
     const removed = candidates.filter((stroke) => strokeIntersectsScribble(
-      stroke, gesture.points, radius, this.canvasLogicalWidth, this.canvasLogicalHeight,
+      stroke, path, radius, this.canvasLogicalWidth, this.canvasLogicalHeight,
     ));
     if (removed.length === 0) return false;
 
@@ -3305,6 +3350,29 @@ export abstract class InkWritingView extends FileView {
       this.refreshEraserCursor();
       this.scheduleToolStateSave();
     });
+    const scribbleRow = pop.createDiv({ cls: "ink-eraser-scribble-row" });
+    const scribbleLabel = scribbleRow.createEl("label", { cls: "ink-eraser-scribble-toggle" });
+    const scribbleToggle = scribbleLabel.createEl("input", { attr: { type: "checkbox", "aria-label": "Scribble erase with pen" } });
+    scribbleToggle.checked = this.state.scribbleErase;
+    scribbleLabel.createSpan({ text: "Scribble erase with pen" });
+    scribbleToggle.addEventListener("change", () => {
+      this.state.scribbleErase = scribbleToggle.checked;
+      sensitivity.disabled = !scribbleToggle.checked;
+      this.scheduleToolStateSave();
+    });
+    const sensitivityLabel = scribbleRow.createEl("label", { cls: "ink-eraser-size-row" });
+    const sensitivityValue = sensitivityLabel.createSpan();
+    const sensitivity = sensitivityLabel.createEl("input", { attr: { type: "range", min: "0", max: "100", step: "1", "aria-label": "Scribble erase sensitivity" } });
+    sensitivity.value = String(this.state.scribbleSensitivity);
+    sensitivity.disabled = !this.state.scribbleErase;
+    const updateSensitivityLabel = (): void => { sensitivityValue.setText(`Scribble sensitivity: ${this.state.scribbleSensitivity}%`); };
+    updateSensitivityLabel();
+    sensitivity.addEventListener("input", () => {
+      this.state.scribbleSensitivity = Number(sensitivity.value);
+      updateSensitivityLabel();
+      this.scheduleToolStateSave();
+    });
+    scribbleRow.createDiv({ cls: "ink-settings-label", text: "Low: fewer accidental erases. High: fewer back-and-forth strokes needed." });
     // The stroke eraser ignores the size (fixed hit radius) - offer the
     // slider only for the shapes that use it.
     const syncSizeVisibility = (): void => {

@@ -1347,6 +1347,9 @@
 .ink-lasso-settings { position: absolute; overflow: auto; }
 
 .ink-eraser-size-row { display: flex; flex-direction: column; }
+.ink-eraser-scribble-row { padding-top: 6px; }
+.ink-eraser-scribble-toggle { display: flex; align-items: center; gap: 8px; min-height: 32px; cursor: pointer; }
+.ink-eraser-scribble-toggle input { margin: 0; accent-color: var(--ink-accent); }
 
 /* Swatch slot: the visible button plus its own native picker input, which
    only becomes tappable while armed (a tap on the swatch arms it; the next
