@@ -140,6 +140,69 @@ afterEach(async () => {
 });
 
 describe("stylus touch input ownership", () => {
+  function copySampleInk() {
+    dispatchPointer("pointerdown"); dispatchPointer("pointermove", { clientX: 380 }); dispatchPointer("pointerup", { clientX: 420 });
+    drawing.selectedStrokeIds.add(drawing.currentPage().strokes[0].id);
+    (view as any).copySelection(); (view as any).clearSelection();
+  }
+
+  it.each(["pen", "highlighter", "eraser", "lasso", "pointer"])("shows paste only after a finger hold with %s, without changing the tool", (tool) => {
+    copySampleInk(); (view as any).selectWritingTool(tool);
+    const finger = touch(91, { touchType: "direct", clientX: 660, clientY: 650 });
+    dispatchTouch("touchstart", [finger]); vi.advanceTimersByTime(599);
+    expect(document.querySelector(".ink-selection-actions")).toBeNull();
+    vi.advanceTimersByTime(1);
+    const actions = document.querySelector<HTMLElement>('.ink-selection-actions')!;
+    expect(actions).not.toBeNull();
+    expect(Array.from(actions.querySelectorAll('button')).map((button) => button.getAttribute('aria-label'))).toEqual(["Paste"]);
+    dispatchTouch("touchend", [finger], []);
+    expect(document.querySelector(".ink-selection-actions")).toBe(actions);
+    clickButton("Paste");
+    expect(document.querySelector(".ink-selection-actions")).toBeNull();
+    expect(drawing.currentPage().strokes).toHaveLength(2);
+    const pasted = drawing.currentPage().strokes[1];
+    expect((pasted.points[0].x + pasted.points.at(-1)!.x) / 2).toBeCloseTo(.7);
+    expect((view as any).state.tool).toBe(tool);
+    expect(drawing.selectedStrokeIds.size).toBe(tool === "lasso" ? 1 : 0);
+  });
+
+  it.each(["tap", "move", "pinch", "cancel", "pen", "blur", "resize", "scroll", "page", "reading", "outside"])("cancels the paste hold on %s", (reason) => {
+    copySampleInk();
+    const finger = touch(91, { touchType: "direct" });
+    dispatchTouch("touchstart", [finger]); vi.advanceTimersByTime(300);
+    if (reason === "tap") dispatchTouch("touchend", [finger], []);
+    if (reason === "move") dispatchTouch("touchmove", [touch(91, { touchType: "direct", clientY: 385 })]);
+    if (reason === "pinch") dispatchTouch("touchstart", [finger, touch(92, { touchType: "direct", clientX: 400 })]);
+    if (reason === "cancel") dispatchTouch("touchcancel", [finger], []);
+    if (reason === "pen") dispatchPointer("pointerdown", { pointerId: 8 });
+    if (reason === "blur") window.dispatchEvent(new Event("blur"));
+    if (reason === "resize") window.dispatchEvent(new Event("resize"));
+    if (reason === "scroll") scroller.dispatchEvent(new Event("scroll"));
+    if (reason === "page") (view as any).addPage();
+    if (reason === "reading") clickButton("Reading mode");
+    if (reason === "outside") document.body.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    vi.advanceTimersByTime(700);
+    expect(document.querySelector(".ink-selection-actions")).toBeNull();
+  });
+
+  it("ignores small hold jitter, excludes empty clipboard and stylus holds, and dismisses on the next tap", () => {
+    const finger = touch(91, { touchType: "direct" });
+    dispatchTouch("touchstart", [finger]); vi.advanceTimersByTime(700);
+    expect(document.querySelector(".ink-selection-actions")).toBeNull();
+    dispatchTouch("touchend", [finger], []);
+    copySampleInk();
+    dispatchTouch("touchstart", [touch(19)]); vi.advanceTimersByTime(700);
+    expect(document.querySelector(".ink-selection-actions")).toBeNull();
+    dispatchTouch("touchend", [touch(19)], []);
+    dispatchTouch("touchstart", [finger]); vi.advanceTimersByTime(300);
+    dispatchTouch("touchmove", [touch(91, { touchType: "direct", clientX: 303, clientY: 352 })]);
+    vi.advanceTimersByTime(300);
+    expect(document.querySelector(".ink-selection-actions")).not.toBeNull();
+    dispatchTouch("touchend", [finger], []);
+    dispatchTouch("touchstart", [finger]); dispatchTouch("touchend", [finger], []); vi.advanceTimersByTime(700);
+    expect(document.querySelector(".ink-selection-actions")).toBeNull();
+  });
+
   it("draws consecutive complete strokes when Scribble omits all Pointer events", () => {
     for (let identifier = 7; identifier < 10; identifier += 1) {
       const start = touch(identifier);

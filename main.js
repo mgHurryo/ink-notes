@@ -24820,6 +24820,8 @@ function pasteClipboardStrokes(content, pageId, width, height, target) {
 }
 
 // src/ink-writing.ts
+var PASTE_HOLD_DELAY_MS = 600;
+var PASTE_HOLD_SLOP_PX = 10;
 var STROKE_ERASER_HIT_RADIUS = 10;
 var OVERLAY_PIXEL_BUDGET = 12e6;
 var SAVE_IDLE_DELAY = 1500;
@@ -25148,6 +25150,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
     this.inkClipboard = new InkClipboard();
     this.selectionActions = null;
     this.pasteTarget = null;
+    this.pasteHold = null;
     this.lassoSettingsPopover = null;
     this.lassoSettingsCleanup = null;
     // --- history
@@ -25702,9 +25705,39 @@ var InkWritingView = class extends import_obsidian4.FileView {
     });
     const scroller = this.inputScroller();
     const doc = this.containerEl.ownerDocument;
-    this.registerDomEvent((_a = doc.defaultView) != null ? _a : window, "resize", () => this.positionSelectionActions());
+    this.registerDomEvent((_a = doc.defaultView) != null ? _a : window, "resize", () => {
+      this.cancelPasteHold();
+      this.hideSelectionActions();
+      this.pasteTarget = null;
+    });
     this.registerDomEvent(doc, "scroll", () => this.positionSelectionActions(), true);
+    const dismissActions = (event) => {
+      var _a2, _b;
+      const target = event.target;
+      if (target && ((_a2 = this.selectionActions) == null ? void 0 : _a2.contains(target))) return;
+      this.cancelPasteHold();
+      this.hideSelectionActions();
+      this.pasteTarget = null;
+      if (this.activePointerId === null && this.selectedStrokeIds.size && target && !((_b = this.inputHost()) == null ? void 0 : _b.contains(target))) {
+        this.clearSelection();
+        this.drawStrokes(this.currentPage().strokes);
+      }
+    };
+    this.registerDomEvent(doc, "pointerdown", dismissActions, true);
+    this.registerDomEvent(doc, "touchstart", dismissActions, true);
+    this.registerDomEvent(doc, "touchcancel", () => {
+      this.cancelPasteHold();
+      this.hideSelectionActions();
+      this.pasteTarget = null;
+    }, true);
+    this.registerDomEvent(doc, "touchend", () => this.cancelPasteHold(), true);
+    this.registerDomEvent(scroller, "scroll", () => {
+      this.cancelPasteHold();
+      this.hideSelectionActions();
+      this.pasteTarget = null;
+    }, { passive: true });
     this.register(() => {
+      this.cancelPasteHold();
       this.hideSelectionActions();
       this.closeLassoSettings();
     });
@@ -25750,6 +25783,9 @@ var InkWritingView = class extends import_obsidian4.FileView {
       }, true);
     }
     const reset = () => {
+      this.cancelPasteHold();
+      this.hideSelectionActions();
+      this.pasteTarget = null;
       this.desktopSpaceDown = false;
       scroller.classList.remove("ink-pan-ready");
       this.endDesktopPan();
@@ -25933,6 +25969,11 @@ var InkWritingView = class extends import_obsidian4.FileView {
   }
   onPointerDown(event, source = "pointer") {
     var _a, _b, _c, _d, _e, _f, _g, _h;
+    this.cancelPasteHold();
+    if (event.pointerType !== "touch") {
+      this.hideSelectionActions();
+      this.pasteTarget = null;
+    }
     this.devPointerEvents += 1;
     this.devLastPointerType = event.pointerType || this.devLastPointerType;
     if (this.beginDesktopPan(event)) return;
@@ -26541,16 +26582,25 @@ var InkWritingView = class extends import_obsidian4.FileView {
   }
   // ---------------------------------------------------------------- touch
   onTouchStart(event) {
-    var _a, _b, _c;
-    if (((_a = this.touchGesture) == null ? void 0 : _a.ids.length) === 2) this.scheduleZoomHudHide();
+    var _a, _b, _c, _d, _e;
+    this.cancelPasteHold();
+    if (event.type === "touchstart") {
+      this.hideSelectionActions();
+      this.pasteTarget = null;
+      if (this.activePointerId === null && this.selectedStrokeIds.size && !Array.from((_a = event.changedTouches) != null ? _a : []).some((touch) => touch.touchType === "stylus")) {
+        this.clearSelection();
+        this.drawStrokes(this.currentPage().strokes);
+      }
+    }
+    if (((_b = this.touchGesture) == null ? void 0 : _b.ids.length) === 2) this.scheduleZoomHudHide();
     if (this.nativeMenuOpen()) {
       this.touchGesture = null;
       return;
     }
-    (_b = event.stopPropagation) == null ? void 0 : _b.call(event);
+    (_c = event.stopPropagation) == null ? void 0 : _c.call(event);
     if (this.onStylusTouch(event)) return;
     if (event.cancelable && event.touches.length < 2) event.preventDefault();
-    if (((_c = this.touchGesture) == null ? void 0 : _c.axis) === "x" && event.touches.length > 1) {
+    if (((_d = this.touchGesture) == null ? void 0 : _d.axis) === "x" && event.touches.length > 1) {
       this.cancelPageFlip();
       this.touchGesture = null;
       return;
@@ -26588,6 +26638,20 @@ var InkWritingView = class extends import_obsidian4.FileView {
       pageY: (y - rect.top) / rect.height
     };
     if (b) this.showZoomHud();
+    else if (event.type === "touchstart" && !this.inputLocked() && this.availableClipboard() && ((_e = this.inputHost()) == null ? void 0 : _e.contains(a.target)) && pointInsideRect(a, rect)) {
+      const page = this.currentPage(), gesture = this.touchGesture;
+      const point = { x: gesture.pageX, y: gesture.pageY };
+      this.pasteHold = { x, y, timer: window.setTimeout(() => {
+        this.pasteHold = null;
+        if (this.touchGesture !== gesture || this.currentPage() !== page || this.activePointerId !== null || this.inputLocked() || this.nativeMenuOpen() || !this.availableClipboard()) return;
+        this.pasteTarget = point;
+        this.showSelectionActions(true);
+      }, PASTE_HOLD_DELAY_MS) };
+    }
+  }
+  cancelPasteHold() {
+    if (this.pasteHold) window.clearTimeout(this.pasteHold.timer);
+    this.pasteHold = null;
   }
   /**
    * Finalizes interactions whose pointer the platform lost. iPadOS split-view
@@ -26610,7 +26674,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
     if (Date.now() - this.lastPointerActivityAt > 2500) this.finishPointerInput(false);
   }
   onTouchMove(event) {
-    var _a;
+    var _a, _b;
     if (this.nativeMenuOpen()) {
       this.touchGesture = null;
       return;
@@ -26633,6 +26697,14 @@ var InkWritingView = class extends import_obsidian4.FileView {
       this.onTouchStart(event);
       return;
     }
+    if (this.pasteHold) {
+      if (b || Math.hypot(a.clientX - this.pasteHold.x, a.clientY - this.pasteHold.y) > PASTE_HOLD_SLOP_PX) this.cancelPasteHold();
+      else {
+        event.preventDefault();
+        return;
+      }
+    }
+    if (((_b = this.selectionActions) == null ? void 0 : _b.dataset.pasteOnly) && Math.hypot(a.clientX - gesture.startX, a.clientY - gesture.startY) > PASTE_HOLD_SLOP_PX) this.hideSelectionActions();
     event.preventDefault();
     if (!b) {
       const scroller = this.inputScroller();
@@ -26797,6 +26869,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
   }
   clearSelection() {
     var _a;
+    this.cancelPasteHold();
     (_a = this.pageImages) == null ? void 0 : _a.clear();
     this.selectedStrokeIds.clear();
     this.lassoPath = [];
@@ -26851,8 +26924,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
     } else if (mode === "freehand" && this.lassoPath.length >= 3) {
       this.selectedStrokeIds = new Set(page.strokes.filter((stroke) => stroke.points.some((point) => pointInPolygon(point, this.lassoPath))).map((stroke) => stroke.id));
     }
-    const lastPoint = this.lassoPath[this.lassoPath.length - 1];
-    if (lastPoint) this.pasteTarget = { x: lastPoint.x, y: lastPoint.y };
+    this.pasteTarget = null;
     this.lassoPath = [];
     this.drawStrokes(page.strokes);
     this.showSelectionActions();
@@ -26874,7 +26946,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
       strokes
     });
     if (cut) this.deleteSelection();
-    else this.showSelectionActions();
+    else this.hideSelectionActions();
   }
   deleteSelection() {
     if (this.inputLocked() || this.activePointerId !== null) return;
@@ -26891,7 +26963,6 @@ var InkWritingView = class extends import_obsidian4.FileView {
     this.drawInteractiveStrokes(page.strokes, true);
     this.scheduleSave();
     this.afterInputFullySettled();
-    this.showSelectionActions();
   }
   pasteSelection() {
     var _a;
@@ -26912,27 +26983,36 @@ var InkWritingView = class extends import_obsidian4.FileView {
     this.markChanged(page);
     this.queueStrokePatch(page, strokes, []);
     this.pushCommand(this.erasedStrokesCommand(page.id, [], strokes));
-    this.selectedStrokeIds = new Set(strokes.map((stroke) => stroke.id));
+    this.selectedStrokeIds = this.state.tool === "lasso" ? new Set(strokes.map((stroke) => stroke.id)) : /* @__PURE__ */ new Set();
+    this.hideSelectionActions();
+    this.pasteTarget = null;
     this.drawInteractiveStrokes(page.strokes, true);
     this.scheduleSave();
     this.afterInputFullySettled();
-    this.showSelectionActions();
   }
   hideSelectionActions() {
     var _a;
     (_a = this.selectionActions) == null ? void 0 : _a.remove();
     this.selectionActions = null;
   }
-  showSelectionActions() {
+  showSelectionActions(pasteOnly = false) {
     this.hideSelectionActions();
     if (!this.viewReady) return;
-    const selected = this.selectedStrokes().length > 0;
-    if (this.state.tool !== "lasso" || this.inputLocked() || !selected && !this.availableClipboard()) return;
+    const selected = !pasteOnly && this.selectedStrokes().length > 0;
+    if (this.inputLocked() || (pasteOnly ? !this.availableClipboard() : this.state.tool !== "lasso" || !selected)) return;
     const pop = this.toolbarRoot().createDiv({ cls: "ink-selection-actions", attr: { role: "group", "aria-label": "Selection actions" } });
     this.selectionActions = pop;
+    if (pasteOnly) pop.dataset.pasteOnly = "true";
     for (const type of ["pointerdown", "touchstart", "touchmove"]) pop.addEventListener(type, (event) => event.stopPropagation());
     const add = (icon, label, action, disabled, cls = "") => {
-      const button2 = this.addIconButton(pop, icon, label, action, disabled);
+      const button2 = this.addIconButton(pop, icon, label, () => {
+        try {
+          action();
+        } finally {
+          this.hideSelectionActions();
+          this.pasteTarget = null;
+        }
+      }, disabled);
       if (cls) button2.addClass(cls);
       button2.createSpan({ text: label });
     };
@@ -26948,7 +27028,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     const pop = this.selectionActions;
     if (!pop) return;
-    if (this.inputLocked() || this.state.tool !== "lasso") {
+    if (this.inputLocked() || !pop.dataset.pasteOnly && (this.state.tool !== "lasso" || !this.selectedStrokes().length)) {
       this.hideSelectionActions();
       return;
     }
@@ -26959,7 +27039,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
     const topEdge = Math.max(8, viewport.top + 8), bottomEdge = Math.min(win.innerHeight - 8, viewport.bottom - 8);
     pop.style.maxWidth = `${Math.max(44, rightEdge - leftEdge)}px`;
     pop.style.maxHeight = `${Math.max(44, bottomEdge - topEdge)}px`;
-    const size = { width: pop.offsetWidth, height: pop.offsetHeight }, bounds = selectionBounds(this.selectedStrokes());
+    const size = { width: pop.offsetWidth, height: pop.offsetHeight }, bounds = pop.dataset.pasteOnly ? null : selectionBounds(this.selectedStrokes());
     const x = rect.left + (bounds ? (bounds.minX + bounds.maxX) / 2 : (_c = (_b = this.pasteTarget) == null ? void 0 : _b.x) != null ? _c : 0.5) * rect.width;
     const top = rect.top + ((_f = (_e = bounds == null ? void 0 : bounds.minY) != null ? _e : (_d = this.pasteTarget) == null ? void 0 : _d.y) != null ? _f : 0.5) * rect.height;
     const bottom = rect.top + ((_i = (_h = bounds == null ? void 0 : bounds.maxY) != null ? _h : (_g = this.pasteTarget) == null ? void 0 : _g.y) != null ? _i : 0.5) * rect.height;
@@ -27818,7 +27898,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
       this.state.lasso.crossFileClipboard = toggle.checked;
       this.scheduleToolStateSave();
       paste.disabled = !this.availableClipboard();
-      this.showSelectionActions();
+      this.hideSelectionActions();
     });
     paste.addEventListener("click", () => {
       this.closeLassoSettings();

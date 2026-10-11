@@ -69,8 +69,10 @@ describe("reference-style editor", () => {
     const { page } = selectSampleInk();
     expect(button("Paste").disabled).toBe(true);
     button("Copy").click();
+    expect(document.querySelector(".ink-selection-actions")).toBeNull();
     expect(page.strokes).toHaveLength(1);
-    button("Paste").click();
+    document.querySelector<HTMLElement>(".ink-page-scroller")!.dispatchEvent(new KeyboardEvent("keydown", { key: "v", ctrlKey: true, bubbles: true }));
+    expect(document.querySelector(".ink-selection-actions")).toBeNull();
     expect(page.strokes).toHaveLength(2);
     expect(page.strokes[1].id).not.toBe("selected");
     button("Undo").click();
@@ -114,7 +116,8 @@ describe("reference-style editor", () => {
     editor.onPointerMove(event(x2, y2));
     editor.onPointerUp(event(x2, y2));
     expect([...editor.selectedStrokeIds].sort()).toEqual(["crossing", "selected"]);
-    button("Copy").click(); button("Paste").click();
+    button("Copy").click();
+    document.querySelector<HTMLElement>(".ink-page-scroller")!.dispatchEvent(new KeyboardEvent("keydown", { key: "v", ctrlKey: true, bubbles: true }));
     expect(page.strokes).toHaveLength(6);
     button("Undo").click();
     expect(page.strokes).toHaveLength(4);
@@ -136,15 +139,34 @@ describe("reference-style editor", () => {
     button("Cut").click();
     expect(page.strokes).toHaveLength(0);
     expect(page.deletedStrokeIds).toContain("selected");
-    // The strip must survive a cut/delete so paste stays reachable without re-lassoing.
-    expect(document.querySelector(".ink-selection-actions")).not.toBeNull();
-    button("Paste").click();
+    expect(document.querySelector(".ink-selection-actions")).toBeNull();
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    scroller.dispatchEvent(new KeyboardEvent("keydown", { key: "v", ctrlKey: true, bubbles: true }));
     expect(page.strokes).toHaveLength(1);
-    button("Delete").click();
+    scroller.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
     expect(page.strokes).toHaveLength(0);
-    expect(document.querySelector(".ink-selection-actions")).not.toBeNull();
+    expect(document.querySelector(".ink-selection-actions")).toBeNull();
     button("Undo").click();
     expect(page.strokes).toHaveLength(1);
+  });
+
+  it("closes Delete and never reopens Paste after clicking outside a copied selection", () => {
+    const { host, page } = selectSampleInk();
+    button("Copy").click();
+    const editor = host as any;
+    vi.spyOn(editor, "inputRect").mockReturnValue(new DOMRect(0, 0, 100, 100));
+    const paper = document.querySelector<HTMLElement>('.ink-page')!;
+    paper.hasPointerCapture = () => false; paper.setPointerCapture = vi.fn(); paper.releasePointerCapture = vi.fn();
+    const event = { pointerId: 5, pointerType: "mouse", clientX: 90, clientY: 90, pressure: .5 };
+    editor.onPointerDown(event); editor.onPointerUp(event);
+    expect(editor.selectedStrokeIds.size).toBe(0);
+    expect(document.querySelector('.ink-selection-actions')).toBeNull();
+    host.lassoPath = [[.1, .1], [.5, .1], [.5, .5], [.1, .5]].map(([x, y]) => ({ x, y, pressure: .5, t: 1 }));
+    host.finishLasso(page); button("Delete").click();
+    expect(document.querySelector('.ink-selection-actions')).toBeNull();
+    expect(page.strokes).toHaveLength(0);
+    button("Undo").click(); expect(page.strokes).toHaveLength(1);
+    expect(document.querySelector('.ink-selection-actions')).toBeNull();
   });
 
   it("supports lasso shortcuts and clears stale selection when switching pages", async () => {
