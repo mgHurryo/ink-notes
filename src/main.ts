@@ -252,6 +252,18 @@ export default class InkNotesPlugin extends Plugin {
     await this.saveData({ pdfOpenMode: this.config.pdfOpenMode, toolState: storedToolState(this.toolState) });
   }
 
+  get fingerAsPen(): boolean { return this.toolState.fingerAsPen; }
+
+  async setFingerAsPen(enabled: boolean): Promise<void> {
+    for (const type of [VIEW_TYPE_INK, VIEW_TYPE_PDF_INK]) {
+      for (const leaf of this.app.workspace.getLeavesOfType(type)) {
+        if (leaf.view instanceof InkView || leaf.view instanceof PdfInkView) leaf.view.refreshInputPreferences();
+      }
+    }
+    this.toolState.fingerAsPen = enabled;
+    await this.persistSettings();
+  }
+
   /** Open a PDF tab in the handwriting view on explicit request. */
   private async openPdfHandwriting(file: TFile): Promise<void> {
     const leaf = this.app.workspace.getLeaf("tab");
@@ -316,6 +328,15 @@ class InkSettingTab extends PluginSettingTab {
   display(): void {
     const { containerEl } = this;
     containerEl.empty();
+    new Setting(containerEl).setName("Input and gestures").setHeading();
+    new Setting(containerEl).setName("Use finger as pen").setDesc(
+      "Off: use a pen to write and fingers to select or move images and handwriting. "
+      + "On: one finger uses the current writing, eraser or selection tool; two fingers move and zoom the page. "
+      + "Use Pointer to move images while finger writing is on. Hold still for clipboard options.",
+    ).addToggle((toggle) => toggle.setValue(this.plugin.fingerAsPen).onChange(async (value) => {
+      try { await this.plugin.setFingerAsPen(value); }
+      catch (error) { new Notice(`Ink Notes could not save input settings: ${error instanceof Error ? error.message : String(error)}`); }
+    }));
     new Setting(containerEl).setName("PDF handwriting").setHeading();
     new Setting(containerEl).setName("Default PDF viewer").setDesc(
       "PDF handwriting is stored in A_pdfinkwrittern/. Choose which viewer opens ordinary PDFs. "

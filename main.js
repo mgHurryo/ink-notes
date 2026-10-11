@@ -23331,6 +23331,15 @@ function button(parent, text, run) {
   el.addEventListener("click", run);
   return el;
 }
+function libraryMenu(parent, label) {
+  const menu = parent.createEl("details", { cls: "ink-image-library-menu" });
+  menu.createEl("summary", { text: label });
+  const panel = menu.createDiv({ cls: "ink-image-library-menu-panel" });
+  panel.addEventListener("click", (e) => {
+    if (e.target.closest("button")) menu.open = false;
+  });
+  return panel;
+}
 var ImageLibraryModal = class extends import_obsidian2.Modal {
   constructor(store, insert) {
     super(store.app);
@@ -23348,6 +23357,21 @@ var ImageLibraryModal = class extends import_obsidian2.Modal {
   onOpen() {
     this.setTitle("Image library");
     this.modalEl.addClass("ink-image-library");
+    this.contentEl.addEventListener("click", (e) => {
+      this.contentEl.querySelectorAll("details[open]").forEach((menu) => {
+        if (!menu.contains(e.target)) menu.open = false;
+      });
+    }, { signal: this.events.signal });
+    this.contentEl.addEventListener("keydown", (e) => {
+      var _a;
+      if (e.key !== "Escape") return;
+      const menu = this.contentEl.querySelector("details[open]");
+      if (!menu) return;
+      menu.open = false;
+      (_a = menu.querySelector("summary")) == null ? void 0 : _a.focus();
+      e.preventDefault();
+      e.stopPropagation();
+    }, { signal: this.events.signal });
     this.contentEl.addEventListener("dragover", (e) => e.preventDefault(), { signal: this.events.signal });
     this.contentEl.addEventListener("drop", (e) => {
       var _a, _b;
@@ -23421,13 +23445,8 @@ var ImageLibraryModal = class extends import_obsidian2.Modal {
       this.query = search.value;
       void this.render().catch((e) => this.report(e));
     };
-    button(tools, "New group", () => this.groupDialog());
-    if (this.groupId && this.groupId !== "*") button(tools, "Rename group", () => {
-      var _a;
-      return this.groupDialog(this.groupId, (_a = library.groups.find((g) => g.id === this.groupId)) == null ? void 0 : _a.name);
-    });
-    const imports = el.createDiv({ cls: "ink-image-library-tools" });
-    const picker = imports.createEl("input", { type: "file", attr: { multiple: "", accept: "image/*", "aria-label": "Import photos or files" } });
+    const imports = libraryMenu(tools, "Import images");
+    const picker = el.createEl("input", { type: "file", attr: { multiple: "", accept: "image/*", "aria-label": "Import photos or files" } });
     picker.hidden = true;
     picker.onchange = () => {
       var _a;
@@ -23436,13 +23455,24 @@ var ImageLibraryModal = class extends import_obsidian2.Modal {
     button(imports, "Photos / files", () => picker.click());
     button(imports, "From vault", () => this.vaultDialog());
     button(imports, "Enter vault paths", () => this.pathDialog());
-    el.createEl("p", { text: "Choose multiple images, drop files here, or paste copied images. Imports are saved as PNG copies (up to 30 MB / 16 MP each). Animated images use their first frame." });
+    imports.createEl("p", { text: "Batch import, drop or paste images. PNG copies, up to 30 MB / 16 MP each. Animated images use their first frame." });
     const assets = library.assets.filter((a) => (this.groupId === "*" || a.groupId === this.groupId) && a.name.toLowerCase().includes(this.query.toLowerCase()));
-    const bar = el.createDiv({ cls: "ink-image-library-tools" });
-    button(bar, "Select visible", () => {
+    const collection = el.createDiv({ cls: "ink-image-library-collection" });
+    collection.createSpan({ text: `${assets.length} images`, cls: "ink-image-library-total" });
+    const groups = libraryMenu(collection, "Groups");
+    button(groups, "New group", () => this.groupDialog());
+    if (this.groupId && this.groupId !== "*") button(groups, "Rename group", () => {
+      var _a;
+      return this.groupDialog(this.groupId, (_a = library.groups.find((g) => g.id === this.groupId)) == null ? void 0 : _a.name);
+    });
+    const selectAll = button(collection, "Select visible", () => {
       assets.forEach((a) => this.selected.add(a.id));
       void this.render().catch((e) => this.report(e));
     });
+    selectAll.disabled = !assets.length;
+    const grid = el.createDiv({ cls: "ink-image-library-grid", attr: { "aria-label": "Library images" } });
+    const footer = el.createDiv({ cls: "ink-image-library-footer" });
+    const bar = footer.createDiv({ cls: "ink-image-library-batch" });
     const clear = button(bar, "Clear selection", () => {
       this.selected.clear();
       void this.render().catch((e) => this.report(e));
@@ -23455,21 +23485,20 @@ var ImageLibraryModal = class extends import_obsidian2.Modal {
     };
     const remove = button(bar, "Delete selected", () => this.deleteDialog(library.assets.filter((asset) => this.selected.has(asset.id))));
     remove.addClass("mod-warning");
-    const count = el.createEl("p", { attr: { role: "status", "aria-live": "polite" } });
+    const primary = footer.createDiv({ cls: "ink-image-library-primary" });
+    const count = primary.createSpan({ attr: { role: "status", "aria-live": "polite" } });
     if (this.lastDeleted.length) {
-      button(bar, `Undo last deletion (${this.lastDeleted.length})`, () => {
+      button(footer, `Undo last deletion (${this.lastDeleted.length})`, () => {
         void this.operation(async () => {
           await this.store.restore(this.lastDeleted);
           this.lastDeleted = [];
           new import_obsidian2.Notice("Image library deletion undone");
         });
       });
-      el.createEl("p", { text: "Undo is available for the last deletion until this library closes or another deletion replaces it." });
     }
-    const grid = el.createDiv({ cls: "ink-image-library-grid" });
     for (const asset of assets) {
       const card = grid.createEl("label", { cls: "ink-image-library-card" });
-      const check = card.createEl("input", { type: "checkbox" });
+      const check = card.createEl("input", { type: "checkbox", attr: { "aria-label": `Select ${asset.name}` } });
       check.checked = this.selected.has(asset.id);
       check.onchange = () => {
         if (check.checked) this.selected.add(asset.id);
@@ -23481,13 +23510,14 @@ var ImageLibraryModal = class extends import_obsidian2.Modal {
       } catch (e) {
         card.createSpan({ text: "Missing image" });
       }
-      card.createSpan({ text: asset.name });
+      card.createSpan({ text: asset.name, cls: "ink-image-library-name", attr: { title: asset.name } });
     }
-    if (!assets.length) grid.createEl("p", { text: "No images yet. Import photos or files to begin." });
-    const insert = button(el, "Insert selected", () => {
+    if (!assets.length) grid.createEl("p", { cls: "ink-image-library-empty", text: library.assets.length ? "No matching images. Try another search or group." : "Your image library is empty. Use Import images, or drop or paste images here." });
+    const insert = button(primary, "Insert selected", () => {
       this.insert(library.assets.filter((a) => this.selected.has(a.id)));
       this.close();
     });
+    insert.addClass("mod-cta");
     const updateActions = () => {
       const size = this.selected.size, hidden = size - assets.filter((asset) => this.selected.has(asset.id)).length;
       count.textContent = `${size} selected${hidden ? ` (${hidden} hidden by filter)` : ""}`;
@@ -23497,6 +23527,7 @@ var ImageLibraryModal = class extends import_obsidian2.Modal {
       remove.disabled = !size;
       move.disabled = !size;
       clear.disabled = !size;
+      bar.hidden = !size;
     };
     updateActions();
   }
@@ -23679,20 +23710,23 @@ var PageImageLayer = class {
         e.preventDefault();
         e.stopPropagation();
       } else this.cancel();
-    }, { signal, passive: false });
+    }, { signal, passive: false, capture: true });
     doc.addEventListener("touchend", (e) => {
       var _a2;
       if (((_a2 = this.drag) == null ? void 0 : _a2.touch) && Array.from(e.changedTouches).some((t) => t.identifier === this.drag.id)) {
         this.finish();
         e.stopPropagation();
       }
-    }, { signal });
+    }, { signal, capture: true });
     doc.addEventListener("touchcancel", () => this.cancel(), { signal });
     (_a = doc.defaultView) == null ? void 0 : _a.addEventListener("blur", () => this.cancel(), { signal });
-    this.bind(this.outline, true);
+    const handle = this.outline.createEl("button", { cls: "ink-image-resize", attr: { type: "button", "aria-label": "Resize image" } });
+    handle.textContent = "\u2198";
+    this.bind(handle, true);
     for (const type of ["pointerdown", "touchstart", "touchmove"]) this.inspector.addEventListener(type, (e) => e.stopPropagation(), { signal });
   }
   dispose() {
+    this.drag = null;
     this.events.abort();
     this.layer.remove();
     this.outline.remove();
@@ -23701,7 +23735,6 @@ var PageImageLayer = class {
   clear() {
     this.cancel();
     this.selectedId = null;
-    this.last = void 0;
     this.outline.hidden = this.inspector.hidden = true;
   }
   select(id) {
@@ -23709,30 +23742,31 @@ var PageImageLayer = class {
     if (!this.context.editable() || !((_a = this.context.page().images) == null ? void 0 : _a.some((image) => image.id === id))) return;
     this.context.select();
     this.selectedId = id;
-    this.last = void 0;
     this.sync();
   }
   sync() {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     const page = this.context.page(), editable = this.context.editable();
     if (this.drag && (this.drag.pageId !== page.id || !editable)) this.cancel();
     if (((_a = this.last) == null ? void 0 : _a.pageId) === page.id && this.last.images === page.images && this.last.editable === editable && this.last.selectedId === this.selectedId) return;
-    this.last = { pageId: page.id, images: page.images, editable, selectedId: this.selectedId };
-    this.layer.empty();
-    for (const image2 of (_b = page.images) != null ? _b : []) {
-      const el = this.layer.createEl("img", { cls: "ink-placed-image", attr: { alt: "Inserted image", draggable: "false" } });
-      try {
-        el.src = this.store.url(image2.assetPath);
-      } catch (e) {
-        el.alt = "Missing image";
+    if (((_b = this.last) == null ? void 0 : _b.pageId) !== page.id || this.last.images !== page.images || this.last.editable !== editable) {
+      this.layer.empty();
+      for (const image2 of (_c = page.images) != null ? _c : []) {
+        const el = this.layer.createEl("img", { cls: "ink-placed-image", attr: { alt: "Inserted image", draggable: "false" } });
+        try {
+          el.src = this.store.url(image2.assetPath);
+        } catch (e) {
+          el.alt = "Missing image";
+        }
+        el.dataset.imageId = image2.id;
+        el.style.zIndex = image2.foreground ? "7" : "0";
+        el.style.pointerEvents = editable ? "auto" : "none";
+        this.position(el, image2);
+        this.bind(el, false);
       }
-      el.dataset.imageId = image2.id;
-      el.style.zIndex = image2.foreground ? "7" : "0";
-      el.style.pointerEvents = editable ? "auto" : "none";
-      this.position(el, image2);
-      this.bind(el, false);
     }
-    const image = ((_c = page.images) != null ? _c : []).find((i) => i.id === this.selectedId);
+    this.last = { pageId: page.id, images: page.images, editable, selectedId: this.selectedId };
+    const image = ((_d = page.images) != null ? _d : []).find((i) => i.id === this.selectedId);
     this.outline.hidden = this.inspector.hidden = !image || !editable;
     if (image && editable) {
       this.position(this.outline, image);
@@ -23761,10 +23795,6 @@ var PageImageLayer = class {
         this.clear();
         this.sync();
       });
-      this.outline.textContent = "";
-      const handle = this.outline.createEl("button", { cls: "ink-image-resize", attr: { type: "button", "aria-label": "Resize image" } });
-      handle.textContent = "\u2198";
-      this.bind(handle, true);
     }
   }
   button(text, run) {
@@ -23778,16 +23808,22 @@ var PageImageLayer = class {
     el.style.height = `${image.height * 100}%`;
   }
   bind(el, resize) {
-    const start = (id, touch, x, y, e) => {
-      var _a;
-      if (!this.context.editable()) return;
+    const start = (id, touch, x, y, e, type) => {
+      var _a, _b, _c;
+      if (!this.context.editable() || ((_b = (_a = this.context).canInteract) == null ? void 0 : _b.call(_a, type)) === false) {
+        if (type === "pen" && this.selectedId) {
+          this.clear();
+          this.sync();
+        }
+        return;
+      }
       if (this.drag) {
         e.preventDefault();
         e.stopPropagation();
         return;
       }
       const page = this.context.page();
-      const image = (_a = page.images) == null ? void 0 : _a.find((i) => {
+      const image = (_c = page.images) == null ? void 0 : _c.find((i) => {
         var _a2;
         return i.id === ((_a2 = el.dataset.imageId) != null ? _a2 : this.selectedId);
       });
@@ -23798,13 +23834,20 @@ var PageImageLayer = class {
       this.drag = { id, touch, pageId: page.id, original: { ...image }, preview: { ...image }, x, y, rect: this.host.getBoundingClientRect(), resize };
     };
     el.addEventListener("pointerdown", (e) => {
-      if (e.pointerType !== "mouse" || e.button !== 0) return;
-      start(e.pointerId, false, e.clientX, e.clientY, e);
+      if (e.pointerType !== "mouse" && e.pointerType !== "pen" || e.button !== 0) return;
+      start(e.pointerId, false, e.clientX, e.clientY, e, e.pointerType);
     });
     el.addEventListener("touchstart", (e) => {
-      if (e.touches.length === 1 && e.touches[0].touchType !== "stylus") {
-        const t = e.touches[0];
-        start(t.identifier, true, t.clientX, t.clientY, e);
+      if (e.touches.length === 1) {
+        const t = e.touches[0], type = t.touchType === "stylus" ? "pen" : "touch";
+        if (this.drag && type === "pen" && !this.drag.touch) {
+          e.preventDefault();
+          e.stopPropagation();
+          this.drag.id = t.identifier;
+          this.drag.touch = true;
+          return;
+        }
+        start(t.identifier, true, t.clientX, t.clientY, e, type);
       }
     }, { passive: false });
     el.addEventListener("dragstart", (e) => e.preventDefault());
@@ -23840,9 +23883,12 @@ var PageImageLayer = class {
     if (drag && this.context.editable() && this.context.page().id === drag.pageId) this.commit(drag.original, drag.preview);
   }
   cancel() {
-    if (!this.drag) return;
+    const drag = this.drag;
+    if (!drag) return;
     this.drag = null;
-    this.last = void 0;
+    const el = Array.from(this.layer.children).find((node) => node.dataset.imageId === drag.original.id);
+    if (el) this.position(el, drag.original);
+    this.position(this.outline, drag.original);
     this.sync();
   }
   isSelected(image) {
@@ -24311,7 +24357,7 @@ var INK_COLORS = [
 ];
 var PRESET_PALETTE_MIN = 1;
 var PRESET_PALETTE_MAX = 10;
-var LONG_PRESS_MS = 550;
+var LONG_PRESS_MS = 600;
 var PICKER_ARM_MS = 400;
 var PICKER_SETTLE_MS = 800;
 var POPOVER_TRANSITION_MS = 150;
@@ -24363,7 +24409,7 @@ var BrushPopoverController = class {
     /** The tool whose panel was last shown; a switch resets the shared scroll
      *  container so the shorter panel is not left scrolled out of view. */
     this.visiblePanel = null;
-    var _a;
+    var _a, _b;
     this.options = options;
     this.root = parent.createDiv({
       cls: options.extraClass ? `ink-size-popover ${options.extraClass}` : "ink-size-popover",
@@ -24377,8 +24423,16 @@ var BrushPopoverController = class {
     }
     const body = this.root.createDiv({ cls: "ink-popover-body" });
     this.body = body;
+    this.root.addEventListener("touchstart", (event) => {
+      if (event.touches.length > 1) this.cancelPresetHold();
+    }, { capture: true });
+    (_a = options.registerCleanup) == null ? void 0 : _a.call(options, () => {
+      var _a2;
+      this.cancelPresetHold();
+      (_a2 = this.presetMenu) == null ? void 0 : _a2.hide();
+    });
     for (const spec of options.tools) this.buildToolPanel(body, spec);
-    (_a = options.buildExtras) == null ? void 0 : _a.call(options, body, {
+    (_b = options.buildExtras) == null ? void 0 : _b.call(options, body, {
       addRange: (parent2, name, min, max, step, value, onChange) => this.addRange(parent2, name, min, max, step, value, onChange)
     });
     this.update();
@@ -24508,6 +24562,9 @@ var BrushPopoverController = class {
   }
   /** Rebuilds the swatch row from the live palette (after add/edit/remove). */
   buildSwatchesInto(spec) {
+    var _a;
+    this.cancelPresetHold();
+    (_a = this.presetMenu) == null ? void 0 : _a.hide();
     const swatches = this.root.querySelector(`.ink-color-control[data-brush-tool="${spec.tool}"] .ink-color-swatches`);
     if (!swatches) return;
     swatches.empty();
@@ -24522,7 +24579,7 @@ var BrushPopoverController = class {
       const slot = swatches.createDiv({ cls: "ink-swatch-slot" });
       const swatch = slot.createEl("button", { cls: "ink-color-swatch", attr: {
         type: "button",
-        title: `${label} \u2014 double-tap to change, hold to remove`,
+        title: `${label} \u2014 double-tap to change, hold for options`,
         "aria-label": `${spec.label} ${label.toLowerCase()}`,
         "aria-pressed": String(settings.color.toLowerCase() === value.toLowerCase()),
         "data-color": value,
@@ -24568,31 +24625,63 @@ var BrushPopoverController = class {
         swatch.dataset.color = picker.value;
         picker.dataset.color = picker.value;
         swatch.setAttribute("aria-label", `${spec.label} ${newLabel.toLowerCase()}`);
-        swatch.title = `${newLabel} \u2014 double-tap to change, hold to remove`;
+        swatch.title = `${newLabel} \u2014 double-tap to change, hold for options`;
         current = picker.value;
         this.update();
       };
       picker.addEventListener("input", applyPick);
       picker.addEventListener("change", applyPick);
-      let pressTimer;
-      const cancelPress = () => {
-        if (pressTimer !== void 0) {
-          window.clearTimeout(pressTimer);
-          pressTimer = void 0;
-        }
+      const options = (event) => {
+        var _a2;
+        this.cancelPresetHold();
+        (_a2 = this.presetMenu) == null ? void 0 : _a2.hide();
+        const menu = new import_obsidian4.Menu();
+        this.presetMenu = menu;
+        menu.addItem((item) => {
+          var _a3, _b2, _c2;
+          return item.setTitle("Remove preset color").setIcon("trash-2").setDisabled(((_c2 = (_b2 = (_a3 = this.options).palette) == null ? void 0 : _b2.call(_a3).length) != null ? _c2 : 1) <= PRESET_PALETTE_MIN).onClick(() => this.removePresetColor(spec, current));
+        });
+        menu.onHide(() => {
+          if (this.presetMenu === menu) this.presetMenu = void 0;
+        });
+        menu.showAtMouseEvent(event);
       };
-      swatch.addEventListener("pointerdown", () => {
-        cancelPress();
-        pressTimer = window.setTimeout(() => {
-          pressTimer = void 0;
+      let origin = { x: 0, y: 0 };
+      swatch.addEventListener("pointerdown", (event) => {
+        this.cancelPresetHold();
+        if (event.button !== 0) return;
+        suppressClick = false;
+        origin = { x: event.clientX, y: event.clientY };
+        this.presetPressTimer = window.setTimeout(() => {
+          this.presetPressTimer = void 0;
+          if (!this.isOpen || !swatch.isConnected) return;
           suppressClick = true;
-          this.removePresetColor(spec, current);
+          options(event);
         }, LONG_PRESS_MS);
       });
-      swatch.addEventListener("pointerup", cancelPress);
-      swatch.addEventListener("pointercancel", cancelPress);
-      swatch.addEventListener("pointerleave", cancelPress);
+      swatch.addEventListener("pointermove", (event) => {
+        if (Math.hypot(event.clientX - origin.x, event.clientY - origin.y) > 10) this.cancelPresetHold();
+      });
+      for (const type of ["pointerup", "pointercancel", "pointerleave"]) swatch.addEventListener(type, () => this.cancelPresetHold());
+      swatch.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        if (!suppressClick || !this.presetMenu) options(event);
+      });
+      swatch.addEventListener("keydown", (event) => {
+        if (event.key === "ContextMenu" || event.shiftKey && event.key === "F10") {
+          event.preventDefault();
+          const rect = swatch.getBoundingClientRect();
+          options(new MouseEvent("contextmenu", { clientX: rect.left, clientY: rect.bottom }));
+        }
+      });
     }
+  }
+  cancelPresetHold() {
+    if (this.presetPressTimer !== void 0) window.clearTimeout(this.presetPressTimer);
+    this.presetPressTimer = void 0;
+  }
+  get optionsOpen() {
+    return this.presetMenu !== void 0;
   }
   /** Deletes one palette entry outright (the one-swatch minimum holds). */
   removePresetColor(spec, value) {
@@ -24656,6 +24745,8 @@ var BrushPopoverController = class {
     const resetButton = resetRow.createEl("button", { text: "Reset", attr: { type: "button" } });
     resetButton.addEventListener("click", () => {
       settings.pressureCurve = void 0;
+      selectedIndex = dragIndex = -1;
+      removePoint.disabled = true;
       this.update();
     });
     const editor = curveBody.createDiv({ cls: "ink-curve-editor", attr: { "aria-label": "Pressure mapping curve" } });
@@ -24667,6 +24758,18 @@ var BrushPopoverController = class {
     };
     const curve = () => settings.pressureCurve ? settings.pressureCurve.map((point) => [...point]) : [[0, 0], [1, 1]];
     let dragIndex = -1;
+    let selectedIndex = -1;
+    const removePoint = resetRow.createEl("button", { text: "Remove point", attr: { type: "button" } });
+    removePoint.disabled = true;
+    removePoint.addEventListener("click", () => {
+      const points = curve();
+      if (selectedIndex <= 0 || selectedIndex >= points.length - 1) return;
+      points.splice(selectedIndex, 1);
+      settings.pressureCurve = points;
+      selectedIndex = dragIndex = -1;
+      removePoint.disabled = true;
+      this.update();
+    });
     canvas.addEventListener("pointerdown", (event) => {
       const position = hit(event.clientX, event.clientY);
       const points = curve();
@@ -24679,11 +24782,7 @@ var BrushPopoverController = class {
           nearestDistance = d;
         }
       }
-      if (event.detail >= 2 && nearest > 0 && nearest < points.length - 1 && points.length > 2) {
-        points.splice(nearest, 1);
-        settings.pressureCurve = points;
-        dragIndex = -1;
-      } else if (nearest >= 0) {
+      if (nearest >= 0) {
         dragIndex = nearest;
       } else if (points.length < 6) {
         const insertAt = points.findIndex((point) => point[0] > position.x);
@@ -24694,6 +24793,8 @@ var BrushPopoverController = class {
         settings.pressureCurve = points;
         dragIndex = index;
       }
+      selectedIndex = dragIndex;
+      removePoint.disabled = selectedIndex <= 0 || selectedIndex >= curve().length - 1;
       canvas.setPointerCapture(event.pointerId);
       this.update();
       event.preventDefault();
@@ -24711,11 +24812,6 @@ var BrushPopoverController = class {
         const low = points[dragIndex - 1][0] + 0.02;
         const high = points[dragIndex + 1][0] - 0.02;
         point[0] = Math.max(low, Math.min(high, position.x));
-      }
-      settings.pressureCurve = points;
-      if (!isEnd && dragIndex > 0 && dragIndex < points.length - 1 && point[1] <= 0.02) {
-        points.splice(dragIndex, 1);
-        dragIndex = -1;
       }
       settings.pressureCurve = points;
       this.update();
@@ -24748,6 +24844,9 @@ var BrushPopoverController = class {
     });
   }
   close() {
+    var _a;
+    this.cancelPresetHold();
+    (_a = this.presetMenu) == null ? void 0 : _a.hide();
     if (!this.openState) return;
     this.openState = false;
     for (const flush of this.customPickers) flush();
@@ -25262,10 +25361,13 @@ function sameInput(left, right) {
 function defaultToolState() {
   return {
     tool: "pen",
+    fingerAsPen: false,
     pen: { color: "#1b1b1b", width: 3, opacity: 1, smooth: 0, taper: 0, pressureGain: 100, speedGain: 0, pressureCurve: void 0 },
     highlighter: { color: "#f2c94c", width: 18, opacity: 0.4 },
     eraserMode: "stroke",
     eraserSize: 32,
+    scribbleErase: true,
+    scribbleSensitivity: 25,
     palette: INK_COLORS.map((color) => color.value),
     lasso: { mode: "freehand", crossFileClipboard: false }
   };
@@ -25282,20 +25384,26 @@ function sanitizeToolState(raw) {
   const lasso = isRecord(source.lasso) ? source.lasso : {};
   return {
     tool: defaults.tool,
+    fingerAsPen: source.fingerAsPen === true,
     pen: sanitizeBrush(source.pen, defaults.pen, PEN_WIDTH_RANGE, true),
     highlighter: sanitizeBrush(source.highlighter, defaults.highlighter, HIGHLIGHTER_WIDTH_RANGE, false),
     eraserMode: isEraserMode(source.eraserMode) ? source.eraserMode : defaults.eraserMode,
     eraserSize: sanitizeNumber(source.eraserSize, defaults.eraserSize, ERASER_SIZE_RANGE),
+    scribbleErase: source.scribbleErase !== false,
+    scribbleSensitivity: sanitizeNumber(source.scribbleSensitivity, defaults.scribbleSensitivity, PERCENT_RANGE),
     palette: sanitizePalette(source.palette),
     lasso: { mode: lasso.mode === "rectangle" ? "rectangle" : "freehand", crossFileClipboard: lasso.crossFileClipboard === true }
   };
 }
 function storedToolState(state) {
   return {
+    fingerAsPen: state.fingerAsPen,
     pen: storedBrush(state.pen),
     highlighter: storedBrush(state.highlighter),
     eraserMode: state.eraserMode,
     eraserSize: state.eraserSize,
+    scribbleErase: state.scribbleErase,
+    scribbleSensitivity: state.scribbleSensitivity,
     palette: [...state.palette],
     lasso: { ...state.lasso }
   };
@@ -25442,6 +25550,9 @@ function pasteClipboardStrokes(content, pageId, width, height, target) {
 }
 
 // src/ink-writing.ts
+var PASTE_HOLD_DELAY_MS = 600;
+var PASTE_HOLD_SLOP_PX = 10;
+var MAX_SCRIBBLE_GESTURE_POINTS = 2048;
 var STROKE_ERASER_HIT_RADIUS = 10;
 var OVERLAY_PIXEL_BUDGET = 12e6;
 var SAVE_IDLE_DELAY = 1500;
@@ -25488,6 +25599,16 @@ function stylusTouchSample(touch, timeStamp) {
     timeStamp: typeof timeStamp === "number" && Number.isFinite(timeStamp) ? timeStamp : void 0
   };
 }
+function fingerTouchSample(touch, timeStamp) {
+  return {
+    pointerId: touch.identifier,
+    pointerType: "touch",
+    clientX: touch.clientX,
+    clientY: touch.clientY,
+    pressure: 0.5,
+    timeStamp
+  };
+}
 function clampLiftPressure(point, previous) {
   if (!previous || point.pressure <= previous.pressure) return;
   point.pressure = previous.pressure;
@@ -25502,7 +25623,7 @@ function strokeIntersectsEraser(stroke, center, radius, mode, width, height) {
   }
   return false;
 }
-function isScribbleEraseGesture(points, eraserSize, width, height) {
+function isScribbleEraseGesture(points, eraserSize, width, height, sensitivity) {
   if (points.length < 8) return false;
   const filtered = [points[0]];
   for (const point of points.slice(1)) {
@@ -25523,7 +25644,7 @@ function isScribbleEraseGesture(points, eraserSize, width, height) {
     const ax = (previous.x - before.x) * width, ay = (previous.y - before.y) * height;
     const bx = (point.x - previous.x) * width, by = (point.y - previous.y) * height;
     const lengths = Math.hypot(ax, ay) * Math.hypot(bx, by);
-    if (lengths > 0 && (ax * bx + ay * by) / lengths < -0.35 && distanceSinceTurn >= Math.max(8, eraserSize * 0.35)) {
+    if (lengths > 0 && (ax * bx + ay * by) / lengths < -0.35 && distanceSinceTurn >= Math.max(8, eraserSize * 0.25)) {
       turns++;
       distanceSinceTurn = 0;
     }
@@ -25541,7 +25662,30 @@ function isScribbleEraseGesture(points, eraserSize, width, height) {
   const boundsHeight = maxY - minY;
   const boundsDiagonal = Math.hypot(boundsWidth, boundsHeight);
   const duration = filtered[filtered.length - 1].t - filtered[0].t;
-  return turns >= 4 && pathLength >= Math.max(96, eraserSize * 3) && boundsDiagonal >= eraserSize && pathLength / Math.max(1, boundsDiagonal) >= 3.2 && duration >= 0 && duration <= 1200;
+  const ease = Math.max(0, Math.min(100, sensitivity)) / 100;
+  const minimumTurns = Math.round(6 - 3 * ease);
+  const horizontal = boundsWidth >= boundsHeight;
+  const span = horizontal ? boundsWidth : boundsHeight;
+  const coordinate = (point) => horizontal ? point.x * width : point.y * height;
+  let extreme = coordinate(filtered[0]), direction = 0, traversals = 0;
+  const travel = Math.max(8, span * 0.6);
+  for (const point of filtered.slice(1)) {
+    const value = coordinate(point);
+    if (direction === 0) {
+      if (Math.abs(value - extreme) >= travel) {
+        direction = Math.sign(value - extreme);
+        extreme = value;
+        traversals++;
+      }
+    } else if ((value - extreme) * direction >= 0) {
+      extreme = value;
+    } else if ((extreme - value) * direction >= travel) {
+      direction *= -1;
+      extreme = value;
+      traversals++;
+    }
+  }
+  return turns >= minimumTurns && traversals >= minimumTurns + 1 && pathLength >= Math.max(96, eraserSize * 3) && boundsDiagonal >= eraserSize * 0.5 && pathLength / Math.max(1, boundsDiagonal) >= 4.8 - 1.6 * ease && duration >= 0 && duration <= 1800;
 }
 function strokeIntersectsScribble(stroke, path, radius, width, height) {
   const samples = sampleStrokeForEraser(path, Math.max(1, radius / 2), width, height);
@@ -25731,6 +25875,9 @@ var InkWritingView = class extends import_obsidian5.FileView {
     this.interactionGeneration = 0;
     this.activePointerId = null;
     this.activeStroke = null;
+    /** Raw, session-only pen path for gesture recognition; rendered stroke
+     *  points are smoothed and may no longer retain small rapid reversals. */
+    this.scribbleGesturePoints = [];
     this.workerStrokePointIndex = 0;
     this.lastPoint = null;
     this.touchGesture = null;
@@ -25770,6 +25917,7 @@ var InkWritingView = class extends import_obsidian5.FileView {
     this.inkClipboard = new InkClipboard();
     this.selectionActions = null;
     this.pasteTarget = null;
+    this.pasteHold = null;
     this.lassoSettingsPopover = null;
     this.lassoSettingsCleanup = null;
     // --- history
@@ -25948,7 +26096,8 @@ var InkWritingView = class extends import_obsidian5.FileView {
       (_b = this.pageImages) == null ? void 0 : _b.dispose();
       this.pageImages = new PageImageLayer(host, this.toolbarRoot(), this.imageLibrary, {
         page: () => this.currentPage(),
-        editable: () => this.state.tool === "pointer" && !this.inputLocked(),
+        editable: () => !this.inputLocked(),
+        canInteract: (type) => !this.inputLocked() && this.activePointerId === null && (type === "touch" ? !this.state.fingerAsPen || this.state.tool === "pointer" : this.state.tool === "pointer"),
         select: () => {
           this.selectedStrokeIds.clear();
           this.hideSelectionActions();
@@ -26274,7 +26423,8 @@ var InkWritingView = class extends import_obsidian5.FileView {
         this.updateEraserControls();
         this.scheduleToolStateSave();
       },
-      anchor: () => this.activeSettingsAnchor()
+      anchor: () => this.activeSettingsAnchor(),
+      registerCleanup: (dispose) => this.register(dispose)
     });
     this.settingsPanel = this.brushPopover.root;
     this.registerPopoverDismiss();
@@ -26290,11 +26440,12 @@ var InkWritingView = class extends import_obsidian5.FileView {
   registerPopoverDismiss() {
     const popover = this.brushPopover;
     this.registerDomEvent(document, "pointerdown", (event) => {
-      var _a;
+      var _a, _b;
       if (!popover.isOpen) return;
       const target = event.target;
       if (target && ((_a = target.closest) == null ? void 0 : _a.call(target, ".ink-tool-button"))) return;
       if (target && popover.root.contains(target)) return;
+      if (popover.optionsOpen && ((_b = target == null ? void 0 : target.closest) == null ? void 0 : _b.call(target, ".menu"))) return;
       popover.close();
     });
     this.registerDomEvent(document, "keydown", (event) => {
@@ -26321,6 +26472,21 @@ var InkWritingView = class extends import_obsidian5.FileView {
     this.sharedToolSettings = shared;
     this.state = {
       tool: this.state.tool,
+      get fingerAsPen() {
+        return shared.config.fingerAsPen;
+      },
+      get scribbleErase() {
+        return shared.config.scribbleErase;
+      },
+      set scribbleErase(value) {
+        shared.config.scribbleErase = value;
+      },
+      get scribbleSensitivity() {
+        return shared.config.scribbleSensitivity;
+      },
+      set scribbleSensitivity(value) {
+        shared.config.scribbleSensitivity = value;
+      },
       pen: shared.config.pen,
       highlighter: shared.config.highlighter,
       eraserMode: shared.config.eraserMode,
@@ -26334,6 +26500,15 @@ var InkWritingView = class extends import_obsidian5.FileView {
   scheduleToolStateSave() {
     var _a;
     (_a = this.sharedToolSettings) == null ? void 0 : _a.scheduleSave(this.state);
+  }
+  /** Settings are shared live; finish the old contact before changing input ownership. */
+  refreshInputPreferences() {
+    var _a;
+    this.cancelPasteHold();
+    this.finishFingerInput();
+    this.touchGesture = null;
+    (_a = this.pageImages) == null ? void 0 : _a.clear();
+    this.syncPageImages();
   }
   /** Shared drawing tools in the centre, with history next to page navigation. */
   buildWritingSections(toolbar, historyParent) {
@@ -26464,9 +26639,56 @@ var InkWritingView = class extends import_obsidian5.FileView {
     });
     const scroller = this.inputScroller();
     const doc = this.containerEl.ownerDocument;
-    this.registerDomEvent((_a = doc.defaultView) != null ? _a : window, "resize", () => this.positionSelectionActions());
+    this.registerDomEvent((_a = doc.defaultView) != null ? _a : window, "resize", () => {
+      this.cancelPasteHold();
+      this.hideSelectionActions();
+      this.pasteTarget = null;
+    });
     this.registerDomEvent(doc, "scroll", () => this.positionSelectionActions(), true);
+    const dismissActions = (event) => {
+      var _a2, _b;
+      const target = event.target;
+      if (target && ((_a2 = this.selectionActions) == null ? void 0 : _a2.contains(target))) return;
+      this.cancelPasteHold();
+      this.hideSelectionActions();
+      this.pasteTarget = null;
+      if (this.activePointerId === null && this.selectedStrokeIds.size && target && !((_b = this.inputHost()) == null ? void 0 : _b.contains(target))) {
+        this.clearSelection();
+        this.drawStrokes(this.currentPage().strokes);
+      }
+    };
+    this.registerDomEvent(doc, "pointerdown", dismissActions, true);
+    this.registerDomEvent(doc, "touchstart", dismissActions, true);
+    this.registerDomEvent(doc, "touchcancel", () => {
+      this.cancelPasteHold();
+      this.hideSelectionActions();
+      this.pasteTarget = null;
+    }, true);
+    this.registerDomEvent(doc, "touchend", () => this.cancelPasteHold(), true);
+    this.registerDomEvent(scroller, "contextmenu", (event) => {
+      var _a2;
+      if (this.inputLocked() || this.nativeMenuOpen() || !((_a2 = this.inputHost()) == null ? void 0 : _a2.contains(event.target)) || event.target.closest("button, input, .ink-placed-image, .ink-image-outline")) return;
+      event.preventDefault();
+      this.cancelPasteHold();
+      this.hideSelectionActions();
+      const point = this.toPoint({ clientX: event.clientX, clientY: event.clientY, pressure: 0.5, pointerId: 0, pointerType: "mouse" }, this.inputRect());
+      if (this.isPointInSelection(point)) this.showSelectionActions();
+      else {
+        this.clearSelection();
+        this.drawStrokes(this.currentPage().strokes);
+        if (this.availableClipboard()) {
+          this.pasteTarget = point;
+          this.showSelectionActions(true);
+        }
+      }
+    });
+    this.registerDomEvent(scroller, "scroll", () => {
+      this.cancelPasteHold();
+      this.hideSelectionActions();
+      this.pasteTarget = null;
+    }, { passive: true });
     this.register(() => {
+      this.cancelPasteHold();
       this.hideSelectionActions();
       this.closeLassoSettings();
     });
@@ -26514,6 +26736,11 @@ var InkWritingView = class extends import_obsidian5.FileView {
       }, true);
     }
     const reset = () => {
+      this.cancelPasteHold();
+      this.hideSelectionActions();
+      this.pasteTarget = null;
+      this.finishFingerInput();
+      this.touchGesture = null;
       this.desktopSpaceDown = false;
       scroller.classList.remove("ink-pan-ready");
       this.endDesktopPan();
@@ -26697,15 +26924,21 @@ var InkWritingView = class extends import_obsidian5.FileView {
   }
   onPointerDown(event, source = "pointer") {
     var _a, _b, _c, _d, _e, _f, _g, _h;
+    this.cancelPasteHold();
+    if (event.pointerType !== "touch") {
+      this.hideSelectionActions();
+      this.pasteTarget = null;
+    }
     this.devPointerEvents += 1;
     this.devLastPointerType = event.pointerType || this.devLastPointerType;
     if (this.beginDesktopPan(event)) return;
     if (event.pointerType === "mouse" && (((_a = event.button) != null ? _a : 0) !== 0 || this.desktopPan)) return;
     if (this.inputLocked()) return;
     if (this.nativeMenuOpen()) return;
-    if (event.pointerType === "touch") return;
+    if (event.pointerType === "touch" && source !== "finger-touch") return;
     if (this.state.tool === "pointer") return;
     if (source === "pointer" && event.pointerType === "pen" && ((_b = this.interaction) == null ? void 0 : _b.source) === "stylus-touch") return;
+    if (event.pointerType === "pen") this.finishFingerInput(true);
     this.onInputStarting();
     this.interactionGeneration += 1;
     if (this.activePointerId !== null) this.finishPointerInput(false);
@@ -26736,6 +26969,7 @@ var InkWritingView = class extends import_obsidian5.FileView {
       lassoMode: tool === "lasso" ? this.state.lasso.mode : void 0
     };
     const point = this.toPoint(event, rect);
+    this.scribbleGesturePoints = tool === "pen" ? [{ ...point }] : [];
     this.erasedStrokeIds.clear();
     this.erasedCandidateIds.clear();
     this.erasedStrokes = [];
@@ -26814,7 +27048,7 @@ var InkWritingView = class extends import_obsidian5.FileView {
   onPointerMove(event, source = "pointer") {
     var _a, _b, _c, _d, _e, _f;
     this.devPointerEvents += 1;
-    if (event.pointerType === "touch") return;
+    if (event.pointerType === "touch" && source !== "finger-touch") return;
     if (((_a = this.desktopPan) == null ? void 0 : _a.pointerId) === event.pointerId) {
       const scroller = this.inputScroller();
       const pan = this.desktopPan;
@@ -26940,6 +27174,18 @@ var InkWritingView = class extends import_obsidian5.FileView {
       if (feed.length === 0) return;
     }
     this.recordPenSampleIntervals(feed);
+    if (interaction.tool === "pen") {
+      for (const sample of feed) {
+        const point = this.toPoint(sample, rect);
+        const previous = this.scribbleGesturePoints[this.scribbleGesturePoints.length - 1];
+        if (this.scribbleGesturePoints.length < MAX_SCRIBBLE_GESTURE_POINTS && (!previous || Math.hypot(
+          (point.x - previous.x) * this.canvasLogicalWidth,
+          (point.y - previous.y) * this.canvasLogicalHeight
+        ) >= 2)) {
+          this.scribbleGesturePoints.push(point);
+        }
+      }
+    }
     this.devSamplesFed += feed.length;
     const record = this.currentStrokeRecord;
     if (record) {
@@ -27249,12 +27495,12 @@ var InkWritingView = class extends import_obsidian5.FileView {
     if (this.activePointerId !== event.pointerId) return;
   }
   onDocumentPointerEnd(event) {
-    var _a, _b;
+    var _a, _b, _c;
     if (((_a = this.desktopPan) == null ? void 0 : _a.pointerId) === event.pointerId) {
       this.endDesktopPan();
       return;
     }
-    if (((_b = this.interaction) == null ? void 0 : _b.source) !== "stylus-touch" && this.activePointerId === event.pointerId) this.finishPointerInput(false);
+    if (((_c = (_b = this.interaction) == null ? void 0 : _b.source) != null ? _c : "pointer") === "pointer" && this.activePointerId === event.pointerId) this.finishPointerInput(false);
   }
   capturePointer(pointerId) {
     const host = this.inputHost();
@@ -27285,6 +27531,7 @@ var InkWritingView = class extends import_obsidian5.FileView {
     const sample = stylusTouchSample(touch, event.timeStamp);
     const interaction = this.interaction;
     if (event.type === "touchstart") {
+      this.finishFingerInput(true);
       if ((interaction == null ? void 0 : interaction.source) === "pointer" && interaction.pointerType === "pen") {
         const pointerId = interaction.pointerId;
         interaction.source = "stylus-touch";
@@ -27303,29 +27550,72 @@ var InkWritingView = class extends import_obsidian5.FileView {
     }
     return true;
   }
+  finishFingerInput(discardChanges = false) {
+    var _a;
+    if (((_a = this.interaction) == null ? void 0 : _a.source) !== "finger-touch") return;
+    const undoBefore = discardChanges ? [...this.undoStack] : null;
+    const redoBefore = discardChanges ? this.redoStack : null;
+    if (this.interaction.tool === "lasso") {
+      this.pendingLassoPoint = null;
+      this.lassoPath = [];
+      this.lassoDrag = null;
+    }
+    this.finishPointerInput(false);
+    const command = this.undoStack[this.undoStack.length - 1];
+    if (undoBefore && command && command !== undoBefore[undoBefore.length - 1]) {
+      command.undo();
+      this.undoStack = undoBefore;
+      this.redoStack = redoBefore;
+      this.afterCommand(command);
+    }
+    this.hideSelectionActions();
+    this.hideLassoPreview();
+  }
+  onTouchCancel(event) {
+    this.cancelPasteHold();
+    this.finishFingerInput(true);
+    this.onStylusTouch(event);
+    this.scheduleZoomHudHide();
+    this.cancelPageFlip();
+    this.touchGesture = null;
+  }
   // ---------------------------------------------------------------- touch
   onTouchStart(event) {
-    var _a, _b, _c;
-    if (((_a = this.touchGesture) == null ? void 0 : _a.ids.length) === 2) this.scheduleZoomHudHide();
+    var _a, _b, _c, _d, _e, _f, _g;
+    this.cancelPasteHold();
+    if (event.type === "touchstart") {
+      this.hideSelectionActions();
+      this.pasteTarget = null;
+      if (this.state.tool !== "lasso" && this.activePointerId === null && this.selectedStrokeIds.size && !Array.from((_a = event.changedTouches) != null ? _a : []).some((touch) => touch.touchType === "stylus")) {
+        this.clearSelection();
+        this.drawStrokes(this.currentPage().strokes);
+      }
+    }
+    if (((_b = this.touchGesture) == null ? void 0 : _b.ids.length) === 2) this.scheduleZoomHudHide();
     if (this.nativeMenuOpen()) {
       this.touchGesture = null;
       return;
     }
-    (_b = event.stopPropagation) == null ? void 0 : _b.call(event);
+    (_c = event.stopPropagation) == null ? void 0 : _c.call(event);
     if (this.onStylusTouch(event)) return;
     if (event.cancelable && event.touches.length < 2) event.preventDefault();
-    if (((_c = this.touchGesture) == null ? void 0 : _c.axis) === "x" && event.touches.length > 1) {
+    if (((_d = this.touchGesture) == null ? void 0 : _d.axis) === "x" && event.touches.length > 1) {
       this.cancelPageFlip();
       this.touchGesture = null;
       return;
     }
     this.settlePageFlip(event);
     this.touchGesture = null;
-    this.healStaleInteraction(Array.from(event.touches));
     const touches = Array.from(event.touches).filter((touch) => {
       var _a2;
       return touch.touchType !== "stylus" && !((_a2 = this.zoomHud) == null ? void 0 : _a2.contains(touch.target));
     });
+    if (((_e = this.interaction) == null ? void 0 : _e.source) === "finger-touch") {
+      const touch = Array.from(event.changedTouches).find((t) => t.identifier === this.interaction.pointerId);
+      if (event.type === "touchend" && touch) this.onPointerUp(fingerTouchSample(touch, event.timeStamp), "finger-touch");
+      else if (touches.length !== 1) this.finishFingerInput(true);
+    }
+    this.healStaleInteraction(Array.from(event.touches));
     if (touches.length < 1 || touches.length > 2) return;
     if (this.flipSettling && touches.length === 2) return;
     if (this.activePointerId !== null) return;
@@ -27352,6 +27642,28 @@ var InkWritingView = class extends import_obsidian5.FileView {
       pageY: (y - rect.top) / rect.height
     };
     if (b) this.showZoomHud();
+    else if (event.type === "touchstart" && !this.inputLocked() && (this.state.fingerAsPen || this.state.tool === "lasso") && this.state.tool !== "pointer" && ((_f = this.inputHost()) == null ? void 0 : _f.contains(a.target)) && pointInsideRect(a, rect)) {
+      this.onPointerDown(fingerTouchSample(a, event.timeStamp), "finger-touch");
+    }
+    if (!b && event.type === "touchstart" && !this.inputLocked() && (this.availableClipboard() || this.selectedStrokeIds.size) && ((_g = this.inputHost()) == null ? void 0 : _g.contains(a.target)) && pointInsideRect(a, rect)) {
+      const page = this.currentPage(), gesture = this.touchGesture;
+      const point = { x: gesture.pageX, y: gesture.pageY };
+      this.pasteHold = { x, y, timer: window.setTimeout(() => {
+        var _a2;
+        this.pasteHold = null;
+        if (this.touchGesture !== gesture || this.currentPage() !== page || this.activePointerId !== null && ((_a2 = this.interaction) == null ? void 0 : _a2.source) !== "finger-touch" || this.inputLocked() || this.nativeMenuOpen()) return;
+        this.finishFingerInput(true);
+        if (this.selectedStrokeIds.size && this.isPointInSelection({ ...point, pressure: 0.5, t: event.timeStamp })) this.showSelectionActions();
+        else if (this.availableClipboard()) {
+          this.pasteTarget = point;
+          this.showSelectionActions(true);
+        }
+      }, PASTE_HOLD_DELAY_MS) };
+    }
+  }
+  cancelPasteHold() {
+    if (this.pasteHold) window.clearTimeout(this.pasteHold.timer);
+    this.pasteHold = null;
   }
   /**
    * Finalizes interactions whose pointer the platform lost. iPadOS split-view
@@ -27364,9 +27676,10 @@ var InkWritingView = class extends import_obsidian5.FileView {
    * samples at frame rate, so silence means the pointer is gone).
    */
   healStaleInteraction(touches) {
+    var _a;
     const interaction = this.interaction;
     if (!interaction || this.activePointerId === null) return;
-    if (interaction.source === "stylus-touch") {
+    if (((_a = interaction.source) != null ? _a : "pointer") !== "pointer") {
       const alive = touches.some((touch) => touch.identifier === interaction.pointerId);
       if (!alive) this.finishPointerInput(false);
       return;
@@ -27374,13 +27687,25 @@ var InkWritingView = class extends import_obsidian5.FileView {
     if (Date.now() - this.lastPointerActivityAt > 2500) this.finishPointerInput(false);
   }
   onTouchMove(event) {
-    var _a;
+    var _a, _b, _c;
     if (this.nativeMenuOpen()) {
       this.touchGesture = null;
       return;
     }
     (_a = event.stopPropagation) == null ? void 0 : _a.call(event);
     if (this.onStylusTouch(event)) return;
+    if (((_b = this.interaction) == null ? void 0 : _b.source) === "finger-touch") {
+      const touch = Array.from(event.touches).find((t) => t.identifier === this.interaction.pointerId);
+      if (touch && event.touches.length === 1) {
+        if (this.pasteHold && Math.hypot(touch.clientX - this.pasteHold.x, touch.clientY - this.pasteHold.y) > PASTE_HOLD_SLOP_PX) this.cancelPasteHold();
+        if (!this.pasteHold) this.onPointerMove(fingerTouchSample(touch, event.timeStamp), "finger-touch");
+        event.preventDefault();
+        return;
+      }
+      this.finishFingerInput(true);
+      this.onTouchStart(event);
+      return;
+    }
     if (this.activePointerId !== null) {
       this.touchGesture = null;
       return;
@@ -27397,6 +27722,14 @@ var InkWritingView = class extends import_obsidian5.FileView {
       this.onTouchStart(event);
       return;
     }
+    if (this.pasteHold) {
+      if (b || Math.hypot(a.clientX - this.pasteHold.x, a.clientY - this.pasteHold.y) > PASTE_HOLD_SLOP_PX) this.cancelPasteHold();
+      else {
+        event.preventDefault();
+        return;
+      }
+    }
+    if (((_c = this.selectionActions) == null ? void 0 : _c.dataset.pasteOnly) && Math.hypot(a.clientX - gesture.startX, a.clientY - gesture.startY) > PASTE_HOLD_SLOP_PX) this.hideSelectionActions();
     event.preventDefault();
     if (!b) {
       const scroller = this.inputScroller();
@@ -27561,6 +27894,7 @@ var InkWritingView = class extends import_obsidian5.FileView {
   }
   clearSelection() {
     var _a;
+    this.cancelPasteHold();
     (_a = this.pageImages) == null ? void 0 : _a.clear();
     this.selectedStrokeIds.clear();
     this.lassoPath = [];
@@ -27615,8 +27949,7 @@ var InkWritingView = class extends import_obsidian5.FileView {
     } else if (mode === "freehand" && this.lassoPath.length >= 3) {
       this.selectedStrokeIds = new Set(page.strokes.filter((stroke) => stroke.points.some((point) => pointInPolygon(point, this.lassoPath))).map((stroke) => stroke.id));
     }
-    const lastPoint = this.lassoPath[this.lassoPath.length - 1];
-    if (lastPoint) this.pasteTarget = { x: lastPoint.x, y: lastPoint.y };
+    this.pasteTarget = null;
     this.lassoPath = [];
     this.drawStrokes(page.strokes);
     this.showSelectionActions();
@@ -27638,7 +27971,7 @@ var InkWritingView = class extends import_obsidian5.FileView {
       strokes
     });
     if (cut) this.deleteSelection();
-    else this.showSelectionActions();
+    else this.hideSelectionActions();
   }
   deleteSelection() {
     if (this.inputLocked() || this.activePointerId !== null) return;
@@ -27655,7 +27988,6 @@ var InkWritingView = class extends import_obsidian5.FileView {
     this.drawInteractiveStrokes(page.strokes, true);
     this.scheduleSave();
     this.afterInputFullySettled();
-    this.showSelectionActions();
   }
   pasteSelection() {
     var _a;
@@ -27676,27 +28008,36 @@ var InkWritingView = class extends import_obsidian5.FileView {
     this.markChanged(page);
     this.queueStrokePatch(page, strokes, []);
     this.pushCommand(this.erasedStrokesCommand(page.id, [], strokes));
-    this.selectedStrokeIds = new Set(strokes.map((stroke) => stroke.id));
+    this.selectedStrokeIds = this.state.tool === "lasso" ? new Set(strokes.map((stroke) => stroke.id)) : /* @__PURE__ */ new Set();
+    this.hideSelectionActions();
+    this.pasteTarget = null;
     this.drawInteractiveStrokes(page.strokes, true);
     this.scheduleSave();
     this.afterInputFullySettled();
-    this.showSelectionActions();
   }
   hideSelectionActions() {
     var _a;
     (_a = this.selectionActions) == null ? void 0 : _a.remove();
     this.selectionActions = null;
   }
-  showSelectionActions() {
+  showSelectionActions(pasteOnly = false) {
     this.hideSelectionActions();
     if (!this.viewReady) return;
-    const selected = this.selectedStrokes().length > 0;
-    if (this.state.tool !== "lasso" || this.inputLocked() || !selected && !this.availableClipboard()) return;
+    const selected = !pasteOnly && this.selectedStrokes().length > 0;
+    if (this.inputLocked() || (pasteOnly ? !this.availableClipboard() : this.state.tool !== "lasso" || !selected)) return;
     const pop = this.toolbarRoot().createDiv({ cls: "ink-selection-actions", attr: { role: "group", "aria-label": "Selection actions" } });
     this.selectionActions = pop;
+    if (pasteOnly) pop.dataset.pasteOnly = "true";
     for (const type of ["pointerdown", "touchstart", "touchmove"]) pop.addEventListener(type, (event) => event.stopPropagation());
     const add = (icon, label, action, disabled, cls = "") => {
-      const button3 = this.addIconButton(pop, icon, label, action, disabled);
+      const button3 = this.addIconButton(pop, icon, label, () => {
+        try {
+          action();
+        } finally {
+          this.hideSelectionActions();
+          this.pasteTarget = null;
+        }
+      }, disabled);
       if (cls) button3.addClass(cls);
       button3.createSpan({ text: label });
     };
@@ -27712,7 +28053,7 @@ var InkWritingView = class extends import_obsidian5.FileView {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     const pop = this.selectionActions;
     if (!pop) return;
-    if (this.inputLocked() || this.state.tool !== "lasso") {
+    if (this.inputLocked() || !pop.dataset.pasteOnly && (this.state.tool !== "lasso" || !this.selectedStrokes().length)) {
       this.hideSelectionActions();
       return;
     }
@@ -27723,7 +28064,7 @@ var InkWritingView = class extends import_obsidian5.FileView {
     const topEdge = Math.max(8, viewport.top + 8), bottomEdge = Math.min(win.innerHeight - 8, viewport.bottom - 8);
     pop.style.maxWidth = `${Math.max(44, rightEdge - leftEdge)}px`;
     pop.style.maxHeight = `${Math.max(44, bottomEdge - topEdge)}px`;
-    const size = { width: pop.offsetWidth, height: pop.offsetHeight }, bounds = selectionBounds(this.selectedStrokes());
+    const size = { width: pop.offsetWidth, height: pop.offsetHeight }, bounds = pop.dataset.pasteOnly ? null : selectionBounds(this.selectedStrokes());
     const x = rect.left + (bounds ? (bounds.minX + bounds.maxX) / 2 : (_c = (_b = this.pasteTarget) == null ? void 0 : _b.x) != null ? _c : 0.5) * rect.width;
     const top = rect.top + ((_f = (_e = bounds == null ? void 0 : bounds.minY) != null ? _e : (_d = this.pasteTarget) == null ? void 0 : _d.y) != null ? _f : 0.5) * rect.height;
     const bottom = rect.top + ((_i = (_h = bounds == null ? void 0 : bounds.maxY) != null ? _h : (_g = this.pasteTarget) == null ? void 0 : _g.y) != null ? _i : 0.5) * rect.height;
@@ -28136,6 +28477,7 @@ var InkWritingView = class extends import_obsidian5.FileView {
     const page = this.pageById(interaction.pageId);
     if (!page) {
       this.interaction = null;
+      this.scribbleGesturePoints = [];
       this.refreshEraserCursor();
       this.activePointerId = null;
       this.penModeler = null;
@@ -28174,7 +28516,7 @@ var InkWritingView = class extends import_obsidian5.FileView {
       });
       this.pushCommand(this.erasedStrokesCommand(page.id, this.erasedStrokes, this.eraserReplacements));
       this.drawInteractiveStrokes(page.strokes, true);
-    } else if (this.activeStroke && !(interaction.tool === "pen" && this.finishScribbleErase(page, this.activeStroke))) {
+    } else if (this.activeStroke && !(interaction.tool === "pen" && this.state.scribbleErase && this.finishScribbleErase(page, this.activeStroke, this.scribbleGesturePoints))) {
       this.markChanged(page);
       this.retainActivePreview();
       this.queueWorkerOperation({
@@ -28188,6 +28530,7 @@ var InkWritingView = class extends import_obsidian5.FileView {
     }
     this.activePointerId = null;
     this.activeStroke = null;
+    this.scribbleGesturePoints = [];
     this.workerStrokePointIndex = 0;
     this.lastPoint = null;
     this.penModeler = null;
@@ -28205,13 +28548,13 @@ var InkWritingView = class extends import_obsidian5.FileView {
     this.scheduleSave();
     this.afterInputFullySettled();
   }
-  finishScribbleErase(page, gesture) {
+  finishScribbleErase(page, gesture, path) {
     var _a, _b, _c, _d;
-    if (!isScribbleEraseGesture(gesture.points, this.state.eraserSize, this.canvasLogicalWidth, this.canvasLogicalHeight)) return false;
+    if (!isScribbleEraseGesture(path, this.state.eraserSize, this.canvasLogicalWidth, this.canvasLogicalHeight, this.state.scribbleSensitivity)) return false;
     const radius = this.state.eraserSize / 2;
     let minX = Number.POSITIVE_INFINITY, minY = Number.POSITIVE_INFINITY;
     let maxX = Number.NEGATIVE_INFINITY, maxY = Number.NEGATIVE_INFINITY;
-    for (const point of gesture.points) {
+    for (const point of path) {
       minX = Math.min(minX, point.x * this.canvasLogicalWidth);
       minY = Math.min(minY, point.y * this.canvasLogicalHeight);
       maxX = Math.max(maxX, point.x * this.canvasLogicalWidth);
@@ -28234,7 +28577,7 @@ var InkWritingView = class extends import_obsidian5.FileView {
     ].map((stroke) => [stroke.id, stroke])).values()].filter((stroke) => stroke.id !== gesture.id);
     const removed = candidates.filter((stroke) => strokeIntersectsScribble(
       stroke,
-      gesture.points,
+      path,
       radius,
       this.canvasLogicalWidth,
       this.canvasLogicalHeight
@@ -28482,6 +28825,31 @@ var InkWritingView = class extends import_obsidian5.FileView {
       this.refreshEraserCursor();
       this.scheduleToolStateSave();
     });
+    const scribbleRow = pop.createDiv({ cls: "ink-eraser-scribble-row" });
+    const scribbleLabel = scribbleRow.createEl("label", { cls: "ink-eraser-scribble-toggle" });
+    const scribbleToggle = scribbleLabel.createEl("input", { attr: { type: "checkbox", "aria-label": "Scribble erase with pen" } });
+    scribbleToggle.checked = this.state.scribbleErase;
+    scribbleLabel.createSpan({ text: "Scribble erase with pen" });
+    scribbleToggle.addEventListener("change", () => {
+      this.state.scribbleErase = scribbleToggle.checked;
+      sensitivity.disabled = !scribbleToggle.checked;
+      this.scheduleToolStateSave();
+    });
+    const sensitivityLabel = scribbleRow.createEl("label", { cls: "ink-eraser-size-row" });
+    const sensitivityValue = sensitivityLabel.createSpan();
+    const sensitivity = sensitivityLabel.createEl("input", { attr: { type: "range", min: "0", max: "100", step: "1", "aria-label": "Scribble erase sensitivity" } });
+    sensitivity.value = String(this.state.scribbleSensitivity);
+    sensitivity.disabled = !this.state.scribbleErase;
+    const updateSensitivityLabel = () => {
+      sensitivityValue.setText(`Scribble sensitivity: ${this.state.scribbleSensitivity}%`);
+    };
+    updateSensitivityLabel();
+    sensitivity.addEventListener("input", () => {
+      this.state.scribbleSensitivity = Number(sensitivity.value);
+      updateSensitivityLabel();
+      this.scheduleToolStateSave();
+    });
+    scribbleRow.createDiv({ cls: "ink-settings-label", text: "Low: fewer accidental erases. High: fewer back-and-forth strokes needed." });
     const syncSizeVisibility = () => {
       sizeRow.style.display = this.state.eraserMode === "stroke" ? "none" : "";
     };
@@ -28582,7 +28950,7 @@ var InkWritingView = class extends import_obsidian5.FileView {
       this.state.lasso.crossFileClipboard = toggle.checked;
       this.scheduleToolStateSave();
       paste.disabled = !this.availableClipboard();
-      this.showSelectionActions();
+      this.hideSelectionActions();
     });
     paste.addEventListener("click", () => {
       this.closeLassoSettings();
@@ -28677,15 +29045,16 @@ var InkWritingView = class extends import_obsidian5.FileView {
     });
   }
   selectWritingTool(tool) {
-    var _a, _b;
+    var _a, _b, _c;
     this.finishPointerInput(false);
     this.onToolSelected(tool);
+    (_a = this.pageImages) == null ? void 0 : _a.clear();
     this.state.tool = tool;
     if (tool !== "lasso") this.clearSelection();
-    if (!isBrushTool(tool)) (_a = this.brushPopover) == null ? void 0 : _a.close();
+    if (!isBrushTool(tool)) (_b = this.brushPopover) == null ? void 0 : _b.close();
     this.closeEraserPopover();
     this.closeLassoSettings();
-    (_b = this.brushPopover) == null ? void 0 : _b.update();
+    (_c = this.brushPopover) == null ? void 0 : _c.update();
     this.updateToolButtons();
     this.refreshEraserCursor();
     this.syncPageImages();
@@ -30019,11 +30388,8 @@ var InkView = class extends InkWritingView {
     this.registerDomEvent(this.pageScroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchcancel", (event) => {
-      this.scheduleZoomHudHide();
       this.finishPinchRender();
-      this.onStylusTouch(event);
-      this.cancelPageFlip();
-      this.touchGesture = null;
+      this.onTouchCancel(event);
     }, { passive: false });
     const observer = new ResizeObserver(() => this.resizeCanvas());
     observer.observe(this.pageScroller);
@@ -31011,8 +31377,8 @@ page: ${this.currentPage().id}
   }
   /**
    * 2D multi-point pressure mapping editor: drag points (endpoints move
-   * vertically), click empty space to add one, double-click a point to
-   * remove it. The curve maps raw pen pressure to the response input and is
+   * vertically), click empty space to add one, select a point and use
+   * Remove point to delete it. The curve maps raw pen pressure to the response input and is
    * captured per stroke; the sample preview re-renders on every change.
    */
   /** Renders the pressure mapping editor: grid, identity guide, curve and
@@ -32303,10 +32669,7 @@ var PdfInkView = class extends InkWritingView {
     this.registerDomEvent(scroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
     this.registerDomEvent(scroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(scroller, "touchcancel", (event) => {
-      this.scheduleZoomHudHide();
-      this.onStylusTouch(event);
-      this.cancelPageFlip();
-      this.touchGesture = null;
+      this.onTouchCancel(event);
     }, { passive: false });
     const observer = new ResizeObserver(() => {
       var _a;
@@ -34272,6 +34635,18 @@ var InkNotesPlugin = class extends import_obsidian13.Plugin {
   async persistSettings() {
     await this.saveData({ pdfOpenMode: this.config.pdfOpenMode, toolState: storedToolState(this.toolState) });
   }
+  get fingerAsPen() {
+    return this.toolState.fingerAsPen;
+  }
+  async setFingerAsPen(enabled) {
+    for (const type of [VIEW_TYPE_INK, VIEW_TYPE_PDF_INK]) {
+      for (const leaf of this.app.workspace.getLeavesOfType(type)) {
+        if (leaf.view instanceof InkView || leaf.view instanceof PdfInkView) leaf.view.refreshInputPreferences();
+      }
+    }
+    this.toolState.fingerAsPen = enabled;
+    await this.persistSettings();
+  }
   /** Open a PDF tab in the handwriting view on explicit request. */
   async openPdfHandwriting(file) {
     const leaf = this.app.workspace.getLeaf("tab");
@@ -34340,6 +34715,16 @@ var InkSettingTab = class extends import_obsidian13.PluginSettingTab {
   display() {
     const { containerEl } = this;
     containerEl.empty();
+    new import_obsidian13.Setting(containerEl).setName("Input and gestures").setHeading();
+    new import_obsidian13.Setting(containerEl).setName("Use finger as pen").setDesc(
+      "Off: use a pen to write and fingers to select or move images and handwriting. On: one finger uses the current writing, eraser or selection tool; two fingers move and zoom the page. Use Pointer to move images while finger writing is on. Hold still for clipboard options."
+    ).addToggle((toggle) => toggle.setValue(this.plugin.fingerAsPen).onChange(async (value) => {
+      try {
+        await this.plugin.setFingerAsPen(value);
+      } catch (error) {
+        new import_obsidian13.Notice(`Ink Notes could not save input settings: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }));
     new import_obsidian13.Setting(containerEl).setName("PDF handwriting").setHeading();
     new import_obsidian13.Setting(containerEl).setName("Default PDF viewer").setDesc(
       "PDF handwriting is stored in A_pdfinkwrittern/. Choose which viewer opens ordinary PDFs. Compatibility mode keeps the native viewer when PDF extensions are enabled. Ink Notes first opens handwriting even with PDF++ enabled; its native-view tools remain available after returning to the built-in viewer. Page, search and selection links always keep the native viewer. Reopen existing tabs to apply the choice."

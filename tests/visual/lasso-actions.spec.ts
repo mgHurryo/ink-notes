@@ -1,4 +1,12 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
+
+async function finger(page: Page, type: string, x: number, y: number) {
+  await page.locator('.ink-page').evaluate((paper, { type, x, y }) => {
+    const touch = new Touch({ identifier: 91, target: paper, clientX: x, clientY: y });
+    paper.dispatchEvent(new TouchEvent(type, { bubbles: true, cancelable: true,
+      touches: type === "touchend" ? [] : [touch], changedTouches: [touch] }));
+  }, { type, x, y });
+}
 
 for (const { width, split } of [{ width: 360, split: false }, { width: 1280, split: false }, { width: 1280, split: true }]) {
   test(`lasso actions fit the viewport and paste with undo at ${width}px${split ? " split pane" : ""}`, async ({ page }) => {
@@ -46,8 +54,23 @@ for (const { width, split } of [{ width: 360, split: false }, { width: 1280, spl
     }
     await page.screenshot({ path: `test-results/lasso-actions-${width}${split ? "-split" : ""}.png` });
     await actions.getByRole("button", { name: "Copy", exact: true }).click();
+    await expect(actions).toHaveCount(0);
+    const x = rect!.x + rect!.width * .75, y = rect!.y + rect!.height * .3;
+    await page.mouse.click(x, y);
+    await expect(actions).toHaveCount(0);
+    await finger(page, "touchstart", x, y); await finger(page, "touchend", x, y);
+    await page.waitForTimeout(650); await expect(actions).toHaveCount(0);
+    await finger(page, "touchstart", x, y); await expect(actions).toBeVisible();
+    await expect(actions.getByRole("button")).toHaveCount(1);
+    await finger(page, "touchend", x, y); await expect(actions).toBeVisible();
     await actions.getByRole("button", { name: "Paste", exact: true }).click();
+    await expect(actions).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => (window as any).__inkNotesPreview.view.currentPage().strokes.length)).toBe(2);
+    const center = await page.evaluate(() => {
+      const points = (window as any).__inkNotesPreview.view.currentPage().strokes[1].points;
+      return [(points[0].x + points.at(-1).x) / 2, (points[0].y + points.at(-1).y) / 2];
+    });
+    expect(center[0]).toBeCloseTo(.75); expect(center[1]).toBeCloseTo(.3);
     await page.getByRole("button", { name: "Undo", exact: true }).click();
     await expect.poll(() => page.evaluate(() => (window as any).__inkNotesPreview.view.currentPage().strokes.length)).toBe(1);
     await page.getByRole("button", { name: "Select", exact: true }).click();
@@ -94,7 +117,11 @@ for (const width of [360, 1280]) {
     const actions = page.getByRole("group", { name: "Selection actions" });
     await expect(actions.getByRole("button", { name: "Copy", exact: true })).toBeVisible();
     await actions.getByRole("button", { name: "Copy", exact: true }).click();
+    await expect(actions).toHaveCount(0);
+    await page.mouse.move(rect.x + rect.width * .5, rect.y + rect.height * .25); await page.mouse.down();
+    await page.mouse.move(rect.x + rect.width * .1, rect.y + rect.height * .1, { steps: 5 }); await page.mouse.up();
     await actions.getByRole("button", { name: "Delete", exact: true }).click();
+    await expect(actions).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => (window as any).__inkNotesPreview.view.currentPage().strokes.length)).toBe(0);
     await page.getByRole("button", { name: "Undo", exact: true }).click();
     await expect.poll(() => page.evaluate(() => (window as any).__inkNotesPreview.view.currentPage().strokes.length)).toBe(1);

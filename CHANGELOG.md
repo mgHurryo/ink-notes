@@ -4,6 +4,19 @@
 
 - Add colored sticky notes to Ink and PDF handwriting pages with position/size controls, foldable previews, handwritten and typed content, and undo/redo. Frame resizing retains the fixed content coordinates; the editor can extend and scroll its board without allocating a board-sized canvas. Explicit Save applies drafts; reading mode prevents changes and stale drafts cannot overwrite another pane's note.
 - Add vault-wide sticky-note title/text/keyword search and Markdown links to exact notes. Provide an optional cancellable handwriting-index adapter with a five-second per-note timeout; no recognition service is bundled or invoked by default. Notes appear in previews, Ink embeds and PDF exports, which capture the visible window/fold state. Source PDFs remain unchanged; old versions may discard sticky metadata on save.
+- Recognize default-pen scribble erasing from raw Pencil samples, with conservative repeated-area reversal checks to reduce accidental erasure of connected handwriting. Add a persistent enable toggle and 0–100% sensitivity slider in eraser settings (default 25%); lower values require more deliberate scrubbing. Ordinary/blank-area strokes remain ink.
+
+## 0.1.3-beta.3
+
+- Unify pen, finger, mouse and keyboard gestures across Ink and PDF editors. By default, stylus writes while fingers select or move images/handwriting and navigate; opt in to Use finger as pen for single-finger writing, highlighting, erasing and selection, with two-finger navigation. Hold opens clipboard actions, color removal requires an explicit menu choice, and pressure-curve points use an explicit remove action. Cancelled edits roll back before pinch or stylus handoff.
+
+## 0.1.3-beta.2
+
+- Close lasso/rectangle action menus after copy, cut, delete or paste and on outside presses; empty selections no longer show Paste just because the clipboard contains ink. In editing mode, hold one finger still on the page for 600ms to show a paste-only menu with any tool. Movement, early release, a second finger, stylus input, page changes and viewport interruption cancel the hold; paste retains the active tool and existing clipboard scope. Desktop shortcuts and Lasso settings remain available.
+
+- Simplify the image library with compact import/group menus, a scrollable thumbnail grid and a fixed insertion footer. Show batch management only when images are selected. Fix direct finger dragging and corner resizing in Ink and PDF pages by preserving native touch targets and routing active image gestures before page navigation; a second finger cancels the image preview and keeps page pinch zoom available.
+
+## 0.1.3-beta.1
 
 - Add image-library batch deletion with a count/name confirmation and undo of the latest deletion while the library stays open. Existing multi-select group moves now disable with no selection; counts include selections hidden by search/group filters. Deletion removes catalog entries only, retaining managed files for placed images, previews and PDF exports; it does not reclaim disk space.
 

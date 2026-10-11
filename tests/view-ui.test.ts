@@ -15,6 +15,7 @@ import { defaultToolState } from "../src/tool-state";
 import type { NotebookStore } from "../src/storage";
 import type { WorkspaceLeaf } from "obsidian";
 import { Menu } from "obsidian";
+import { gestureContract } from "./gesture-contract";
 
 const button = (label: string) => document.querySelector<HTMLButtonElement>('button[aria-label="' + label + '"]')!;
 /** iPads deliver no dblclick for touch; the preset editor opens on two taps. */
@@ -51,6 +52,8 @@ afterEach(async () => {
   window.localStorage.clear();
 });
 
+gestureContract(async () => view);
+
 describe("reference-style editor", () => {
   it("duplicates sticky boards with independent note/stroke ownership and content", () => {
     const host = view as any, page = host.notebook.pages[0];
@@ -84,8 +87,10 @@ describe("reference-style editor", () => {
     const { page } = selectSampleInk();
     expect(button("Paste").disabled).toBe(true);
     button("Copy").click();
+    expect(document.querySelector(".ink-selection-actions")).toBeNull();
     expect(page.strokes).toHaveLength(1);
-    button("Paste").click();
+    document.querySelector<HTMLElement>(".ink-page-scroller")!.dispatchEvent(new KeyboardEvent("keydown", { key: "v", ctrlKey: true, bubbles: true }));
+    expect(document.querySelector(".ink-selection-actions")).toBeNull();
     expect(page.strokes).toHaveLength(2);
     expect(page.strokes[1].id).not.toBe("selected");
     button("Undo").click();
@@ -129,7 +134,8 @@ describe("reference-style editor", () => {
     editor.onPointerMove(event(x2, y2));
     editor.onPointerUp(event(x2, y2));
     expect([...editor.selectedStrokeIds].sort()).toEqual(["crossing", "selected"]);
-    button("Copy").click(); button("Paste").click();
+    button("Copy").click();
+    document.querySelector<HTMLElement>(".ink-page-scroller")!.dispatchEvent(new KeyboardEvent("keydown", { key: "v", ctrlKey: true, bubbles: true }));
     expect(page.strokes).toHaveLength(6);
     button("Undo").click();
     expect(page.strokes).toHaveLength(4);
@@ -151,15 +157,34 @@ describe("reference-style editor", () => {
     button("Cut").click();
     expect(page.strokes).toHaveLength(0);
     expect(page.deletedStrokeIds).toContain("selected");
-    // The strip must survive a cut/delete so paste stays reachable without re-lassoing.
-    expect(document.querySelector(".ink-selection-actions")).not.toBeNull();
-    button("Paste").click();
+    expect(document.querySelector(".ink-selection-actions")).toBeNull();
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    scroller.dispatchEvent(new KeyboardEvent("keydown", { key: "v", ctrlKey: true, bubbles: true }));
     expect(page.strokes).toHaveLength(1);
-    button("Delete").click();
+    scroller.dispatchEvent(new KeyboardEvent("keydown", { key: "Delete", bubbles: true }));
     expect(page.strokes).toHaveLength(0);
-    expect(document.querySelector(".ink-selection-actions")).not.toBeNull();
+    expect(document.querySelector(".ink-selection-actions")).toBeNull();
     button("Undo").click();
     expect(page.strokes).toHaveLength(1);
+  });
+
+  it("closes Delete and never reopens Paste after clicking outside a copied selection", () => {
+    const { host, page } = selectSampleInk();
+    button("Copy").click();
+    const editor = host as any;
+    vi.spyOn(editor, "inputRect").mockReturnValue(new DOMRect(0, 0, 100, 100));
+    const paper = document.querySelector<HTMLElement>('.ink-page')!;
+    paper.hasPointerCapture = () => false; paper.setPointerCapture = vi.fn(); paper.releasePointerCapture = vi.fn();
+    const event = { pointerId: 5, pointerType: "mouse", clientX: 90, clientY: 90, pressure: .5 };
+    editor.onPointerDown(event); editor.onPointerUp(event);
+    expect(editor.selectedStrokeIds.size).toBe(0);
+    expect(document.querySelector('.ink-selection-actions')).toBeNull();
+    host.lassoPath = [[.1, .1], [.5, .1], [.5, .5], [.1, .5]].map(([x, y]) => ({ x, y, pressure: .5, t: 1 }));
+    host.finishLasso(page); button("Delete").click();
+    expect(document.querySelector('.ink-selection-actions')).toBeNull();
+    expect(page.strokes).toHaveLength(0);
+    button("Undo").click(); expect(page.strokes).toHaveLength(1);
+    expect(document.querySelector('.ink-selection-actions')).toBeNull();
   });
 
   it("supports lasso shortcuts and clears stale selection when switching pages", async () => {
@@ -615,7 +640,7 @@ describe("reference-style editor", () => {
     // the platform picker anchored to it snaps shut mid-adjust.
     expect(picker.isConnected).toBe(true);
   });
-  it("removes a preset on hold, never the last one", () => {
+  it("opens options on hold and removes a preset only explicitly, never the last one", () => {
     vi.useFakeTimers();
     try {
       button("Pen").click();
@@ -624,15 +649,20 @@ describe("reference-style editor", () => {
           .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
         vi.advanceTimersByTime(600);
       };
-      hold(); hold(); hold(); hold();
+      hold();
+      expect(document.querySelectorAll('.ink-color-swatch[data-brush-tool="pen"]').length).toBe(5);
+      const remove = () => Array.from(document.querySelectorAll<HTMLButtonElement>('.menu button')).find((b) => b.textContent === "Remove preset color")!;
+      remove().click();
+      for (let i = 0; i < 3; i++) { hold(); remove().click(); }
       expect(document.querySelectorAll('.ink-color-swatch[data-brush-tool="pen"]').length).toBe(1);
       hold();
+      expect(remove().disabled).toBe(true); remove().click();
       expect(document.querySelectorAll('.ink-color-swatch[data-brush-tool="pen"]').length).toBe(1);
     } finally {
       vi.useRealTimers();
     }
   });
-  it("does not select the color when a hold removed the preset", () => {
+  it("does not select the color after a hold opens its options", () => {
     vi.useFakeTimers();
     try {
       button("Pen").click();
@@ -647,6 +677,31 @@ describe("reference-style editor", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+  it("cancels color options for movement, another finger, and a closed panel", () => {
+    vi.useFakeTimers();
+    try {
+      button("Pen").click(); const swatch = button("Pen blue");
+      swatch.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 10, clientY: 10 }));
+      const move = new MouseEvent("pointermove", { bubbles: true, clientX: 30, clientY: 10 });
+      Object.defineProperty(move, "pointerId", { value: 1 }); swatch.dispatchEvent(move);
+      vi.advanceTimersByTime(600); expect(document.querySelector('.menu')).toBeNull();
+      swatch.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+      const touch = new Event("touchstart", { bubbles: true }); Object.defineProperty(touch, "touches", { value: [{}, {}] });
+      swatch.dispatchEvent(touch); vi.advanceTimersByTime(600); expect(document.querySelector('.menu')).toBeNull();
+      swatch.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })); button("Pen").click();
+      vi.advanceTimersByTime(600); expect(document.querySelector('.menu')).toBeNull();
+      expect((view as any).state.palette).toHaveLength(5);
+    } finally { vi.useRealTimers(); }
+  });
+  it("offers the same color options by right-click and keyboard", () => {
+    button("Pen").click(); const swatch = button("Pen blue");
+    swatch.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    expect(document.querySelector('.menu')?.textContent).toContain("Remove preset color");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    swatch.dispatchEvent(new KeyboardEvent("keydown", { key: "F10", shiftKey: true, bubbles: true, cancelable: true }));
+    expect(document.querySelector('.menu')?.textContent).toContain("Remove preset color");
+    expect((view as any).state.palette).toHaveLength(5);
   });
   it("schedules a shared-settings save when popover and eraser controls change", () => {
     const scheduleSave = vi.fn();
@@ -688,6 +743,30 @@ describe("reference-style editor", () => {
     button("Square eraser").click();
     expect(cursor.classList.contains("is-square")).toBe(true);
     expect(button("Square eraser").getAttribute("aria-checked")).toBe("true");
+  });
+  it("exposes a persistent scribble eraser toggle in eraser settings", () => {
+    const scheduleSave = vi.fn();
+    (view as unknown as { sharedToolSettings: unknown }).sharedToolSettings = {
+      config: defaultToolState(), scheduleSave,
+    };
+    button("Erase").click();
+    button("Erase").click();
+    const toggle = document.querySelector<HTMLInputElement>('input[aria-label="Scribble erase with pen"]')!;
+    expect(toggle.checked).toBe(true);
+    const sensitivity = document.querySelector<HTMLInputElement>('input[aria-label="Scribble erase sensitivity"]')!;
+    expect(sensitivity.value).toBe("25");
+    sensitivity.value = "60";
+    sensitivity.dispatchEvent(new Event("input", { bubbles: true }));
+    expect((view as any).state.scribbleSensitivity).toBe(60);
+    expect(document.body.textContent).toContain("Scribble sensitivity: 60%");
+    toggle.checked = false;
+    toggle.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(scheduleSave).toHaveBeenCalled();
+    expect((view as any).state.scribbleErase).toBe(false);
+    expect(sensitivity.disabled).toBe(true);
+    toggle.checked = true;
+    toggle.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(sensitivity.disabled).toBe(false);
   });
   it("toggles the eraser mini popover on re-tap without the reopen race", async () => {
     button("Erase").click();   // select the eraser

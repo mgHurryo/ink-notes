@@ -2,6 +2,102 @@ import { expect, test } from "@playwright/test";
 
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3ioAAAAASUVORK5CYII=", "base64");
 
+for (const [width, height] of [[360, 800], [1024, 768], [1440, 900], [768, 520]]) {
+  test(`image library keeps thumbnails and insertion visible at ${width}x${height}`, async ({ page }) => {
+    await page.setViewportSize({ width, height }); await page.goto("/");
+    await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+    await page.getByRole("button", { name: "Image library", exact: true }).click();
+    const library = page.getByRole("dialog", { name: "Image library", exact: true });
+    const thumbnail = await page.evaluate(() => {
+      const canvas = document.createElement("canvas"); canvas.width = 480; canvas.height = 320;
+      const ctx = canvas.getContext("2d")!; ctx.fillStyle = "#fafbff"; ctx.fillRect(0, 0, 480, 320);
+      ctx.fillStyle = "#304264"; ctx.font = "bold 28px sans-serif"; ctx.fillText("Course diagrams", 28, 50);
+      ctx.fillStyle = "#71bacb"; ctx.fillRect(28, 90, 180, 160);
+      ctx.fillStyle = "#7f79c6"; ctx.fillRect(232, 90, 220, 70);
+      ctx.fillStyle = "#b5c8e4"; ctx.fillRect(232, 180, 220, 70);
+      return canvas.toDataURL("image/png").split(",")[1];
+    });
+    await library.locator('input[type="file"]').setInputFiles(Array.from({ length: 18 }, (_, index) => ({
+      name: `Lecture_${String(index + 1).padStart(2, "0")}_requirement_engineering_diagram.png`, mimeType: "image/png", buffer: Buffer.from(thumbnail, "base64"),
+    })));
+    await expect(library.locator(".ink-image-library-card")).toHaveCount(18);
+    await expect(library.locator(".ink-image-library-batch")).toBeHidden();
+    await expect(library.getByRole("button", { name: "From vault", exact: true })).toBeHidden();
+    await library.locator("summary").filter({ hasText: /^Import images$/ }).click();
+    await expect(library.getByRole("button", { name: "From vault", exact: true })).toBeVisible();
+    await library.getByRole("button", { name: "From vault", exact: true }).focus();
+    await page.keyboard.press("Escape");
+    await expect(library).toBeVisible();
+    await expect(library.getByRole("button", { name: "From vault", exact: true })).toBeHidden();
+    await page.screenshot({ path: `test-results/image-library-layout-${width}.png` });
+    await library.locator('.ink-image-library-card input[type="checkbox"]').first().check();
+    await expect(library.locator(".ink-image-library-batch")).toBeVisible();
+    const grid = library.locator(".ink-image-library-grid"), insert = library.getByRole("button", { name: "Insert selected (1)", exact: true });
+    const beforeScroll = (await insert.boundingBox())!;
+    await grid.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    const afterScroll = (await insert.boundingBox())!;
+    expect(afterScroll.y).toBeCloseTo(beforeScroll.y);
+    expect(afterScroll.y + afterScroll.height).toBeLessThanOrEqual(height);
+    expect(await library.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+    await expect(library.locator(".ink-image-library-card").last()).toBeInViewport();
+    await page.screenshot({ path: `test-results/image-library-selected-${width}.png` });
+  });
+}
+
+test("native finger drags and resizes the selected image without navigating the page", async ({ page }) => {
+  await page.setViewportSize({ width: 1024, height: 768 }); await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  await page.getByRole("button", { name: "Image library", exact: true }).click();
+  const library = page.getByRole("dialog", { name: "Image library", exact: true });
+  await library.locator('input[type="file"]').setInputFiles({ name: "Diagram.png", mimeType: "image/png", buffer: png });
+  await expect(library.locator(".ink-image-library-card")).toHaveCount(1);
+  await library.getByRole("button", { name: "Select visible", exact: true }).click();
+  await library.getByRole("button", { name: "Insert selected (1)", exact: true }).click();
+  const state = () => page.evaluate(() => {
+    const view = (window as any).__inkNotesPreview.view;
+    return { image: view.currentPage().images[0], pageId: view.currentPage().id, zoom: view.zoom };
+  });
+  const session = await page.context().newCDPSession(page);
+  const drag = async (x: number, y: number, dx: number, dy: number) => {
+    await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x, y, id: 1 }] });
+    for (let step = 1; step <= 5; step++) await session.send("Input.dispatchTouchEvent", {
+      type: "touchMove", touchPoints: [{ x: x + dx * step / 5, y: y + dy * step / 5, id: 1 }],
+    });
+    await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  };
+  await page.getByRole("button", { name: "Done", exact: true }).click();
+  const before = await state(), image = page.locator(".ink-placed-image"), box = (await image.boundingBox())!;
+  await drag(box.x + box.width / 2, box.y + box.height / 2, 42, 24);
+  expect((await state()).image.x).toBeGreaterThan(before.image.x);
+  expect((await state()).image.y).toBeGreaterThan(before.image.y);
+  expect((await state()).pageId).toBe(before.pageId); expect((await state()).zoom).toBe(before.zoom);
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  expect((await state()).image.x).toBe(before.image.x);
+  await page.getByRole("button", { name: "Redo", exact: true }).click();
+  const movedBox = (await image.boundingBox())!;
+  await drag(movedBox.x + movedBox.width / 2, movedBox.y + movedBox.height / 2, 0, 0);
+  const handle = page.getByRole("button", { name: "Resize image", exact: true });
+  await handle.scrollIntoViewIfNeeded();
+  const h = (await handle.boundingBox())!, beforeResize = await state();
+  await drag(h.x + h.width / 2, h.y + h.height / 2, 36, 24);
+  const resized = await state();
+  expect(resized.image.width).toBeGreaterThan(beforeResize.image.width);
+  expect(resized.image.width / resized.image.height).toBeCloseTo(beforeResize.image.width / beforeResize.image.height);
+  await page.getByRole("button", { name: "Undo", exact: true }).click();
+  expect((await state()).image.width).toBe(beforeResize.image.width);
+  await image.scrollIntoViewIfNeeded();
+  const pinchBox = (await image.boundingBox())!, beforePinch = await state();
+  const x = pinchBox.x + pinchBox.width / 2, y = pinchBox.y + pinchBox.height / 2;
+  await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: x - 40, y, id: 1 }] });
+  await session.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: x - 30, y: y + 10, id: 1 }] });
+  await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: x - 30, y: y + 10, id: 1 }, { x: x + 40, y, id: 2 }] });
+  await session.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: x - 70, y: y + 10, id: 1 }, { x: x + 80, y, id: 2 }] });
+  await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
+  expect((await state()).image).toEqual(beforePinch.image);
+  expect((await state()).zoom).toBeGreaterThan(beforePinch.zoom);
+  await session.detach();
+});
+
 for (const width of [360, 1280]) {
   test(`image library batch move, filtered deletion, cancellation and undo at ${width}px`, async ({ page }) => {
     const errors: string[] = []; page.on("pageerror", (e) => errors.push(e.message));
@@ -9,8 +105,8 @@ for (const width of [360, 1280]) {
     await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
     await page.getByRole("button", { name: "Image library", exact: true }).click();
     const library = page.getByRole("dialog", { name: "Image library", exact: true });
-    const move = library.getByRole("combobox", { name: "Move selected images to group", exact: true });
-    await expect(library.getByRole("button", { name: "Delete selected (0)", exact: true })).toBeDisabled();
+    const move = library.getByRole("combobox", { name: "Move selected images to group", exact: true, includeHidden: true });
+    await expect(library.locator(".ink-image-library-batch")).toBeHidden();
     await expect(move).toBeDisabled();
     await library.locator('input[type="file"]').setInputFiles(["One", "Two", "Three"].map((name) => ({ name: `${name}.png`, mimeType: "image/png", buffer: png })));
     await expect(library.locator(".ink-image-library-card")).toHaveCount(3);
@@ -20,6 +116,7 @@ for (const width of [360, 1280]) {
     const original = await page.evaluate(() => (window as any).__inkNotesPreview.view.currentPage().images[0]);
     const originalBytes = await page.evaluate(async (path) => Array.from(new Uint8Array(await (window as any).__inkNotesPreview.view.imageLibrary.bytes(path))), original.assetPath);
     await page.getByRole("button", { name: "Image library", exact: true }).click();
+    await library.locator("summary").filter({ hasText: /^Groups$/ }).click();
     await library.getByRole("button", { name: "New group", exact: true }).click();
     const group = page.getByRole("dialog", { name: "New group", exact: true });
     await group.getByRole("textbox", { name: "Group name" }).fill("Keep");
@@ -49,7 +146,7 @@ for (const width of [360, 1280]) {
     await library.getByRole("button", { name: "Delete selected (2)", exact: true }).click();
     await confirmation.getByRole("button", { name: "Delete 2 images", exact: true }).click();
     await expect(confirmation).toHaveCount(0);
-    await expect(library.getByRole("button", { name: "Delete selected (0)", exact: true })).toBeDisabled();
+    await expect(library.locator(".ink-image-library-batch")).toBeHidden();
     await library.getByRole("button", { name: "Undo last deletion (2)", exact: true }).click();
     await expect(library.getByRole("button", { name: /Undo last deletion/ })).toHaveCount(0);
     await search.fill(""); await search.press("Tab");
@@ -114,6 +211,7 @@ for (const width of [360, 1280]) {
     await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
     await page.getByRole("button", { name: "Image library", exact: true }).click();
     const library = page.getByRole("dialog", { name: "Image library", exact: true }); await expect(library).toBeVisible();
+    await library.locator("summary").filter({ hasText: /^Groups$/ }).click();
     await library.getByRole("button", { name: "New group", exact: true }).click();
     const group = page.getByRole("dialog", { name: "New group", exact: true });
     await group.getByRole("textbox", { name: "Group name" }).fill("Course diagrams"); await group.getByRole("button", { name: "Save", exact: true }).click();
@@ -161,7 +259,7 @@ for (const width of [360, 1280]) {
     await page.screenshot({ path: `test-results/image-controls-${width}.png` });
     await page.getByRole("button", { name: "Pen", exact: true }).click();
     await expect(page.locator(".ink-image-inspector")).toBeHidden();
-    expect(await placed.evaluate((el) => getComputedStyle(el).pointerEvents)).toBe("none");
+    expect(await placed.evaluate((el) => getComputedStyle(el).pointerEvents)).toBe("auto");
     await page.screenshot({ path: `test-results/images-${width}.png` });
     expect(errors).toEqual([]);
   });
@@ -176,10 +274,12 @@ test("vault and manual batch imports keep managed copies; touch edits cancel for
   }, Array.from(png));
   await page.getByRole("button", { name: "Image library", exact: true }).click();
   const library = page.getByRole("dialog", { name: "Image library", exact: true });
+  await library.locator("summary").filter({ hasText: /^Import images$/ }).click();
   await library.getByRole("button", { name: "From vault", exact: true }).click();
   const vault = page.getByRole("dialog", { name: "Import images from vault", exact: true });
   await vault.getByRole("button", { name: "Select all", exact: true }).click(); await vault.getByRole("button", { name: "Import selected", exact: true }).click();
   await expect(library.locator(".ink-image-library-card")).toHaveCount(2);
+  await library.locator("summary").filter({ hasText: /^Import images$/ }).click();
   await library.getByRole("button", { name: "Enter vault paths", exact: true }).click();
   const manual = page.getByRole("dialog", { name: "Import vault paths", exact: true });
   await manual.getByRole("textbox", { name: "Image paths", exact: true }).fill("A.png\nB.png"); await manual.getByRole("button", { name: "Import all", exact: true }).click();
@@ -193,8 +293,9 @@ test("vault and manual batch imports keep managed copies; touch edits cancel for
     const touch = (identifier: number, x: number, y: number) => new Touch({ identifier, target: host, clientX: x, clientY: y });
     const t = touch(1, r.x + 10, r.y + 10), end = touch(1, r.x + 40, r.y + 20);
     el.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, cancelable: true, touches: [t], changedTouches: [t] }));
-    document.dispatchEvent(new TouchEvent("touchmove", { bubbles: true, cancelable: true, touches: [end], changedTouches: [end] }));
-    document.dispatchEvent(new TouchEvent("touchend", { bubbles: true, cancelable: true, touches: [], changedTouches: [end] }));
+    if (!el.isConnected) throw new Error("Selecting an image detached the native touch target");
+    el.dispatchEvent(new TouchEvent("touchmove", { bubbles: true, cancelable: true, touches: [end], changedTouches: [end] }));
+    el.dispatchEvent(new TouchEvent("touchend", { bubbles: true, cancelable: true, touches: [], changedTouches: [end] }));
   });
   expect((await state())[3].x).toBeGreaterThan(before.x);
   const beforePinch = (await state())[3];
@@ -203,8 +304,9 @@ test("vault and manual batch imports keep managed copies; touch edits cancel for
     const touch = (identifier: number, x: number, y: number) => new Touch({ identifier, target: host, clientX: x, clientY: y });
     const t = touch(1, r.x + 10, r.y + 10), moved = touch(1, r.x + 50, r.y + 20), second = touch(2, r.x + 80, r.y + 60);
     el.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, cancelable: true, touches: [t], changedTouches: [t] }));
-    document.dispatchEvent(new TouchEvent("touchmove", { bubbles: true, cancelable: true, touches: [moved], changedTouches: [moved] }));
+    el.dispatchEvent(new TouchEvent("touchmove", { bubbles: true, cancelable: true, touches: [moved], changedTouches: [moved] }));
     host.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, cancelable: true, touches: [moved, second], changedTouches: [second] }));
+    if (!el.isConnected) throw new Error("Cancelling for pinch detached the native touch target");
     host.dispatchEvent(new TouchEvent("touchend", { bubbles: true, cancelable: true, touches: [], changedTouches: [moved, second] }));
   });
   expect((await state())[3]).toEqual(beforePinch);
@@ -245,7 +347,7 @@ test("image editing dismisses outside and excludes pen and native stylus input i
     el.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, cancelable: true, touches: [touch], changedTouches: [touch] }));
     el.dispatchEvent(new TouchEvent("touchend", { bubbles: true, cancelable: true, touches: [], changedTouches: [touch] }));
   });
-  await expect(inspector).toBeHidden();
+  await expect(inspector).toBeVisible();
   expect(await page.evaluate(() => (window as any).__inkNotesPreview.view.currentPage().strokes.length)).toBe(count);
   for (const tool of ["Pen", "Highlight", "Erase", "Select"]) {
     await page.getByRole("button", { name: tool, exact: true }).click();

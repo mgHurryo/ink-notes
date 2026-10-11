@@ -14,16 +14,19 @@ import type { EraserMode, ToolState } from "./ink-writing";
 import type { InkClipboard } from "./lasso-clipboard";
 
 /** The JSON shape persisted under `toolState` in the plugin data file. */
-export type StoredToolState = Pick<ToolState, "pen" | "highlighter" | "eraserMode" | "eraserSize" | "palette" | "lasso">;
+export type StoredToolState = Pick<ToolState, "pen" | "highlighter" | "eraserMode" | "eraserSize" | "scribbleErase" | "scribbleSensitivity" | "palette" | "lasso" | "fingerAsPen">;
 
 /** Single source of the pristine defaults both editors start from. */
 export function defaultToolState(): ToolState {
   return {
     tool: "pen",
+    fingerAsPen: false,
     pen: { color: "#1b1b1b", width: 3, opacity: 1, smooth: 0, taper: 0, pressureGain: 100, speedGain: 0, pressureCurve: undefined },
     highlighter: { color: "#f2c94c", width: 18, opacity: 0.4 },
     eraserMode: "stroke",
     eraserSize: 32,
+    scribbleErase: true,
+    scribbleSensitivity: 25,
     palette: INK_COLORS.map((color) => color.value),
     lasso: { mode: "freehand", crossFileClipboard: false },
   };
@@ -52,10 +55,13 @@ export function sanitizeToolState(raw: unknown): ToolState {
   const lasso = isRecord(source.lasso) ? source.lasso : {};
   return {
     tool: defaults.tool,
+    fingerAsPen: source.fingerAsPen === true,
     pen: sanitizeBrush(source.pen, defaults.pen, PEN_WIDTH_RANGE, true),
     highlighter: sanitizeBrush(source.highlighter, defaults.highlighter, HIGHLIGHTER_WIDTH_RANGE, false),
     eraserMode: isEraserMode(source.eraserMode) ? source.eraserMode : defaults.eraserMode,
     eraserSize: sanitizeNumber(source.eraserSize, defaults.eraserSize, ERASER_SIZE_RANGE),
+    scribbleErase: source.scribbleErase !== false,
+    scribbleSensitivity: sanitizeNumber(source.scribbleSensitivity, defaults.scribbleSensitivity, PERCENT_RANGE),
     palette: sanitizePalette(source.palette),
     lasso: { mode: lasso.mode === "rectangle" ? "rectangle" : "freehand", crossFileClipboard: lasso.crossFileClipboard === true },
   };
@@ -64,10 +70,13 @@ export function sanitizeToolState(raw: unknown): ToolState {
 /** The plain-JSON snapshot to persist (the active tool stays per session). */
 export function storedToolState(state: ToolState): StoredToolState {
   return {
+    fingerAsPen: state.fingerAsPen,
     pen: storedBrush(state.pen),
     highlighter: storedBrush(state.highlighter),
     eraserMode: state.eraserMode,
     eraserSize: state.eraserSize,
+    scribbleErase: state.scribbleErase,
+    scribbleSensitivity: state.scribbleSensitivity,
     palette: [...state.palette],
     lasso: { ...state.lasso },
   };

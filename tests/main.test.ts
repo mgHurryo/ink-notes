@@ -9,6 +9,7 @@ const pickerOpen = vi.fn();
 const pickerArguments = vi.fn();
 const create = vi.fn();
 const settings: { name: string; options?: Record<string, string>; value?: string; change?: (value: string) => Promise<void> }[] = [];
+const toggles: { value?: boolean; change?: (value: boolean) => Promise<void> }[] = [];
 
 vi.mock("obsidian", async (importOriginal) => ({
   ...(await importOriginal<Record<string, unknown>>()),
@@ -34,6 +35,12 @@ vi.mock("obsidian", async (importOriginal) => ({
     setHeading() { return this; }
     setDesc() { return this; }
     addButton() { return this; }
+    addToggle(build: (toggle: unknown) => void) {
+      const entry: typeof toggles[number] = {}; toggles.push(entry);
+      const toggle = { setValue(value: boolean) { entry.value = value; return toggle; },
+        onChange(change: typeof entry.change) { entry.change = change; return toggle; } };
+      build(toggle); return this;
+    }
     addDropdown(build: (dropdown: unknown) => void) {
       const entry = this.entry;
       const dropdown = {
@@ -75,7 +82,25 @@ import { PdfInkView } from "../src/pdf-view";
 
 describe("plugin event synchronization", () => {
   beforeEach(() => { observe.mockReset(); register.mockReset(); registerMarkdown.mockReset(); list.mockReset(); notice.mockReset();
-    pickerOpen.mockReset(); pickerArguments.mockReset(); create.mockReset(); settings.length = 0; });
+    pickerOpen.mockReset(); pickerArguments.mockReset(); create.mockReset(); settings.length = 0; toggles.length = 0; });
+
+  it("exposes opt-in finger writing, persists it and refreshes both open editor kinds", async () => {
+    const plugin = new InkNotesPlugin({} as never, {} as never);
+    await plugin.onload();
+    const ink = Object.assign(new InkView({} as never, {} as never), { refreshInputPreferences: vi.fn() });
+    const pdf = Object.assign(Object.create(PdfInkView.prototype), { refreshInputPreferences: vi.fn() });
+    (plugin.app.workspace.getLeavesOfType as ReturnType<typeof vi.fn>).mockImplementation((type: string) =>
+      [{ view: type === "ink-notes-view" ? ink : pdf }]);
+    (plugin.addSettingTab as ReturnType<typeof vi.fn>).mock.calls[0][0].display();
+    expect(toggles[0].value).toBe(false);
+    await toggles[0].change!(true);
+    expect(plugin.fingerAsPen).toBe(true);
+    expect(ink.refreshInputPreferences).toHaveBeenCalledOnce(); expect(pdf.refreshInputPreferences).toHaveBeenCalledOnce();
+    expect(plugin.saveData).toHaveBeenLastCalledWith(expect.objectContaining({ toolState: expect.objectContaining({ fingerAsPen: true }) }));
+    (plugin.saveData as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("disk full"));
+    await toggles[0].change!(false);
+    expect(notice).toHaveBeenCalledWith("Ink Notes could not save input settings: disk full");
+  });
 
   it("registers sticky search and opens external Markdown links in a matching handwriting pane", async () => {
     const plugin = new InkNotesPlugin({} as never, {} as never); await plugin.onload();
