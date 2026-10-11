@@ -22,6 +22,8 @@ describe("tool state persistence", () => {
       state.highlighter.opacity = 0.55;
       state.eraserMode = "square";
       state.eraserSize = 64;
+      state.lasso.crossFileClipboard = true;
+      state.lasso.mode = "rectangle";
       expect(sanitizeToolState(storedToolState(state))).toEqual(state);
     });
 
@@ -112,6 +114,16 @@ describe("tool state persistence", () => {
   });
 
   describe("storedToolState", () => {
+    it("keeps old or invalid lasso modes on freehand while preserving clipboard scope", () => {
+      for (const mode of [undefined, "circle", 42, null]) {
+        expect(sanitizeToolState({ lasso: { mode, crossFileClipboard: true } }).lasso)
+          .toEqual({ mode: "freehand", crossFileClipboard: true });
+      }
+    });
+    it("requires an explicit boolean to enable cross-file copying", () => {
+      expect(sanitizeToolState({ lasso: { crossFileClipboard: "true" } }).lasso.crossFileClipboard).toBe(false);
+      expect(sanitizeToolState({ lasso: { crossFileClipboard: true } }).lasso.crossFileClipboard).toBe(true);
+    });
     it("strips the session tool and deep-copies the curve", () => {
       const source = defaultToolState();
       source.pen.pressureCurve = [[0, 0], [1, 1]];

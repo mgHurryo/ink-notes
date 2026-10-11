@@ -1,5 +1,22 @@
 # Changelog
 
+## Unreleased
+
+- Add image-library batch deletion with a count/name confirmation and undo of the latest deletion while the library stays open. Existing multi-select group moves now disable with no selection; counts include selections hidden by search/group filters. Deletion removes catalog entries only, retaining managed files for placed images, previews and PDF exports; it does not reclaim disk space.
+
+- Add a dedicated Pointer arrow tool (desktop shortcut A) for image editing. Insertion selects the image immediately; a finger/mouse contact on an image opens its controls, and tapping outside dismisses them. Stylus Pointer and native stylus Touch input cannot select/drag images; handwriting and lasso tools keep their existing behavior. Pointer contacts on blank paper never create ink.
+
+- Add a grouped image library with batch photo/file, vault, path-list, paste and drop imports. Insert reusable managed image copies into Ink and PDF handwriting pages; move, resize, change their layer above/below handwriting and delete individual placements with undo/redo. Images default below handwriting and appear in previews, Markdown embeds and PDF exports. Existing note files remain readable without migration; sync managed image assets with notes and back up before downgrading to an older plugin.
+
+- Add Freehand and Rectangle selection modes in lasso settings for both Ink and PDF handwriting. Freehand remains the default; rectangle drags work in every direction, select crossing strokes, and retain the existing move/copy/cut/delete/paste actions. The mode persists across sessions; older settings default to Freehand.
+- Add floating lasso Copy / Cut / Delete / Paste actions for Ink notebooks and PDF handwriting. Actions stay inside the editor pane, wrap on narrow screens, and support undo/redo and desktop shortcuts. Selection and placement targets clear on page/file changes.
+- Add an opt-in Copy and paste across files setting in the lasso panel. A plugin-scoped in-memory clipboard preserves handwriting proportions, pressure and brush settings across Ink/PDF pages; copied contents clear on reload and never use the system clipboard or modify the original PDF.
+- Add multi-select page management to both page rails. Bulk deletion is undoable; PDF deletions hide source-page note records only in the sidecar and never modify the source PDF. The final visible page is protected.
+- The default pen can now erase handwriting with a deliberate fast scribble over existing ink. It removes complete strokes crossed by the gesture and the gesture itself, with one undo restoring the erased writing; ordinary pen marks and scribbles over blank areas remain ink.
+- Allow both editing panes of the same PDF to write, erase and add note pages. Concurrent sidecar saves merge strokes, deletion markers and page changes instead of overwriting another pane's notes.
+- Preserve deferred peer handwriting when the source PDF changes while a split pane is still applying it. Stale panes become read-only and no longer save old coordinates; local and peer notes are retained together in a conflict copy for recovery. External sidecar refreshes are ignored after the source revision is blocked, and normal saves avoid an unnecessary full merge when no peer state is pending. Merging external edits still resets that pane's undo/redo history to prevent stale snapshots from overwriting peer work. iPad, Obsidian and PDF++ runtime combinations remain unverified.
+- Recover a conflict copy before unloading a PDF when its latest handwriting cannot be saved, including source-revision blocks. PDF teardown now runs even when both the normal save and recovery copy fail, so a replaced tab cannot retain stale sidecar or worker state.
+
 ## 0.1.2 - 2026-10-10
 
 - Fix ordinary PDF opens bypassing Ink Notes first when the host supplies focus flags, empty fragments or native viewport memory. Track the original public openFile request so passive state added during dispatch does not override an explicit handwriting preference.

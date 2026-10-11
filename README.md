@@ -38,12 +38,32 @@ If the explicit command is missing, check that Ink Notes is enabled in this vaul
 - Real-time pen and highlighter previews, including long strokes that cross render tiles.
 - Stroke, circular, and square erasers with an always-visible aiming outline and adjustable local-eraser size.
 - Paper templates, a collapsible page rail, page creation, duplication, deletion, reordering, rename, and zoom.
-- Undo and redo for drawing, erasing, lasso moves, and page operations.
-- Lasso selection and constrained on-page stroke movement.
+- Undo and redo for drawing, erasing, lasso moves, cut/paste/delete, and page operations.
+- Lasso selection, constrained on-page movement, and a floating Copy / Cut / Delete / Paste menu that stays inside the current editor pane.
 - A single compact 56px responsive toolbar with tool settings in an accessible popover and no duplicate offscreen controls.
 - Atomic Vault writes with stroke and page tombstones so deleted content stays deleted during cross-device merges.
 - Read-only Markdown `ink` code-block embeds with optional page targeting.
 - No native dependency, so the plugin is packaged once for all Obsidian platforms.
+
+### Copy handwriting with the lasso
+
+Choose **Select** and circle handwriting to show **Copy**, **Cut**, **Delete** and **Paste**. The menu moves above or below the selection and wraps on narrow screens. Pasted handwriting stays selected so you can drag it into place. Cut, paste and delete support undo/redo; copying keeps the original strokes.
+
+Tap **Select** again to open **Lasso** settings. Choose **Freehand** (the default) to draw a selection loop, or **Rectangle** to drag a box from one corner to the opposite corner in any direction. The rectangle selects whole strokes that lie inside or cross its boundary. Your mode is remembered and shared between Ink and PDF editors. Both modes support the same movement and clipboard actions.
+
+Enable **Copy and paste across files** in Lasso settings to paste handwriting from any Ink notebook or PDF handwriting page into another file. This option is off by default; while off, pasting is limited to pages of the source file. In the destination, tap blank paper with Select to choose a paste location, or use **Paste handwriting** in Lasso settings to paste at the visible page center. This copies handwriting only; PDF text and page backgrounds are excluded.
+
+On desktop, Select supports **Ctrl/Cmd+C**, **Ctrl/Cmd+X**, **Ctrl/Cmd+V**, and **Delete/Backspace**. The handwriting clipboard is held in memory for the running plugin instance and clears on restart or plugin reload. It is not the system clipboard and does not sync between devices.
+
+### Insert and arrange images
+
+In editing mode, click **Image library** beside Select. Batch-import with **Photos / files** (the native photo/file picker on mobile), **From vault**, or **Enter vault paths** (one path per line). You can also drop multiple files or paste copied images into the library. Create or rename groups, select multiple images, and use **Move selected to…** to organize them. Importing adds images to the library; select them and click **Insert selected** to place them on the current Ink or PDF handwriting page.
+
+For batch management, tick individual images or use **Select visible**; **Clear selection** resets the entire selection. Selections persist across search/group filters, and the count shows how many selected images are hidden. Use **Move selected to…** for batch grouping or **Delete selected** to remove selected entries after confirming their count and names. **Undo last deletion** restores the latest removed batch until you close the library or delete another batch. Deletion only removes library entries: images already placed in notes remain visible and exportable, and managed image files are kept. This does not reclaim disk space or delete your original files.
+
+Images start below handwriting so you can write on them. Inserting switches to the **Pointer** arrow tool and selects the new image immediately. To edit an existing image, choose Pointer (**A** on desktop), then touch the image with a finger or click it with a mouse. Drag it to move, drag the bottom-right handle to resize with its aspect ratio preserved, or use the position/width percentage controls. Tapping outside the image and its controls closes image editing; the Pointer tool stays active and never draws ink. **Above handwriting / Below handwriting** changes its layer; **Delete image** removes that instance. These edits support undo/redo. Pencil/stylus input never selects or drags images, including native iPad stylus Touch events. Pen, Highlight, Erase and lasso Select retain their own input behavior; choose Pen to write over images. Reading mode disables image editing. Images appear in page previews, Markdown embeds and exported PDFs.
+
+The library stores managed PNG copies in `Ink Notes/Images/assets/` and groups in `Ink Notes/Images/library.json`. Notes and PDF sidecars store only image references and geometry; the source PDF and original images are preserved. Sync the managed assets together with your notes. Removing a placed image keeps its library asset for other pages. Imports are sequential, limited to 30 MB and 16 megapixels per image, and report unsupported or damaged files individually. Supported formats depend on the WebView; HEIC may require conversion first. Animated images are imported as a still frame. Missing assets are reported during export so a PDF is not silently saved without images. Older plugin versions do not understand image metadata; keep a vault backup before downgrading.
 
 ## UI Preview
 

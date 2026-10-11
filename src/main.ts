@@ -4,12 +4,14 @@ import { InkView, VIEW_TYPE_INK } from "./view";
 import { INK_EXTENSION, NotebookStore } from "./storage";
 import { createInkEmbedProcessor } from "./embed";
 import { InkWorkerService } from "./worker-service";
-import { PdfInkView, PdfWriterArbiter, VIEW_TYPE_PDF_INK } from "./pdf-view";
+import { PdfInkView, VIEW_TYPE_PDF_INK } from "./pdf-view";
 import { PdfSidecarStore } from "./pdf-store";
 import { PDF_INK_FOLDER, PDF_SIDECAR_EXTENSION } from "./pdf-sidecar";
 import { PDF_VIEW_ENHANCER_PLUGIN_IDS, PdfTabTakeover } from "./pdf-takeover";
 import { sanitizeToolState, storedToolState, ToolStateSaver, type SharedToolState, type StoredToolState } from "./tool-state";
 import type { ToolState } from "./ink-writing";
+import { InkClipboard } from "./lasso-clipboard";
+import { ImageLibraryStore } from "./image-library";
 
 interface InkNotesSettings {
   pdfOpenMode: "native" | "compatible" | "ink";
@@ -20,10 +22,10 @@ const DEFAULT_SETTINGS: InkNotesSettings = {
 };
 
 export default class InkNotesPlugin extends Plugin {
+  private imageLibrary?: ImageLibraryStore;
   private store!: NotebookStore;
   private workers!: InkWorkerService;
   private pdfStore!: PdfSidecarStore;
-  private arbiter!: PdfWriterArbiter;
   private takeover!: PdfTabTakeover;
   config: InkNotesSettings = { ...DEFAULT_SETTINGS };
   /** Tool settings shared by both editors; loaded sanitized in onload and
@@ -51,8 +53,10 @@ export default class InkNotesPlugin extends Plugin {
     this.toolStateBinding = {
       config: this.toolState,
       scheduleSave: (state) => this.toolStateSaver.schedule(state),
+      clipboard: new InkClipboard(),
     };
     this.store = new NotebookStore(this.app);
+    if (this.app.vault) this.imageLibrary = new ImageLibraryStore(this.app);
     this.workers = new InkWorkerService((message) => new Notice(message));
     this.register(() => this.workers.dispose());
     this.registerView(VIEW_TYPE_INK, (leaf) => this.createView(leaf));
@@ -105,7 +109,7 @@ export default class InkNotesPlugin extends Plugin {
         return true;
       },
     });
-    this.registerMarkdownCodeBlockProcessor("ink", createInkEmbedProcessor(this.app, (file, pageId) => this.openFile(file, pageId)));
+    this.registerMarkdownCodeBlockProcessor("ink", createInkEmbedProcessor(this.app, (file, pageId) => this.openFile(file, pageId), this.imageLibrary));
     this.registerEvent(this.app.workspace.on("file-menu", (menu, file) => {
       if (!(file instanceof TFile) || file.extension.toLowerCase() !== "pdf") return;
       menu.addItem((item) => item.setTitle("Open PDF with Ink Notes handwriting").setIcon("pen-line")
@@ -126,17 +130,18 @@ export default class InkNotesPlugin extends Plugin {
   }
 
   private createView(leaf: WorkspaceLeaf): InkView {
-    return new InkView(leaf, this.store, this.workers, this.toolStateBinding);
+    const view = new InkView(leaf, this.store, this.workers, this.toolStateBinding);
+    if (this.imageLibrary) view.useImageLibrary(this.imageLibrary);
+    return view;
   }
 
   /**
    * PDF handwriting support: a custom view for PDF tabs, installed by
    * wrapping the public WorkspaceLeaf.setViewState choke point, plus the
-   * sidecar store, writer arbitration, and vault event wiring.
+   * sidecar store and vault event wiring.
    */
   private configurePdfSupport(): void {
     this.pdfStore = new PdfSidecarStore(this.app);
-    this.arbiter = new PdfWriterArbiter();
     this.takeover = new PdfTabTakeover(() => ({
       enabled: this.config.pdfOpenMode !== "native",
       preferInk: this.config.pdfOpenMode === "ink",
@@ -152,7 +157,8 @@ export default class InkNotesPlugin extends Plugin {
     }), VIEW_TYPE_PDF_INK);
     this.registerView(VIEW_TYPE_PDF_INK, (leaf) => {
       const view = new PdfInkView(leaf);
-      view.configure({ store: this.pdfStore, workers: this.workers, takeover: this.takeover, arbiter: this.arbiter, toolState: this.toolStateBinding });
+      if (this.imageLibrary) view.useImageLibrary(this.imageLibrary);
+      view.configure({ store: this.pdfStore, workers: this.workers, takeover: this.takeover, toolState: this.toolStateBinding });
       return view;
     });
     if (this.app.vault) {

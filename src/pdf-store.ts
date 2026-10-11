@@ -38,7 +38,14 @@ export class PdfSidecarStore {
     const existing = this.sidecarFileFor(pdf.path);
     if (existing) return existing;
     const sidecar = createSidecar(pdf.path, fingerprint, sourcePages);
-    return this.vault.create(sidecarPathFor(pdf.path), serializeSidecar(sidecar));
+    try {
+      return await this.vault.create(sidecarPathFor(pdf.path), serializeSidecar(sidecar));
+    } catch (error) {
+      // A split pane may finish creating the same sidecar first.
+      const created = this.sidecarFileFor(pdf.path);
+      if (created) return created;
+      throw error;
+    }
   }
 
   async readRaw(file: TFile): Promise<string> {
@@ -127,7 +134,12 @@ export class PdfSidecarStore {
   }
 
   private async ensureFolder(): Promise<void> {
-    if (!this.vault.getAbstractFileByPath(PDF_INK_FOLDER)) await this.vault.createFolder(PDF_INK_FOLDER);
+    if (this.vault.getAbstractFileByPath(PDF_INK_FOLDER)) return;
+    try {
+      await this.vault.createFolder(PDF_INK_FOLDER);
+    } catch (error) {
+      if (!this.vault.getAbstractFileByPath(PDF_INK_FOLDER)) throw error;
+    }
   }
 }
 

@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("obsidian", () => ({ FileView: class {} }));
+vi.mock("obsidian", () => ({ Modal: class {}, FileView: class {} }));
 
 import { InkView } from "../src/view";
 
@@ -14,7 +14,8 @@ function setup(viewportWidth = 800) {
   const viewportHeight = Math.min(600, height);
   let left = 0;
   let top = 0;
-  Object.assign(view, { zoom: 1, activePointerId: null, touchGesture: null });
+  Object.assign(view, { zoom: 1, activePointerId: null, touchGesture: null,
+    selectedStrokeIds: new Set(), lassoPath: [], lassoDrag: null });
   const zoomReadout = { textContent: "100%" };
   const zoomOut = { disabled: false };
   const zoomIn = { disabled: false };

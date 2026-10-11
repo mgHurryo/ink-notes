@@ -27,3 +27,5 @@ export function setIcon(): void {}
 export function loadPdfJs(): Promise<unknown> {
   return Promise.resolve({});
 }
+
+export class Modal {}

@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-vi.mock("obsidian", () => ({ FileView: class {}, Scope: class {}, TFile: class {} }));
+vi.mock("obsidian", () => ({ Modal: class {}, FileView: class {}, Scope: class {}, TFile: class {} }));
 vi.mock("../src/rendering", () => ({ canvasResolution: vi.fn(), drawInkStroke: vi.fn() }));
 import { InkView } from "../src/view";
 import { canvasResolution, drawInkStroke } from "../src/rendering";

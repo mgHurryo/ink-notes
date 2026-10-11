@@ -5,6 +5,7 @@ function createEl(this: HTMLElement, tag: string, options: any = {}) {
   const element = document.createElement(tag);
   if (options.cls) element.className = options.cls;
   if (options.text) element.textContent = options.text;
+  for (const key of ["type", "value", "placeholder"]) if (options[key] !== undefined) (element as any)[key] = options[key];
   for (const [key, value] of Object.entries(options.attr ?? {})) element.setAttribute(key, String(value));
   this.append(element);
   return element;
@@ -103,6 +104,7 @@ export class Menu {
 }
 export class Notice { constructor(message: string) { console.warn(message); } }
 export class TFile {}
+export function normalizePath(path: string): string { return path.replace(/\\/g, "/").replace(/\/+/g, "/"); }
 export class WorkspaceLeaf {}
 export class App {}
 /** pdf-view's RecoveryChoiceModal extends this at module load; the preview

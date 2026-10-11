@@ -15,6 +15,9 @@
  */
 
 import { FileView, Menu, Notice, setIcon } from "obsidian";
+import { ImageLibraryModal, ImageLibraryStore, placedImage } from "./image-library";
+import { PageImageLayer } from "./page-images";
+import type { InkImage } from "./model";
 import {
   MAX_RAW_POINT_SAMPLES,
   ModelerEngageReason,
@@ -37,6 +40,7 @@ import type { InkWorkerResponse, NotebookOperation } from "./worker-protocol";
 import { InkWorkerService, InkWorkerSession } from "./worker-service";
 import { canvasResolution, clampPercent, drawInkStroke, normalizePressureCurve, samplePressureCurve } from "./rendering";
 import { defaultToolState, type SharedToolState } from "./tool-state";
+import { InkClipboard, pasteClipboardStrokes } from "./lasso-clipboard";
 
 export interface ToolState {
   tool: InkTool;
@@ -47,9 +51,11 @@ export interface ToolState {
   /** Editable preset swatch colors, shared by both editors and persisted
    *  with the rest of the tool settings (1..10 entries). */
   palette: string[];
+  lasso: { mode: LassoMode; crossFileClipboard: boolean };
 }
 
 export type EraserMode = "stroke" | "circle" | "square";
+export type LassoMode = "freehand" | "rectangle";
 
 export interface EditCommand {
   undo: () => void;
@@ -66,6 +72,7 @@ export interface InteractionContext {
   tool: InkTool;
   eraserMode?: EraserMode;
   eraserSize?: number;
+  lassoMode?: LassoMode;
 }
 
 export interface InkPointerSample {
@@ -203,6 +210,58 @@ export function strokeIntersectsEraser(stroke: InkStroke, center: InkPoint, radi
     if (segmentIntersectsEraser(stroke.points[index - 1], stroke.points[index], center, radius, mode, width, height)) return true;
   }
   return false;
+}
+
+function isScribbleEraseGesture(points: InkPoint[], eraserSize: number, width: number, height: number): boolean {
+  if (points.length < 8) return false;
+  const filtered = [points[0]];
+  for (const point of points.slice(1)) {
+    const previous = filtered[filtered.length - 1];
+    if (Math.hypot((point.x - previous.x) * width, (point.y - previous.y) * height) >= 2) filtered.push(point);
+  }
+  if (filtered.length < 8) return false;
+
+  let pathLength = 0;
+  let distanceSinceTurn = 0;
+  let turns = 0;
+  for (let index = 1; index < filtered.length; index++) {
+    const previous = filtered[index - 1], point = filtered[index];
+    const segmentLength = Math.hypot((point.x - previous.x) * width, (point.y - previous.y) * height);
+    pathLength += segmentLength;
+    distanceSinceTurn += segmentLength;
+    if (index < 2) continue;
+    const before = filtered[index - 2];
+    const ax = (previous.x - before.x) * width, ay = (previous.y - before.y) * height;
+    const bx = (point.x - previous.x) * width, by = (point.y - previous.y) * height;
+    const lengths = Math.hypot(ax, ay) * Math.hypot(bx, by);
+    // Only sharp, separated reversals count; handwriting corners and sample jitter do not.
+    if (lengths > 0 && (ax * bx + ay * by) / lengths < -0.35 && distanceSinceTurn >= Math.max(8, eraserSize * 0.35)) {
+      turns++;
+      distanceSinceTurn = 0;
+    }
+  }
+
+  let minX = Number.POSITIVE_INFINITY, minY = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY, maxY = Number.NEGATIVE_INFINITY;
+  for (const point of filtered) {
+    const x = point.x * width, y = point.y * height;
+    minX = Math.min(minX, x); minY = Math.min(minY, y);
+    maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
+  }
+  const boundsWidth = maxX - minX;
+  const boundsHeight = maxY - minY;
+  const boundsDiagonal = Math.hypot(boundsWidth, boundsHeight);
+  const duration = filtered[filtered.length - 1].t - filtered[0].t;
+  return turns >= 4
+    && pathLength >= Math.max(96, eraserSize * 3)
+    && boundsDiagonal >= eraserSize
+    && pathLength / Math.max(1, boundsDiagonal) >= 3.2
+    && duration >= 0 && duration <= 1_200;
+}
+
+function strokeIntersectsScribble(stroke: InkStroke, path: InkPoint[], radius: number, width: number, height: number): boolean {
+  const samples = sampleStrokeForEraser(path, Math.max(1, radius / 2), width, height);
+  return samples.some((point) => strokeIntersectsEraser(stroke, point, radius + 1, "circle", width, height));
 }
 
 export function eraseStrokeSegments(stroke: InkStroke, center: InkPoint, radius: number, mode: Exclude<EraserMode, "stroke">, width: number, height: number): InkPoint[][] {
@@ -380,6 +439,61 @@ function isPointerCaptureError(error: unknown): boolean {
  * identically in both editors.
  */
 export abstract class InkWritingView extends FileView {
+  protected imageLibrary?: ImageLibraryStore;
+  private pageImages?: PageImageLayer;
+
+  useImageLibrary(store: ImageLibraryStore): void { this.imageLibrary = store; }
+
+  private syncPageImages(): void {
+    if (!this.imageLibrary || !this.viewReady) return;
+    const host = this.inputHost(); if (!host) return;
+    if (this.pageImages?.host !== host) {
+      this.pageImages?.dispose();
+      this.pageImages = new PageImageLayer(host, this.toolbarRoot(), this.imageLibrary, {
+        page: () => this.currentPage(), editable: () => this.state.tool === "pointer" && !this.inputLocked(),
+        select: () => { this.selectedStrokeIds.clear(); this.hideSelectionActions(); },
+        change: (before, after) => { if (!this.inputLocked()) this.changeImages(this.currentPage().id, before, after); },
+      });
+    }
+    this.pageImages.sync();
+  }
+
+  private openImageLibrary(): void {
+    if (!this.imageLibrary || this.inputLocked()) return;
+    this.finishPointerInput(false);
+    const notebook = this.currentNotebook(), pageId = this.currentPage().id, file = this.file;
+    new ImageLibraryModal(this.imageLibrary, (assets) => {
+      if (this.file !== file || this.currentNotebook() !== notebook || this.currentPage().id !== pageId || this.inputLocked()) {
+        new Notice("The page changed. Open the image library again to insert here."); return;
+      }
+      const images = assets.map((asset, index) => placedImage(asset, pageId, this.canvasLogicalWidth / this.canvasLogicalHeight, index));
+      if (!images.length) return;
+      this.selectWritingTool("pointer"); this.changeImages(pageId, [], images);
+      this.pageImages?.select(images[images.length - 1].id);
+    }).open();
+  }
+
+  private changeImages(pageId: string, before: InkImage[], after: InkImage[]): void {
+    const templatesBefore = before.map((i) => ({ ...i })), templatesAfter = after.map((i) => ({ ...i }));
+    let current = before.map((i) => ({ ...i }));
+    const apply = (templates: InkImage[]) => {
+      const page = this.pageById(pageId); if (!page) return;
+      const now = Math.max(Date.now(), page.updatedAt + 1);
+      const tombstones = new Set(page.deletedImageIds ?? []);
+      const desired = templates.map((i) => ({ ...i, id: tombstones.has(i.id) ? newId("placed-image") : i.id, pageId, updatedAt: now }));
+      const ids = new Set(current.map((i) => i.id));
+      const removed = current.filter((i) => !desired.some((next) => next.id === i.id)).map((i) => i.id);
+      page.images = [...(page.images ?? []).filter((i) => !ids.has(i.id)), ...desired];
+      page.deletedImageIds = [...new Set([...(page.deletedImageIds ?? []), ...removed])];
+      this.markChanged(page); page.updatedAt = now; this.currentNotebook().updatedAt = now;
+      this.queueWorkerOperation({ type: "patch-images", pageId, upsert: desired, remove: [...ids], deletedImageIds: removed,
+        pageUpdatedAt: page.updatedAt, notebookUpdatedAt: this.currentNotebook().updatedAt });
+      current = desired;
+      this.syncPageImages(); this.scheduleSave(); this.afterInputFullySettled();
+    };
+    apply(templatesAfter);
+    this.pushCommand({ undo: () => apply(templatesBefore), redo: () => apply(templatesAfter) });
+  }
   /** Defaults come from the persistence module so saved settings restore
    *  against the exact same shape the editors start from. */
   protected state: ToolState = defaultToolState();
@@ -503,6 +617,11 @@ export abstract class InkWritingView extends FileView {
     dy: number;
   } | null = null;
   protected pendingLassoPoint: InkPoint | null = null;
+  private inkClipboard = new InkClipboard();
+  private selectionActions: HTMLElement | null = null;
+  private pasteTarget: { x: number; y: number } | null = null;
+  protected lassoSettingsPopover: HTMLElement | null = null;
+  private lassoSettingsCleanup: (() => void) | null = null;
 
   // --- history
   protected undoStack: EditCommand[] = [];
@@ -880,7 +999,9 @@ export abstract class InkWritingView extends FileView {
       eraserMode: shared.config.eraserMode,
       eraserSize: shared.config.eraserSize,
       palette: shared.config.palette,
+      lasso: shared.config.lasso,
     };
+    if (shared.clipboard) this.inkClipboard = shared.clipboard;
   }
 
   /** Persists tool settings (debounced); safe to call on every input event. */
@@ -898,6 +1019,8 @@ export abstract class InkWritingView extends FileView {
     this.addToolButton(draw, "highlighter", "Highlight", "highlighter");
     this.addToolButton(draw, "eraser", "Erase", "eraser");
     this.addToolButton(draw, "lasso-select", "Select", "lasso");
+    if (this.imageLibrary) this.addToolButton(draw, "mouse-pointer-2", "Pointer", "pointer");
+    if (this.imageLibrary) this.addIconButton(draw, "image-plus", "Image library", () => this.openImageLibrary());
   }
 
   protected buildReadingModeButton(parent: HTMLElement): void {
@@ -913,6 +1036,7 @@ export abstract class InkWritingView extends FileView {
     this.closePageOptionsMenu();
     this.brushPopover?.close();
     this.closeEraserPopover();
+    this.closeLassoSettings();
     this.clearSelection();
     this.readingMode = reading;
     this.toolbarRoot().toggleClass("ink-reading", reading);
@@ -1005,8 +1129,12 @@ export abstract class InkWritingView extends FileView {
   protected desktopResetZoom(): void {}
 
   protected registerDesktopInput(): void {
+    this.register(() => { this.pageImages?.dispose(); this.pageImages = undefined; });
     const scroller = this.inputScroller();
     const doc = this.containerEl.ownerDocument;
+    this.registerDomEvent(doc.defaultView ?? window, "resize", () => this.positionSelectionActions());
+    this.registerDomEvent(doc, "scroll", () => this.positionSelectionActions(), true);
+    this.register(() => { this.hideSelectionActions(); this.closeLassoSettings(); });
     scroller.tabIndex = 0;
     this.registerDomEvent(scroller, "pointerdown", (event) => {
       if (event.pointerType !== "mouse" || this.nativeMenuOpen()) return;
@@ -1060,6 +1188,11 @@ export abstract class InkWritingView extends FileView {
       if (key === "-") { this.desktopZoom(1 / 1.1); return true; }
       if (key === "0") { this.desktopResetZoom(); return true; }
       if (this.inputLocked()) return false;
+      if (this.state.tool === "lasso") {
+        if (key === "c" && this.selectedStrokes().length > 0) { this.copySelection(); return true; }
+        if (key === "x" && this.selectedStrokes().length > 0) { this.copySelection(true); return true; }
+        if (key === "v" && this.availableClipboard()) { this.pasteSelection(); return true; }
+      }
       if (key === "z") { if (event.shiftKey) this.redo(); else this.undo(); return true; }
       if (key === "y" && !event.shiftKey) { this.redo(); return true; }
       return false;
@@ -1078,10 +1211,11 @@ export abstract class InkWritingView extends FileView {
     if (key === "-") { this.desktopZoom(1 / 1.1); return true; }
     if (key === "0") { this.desktopResetZoom(); return true; }
     if (event.shiftKey || this.inputLocked()) return false;
-    const tools: Record<string, InkTool> = { b: "pen", h: "highlighter", e: "eraser", v: "lasso" };
+    const tools: Record<string, InkTool> = { b: "pen", h: "highlighter", e: "eraser", v: "lasso", a: "pointer" };
     const tool = tools[key];
     if (tool) { this.selectWritingTool(tool); return true; }
     if (key === "escape") { this.clearSelection(); return true; }
+    if (this.state.tool === "lasso" && (key === "delete" || key === "backspace") && this.selectedStrokes().length > 0) { this.deleteSelection(); return true; }
     return false;
   }
 
@@ -1162,6 +1296,9 @@ export abstract class InkWritingView extends FileView {
     if (this.inputLocked()) return;
     if (this.nativeMenuOpen()) return;
     if (event.pointerType === "touch") return;
+    // Pointer selects page objects through their own handlers; blank paper
+    // and stylus contacts must never fall through into stroke creation.
+    if (this.state.tool === "pointer") return;
     // Deduplicate only the contact currently owned by native stylus Touch.
     // The next contact may have Pointer events without a classified Touch,
     // so observing one Touch stream must not disable pen input for the view.
@@ -1196,6 +1333,7 @@ export abstract class InkWritingView extends FileView {
       tool,
       eraserMode: tool === "eraser" ? this.state.eraserMode : undefined,
       eraserSize: tool === "eraser" ? this.state.eraserSize : undefined,
+      lassoMode: tool === "lasso" ? this.state.lasso.mode : undefined,
     };
     const point = this.toPoint(event, rect);
     this.erasedStrokeIds.clear();
@@ -1210,6 +1348,7 @@ export abstract class InkWritingView extends FileView {
       return;
     }
     if (tool === "lasso") {
+      this.hideSelectionActions();
       if (this.isPointInSelection(point)) {
         const strokes = this.selectedStrokes();
         const before = new Map(strokes.map((stroke) => [stroke.id, clonePoints(stroke.points)]));
@@ -1829,7 +1968,7 @@ export abstract class InkWritingView extends FileView {
     // app chrome entirely, so Obsidian's sidebar edge-swipe can never fire
     // mid-write, whatever the entry point. Navigation gestures (pan,
     // pinch-zoom, page flip) deliberately stay available while editing is
-    // locked (reading mode, PDF writer arbitration) - only ink input is
+    // locked (reading mode or invalid PDF source state) - only ink input is
     // gated, and that happens in onPointerDown.
     event.stopPropagation?.();
     if (this.onStylusTouch(event)) return;
@@ -2065,7 +2204,8 @@ export abstract class InkWritingView extends FileView {
     }
     const previous = this.lassoPath[this.lassoPath.length - 1];
     if (!previous || distance(point, previous) < 0.001) return false;
-    this.lassoPath.push(point);
+    if ((this.interaction?.lassoMode ?? this.state.lasso.mode) === "rectangle") this.lassoPath = [this.lassoPath[0], point];
+    else this.lassoPath.push(point);
     return true;
   }
 
@@ -2087,13 +2227,16 @@ export abstract class InkWritingView extends FileView {
   }
 
   protected clearSelection(): void {
+    this.pageImages?.clear();
     this.selectedStrokeIds.clear();
     this.lassoPath = [];
     this.lassoDrag = null;
     this.hideLassoPreview();
+    this.hideSelectionActions();
+    this.pasteTarget = null;
   }
 
-  private finishLasso(page: InkPage): void {
+  private finishLasso(page: InkPage, mode = this.state.lasso.mode): void {
     if (this.lassoDrag) {
       const drag = this.lassoDrag;
       const before = drag.before;
@@ -2126,13 +2269,132 @@ export abstract class InkWritingView extends FileView {
       }
       this.lassoDrag = null;
       this.commitLassoPreview(page);
+      this.showSelectionActions();
       return;
     }
-    if (this.lassoPath.length >= 3) {
+    if (mode === "rectangle" && this.lassoPath.length >= 2) {
+      const bounds = boundsForPointSets([this.lassoPath])!;
+      const spanX = bounds.maxX - bounds.minX, spanY = bounds.maxY - bounds.minY;
+      if (spanX > 0 && spanY > 0) {
+        const center = { ...this.lassoPath[0], x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
+        // Reuse the box segment test so a sparse stroke crossing the frame is selected too.
+        this.selectedStrokeIds = new Set(page.strokes.filter((stroke) =>
+          strokeIntersectsEraser(stroke, center, 1, "square", 2 / spanX, 2 / spanY)).map((stroke) => stroke.id));
+      }
+    } else if (mode === "freehand" && this.lassoPath.length >= 3) {
       this.selectedStrokeIds = new Set(page.strokes.filter((stroke) => stroke.points.some((point) => pointInPolygon(point, this.lassoPath))).map((stroke) => stroke.id));
     }
+    const lastPoint = this.lassoPath[this.lassoPath.length - 1];
+    if (lastPoint) this.pasteTarget = { x: lastPoint.x, y: lastPoint.y };
     this.lassoPath = [];
     this.drawStrokes(page.strokes);
+    this.showSelectionActions();
+  }
+
+  private availableClipboard() {
+    const content = this.inkClipboard.content;
+    return content && (this.state.lasso.crossFileClipboard || content.filePath === (this.file?.path ?? "")) ? content : null;
+  }
+
+  protected copySelection(cut = false): void {
+    if (this.inputLocked() || this.activePointerId !== null) return;
+    const strokes = this.selectedStrokes();
+    if (strokes.length === 0) return;
+    this.inkClipboard.copy({ filePath: this.file?.path ?? "", width: this.canvasLogicalWidth,
+      height: this.canvasLogicalHeight, strokes });
+    if (cut) this.deleteSelection();
+    else this.showSelectionActions();
+  }
+
+  protected deleteSelection(): void {
+    if (this.inputLocked() || this.activePointerId !== null) return;
+    const strokes = this.selectedStrokes().map(cloneStroke);
+    if (strokes.length === 0) return;
+    const page = this.currentPage();
+    this.materializePendingInkPreview(page);
+    const ids = strokes.map((stroke) => stroke.id);
+    this.deleteStrokes(page, ids);
+    this.markChanged(page);
+    this.queueStrokePatch(page, [], ids);
+    this.pushCommand(this.erasedStrokesCommand(page.id, strokes, []));
+    this.clearSelection();
+    this.drawInteractiveStrokes(page.strokes, true);
+    this.scheduleSave();
+    this.afterInputFullySettled();
+    this.showSelectionActions();
+  }
+
+  protected pasteSelection(): void {
+    if (this.inputLocked() || this.activePointerId !== null) return;
+    const content = this.availableClipboard();
+    if (!content) return;
+    const page = this.currentPage();
+    const rect = this.inputRect(), scroller = this.inputScroller().getBoundingClientRect();
+    const bounds = selectionBounds(this.selectedStrokes());
+    const target = bounds ? { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }
+      : this.pasteTarget ?? { x: rect.width > 0 ? (scroller.left + scroller.width / 2 - rect.left) / rect.width : 0.5,
+        y: rect.height > 0 ? (scroller.top + scroller.height / 2 - rect.top) / rect.height : 0.5 };
+    const strokes = pasteClipboardStrokes(content, page.id, this.canvasLogicalWidth, this.canvasLogicalHeight, target);
+    if (strokes.length === 0) return;
+    this.materializePendingInkPreview(page);
+    page.strokes.push(...strokes);
+    this.markChanged(page);
+    this.queueStrokePatch(page, strokes, []);
+    this.pushCommand(this.erasedStrokesCommand(page.id, [], strokes));
+    this.selectedStrokeIds = new Set(strokes.map((stroke) => stroke.id));
+    this.drawInteractiveStrokes(page.strokes, true);
+    this.scheduleSave();
+    this.afterInputFullySettled();
+    this.showSelectionActions();
+  }
+
+  private hideSelectionActions(): void {
+    this.selectionActions?.remove();
+    this.selectionActions = null;
+  }
+
+  private showSelectionActions(): void {
+    this.hideSelectionActions();
+    if (!this.viewReady) return;
+    const selected = this.selectedStrokes().length > 0;
+    if (this.state.tool !== "lasso" || this.inputLocked() || (!selected && !this.availableClipboard())) return;
+    const pop = this.toolbarRoot().createDiv({ cls: "ink-selection-actions", attr: { role: "group", "aria-label": "Selection actions" } });
+    this.selectionActions = pop;
+    for (const type of ["pointerdown", "touchstart", "touchmove"] as const) pop.addEventListener(type, (event) => event.stopPropagation());
+    const add = (icon: string, label: string, action: () => void, disabled: boolean, cls = ""): void => {
+      const button = this.addIconButton(pop, icon, label, action, disabled);
+      if (cls) button.addClass(cls);
+      button.createSpan({ text: label });
+    };
+    if (selected) {
+      add("copy", "Copy", () => this.copySelection(), false);
+      add("scissors", "Cut", () => this.copySelection(true), false);
+      add("trash-2", "Delete", () => this.deleteSelection(), false, "is-danger");
+    }
+    add("clipboard-paste", "Paste", () => this.pasteSelection(), !this.availableClipboard());
+    this.positionSelectionActions();
+  }
+
+  private positionSelectionActions(): void {
+    const pop = this.selectionActions;
+    if (!pop) return;
+    if (this.inputLocked() || this.state.tool !== "lasso") { this.hideSelectionActions(); return; }
+    const rect = this.inputRect(), viewport = this.inputScroller().getBoundingClientRect();
+    const rootRect = this.toolbarRoot().getBoundingClientRect();
+    const win = pop.ownerDocument.defaultView ?? window;
+    const leftEdge = Math.max(8, viewport.left + 8), rightEdge = Math.min(win.innerWidth - 8, viewport.right - 8);
+    const topEdge = Math.max(8, viewport.top + 8), bottomEdge = Math.min(win.innerHeight - 8, viewport.bottom - 8);
+    pop.style.maxWidth = `${Math.max(44, rightEdge - leftEdge)}px`;
+    pop.style.maxHeight = `${Math.max(44, bottomEdge - topEdge)}px`;
+    // Layout dimensions stay stable while the entrance animation scales the panel.
+    const size = { width: pop.offsetWidth, height: pop.offsetHeight }, bounds = selectionBounds(this.selectedStrokes());
+    const x = rect.left + (bounds ? (bounds.minX + bounds.maxX) / 2 : this.pasteTarget?.x ?? 0.5) * rect.width;
+    const top = rect.top + (bounds?.minY ?? this.pasteTarget?.y ?? 0.5) * rect.height;
+    const bottom = rect.top + (bounds?.maxY ?? this.pasteTarget?.y ?? 0.5) * rect.height;
+    const candidates = [top - size.height - 10, bottom + 10];
+    const y = candidates.find((candidate) => candidate >= topEdge && candidate + size.height <= bottomEdge) ?? topEdge;
+    pop.style.left = `${Math.max(leftEdge, Math.min(rightEdge - size.width, x - size.width / 2)) - rootRect.left}px`;
+    pop.style.top = `${Math.max(topEdge, Math.min(bottomEdge - size.height, y)) - rootRect.top}px`;
   }
 
   private applyStrokePoints(pageId: string, pointsById: Map<string, InkPoint[]>): void {
@@ -2401,6 +2663,8 @@ export abstract class InkWritingView extends FileView {
   }
 
   protected drawSelection(width: number, height: number): void {
+    this.syncPageImages();
+    this.positionSelectionActions();
     const ctx = this.ctx;
     if (!ctx) return;
     ctx.save();
@@ -2408,11 +2672,16 @@ export abstract class InkWritingView extends FileView {
     ctx.lineWidth = 1.5;
     ctx.setLineDash([6, 4]);
     if (this.lassoPath.length > 1) {
-      ctx.beginPath();
-      ctx.moveTo(this.lassoPath[0].x * width, this.lassoPath[0].y * height);
-      for (const point of this.lassoPath.slice(1)) ctx.lineTo(point.x * width, point.y * height);
-      ctx.closePath();
-      ctx.stroke();
+      if ((this.interaction?.lassoMode ?? this.state.lasso.mode) === "rectangle") {
+        const bounds = boundsForPointSets([this.lassoPath])!;
+        ctx.strokeRect(bounds.minX * width, bounds.minY * height, (bounds.maxX - bounds.minX) * width, (bounds.maxY - bounds.minY) * height);
+      } else {
+        ctx.beginPath();
+        ctx.moveTo(this.lassoPath[0].x * width, this.lassoPath[0].y * height);
+        for (const point of this.lassoPath.slice(1)) ctx.lineTo(point.x * width, point.y * height);
+        ctx.closePath();
+        ctx.stroke();
+      }
     }
     const bounds = selectionBounds(this.selectedStrokes());
     if (bounds) ctx.strokeRect(bounds.minX * width, bounds.minY * height, (bounds.maxX - bounds.minX) * width, (bounds.maxY - bounds.minY) * height);
@@ -2552,7 +2821,7 @@ export abstract class InkWritingView extends FileView {
       this.renderFrame = null;
     }
     if (interaction.tool === "lasso") {
-      this.finishLasso(page);
+      this.finishLasso(page, interaction.lassoMode);
       this.activePointerId = null;
       this.tiles?.resumeInkCommit();
       this.applyPendingMergedNotebook();
@@ -2572,7 +2841,7 @@ export abstract class InkWritingView extends FileView {
       });
       this.pushCommand(this.erasedStrokesCommand(page.id, this.erasedStrokes, this.eraserReplacements));
       this.drawInteractiveStrokes(page.strokes, true);
-    } else if (this.activeStroke) {
+    } else if (this.activeStroke && !(interaction.tool === "pen" && this.finishScribbleErase(page, this.activeStroke))) {
       this.markChanged(page);
       // Retain a complete vector preview without copying the full high-density
       // overlay. Late Worker responses update only the live stroke layer.
@@ -2599,6 +2868,64 @@ export abstract class InkWritingView extends FileView {
     this.applyPendingMergedNotebook();
     this.scheduleSave();
     this.afterInputFullySettled();
+  }
+
+  private finishScribbleErase(page: InkPage, gesture: InkStroke): boolean {
+    if (!isScribbleEraseGesture(gesture.points, this.state.eraserSize, this.canvasLogicalWidth, this.canvasLogicalHeight)) return false;
+    const radius = this.state.eraserSize / 2;
+    let minX = Number.POSITIVE_INFINITY, minY = Number.POSITIVE_INFINITY;
+    let maxX = Number.NEGATIVE_INFINITY, maxY = Number.NEGATIVE_INFINITY;
+    for (const point of gesture.points) {
+      minX = Math.min(minX, point.x * this.canvasLogicalWidth);
+      minY = Math.min(minY, point.y * this.canvasLogicalHeight);
+      maxX = Math.max(maxX, point.x * this.canvasLogicalWidth);
+      maxY = Math.max(maxY, point.y * this.canvasLogicalHeight);
+    }
+    const left = Math.max(0, minX - radius), top = Math.max(0, minY - radius);
+    const right = Math.min(this.canvasLogicalWidth, maxX + radius);
+    const bottom = Math.min(this.canvasLogicalHeight, maxY + radius);
+    const search = {
+      x: left,
+      y: top,
+      width: right - left,
+      height: bottom - top,
+    };
+    const indexed = this.tiles?.query ? this.tiles.query(search) : page.strokes;
+    const candidates = [...new Map([
+      ...indexed,
+      ...this.pendingInkStrokes,
+      ...(this.committingInkStrokes ?? []),
+    ].map((stroke) => [stroke.id, stroke])).values()]
+      .filter((stroke) => stroke.id !== gesture.id);
+    const removed = candidates.filter((stroke) => strokeIntersectsScribble(
+      stroke, gesture.points, radius, this.canvasLogicalWidth, this.canvasLogicalHeight,
+    ));
+    if (removed.length === 0) return false;
+
+    const removedIds = [gesture.id, ...removed.map((stroke) => stroke.id)];
+    this.deleteStrokes(page, removedIds);
+    this.pendingInkStrokes = this.pendingInkStrokes.filter((stroke) => stroke.id !== gesture.id);
+    if (this.pendingInkStrokes.length === 0) this.pendingInkPageId = null;
+    this.confirmedStrokeOutlines?.delete(gesture.id);
+    this.markChanged(page);
+    this.queueWorkerOperation({
+      type: "complete-stroke", pageId: page.id, strokeId: gesture.id,
+      pageUpdatedAt: page.updatedAt, notebookUpdatedAt: this.currentNotebook().updatedAt,
+    });
+    this.queueWorkerOperation({
+      type: "patch-strokes",
+      pageId: page.id,
+      upsert: [],
+      remove: removedIds,
+      deletedStrokeIds: [...page.deletedStrokeIds],
+      pageUpdatedAt: page.updatedAt,
+      notebookUpdatedAt: this.currentNotebook().updatedAt,
+    });
+    this.tiles?.patchStrokes([], removedIds, page.strokes);
+    this.pushCommand(this.erasedStrokesCommand(page.id, removed.map(cloneStroke), []));
+    this.activeStroke = null;
+    this.drawInteractiveStrokes(page.strokes, true);
+    return true;
   }
 
   // -------------------------------------------------------- history stack
@@ -2900,6 +3227,91 @@ export abstract class InkWritingView extends FileView {
     closeAnchoredPopover(pop, () => pop.remove());
   }
 
+  protected toggleLassoSettings(anchor: HTMLElement | null): void {
+    if (this.lassoSettingsPopover) { this.closeLassoSettings(); return; }
+    this.brushPopover?.close();
+    this.closeEraserPopover();
+    const pop = this.toolbarRoot().createDiv({ cls: "ink-lasso-settings ink-eraser-popover is-open",
+      attr: { role: "dialog", "aria-label": "Lasso settings" } });
+    this.lassoSettingsPopover = pop;
+    for (const type of ["pointerdown", "touchstart", "touchmove"] as const) pop.addEventListener(type, (event) => event.stopPropagation());
+    pop.createDiv({ cls: "ink-size-popover-title", text: "Lasso" });
+    const modes = pop.createDiv({ cls: "ink-eraser-modes ink-lasso-modes", attr: { role: "radiogroup", "aria-label": "Selection shape" } });
+    for (const [mode, label, icon] of [["freehand", "Freehand", "lasso-select"], ["rectangle", "Rectangle", "square-dashed"]] as const) {
+      const button = modes.createEl("button", { cls: "ink-eraser-mode", attr: { type: "button", role: "radio",
+        "aria-label": `${label} selection`, "aria-checked": String(this.state.lasso.mode === mode), "data-lasso-mode": mode } });
+      setIcon(button.createSpan({ cls: "ink-button-icon" }), icon);
+      button.createSpan({ cls: "ink-eraser-mode-label", text: label });
+      button.addEventListener("click", () => {
+        this.finishPointerInput(false);
+        this.state.lasso.mode = mode;
+        this.clearSelection();
+        this.drawStrokes(this.currentPage().strokes);
+        modes.querySelectorAll<HTMLElement>("[data-lasso-mode]").forEach((candidate) => {
+          candidate.setAttribute("aria-checked", String(candidate.dataset.lassoMode === mode));
+        });
+        this.scheduleToolStateSave();
+      });
+    }
+    const row = pop.createEl("label", { cls: "ink-lasso-clipboard-toggle" });
+    const toggle = row.createEl("input", { attr: { type: "checkbox", "aria-label": "Copy and paste across files" } });
+    toggle.checked = this.state.lasso.crossFileClipboard;
+    row.createSpan({ text: "Copy and paste across files" });
+    pop.createDiv({ cls: "ink-lasso-hint", text: "Share copied handwriting between Ink notebooks and PDF notes while the plugin is running." });
+    const paste = pop.createEl("button", { text: "Paste handwriting", attr: { type: "button", "aria-label": "Paste handwriting" } });
+    paste.disabled = !this.availableClipboard();
+    toggle.addEventListener("change", () => {
+      this.state.lasso.crossFileClipboard = toggle.checked;
+      this.scheduleToolStateSave();
+      paste.disabled = !this.availableClipboard();
+      this.showSelectionActions();
+    });
+    paste.addEventListener("click", () => { this.closeLassoSettings(); this.pasteSelection(); });
+    const doc = pop.ownerDocument, win = doc.defaultView ?? window;
+    const place = (): void => {
+      if (!anchor) return;
+      const root = this.toolbarRoot().getBoundingClientRect(), button = anchor.getBoundingClientRect();
+      const leftEdge = Math.max(8, root.left + 8), rightEdge = Math.min(win.innerWidth - 8, root.right - 8);
+      const topEdge = Math.max(8, root.top + 8), bottomEdge = Math.min(win.innerHeight - 8, root.bottom - 8);
+      pop.style.maxWidth = `${Math.max(44, rightEdge - leftEdge)}px`;
+      pop.style.maxHeight = `${Math.max(44, bottomEdge - topEdge)}px`;
+      const width = pop.offsetWidth, height = pop.offsetHeight;
+      const left = Math.max(leftEdge, Math.min(rightEdge - width, button.left + button.width / 2 - width / 2));
+      const below = button.bottom + 10;
+      const top = below + height <= bottomEdge ? below : Math.max(topEdge, button.top - height - 10);
+      pop.style.left = `${left - root.left}px`;
+      pop.style.top = `${top - root.top}px`;
+      pop.style.setProperty("--ink-popover-origin-x", `${button.left + button.width / 2 - left}px`);
+      pop.style.setProperty("--ink-popover-origin-y", `${top === below ? 0 : height}px`);
+    };
+    const outside = (event: Event): void => {
+      const target = event.target as HTMLElement | null;
+      if (target && (pop.contains(target) || target.closest?.(".ink-tool-button"))) return;
+      this.closeLassoSettings();
+    };
+    const key = (event: KeyboardEvent): void => { if (event.key === "Escape") this.closeLassoSettings(); };
+    doc.addEventListener("pointerdown", outside, true);
+    doc.addEventListener("keydown", key);
+    win.addEventListener("resize", place);
+    win.addEventListener("scroll", place, true);
+    this.lassoSettingsCleanup = () => {
+      doc.removeEventListener("pointerdown", outside, true);
+      doc.removeEventListener("keydown", key);
+      win.removeEventListener("resize", place);
+      win.removeEventListener("scroll", place, true);
+      anchor?.setAttribute("aria-expanded", "false");
+    };
+    anchor?.setAttribute("aria-expanded", "true");
+    place();
+  }
+
+  protected closeLassoSettings(): void {
+    this.lassoSettingsPopover?.remove();
+    this.lassoSettingsPopover = null;
+    this.lassoSettingsCleanup?.();
+    this.lassoSettingsCleanup = null;
+  }
+
   // -------------------------------------------------------------- toolbar
 
   protected addToolbarSection(parent: HTMLElement, label: string): HTMLElement {
@@ -2925,20 +3337,19 @@ export abstract class InkWritingView extends FileView {
   }
 
   protected addToolButton(parent: HTMLElement, icon: string, label: string, tool: InkTool): void {
-    const hasSettings = tool === "pen" || tool === "highlighter" || tool === "eraser";
     const button = parent.createEl("button", { cls: "ink-tool-button", attr: {
       type: "button", title: label, "aria-label": label, "aria-pressed": String(this.state.tool === tool), "data-tool": tool,
-      ...(hasSettings ? { "aria-haspopup": "dialog", "aria-expanded": "false" } : {}),
+      ...(tool === "pointer" ? {} : { "aria-haspopup": "dialog", "aria-expanded": "false" }),
     } });
-    const shortcut: Record<InkTool, string> = { pen: "B", highlighter: "H", eraser: "E", lasso: "V" };
+    const shortcut: Record<InkTool, string> = { pen: "B", highlighter: "H", eraser: "E", lasso: "V", pointer: "A" };
     button.title = `${label} (${shortcut[tool]})`;
     const iconHolder = button.createSpan({ cls: "ink-button-icon" });
     setIcon(iconHolder, icon);
     button.addEventListener("click", () => {
       if (this.readingMode) return;
       this.finishPointerInput(false);
-      if (this.state.tool === tool && hasSettings) {
-        this.toggleToolSettings(button);
+      if (this.state.tool === tool) {
+        if (tool !== "pointer") this.toggleToolSettings(button);
         return;
       }
       this.selectWritingTool(tool);
@@ -2950,11 +3361,13 @@ export abstract class InkWritingView extends FileView {
     this.onToolSelected(tool);
     this.state.tool = tool;
     if (tool !== "lasso") this.clearSelection();
-    if (tool === "eraser") this.brushPopover?.close();
+    if (!isBrushTool(tool)) this.brushPopover?.close();
     this.closeEraserPopover();
+    this.closeLassoSettings();
     this.brushPopover?.update();
     this.updateToolButtons();
     this.refreshEraserCursor();
+    this.syncPageImages();
     if (this.settingsOpen()) this.reopenToolSettings();
   }
 

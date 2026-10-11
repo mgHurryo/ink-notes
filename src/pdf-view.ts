@@ -12,6 +12,7 @@ import {
   PdfSidecarNotePage,
   PdfSourcePageGeometry,
   deleteBlankNotePage,
+  deleteNotePage,
   insertBlankNotePageAt,
   mergeSidecars,
   moveBlankNotePage,
@@ -21,6 +22,7 @@ import {
 import { PdfSidecarStore, serializeSidecar } from "./pdf-store";
 import { PdfExportError, exportHandwrittenPdf, exportPathFor, sidecarHasInk } from "./pdf-export";
 import { PdfTabTakeover, hasNativeNavigation } from "./pdf-takeover";
+import { paintPageImages } from "./image-library";
 
 export const VIEW_TYPE_PDF_INK = "ink-notes-pdf-view";
 
@@ -40,22 +42,6 @@ const RAIL_SWEEP_THROTTLE_MS = 120;
 const RAIL_REVEAL_DELAY_MS = 230;
 
 export type SaveOutcome = { status: "saved" } | { status: "conflict"; message: string } | { status: "failed"; message: string };
-
-/** Only one view may edit a given PDF at a time; others stay read-only. */
-export class PdfWriterArbiter {
-  private readonly holders = new Map<string, string>();
-
-  acquire(pdfPath: string, holderId: string): boolean {
-    const holder = this.holders.get(pdfPath);
-    if (holder !== undefined && holder !== holderId) return false;
-    this.holders.set(pdfPath, holderId);
-    return true;
-  }
-
-  release(pdfPath: string, holderId: string): void {
-    if (this.holders.get(pdfPath) === holderId) this.holders.delete(pdfPath);
-  }
-}
 
 interface PdfJsViewport { width: number; height: number }
 
@@ -81,29 +67,24 @@ interface PdfJsLib {
   RenderingCancelledException?: new (...args: unknown[]) => Error;
 }
 
-let nextViewId = 1;
-
 /** Fallback model when no sidecar is attached; keeps undo/redo seams safe. */
 const EMPTY_NOTEBOOK = createNotebook();
 
 /**
  * Handwriting view for PDF tabs. Reading mode locks editing independently
- * of sidecar fingerprint checks and writer arbitration. The PDF page renders
+ * of sidecar fingerprint checks. The PDF page renders
  * with Obsidian's own pdf.js below
  * the shared ink tile pipeline, so strokes persist through the same
  * merge/tombstone machinery as .ink notebooks.
  *
  * The writing pipeline itself (pointer capture, stroke modeling, previews,
  * eraser, lasso, history, save scheduling) is the shared InkWritingView; this
- * class supplies the PDF seams: sidecar storage, page geometry, mode/writer
- * arbitration and the pdf.js canvas underneath the ink host.
+ * class supplies the PDF seams: sidecar storage, page geometry, editing mode
+ * and the pdf.js canvas underneath the ink host.
  */
 export class PdfInkView extends InkWritingView {
-  readonly viewId = `pdf-view-${nextViewId++}`;
-
   private store!: PdfSidecarStore;
   private takeover!: PdfTabTakeover;
-  private arbiter!: PdfWriterArbiter;
 
   private root: HTMLElement | null = null;
   private scroller: HTMLElement | null = null;
@@ -125,7 +106,7 @@ export class PdfInkView extends InkWritingView {
   private sidecarFile: TFile | null = null;
   /** Set when fingerprint mismatch or an unreadable sidecar blocks writing. */
   private writeBlockedReason: string | null = null;
-  private writerHeld = false;
+  private pendingMergedSidecar: PdfSidecar | null = null;
 
   private sourcePages: PdfSourcePageGeometry[] = [];
   private noteIndex = 0;
@@ -145,6 +126,7 @@ export class PdfInkView extends InkWritingView {
   private pageRail: HTMLElement | null = null;
   private railThumbs: HTMLElement | null = null;
   private railCount: HTMLElement | null = null;
+  private railActions: HTMLElement | null = null;
   private thumbButtons = new Map<number, HTMLButtonElement>();
   /** Rendered thumbnail bitmaps by note-page index. Deliberately tiny:
    *  entries further than one page from the current page are evicted
@@ -157,6 +139,8 @@ export class PdfInkView extends InkWritingView {
    *  (page insert/delete/move, new document) triggers a rebuild. */
   private railBuiltIds = "";
   private railSweepTimer: number | undefined;
+  private pageManagement = false;
+  private selectedPageIds = new Set<string>();
 
   private dirty = false;
   private editRevision = 0;
@@ -172,11 +156,10 @@ export class PdfInkView extends InkWritingView {
   }
 
   /** Wired by the plugin right after construction. */
-  configure(deps: { store: PdfSidecarStore; workers: InkWorkerService; takeover: PdfTabTakeover; arbiter: PdfWriterArbiter; toolState?: SharedToolState }): void {
+  configure(deps: { store: PdfSidecarStore; workers: InkWorkerService; takeover: PdfTabTakeover; toolState?: SharedToolState }): void {
     this.store = deps.store;
     this.workers = deps.workers;
     this.takeover = deps.takeover;
-    this.arbiter = deps.arbiter;
     if (deps.toolState) this.useSharedToolState(deps.toolState);
   }
 
@@ -238,13 +221,15 @@ export class PdfInkView extends InkWritingView {
     this.disposeZoomHud();
     this.closePageOptionsMenu();
     this.finishPointerInput(false);
+    this.clearSelection();
+    this.closeLassoSettings();
     let outcome = await this.flushSaveNow();
     if (outcome.status === "failed" && this.sidecar && this.sidecarFile) {
       outcome = await this.saveConflictCopy(this.sidecarRaw, outcome.message);
     }
     if (outcome.status === "failed") new Notice(`Ink Notes could not save this PDF's latest notes: ${outcome.message}`);
     if (outcome.status === "conflict") new Notice(`Ink Notes kept a conflict copy: ${outcome.message}`);
-    this.releaseWriter();
+    this.pendingMergedSidecar = null;
     this.loadGeneration += 1;
     this.cancelPdfRender();
     if (this.pdfRenderTimer !== undefined) { window.clearTimeout(this.pdfRenderTimer); this.pdfRenderTimer = undefined; }
@@ -323,39 +308,90 @@ export class PdfInkView extends InkWritingView {
 
   async onUnloadFile(_file: TFile): Promise<void> {
     this.finishPointerInput(false);
-    const outcome = await this.flushSaveNow();
+    this.clearSelection();
+    this.closeLassoSettings();
+    let outcome: SaveOutcome = { status: "saved" };
+    try {
+      outcome = await this.flushSaveNow();
+      if (outcome.status === "failed" && this.sidecar && this.sidecarFile) {
+        outcome = await this.saveConflictCopy(this.sidecarRaw, outcome.message);
+      }
+      if (outcome.status === "conflict") new Notice(`Ink Notes kept a conflict copy: ${outcome.message}`);
+    } catch (error) {
+      outcome = { status: "failed", message: messageOf(error) };
+    } finally {
+      this.clearSaveTimers();
+      this.loadGeneration += 1;
+      this.cancelPdfRender();
+      this.discardPendingInkPreview();
+      this.disposeWorkerSession();
+      void this.pdfDoc?.destroy().catch(() => undefined);
+      this.pdfDoc = null;
+      this.sidecar = null;
+      this.sidecarFile = null;
+      this.writeBlockedReason = null;
+      this.pendingMergedSidecar = null;
+    }
     if (outcome.status === "failed") throw new Error(`Could not save PDF handwriting: ${outcome.message}`);
-    if (outcome.status === "conflict") new Notice(`Ink Notes kept a conflict copy: ${outcome.message}`);
-    this.clearSaveTimers();
-    this.loadGeneration += 1;
-    this.cancelPdfRender();
-    this.discardPendingInkPreview();
-    void this.pdfDoc?.destroy().catch(() => undefined);
-    this.pdfDoc = null;
-    this.sidecar = null;
-    this.sidecarFile = null;
-    this.writeBlockedReason = null;
-    this.releaseWriter();
   }
 
   /**
    * Adopt an externally modified sidecar (another device synced new ink).
-   * Ignored while local edits are pending — the save path merges those — and
-   * while the user is mid-stroke.
+   * Merge dirty panes too, but defer model replacement until pointer input and
+   * tile commits settle. The save path also includes queued peer state.
    */
   async reloadExternalSidecar(changedPath: string): Promise<void> {
     if (!this.sidecar || !this.sidecarFile || this.sidecarFile.path !== changedPath) return;
-    if (this.dirty || this.activePointerId !== null) return;
-    const raw = await this.store.readRaw(this.sidecarFile).catch(() => null);
+    const file = this.sidecarFile;
+    const generation = this.loadGeneration;
+    const raw = await this.store.readRaw(file).catch(() => null);
+    if (generation !== this.loadGeneration || this.sidecarFile !== file || !this.sidecar) return;
     if (raw === null || raw === this.sidecarRaw) return;
     try {
       const sidecar = normalizeSidecar(JSON.parse(raw));
-      this.attachSidecar(sidecar, raw, this.sidecarFile);
-      this.layoutPage();
-      this.renderAll();
+      this.receiveMergedSidecar(sidecar);
     } catch {
       // Corrupt external state: keep the in-memory sidecar, never write over it.
     }
+  }
+
+  private receiveMergedSidecar(sidecar: PdfSidecar): void {
+    if (!this.sidecar || this.writeBlockedReason) return;
+    if (sidecar.source.sha256 !== this.sidecar.source.sha256
+      || sidecar.source.byteLength !== this.sidecar.source.byteLength) return;
+    this.pendingMergedSidecar = this.pendingMergedSidecar
+      ? mergeSidecars(this.pendingMergedSidecar, sidecar) : sidecar;
+    this.applyPendingMergedNotebook();
+  }
+
+  protected applyPendingMergedNotebook(): void {
+    if (!this.sidecar || !this.pendingMergedSidecar || this.activePointerId !== null
+      || this.pendingInkStrokes.length > 0) return;
+    const previous = this.sidecar;
+    const selectedId = previous.notePages[this.noteIndex]?.id;
+    const merged = mergeSidecars(this.pendingMergedSidecar, previous);
+    this.pendingMergedSidecar = null;
+    const geometryChanged = JSON.stringify(previous.notePages) !== JSON.stringify(merged.notePages);
+    const inkChanged = JSON.stringify(previous.notebook) !== JSON.stringify(merged.notebook);
+    this.sidecar = merged;
+    if (!geometryChanged && !inkChanged) return;
+    this.editRevision += 1; // An older in-flight save cannot mark this model clean.
+    const selected = merged.notePages.findIndex((page) => page.id === selectedId);
+    this.noteIndex = selected >= 0 ? selected : Math.min(this.noteIndex, merged.notePages.length - 1);
+    // Snapshot page commands may include the other pane's ink. Retain the
+    // existing external-refresh policy: history restarts at the merged model.
+    this.undoStack = [];
+    this.redoStack = [];
+    this.syncNotebookToWorker();
+    this.invalidateThumbnails();
+    if (geometryChanged) {
+      this.destroySwipeStage();
+      this.prewarmToken += 1;
+      this.neighbourCache.clear();
+      this.layoutPage();
+      void this.renderPdfPage();
+    }
+    this.renderAll();
   }
 
   // ------------------------------------------------------------------ locks
@@ -367,27 +403,6 @@ export class PdfInkView extends InkWritingView {
 
   private canEdit(): boolean {
     return this.sidecar !== null && this.writeBlockedReason === null && this.file !== null;
-  }
-
-  /**
-   * Writer ownership survives mode changes so pending saves stay serialized.
-   * Sidecar validation and writer arbitration still gate editing independently
-   * of the user-selected reading mode.
-   */
-  private acquireWriter(): void {
-    if (this.writerHeld || !this.canEdit()) return;
-    if (this.file && !this.arbiter.acquire(this.file.path, this.viewId)) {
-      // A silent lock reads as broken buttons and dead gestures; say why
-      // the view is read-only instead.
-      this.setStatus("Another open tab is already writing notes for this PDF; this view is read-only", true);
-      return;
-    }
-    this.writerHeld = true;
-  }
-
-  private releaseWriter(): void {
-    if (this.writerHeld && this.file) this.arbiter.release(this.file.path, this.viewId);
-    this.writerHeld = false;
   }
 
   /** Hand the tab back to the built-in (possibly PDF++-enhanced) viewer. */
@@ -437,8 +452,8 @@ export class PdfInkView extends InkWritingView {
   sourcePdfModified(): void {
     if (!this.sidecar) return;
     this.finishPointerInput(false);
-    this.writeBlockedReason = "The source PDF changed. Reopen it to check the notes against the new revision.";
-    this.releaseWriter();
+    this.writeBlockedReason = `The source PDF changed. Reopen it to check the notes against the new revision.${
+      this.dirty ? " Unsaved notes will be kept in a conflict copy if you close this tab." : ""}`;
     this.updateToolButtons();
     this.setStatus(this.writeBlockedReason, true);
   }
@@ -559,13 +574,12 @@ export class PdfInkView extends InkWritingView {
     this.sidecarRaw = raw;
     this.sidecarFile = file;
     this.dirty = false;
+    this.pendingMergedSidecar = null;
     this.undoStack = [];
     this.redoStack = [];
     this.disposeWorkerSession();
     this.initializeWorkerSession();
     this.maybeOfferRecoveryChoice();
-    // Editable PDFs hold the writer from the moment their sidecar resolves.
-    this.acquireWriter();
   }
 
   private async writeSidecar(file: TFile, expectedRaw: string, sidecar: PdfSidecar): Promise<void> {
@@ -626,7 +640,7 @@ export class PdfInkView extends InkWritingView {
       if (this.sidecar) this.openPageInsertMenu(event, this.noteIndex, this.sidecar.notePages.length,
         (index) => this.addBlankPage(index));
     });
-    // Menu and export respond regardless of the writer lock: the menu's
+    // Menu and export respond regardless of editing availability: the menu's
     // mutating items fail with a notice when read-only, and export only
     // reads. A silently dead button is indistinguishable from a broken one.
     this.addTrackedIconButton(docGroup, "export", "download", "Export PDF with handwriting", () => void this.exportHandwrittenCopy());
@@ -671,6 +685,8 @@ export class PdfInkView extends InkWritingView {
     const header = rail.createDiv({ cls: "ink-rail-header" });
     header.createDiv({ cls: "ink-rail-heading", text: "Pages" });
     this.railCount = header.createSpan({ cls: "ink-rail-count" });
+    this.railActions = rail.createDiv({ cls: "ink-rail-actions", attr: { role: "group", "aria-label": "Page management" } });
+    this.renderPageRailActions();
     this.railThumbs = rail.createDiv({ cls: "ink-rail-thumbs" });
     // Scrolling long documents brings new thumbnails into view; repaint the
     // fresh range (throttled) instead of pre-rendering every page.
@@ -706,12 +722,21 @@ export class PdfInkView extends InkWritingView {
       this.rebuildRailButtons(count);
       this.railBuiltIds = ids;
     }
+    const pageIds = new Set(pages?.map((page) => page.id) ?? []);
+    this.selectedPageIds.forEach((pageId) => { if (!pageIds.has(pageId)) this.selectedPageIds.delete(pageId); });
+    this.renderPageRailActions();
     this.thumbButtons.forEach((button, index) => {
+      const pageId = pages?.[index]?.id;
       const active = index === this.noteIndex;
+      const selected = pageId !== undefined && this.selectedPageIds.has(pageId);
       button.toggleClass("is-active", active);
+      button.toggleClass("is-selected", this.pageManagement && selected);
       button.setAttribute("aria-current", String(active));
+      button.setAttribute("aria-pressed", String(this.pageManagement && selected));
+      button.setAttribute("aria-disabled", String(!pages || this.editingLocked()));
     });
-    if (this.railCount) this.railCount.textContent = `${this.noteIndex + 1} / ${count}`;
+    if (this.railCount) this.railCount.textContent = this.pageManagement
+      ? `${this.selectedPageIds.size} selected` : `${this.noteIndex + 1} / ${count}`;
     this.thumbButtons.get(this.noteIndex)?.scrollIntoView?.({ block: "nearest" });
     this.evictDistantThumbnails();
     this.paintVisibleThumbnails();
@@ -731,12 +756,71 @@ export class PdfInkView extends InkWritingView {
         cls: "ink-page-thumb",
         attr: { type: "button", "aria-label": `Page ${index + 1}` },
       });
+      const pageId = pages?.[index]?.id;
+      if (pageId) button.dataset.pageId = pageId;
       button.style.aspectRatio = `${Math.max(1, display.width)} / ${Math.max(1, display.height)}`;
       button.createEl("canvas", { cls: "ink-page-thumb-canvas", attr: { "aria-hidden": "true" } });
       button.createSpan({ text: String(index + 1), cls: "ink-page-thumb-number" });
-      button.addEventListener("click", () => void this.navigatePages(index - this.noteIndex));
+      button.addEventListener("click", () => {
+        if (this.pageManagement) {
+          if (pageId) this.toggleManagedPage(pageId);
+          return;
+        }
+        void this.navigatePages(index - this.noteIndex);
+      });
       this.thumbButtons.set(index, button);
     }
+  }
+
+  private renderPageRailActions(): void {
+    const actions = this.railActions;
+    if (!actions) return;
+    actions.empty();
+    const add = (icon: string, label: string, callback: () => void, disabled = false): void => {
+      const button = actions.createEl("button", { cls: "ink-icon-button", attr: { type: "button", "aria-label": label } });
+      setIcon(button, icon);
+      button.disabled = disabled;
+      button.addEventListener("click", callback);
+    };
+    if (this.pageManagement) {
+      add("trash-2", "Delete selected pages", () => this.deleteSelectedPages(),
+        this.selectedPageIds.size === 0 || this.selectedPageIds.size >= (this.sidecar?.notePages.length ?? 0) || this.editingLocked());
+      add("x", "Done managing pages", () => this.setPageManagement(false));
+    } else {
+      add("list-checks", "Manage pages", () => this.setPageManagement(true), this.editingLocked() || !this.sidecar);
+    }
+  }
+
+  private setPageManagement(enabled: boolean): void {
+    this.pageManagement = enabled && !this.editingLocked() && this.sidecar !== null;
+    this.selectedPageIds.clear();
+    this.refreshPageRail();
+  }
+
+  private toggleManagedPage(pageId: string): void {
+    if (!this.pageManagement || this.editingLocked() || !this.sidecar?.notePages.some((page) => page.id === pageId)) return;
+    if (this.selectedPageIds.has(pageId)) this.selectedPageIds.delete(pageId);
+    else this.selectedPageIds.add(pageId);
+    this.refreshPageRail();
+  }
+
+  private deleteSelectedPages(): void {
+    if (!this.pageManagement || this.editingLocked() || !this.sidecar) return;
+    const selected = new Set(this.selectedPageIds);
+    if (selected.size === 0 || selected.size >= this.sidecar.notePages.length) return;
+    const currentId = this.sidecar.notePages[this.noteIndex]?.id;
+    const deletedBeforeCurrent = this.sidecar.notePages.slice(0, this.noteIndex).filter((page) => selected.has(page.id)).length;
+    this.withPageUndo(() => {
+      const ids = this.sidecar!.notePages.filter((page) => selected.has(page.id)).map((page) => page.id);
+      if (ids.length !== selected.size || ids.some((id) => !deleteNotePage(this.sidecar!, id))) return false;
+      const retainedIndex = currentId ? this.sidecar!.notePages.findIndex((page) => page.id === currentId) : -1;
+      this.noteIndex = retainedIndex >= 0
+        ? retainedIndex : Math.max(0, Math.min(this.noteIndex - deletedBeforeCurrent, this.sidecar!.notePages.length - 1));
+      return true;
+    }, "delete selected pages");
+    this.selectedPageIds.clear();
+    this.pageManagement = false;
+    this.refreshPageRail();
   }
 
   private invalidateThumbnails(): void {
@@ -891,14 +975,27 @@ export class PdfInkView extends InkWritingView {
    */
   private overlayThumbInk(ctx: CanvasRenderingContext2D, canvas: HTMLCanvasElement, index: number): void {
     const page = this.sidecar?.notebook.pages[index];
-    if (!page || page.strokes.length === 0) return;
-    const scale = canvas.width / Math.max(1, this.canvasLogicalWidth);
-    ctx.save();
-    ctx.setTransform(scale, 0, 0, scale, 0, 0);
-    for (const stroke of page.strokes) {
-      drawInkStroke(ctx, scaledStroke(stroke, scale), this.canvasLogicalWidth, this.canvasLogicalHeight);
+    if (!page) return;
+    if ((page.images?.length ?? 0) > 0) {
+      const background = document.createElement("canvas"); background.width = canvas.width; background.height = canvas.height;
+      background.getContext("2d")?.drawImage(canvas, 0, 0);
+      const width = this.canvasLogicalWidth, height = this.canvasLogicalHeight;
+      const scale = canvas.width / Math.max(1, width);
+      paintPageImages(this.imageLibrary, canvas, page, (context) => { context.clearRect(0, 0, canvas.width, canvas.height); context.drawImage(background, 0, 0); }, (context) => {
+        context.setTransform(scale, 0, 0, scale, 0, 0);
+        for (const stroke of page.strokes) drawInkStroke(context, scaledStroke(stroke, scale), width, height);
+        context.setTransform(1, 0, 0, 1, 0, 0);
+      });
+      return;
     }
-    ctx.restore();
+    const scale = canvas.width / Math.max(1, this.canvasLogicalWidth);
+    // Even an image-free repaint invalidates pending paints from an older
+    // revision, otherwise a slow image load can resurrect a deleted image.
+    paintPageImages(this.imageLibrary, canvas, page, () => undefined, (context) => {
+      context.setTransform(scale, 0, 0, scale, 0, 0);
+      for (const stroke of page.strokes) drawInkStroke(context, scaledStroke(stroke, scale), this.canvasLogicalWidth, this.canvasLogicalHeight);
+      context.setTransform(1, 0, 0, 1, 0, 0);
+    });
   }
 
   private openPageMenu(event: MouseEvent): void {
@@ -1013,6 +1110,8 @@ export class PdfInkView extends InkWritingView {
     if (next < 0 || next >= count) return;
     this.finishPointerInput(false);
     this.noteIndex = next;
+    this.clearSelection();
+    this.closeLassoSettings();
     this.zoomTouched = this.zoomLocked;
     if (this.scroller) {
       this.scroller.scrollLeft = 0;
@@ -1239,13 +1338,18 @@ export class PdfInkView extends InkWritingView {
   }
 
   private editingLocked(): boolean {
-    return this.readingMode || !this.canEdit() || !this.writerHeld;
+    return this.readingMode || !this.canEdit();
   }
 
   protected onReadingModeChanged(): void {
     this.destroySwipeStage();
     this.touchGesture = null;
     this.root?.toggleClass("ink-pdf-editing", !this.readingMode);
+    if (this.readingMode) {
+      this.pageManagement = false;
+      this.selectedPageIds.clear();
+      this.refreshPageRail();
+    }
   }
 
   protected pagePixelSize(): { width: number; height: number } {
@@ -1349,9 +1453,12 @@ export class PdfInkView extends InkWritingView {
     const ctx = ink.getContext("2d");
     if (ctx) {
       ctx.setTransform(ink.width / baseWidth, 0, 0, ink.height / logicalHeight, 0, 0);
-      for (const stroke of this.sidecar?.notebook.pages[neighborIndex]?.strokes ?? []) {
-        drawInkStroke(ctx, stroke, baseWidth, logicalHeight);
-      }
+      const page = this.sidecar?.notebook.pages[neighborIndex];
+      if (page) paintPageImages(this.imageLibrary, ink, page, (context) => context.clearRect(0, 0, ink.width, ink.height), (context) => {
+        context.setTransform(ink.width / baseWidth, 0, 0, ink.height / logicalHeight, 0, 0);
+        for (const stroke of page.strokes) drawInkStroke(context, stroke, baseWidth, logicalHeight);
+        context.setTransform(1, 0, 0, 1, 0, 0);
+      });
     }
   }
 
@@ -1476,14 +1583,18 @@ export class PdfInkView extends InkWritingView {
     this.flipSettling = false;
   }
   protected settingsOpen(): boolean {
+    if (this.state.tool === "pointer") return false;
+    if (this.state.tool === "lasso") return this.lassoSettingsPopover !== null;
     return this.state.tool === "eraser" ? this.eraserPopover !== null : this.brushPopover?.isOpen ?? false;
   }
   protected toggleToolSettings(anchor: HTMLElement): void {
+    if (this.state.tool === "lasso") { this.toggleLassoSettings(anchor); return; }
     if (this.state.tool === "eraser") { this.toggleEraserPopover(anchor); return; }
     this.ensureBrushSettingsPopover();
     this.brushPopover?.toggle();
   }
   protected reopenToolSettings(): void {
+    if (this.state.tool === "lasso") { if (!this.lassoSettingsPopover) this.toggleLassoSettings(this.activeSettingsAnchor()); return; }
     if (this.state.tool === "eraser") {
       if (!this.eraserPopover) this.toggleEraserPopover(this.toolbarButtons.get(`tool-${this.state.tool}`) ?? null);
       return;
@@ -1598,7 +1709,7 @@ export class PdfInkView extends InkWritingView {
     this.cancelPdfRender();
     this.finishPointerInput(false);
     this.discardPendingInkPreview();
-    this.releaseWriter();
+    this.pendingMergedSidecar = null;
     this.pdfDoc = null;
     this.sourcePages = [];
     this.noteIndex = 0;
@@ -1632,12 +1743,13 @@ export class PdfInkView extends InkWritingView {
    * awaited, and newer changes trigger a follow-up flush.
    */
   async flushSaveNow(): Promise<SaveOutcome> {
-    if (!this.dirty || !this.sidecar || !this.sidecarFile) return { status: "saved" };
     if (this.activeSave) {
       const previous = await this.activeSave;
       if (previous.status !== "saved") return previous;
       return this.flushSaveNow();
     }
+    if (this.writeBlockedReason && this.dirty) return { status: "failed", message: this.writeBlockedReason };
+    if (!this.dirty || !this.sidecar || !this.sidecarFile) return { status: "saved" };
     const save = this.performSave()
       .catch((error): SaveOutcome => ({ status: "failed", message: messageOf(error) }))
       .finally(() => { this.activeSave = null; });
@@ -1657,13 +1769,16 @@ export class PdfInkView extends InkWritingView {
   private async performSave(): Promise<SaveOutcome> {
     let latestRaw = this.sidecarRaw;
     for (let attempt = 0; attempt <= SAVE_CONFLICT_RETRIES; attempt++) {
+      if (this.writeBlockedReason) return { status: "failed", message: this.writeBlockedReason };
       const revision = this.editRevision;
-      const next = { ...this.sidecar!, updatedAt: Date.now() };
+      // Pending peer state must also reach disk when a save finishes mid-stroke.
+      const snapshot = this.pendingMergedSidecar ? mergeSidecars(this.pendingMergedSidecar, this.sidecar!) : this.sidecar!;
+      const next = { ...snapshot, updatedAt: Date.now() };
       const nextRaw = serializeSidecar(next);
       if (await this.store.writeIfUnchanged(this.sidecarFile!, this.sidecarRaw, nextRaw)) {
         this.sidecarRaw = nextRaw;
-        if (this.editRevision === revision) this.sidecar = next;
         this.dirty = this.editRevision !== revision;
+        if (this.pendingMergedSidecar) this.receiveMergedSidecar(next);
         return { status: "saved" };
       }
       // CAS mismatch: re-read, merge, retry. Unreadable or foreign content
@@ -1673,6 +1788,8 @@ export class PdfInkView extends InkWritingView {
       } catch (error) {
         return { status: "failed", message: messageOf(error) };
       }
+      // A source change while awaiting disk must stop the next CAS attempt.
+      if (this.writeBlockedReason) return { status: "failed", message: this.writeBlockedReason };
       let latest: PdfSidecar;
       try {
         latest = normalizeSidecar(JSON.parse(latestRaw));
@@ -1684,13 +1801,13 @@ export class PdfInkView extends InkWritingView {
       }
       try {
         const mergeRevision = this.editRevision;
-        const merged = mergeSidecars(latest, this.sidecar!);
+        const merged = mergeSidecars(latest, this.pendingMergedSidecar
+          ? mergeSidecars(this.pendingMergedSidecar, this.sidecar!) : this.sidecar!);
         const mergedRaw = serializeSidecar(merged);
         if (await this.store.writeIfUnchanged(this.sidecarFile!, latestRaw, mergedRaw)) {
           this.sidecarRaw = mergedRaw;
-          this.sidecar = this.editRevision === mergeRevision ? merged : mergeSidecars(merged, this.sidecar!);
           this.dirty = this.editRevision !== mergeRevision;
-          this.syncNotebookToWorker();
+          this.receiveMergedSidecar(merged);
           return { status: "saved" };
         }
       } catch (error) {
@@ -1707,7 +1824,9 @@ export class PdfInkView extends InkWritingView {
     try {
       const revision = this.editRevision;
       const conflictPath = `${this.sidecarFile!.path.replace(/\.pdfink\.json$/, "")}.conflict-${Date.now()}.pdfink.json`;
-      const sidecar = { ...this.sidecar!, updatedAt: Date.now() };
+      const snapshot = this.pendingMergedSidecar
+        ? mergeSidecars(this.pendingMergedSidecar, this.sidecar!) : this.sidecar!;
+      const sidecar = { ...snapshot, updatedAt: Date.now() };
       await this.app.vault.create(conflictPath, serializeSidecar(sidecar));
       this.sidecarRaw = diskRaw;
       this.dirty = this.editRevision !== revision;
@@ -1740,7 +1859,7 @@ export class PdfInkView extends InkWritingView {
         new Notice("Export cancelled: the source PDF changed. Your notes still belong to the previous revision.");
         return;
       }
-      const output = await exportHandwrittenPdf(bytes, this.sidecar, this.file.basename, this.canvasLogicalWidth);
+      const output = await exportHandwrittenPdf(bytes, this.sidecar, this.file.basename, this.canvasLogicalWidth, this.imageLibrary?.bytes);
       const target = exportPathFor(this.file.path, (candidate) => this.app.vault.getAbstractFileByPath(candidate) !== null);
       await this.app.vault.createBinary(target, output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength) as ArrayBuffer);
       new Notice(`Exported ${target}`);

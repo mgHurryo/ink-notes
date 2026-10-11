@@ -11,6 +11,7 @@ import {
 } from "./model";
 import { NotebookStore } from "./storage";
 import { exportNotebookPdf, exportPathFor, notebookHasInk } from "./pdf-export";
+import { paintPageImages } from "./image-library";
 import { registerDocumentPointerEndEvents } from "./ink-input";
 import { InkWritingView, InkPointerSample, cloneStroke, SPARSE_SAMPLE_INTERVAL_MS } from "./ink-writing";
 import type { EditCommand } from "./ink-writing";
@@ -102,6 +103,8 @@ export class InkView extends InkWritingView {
   private railResize: { pointerId: number; startWidth: number; startX: number } | null = null;
   /** Deferred thumbnail redraw while the rail's expand transition runs. */
   private railRevealTimer: number | undefined;
+  private pageManagement = false;
+  private selectedPageIds = new Set<string>();
 
   constructor(leaf: WorkspaceLeaf, store: NotebookStore, workers?: InkWorkerService, toolState?: SharedToolState) {
     super(leaf);
@@ -148,6 +151,8 @@ export class InkView extends InkWritingView {
     if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
     if (this.desktopZoomTimer !== undefined) globalThis.clearTimeout(this.desktopZoomTimer);
     this.finishPointerInput(false);
+    this.clearSelection();
+    this.closeLassoSettings();
     this.cancelPendingInkCommitTimer();
     this.clearSaveTimers();
     this.destroySwipeStage();
@@ -198,6 +203,8 @@ export class InkView extends InkWritingView {
     this.pageNavigationGeneration += 1;
     this.destroySwipeStage();
     this.finishPointerInput(false);
+    this.clearSelection();
+    this.closeLassoSettings();
     this.cancelPendingInkCommitTimer();
     this.clearSaveTimers();
     if (this.dirtyRevision > this.savedRevision || this.activeSave) await this.save(file);
@@ -256,7 +263,7 @@ export class InkView extends InkWritingView {
       return;
     }
     try {
-      const output = await exportNotebookPdf(this.notebook, this.file.basename, this.canvasLogicalWidth);
+      const output = await exportNotebookPdf(this.notebook, this.file.basename, this.canvasLogicalWidth, this.imageLibrary?.bytes);
       const target = exportPathFor(this.file.path, (candidate) => this.app.vault.getAbstractFileByPath(candidate) !== null);
       await this.app.vault.createBinary(target, output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength) as ArrayBuffer);
       new Notice(`Exported ${target}`);
@@ -328,28 +335,42 @@ export class InkView extends InkWritingView {
   private renderPageRail(): void {
     let rail = this.root.querySelector<HTMLElement>(".ink-page-rail");
     if (!rail) return;
+    const pageIds = new Set(this.notebook.pages.map((page) => page.id));
+    this.selectedPageIds.forEach((pageId) => { if (!pageIds.has(pageId)) this.selectedPageIds.delete(pageId); });
     rail.empty();
     const header = rail.createDiv({ cls: "ink-rail-header" });
     header.createDiv({ cls: "ink-rail-heading", text: "Pages" });
-    header.createSpan({ cls: "ink-rail-count", text: `${this.pageIndex + 1} / ${this.notebook.pages.length}` });
+    header.createSpan({ cls: "ink-rail-count", text: this.pageManagement
+      ? `${this.selectedPageIds.size} selected` : `${this.pageIndex + 1} / ${this.notebook.pages.length}` });
     const actions = rail.createDiv({ cls: "ink-rail-actions", attr: { role: "group", "aria-label": "Current page actions" } });
-    this.addIconButton(actions, "chevron-up", "Move current page up", () => this.moveCurrentPage(-1), this.pageIndex === 0);
-    this.addIconButton(actions, "chevron-down", "Move current page down", () => this.moveCurrentPage(1), this.pageIndex === this.notebook.pages.length - 1);
-    this.addIconButton(actions, "copy", "Duplicate current page", () => this.duplicateCurrentPage());
-    this.addIconButton(actions, "trash-2", "Delete current page", () => this.deleteCurrentPage(), this.notebook.pages.length <= 1);
+    if (this.pageManagement) {
+      this.addIconButton(actions, "trash-2", "Delete selected pages", () => this.deleteSelectedPages(),
+        this.selectedPageIds.size === 0 || this.selectedPageIds.size >= this.notebook.pages.length);
+      this.addIconButton(actions, "x", "Done managing pages", () => this.setPageManagement(false));
+    } else {
+      this.addIconButton(actions, "chevron-up", "Move current page up", () => this.moveCurrentPage(-1), this.pageIndex === 0);
+      this.addIconButton(actions, "chevron-down", "Move current page down", () => this.moveCurrentPage(1), this.pageIndex === this.notebook.pages.length - 1);
+      this.addIconButton(actions, "copy", "Duplicate current page", () => this.duplicateCurrentPage());
+      this.addIconButton(actions, "trash-2", "Delete current page", () => this.deleteCurrentPage(), this.notebook.pages.length <= 1);
+      this.addIconButton(actions, "list-checks", "Manage pages", () => this.setPageManagement(true), this.readingMode);
+    }
     const thumbs = rail.createDiv({ cls: "ink-rail-thumbs" });
     this.notebook.pages.forEach((page, index) => {
       const button = thumbs.createEl("button", { cls: "ink-page-thumb", attr: { type: "button", title: page.title } });
       if (index === this.pageIndex) button.addClass("is-active");
+      if (this.pageManagement && this.selectedPageIds.has(page.id)) button.addClass("is-selected");
       button.setAttribute("aria-label", String(index + 1) + ": " + page.title);
       button.setAttribute("aria-current", String(index === this.pageIndex));
+      button.setAttribute("aria-pressed", String(this.pageManagement && this.selectedPageIds.has(page.id)));
+      if (this.pageManagement) button.setAttribute("aria-selected", String(this.selectedPageIds.has(page.id)));
       // Paper class stays on the background layer; the canvas above it carries
       // a vector snapshot of the page's ink (transparent where unwritten).
       button.createDiv({ cls: `ink-page-thumb-paper ink-paper-${page.paper}` });
       const canvas = button.createEl("canvas", { cls: "ink-page-thumb-canvas", attr: { "aria-hidden": "true" } });
       button.createSpan({ text: String(index + 1), cls: "ink-page-thumb-number" });
       button.createSpan({ text: page.title, cls: "ink-page-thumb-title" });
-      button.addEventListener("click", () => this.navigateToPage(page.id));
+      button.addEventListener("click", () => this.pageManagement
+        ? this.togglePageSelection(page.id) : this.navigateToPage(page.id));
       this.drawPageThumbnail(canvas, page);
     });
     this.mountRailResizer(rail);
@@ -383,7 +404,11 @@ export class InkView extends InkWritingView {
       // instead of a sparse re-flow.
       const paper = canvas.closest(".ink-page-thumb")?.querySelector<HTMLElement>(".ink-page-thumb-paper");
       if (paper) paper.style.setProperty("--ink-page-scale", String(scale));
-      for (const stroke of page.strokes) drawInkStroke(ctx, scaledStroke(stroke, scale), width, height);
+      paintPageImages(this.imageLibrary, canvas, page, (context) => context.clearRect(0, 0, canvas.width, canvas.height), (context) => {
+        context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
+        for (const stroke of page.strokes) drawInkStroke(context, scaledStroke(stroke, scale), width, height);
+        context.setTransform(1, 0, 0, 1, 0, 0);
+      });
     } catch (error) {
       console.warn("Ink Notes could not render a page thumbnail", error);
     }
@@ -578,6 +603,11 @@ export class InkView extends InkWritingView {
   protected onReadingModeChanged(): void {
     this.destroySwipeStage();
     this.touchGesture = null;
+    if (this.readingMode) {
+      this.pageManagement = false;
+      this.selectedPageIds.clear();
+      if (this.root) this.renderPageRail();
+    }
   }
   protected pagePixelSize(): { width: number; height: number } {
     return { width: this.notebook.pageWidth, height: this.notebook.pageHeight };
@@ -724,7 +754,12 @@ export class InkView extends InkWritingView {
     const ctx = canvas.getContext("2d");
     if (ctx) {
       ctx.setTransform(canvas.width / this.canvasLogicalWidth, 0, 0, canvas.height / this.canvasLogicalHeight, 0, 0);
-      for (const stroke of neighbor!.strokes) drawInkStroke(ctx, stroke, this.canvasLogicalWidth, this.canvasLogicalHeight);
+      const width = this.canvasLogicalWidth, height = this.canvasLogicalHeight;
+      paintPageImages(this.imageLibrary, canvas, neighbor!, (context) => context.clearRect(0, 0, canvas.width, canvas.height), (context) => {
+        context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
+        for (const stroke of neighbor!.strokes) drawInkStroke(context, stroke, width, height);
+        context.setTransform(1, 0, 0, 1, 0, 0);
+      });
     }
     this.swipeStage = stage;
   }
@@ -787,9 +822,12 @@ export class InkView extends InkWritingView {
     this.flipSettling = false;
   }
   protected settingsOpen(): boolean {
+    if (this.state.tool === "pointer") return false;
+    if (this.state.tool === "lasso") return this.lassoSettingsPopover !== null;
     return this.state.tool === "eraser" ? this.eraserPopover !== null : this.brushPopover?.isOpen ?? false;
   }
   protected toggleToolSettings(anchor: HTMLElement): void {
+    if (this.state.tool === "lasso") { this.toggleLassoSettings(anchor); return; }
     if (this.state.tool === "eraser") { this.toggleEraserPopover(anchor); return; }
     this.ensureBrushSettingsPopover();
     if (!this.brushPopover) return;
@@ -797,6 +835,7 @@ export class InkView extends InkWritingView {
     else this.brushPopover?.open();
   }
   protected reopenToolSettings(): void {
+    if (this.state.tool === "lasso") { if (!this.lassoSettingsPopover) this.toggleLassoSettings(this.activeSettingsAnchor()); return; }
     if (this.state.tool === "eraser") {
       if (!this.eraserPopover) this.toggleEraserPopover(this.activeToolButton());
       return;
@@ -1097,6 +1136,51 @@ export class InkView extends InkWritingView {
     this.scheduleSave();
   }
 
+  private setPageManagement(enabled: boolean): void {
+    this.pageManagement = enabled && !this.readingMode;
+    this.selectedPageIds.clear();
+    this.renderPageRail();
+  }
+
+  private togglePageSelection(pageId: string): void {
+    if (!this.pageManagement || this.readingMode) return;
+    if (this.selectedPageIds.has(pageId)) this.selectedPageIds.delete(pageId);
+    else this.selectedPageIds.add(pageId);
+    this.renderPageRail();
+  }
+
+  private deleteSelectedPages(): void {
+    if (this.readingMode || !this.pageManagement) return;
+    const selected = new Set(this.selectedPageIds);
+    if (selected.size === 0 || selected.size >= this.notebook.pages.length) return;
+    this.finishPointerInput(false);
+    const before = cloneNotebook(this.notebook);
+    const beforePageId = this.currentPage().id;
+    const removedBeforeCurrent = this.notebook.pages
+      .slice(0, this.pageIndex).filter((page) => selected.has(page.id)).length;
+    const now = Date.now();
+    this.notebook.pages = this.notebook.pages.filter((page) => {
+      if (!selected.has(page.id)) return true;
+      this.notebook.deletedPages[page.id] = now;
+      return false;
+    });
+    this.pageIndex = this.notebook.pages.some((page) => page.id === beforePageId)
+      ? this.notebook.pages.findIndex((page) => page.id === beforePageId)
+      : Math.max(0, Math.min(this.pageIndex - removedBeforeCurrent, this.notebook.pages.length - 1));
+    this.notebook.pageOrder = this.notebook.pages.map((page) => page.id);
+    this.notebook.pageOrderUpdatedAt = now;
+    this.notebook.updatedAt = now;
+    this.dirtyRevision += 1;
+    this.queueWorkerOperation({ type: "history-restore", notebook: cloneNotebook(this.notebook) });
+    this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, this.currentPage().id);
+    this.selectedPageIds.clear();
+    this.pageManagement = false;
+    this.resetPageView();
+    this.clearSelection();
+    this.renderAll();
+    this.scheduleSave();
+  }
+
   private moveCurrentPage(delta: number): void {
     if (this.readingMode) return;
     const target = this.pageIndex + delta;
@@ -1262,6 +1346,8 @@ export class InkView extends InkWritingView {
   }
 
   private resetPageView(): void {
+    this.clearSelection();
+    this.closeLassoSettings();
     if (this.desktopZoomTimer !== undefined) globalThis.clearTimeout(this.desktopZoomTimer);
     this.desktopZoomTimer = undefined;
     this.pinchRenderZoom = undefined;
@@ -1432,13 +1518,15 @@ function cloneNotebook(notebook: InkNotebook): InkNotebook {
     pages: notebook.pages.map((page) => ({
       ...page,
       strokes: page.strokes.map(cloneStroke),
+      images: page.images?.map((image) => ({ ...image })),
+      deletedImageIds: [...(page.deletedImageIds ?? [])],
       deletedStrokeIds: [...page.deletedStrokeIds],
     })),
   };
 }
 
 function clonePage(page: InkPage): InkPage {
-  return { ...page, strokes: page.strokes.map(cloneStroke), deletedStrokeIds: [...page.deletedStrokeIds] };
+  return { ...page, images: page.images?.map((image) => ({ ...image })), deletedImageIds: [...(page.deletedImageIds ?? [])], strokes: page.strokes.map(cloneStroke), deletedStrokeIds: [...page.deletedStrokeIds] };
 }
 
 function clonePageAsNew(page: InkPage, title: string, now = Date.now()): InkPage {
@@ -1447,6 +1535,8 @@ function clonePageAsNew(page: InkPage, title: string, now = Date.now()): InkPage
     ...clonePage(page),
     id: pageId,
     title,
+    images: page.images?.map((image) => ({ ...image, id: newId("placed-image"), pageId, createdAt: now, updatedAt: now })),
+    deletedImageIds: [],
     strokes: page.strokes.map((stroke) => ({ ...cloneStroke(stroke), id: newId("stroke"), pageId, createdAt: now, updatedAt: now })),
     deletedStrokeIds: [],
     createdAt: now,
@@ -1509,6 +1599,9 @@ function reconcileNotebook(target: InkNotebook, incoming: InkNotebook, selectedP
 }
 
 function reconcilePage(target: InkPage, incoming: InkPage): boolean {
+  const imagesChanged = JSON.stringify(target.images ?? []) !== JSON.stringify(incoming.images ?? []);
+  if (imagesChanged) target.images = incoming.images?.map((image) => ({ ...image }));
+  target.deletedImageIds = [...(incoming.deletedImageIds ?? [])];
   const previousStrokes = target.strokes;
   const previousById = new Map(previousStrokes.map((stroke) => [stroke.id, stroke]));
   const strokes = incoming.strokes.map((incomingStroke) => {
@@ -1528,7 +1621,7 @@ function reconcilePage(target: InkPage, incoming: InkPage): boolean {
     ? target.deletedStrokeIds : [...incoming.deletedStrokeIds];
   target.createdAt = incoming.createdAt;
   target.updatedAt = incoming.updatedAt;
-  return inkChanged;
+  return inkChanged || imagesChanged;
 }
 
 function strokeAppearanceEqual(left: InkStroke, right: InkStroke): boolean {

@@ -11,9 +11,10 @@
 import { INK_COLORS, PRESET_PALETTE_MAX, PRESET_PALETTE_MIN } from "./brush-popover";
 import type { BrushSettings } from "./brush-popover";
 import type { EraserMode, ToolState } from "./ink-writing";
+import type { InkClipboard } from "./lasso-clipboard";
 
 /** The JSON shape persisted under `toolState` in the plugin data file. */
-export type StoredToolState = Pick<ToolState, "pen" | "highlighter" | "eraserMode" | "eraserSize" | "palette">;
+export type StoredToolState = Pick<ToolState, "pen" | "highlighter" | "eraserMode" | "eraserSize" | "palette" | "lasso">;
 
 /** Single source of the pristine defaults both editors start from. */
 export function defaultToolState(): ToolState {
@@ -24,6 +25,7 @@ export function defaultToolState(): ToolState {
     eraserMode: "stroke",
     eraserSize: 32,
     palette: INK_COLORS.map((color) => color.value),
+    lasso: { mode: "freehand", crossFileClipboard: false },
   };
 }
 
@@ -47,6 +49,7 @@ const CSS_HEX_COLOR = /^#(?:[0-9a-f]{3}|[0-9a-f]{6})$/i;
 export function sanitizeToolState(raw: unknown): ToolState {
   const defaults = defaultToolState();
   const source = isRecord(raw) ? raw : {};
+  const lasso = isRecord(source.lasso) ? source.lasso : {};
   return {
     tool: defaults.tool,
     pen: sanitizeBrush(source.pen, defaults.pen, PEN_WIDTH_RANGE, true),
@@ -54,6 +57,7 @@ export function sanitizeToolState(raw: unknown): ToolState {
     eraserMode: isEraserMode(source.eraserMode) ? source.eraserMode : defaults.eraserMode,
     eraserSize: sanitizeNumber(source.eraserSize, defaults.eraserSize, ERASER_SIZE_RANGE),
     palette: sanitizePalette(source.palette),
+    lasso: { mode: lasso.mode === "rectangle" ? "rectangle" : "freehand", crossFileClipboard: lasso.crossFileClipboard === true },
   };
 }
 
@@ -65,6 +69,7 @@ export function storedToolState(state: ToolState): StoredToolState {
     eraserMode: state.eraserMode,
     eraserSize: state.eraserSize,
     palette: [...state.palette],
+    lasso: { ...state.lasso },
   };
 }
 
@@ -77,6 +82,7 @@ export function storedToolState(state: ToolState): StoredToolState {
 export interface SharedToolState {
   config: ToolState;
   scheduleSave(state: ToolState): void;
+  clipboard?: InkClipboard;
 }
 
 export const TOOL_STATE_SAVE_DEBOUNCE_MS = 500;

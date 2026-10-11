@@ -1,13 +1,19 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("obsidian", async () => import("../dev/obsidian"));
-import { PdfInkView, PdfWriterArbiter, VIEW_TYPE_PDF_INK } from "../src/pdf-view";
+import { PdfInkView, VIEW_TYPE_PDF_INK } from "../src/pdf-view";
 import { PdfSidecarStore, serializeSidecar } from "../src/pdf-store";
 import { createSidecar, insertBlankNotePage, sourcePageId } from "../src/pdf-sidecar";
 import type { PdfSidecar } from "../src/pdf-sidecar";
 import { InkWorkerService } from "../src/worker-service";
 import { PdfTabTakeover } from "../src/pdf-takeover";
 import type { TFile, WorkspaceLeaf } from "obsidian";
+import { InkView } from "../src/view";
+import type { NotebookStore } from "../src/storage";
+import { InkClipboard } from "../src/lasso-clipboard";
+import { defaultToolState, type SharedToolState } from "../src/tool-state";
+import type { InkNotebook, InkStroke } from "../src/model";
+import type { ImageLibraryStore } from "../src/image-library";
 
 const FINGERPRINT = { sha256: "a".repeat(64), byteLength: 100 };
 const views = new Set<PdfInkView>();
@@ -43,7 +49,7 @@ function fakePdfDoc(pageCount: number) {
   return { renderedPages, getPage, doc: { numPages: pageCount, getPage, destroy: async () => undefined } };
 }
 
-async function setup(sourcePageCount = 3) {
+async function setup(sourcePageCount = 3, imageLibrary?: ImageLibraryStore) {
   const sidecar = createSidecar("docs/lecture.pdf", FINGERPRINT,
     Array.from({ length: sourcePageCount }, () => ({ width: 595.28, height: 841.89, rotation: 0 })));
   const raw = serializeSidecar(sidecar);
@@ -64,12 +70,12 @@ async function setup(sourcePageCount = 3) {
   };
   const workers = { createSession: vi.fn(() => session) } as unknown as InkWorkerService;
   const view = new PdfInkView({} as WorkspaceLeaf);
+  if (imageLibrary) view.useImageLibrary(imageLibrary);
   views.add(view);
   view.configure({
     store: store as unknown as PdfSidecarStore,
     workers,
     takeover: new PdfTabTakeover(() => ({ enabled: false, enhancerActive: false, isPdfFile: () => true }), VIEW_TYPE_PDF_INK),
-    arbiter: new PdfWriterArbiter(),
   });
   view.file = { path: "docs/lecture.pdf", basename: "lecture" } as TFile;
   await view.onOpen();
@@ -85,6 +91,32 @@ async function setup(sourcePageCount = 3) {
 
 const thumbs = () => document.querySelectorAll<HTMLButtonElement>(".ink-pdf-view .ink-page-thumb");
 const thumbAt = (index: number) => thumbs()[index]!;
+
+it("edits PDF page images, restores deletion with fresh IDs, and keeps images separate across pages", async () => {
+  const { view, internal, sidecar } = await setup(2, { url: () => "data:image/png;base64,", image: async () => document.createElement("img") } as unknown as ImageLibraryStore);
+  internal.renderAll();
+  expect(document.querySelector('[aria-label="Image library"]')).not.toBeNull();
+  document.querySelector<HTMLButtonElement>('[aria-label="Pointer"]')!.click();
+  const editor = view as any, pageId = sidecar.notebook.pages[0].id;
+  editor.changeImages(pageId, [], [{ id: "pdf-image", pageId, assetPath: "Ink Notes/Images/assets/a.png", x: .1, y: .1, width: .3, height: .3,
+    foreground: false, createdAt: 1, updatedAt: 1 }]);
+  editor.pageImages.select("pdf-image");
+  expect(document.querySelectorAll(".ink-placed-image")).toHaveLength(1);
+  const input = document.querySelector<HTMLInputElement>('[aria-label="Image X percent"]')!;
+  input.value = "40"; input.dispatchEvent(new Event("change"));
+  expect(sidecar.notebook.pages[0].images![0].x).toBe(.4);
+  editor.undo(); expect(sidecar.notebook.pages[0].images![0].x).toBe(.1);
+  editor.redo(); expect(sidecar.notebook.pages[0].images![0].x).toBe(.4);
+  editor.pageImages.select("pdf-image");
+  const remove = Array.from(document.querySelectorAll<HTMLButtonElement>(".ink-image-inspector button")).find((b) => b.textContent === "Delete image")!;
+  remove.click(); expect(sidecar.notebook.pages[0].images).toHaveLength(0);
+  editor.undo(); expect(sidecar.notebook.pages[0].images).toHaveLength(1);
+  expect(sidecar.notebook.pages[0].images![0].id).not.toBe("pdf-image");
+  await view.navigatePages(1); expect(document.querySelectorAll(".ink-placed-image")).toHaveLength(0);
+  await view.navigatePages(-1); expect(document.querySelectorAll(".ink-placed-image")).toHaveLength(1);
+  editor.setReadingMode(true); editor.drawSelection(100, 100);
+  expect((document.querySelector(".ink-placed-image") as HTMLElement).style.pointerEvents).toBe("none");
+});
 
 interface SwipeInternals {
   scroller: HTMLElement;
@@ -191,11 +223,47 @@ afterEach(async () => {
 });
 
 describe("pdf page preview rail", () => {
-  it("switches PDF reading mode without changing navigation or writer ownership", async () => {
+  it("shares copied Ink strokes with PDF notes only when cross-file paste is enabled", async () => {
+    const { view: target, sidecar } = await setup(1);
+    const source = new InkView({} as WorkspaceLeaf, {} as NotebookStore);
+    source.file = { path: "source.ink" } as TFile;
+    const shared: SharedToolState = { config: defaultToolState(), clipboard: new InkClipboard(), scheduleSave: vi.fn() };
+    const sourceHost = source as unknown as { useSharedToolState(binding: SharedToolState): void; notebook: InkNotebook;
+      selectedStrokeIds: Set<string>; copySelection(): void; canvasLogicalWidth: number; canvasLogicalHeight: number };
+    const targetHost = target as unknown as { useSharedToolState(binding: SharedToolState): void; pasteSelection(): void;
+      canvasLogicalWidth: number; canvasLogicalHeight: number; state: ReturnType<typeof defaultToolState> };
+    sourceHost.useSharedToolState(shared); targetHost.useSharedToolState(shared);
+    const page = sourceHost.notebook.pages[0];
+    const ink: InkStroke = { id: "source-ink", pageId: page.id, tool: "pen", color: "#000", width: 3, opacity: 1,
+      points: [{ x: 0.1, y: 0.1, pressure: 0.6, t: 1 }, { x: 0.2, y: 0.2, pressure: 0.7, t: 2 }], createdAt: 1, updatedAt: 1 };
+    page.strokes.push(ink); sourceHost.selectedStrokeIds.add(ink.id);
+    sourceHost.canvasLogicalWidth = 100; sourceHost.canvasLogicalHeight = 100;
+    targetHost.canvasLogicalWidth = 100; targetHost.canvasLogicalHeight = 150;
+    sourceHost.copySelection();
+    targetHost.pasteSelection();
+    expect(sidecar.notebook.pages[0].strokes).toHaveLength(0);
+    document.querySelector<HTMLButtonElement>('[aria-label="Select"]')!.click();
+    document.querySelector<HTMLButtonElement>('[aria-label="Select"]')!.click();
+    document.querySelector<HTMLButtonElement>('[aria-label="Rectangle selection"]')!.click();
+    expect(shared.config.lasso.mode).toBe("rectangle");
+    expect(sourceHost.notebook.pages[0].strokes).toHaveLength(1);
+    const toggle = document.querySelector<HTMLInputElement>('[aria-label="Copy and paste across files"]')!;
+    toggle.checked = true; toggle.dispatchEvent(new Event("change"));
+    document.querySelector<HTMLButtonElement>('[aria-label="Paste handwriting"]')!.click();
+    expect(sidecar.notebook.pages[0].strokes).toHaveLength(1);
+    expect(sidecar.notebook.pages[0].strokes[0].pageId).toBe(sidecar.notebook.pages[0].id);
+    expect(sidecar.notebook.pages[0].strokes[0].id).not.toBe(ink.id);
+    expect(page.strokes).toHaveLength(1);
+    expect(shared.scheduleSave).toHaveBeenCalled();
+    document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')!.click();
+    expect(sidecar.notebook.pages[0].strokes).toHaveLength(0);
+    await target.onClose();
+  });
+  it("switches PDF reading mode without changing navigation or sidecar writability", async () => {
     const { view, internal, sidecar } = await setup(2);
     const host = view as unknown as { readingMode: boolean; setReadingMode(value: boolean): void;
       addBlankPage(index: number): void; withPageUndo(change: () => boolean, label: string): void;
-      writerHeld: boolean; inputLocked(): boolean; state: { tool: string }; ensureSwipeStage(offset: number): void;
+      writeBlockedReason: string | null; inputLocked(): boolean; state: { tool: string }; ensureSwipeStage(offset: number): void;
       exportHandwrittenCopy(): Promise<void> };
     const before = serializeSidecar(sidecar);
     const toggle = document.querySelector<HTMLButtonElement>('[aria-label="Reading mode"]')!;
@@ -203,7 +271,7 @@ describe("pdf page preview rail", () => {
     expect(host.readingMode).toBe(true);
     expect(toggle.getAttribute("aria-pressed")).toBe("true");
     expect(document.querySelector(".ink-pdf-view")!.classList.contains("ink-reading")).toBe(true);
-    expect(host.writerHeld).toBe(true);
+    expect(host.writeBlockedReason).toBeNull();
     expect(host.inputLocked()).toBe(true);
     const scroller = document.querySelector<HTMLElement>(".ink-pdf-scroller")!;
     scroller.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true }));
@@ -222,7 +290,7 @@ describe("pdf page preview rail", () => {
     expect(host.readingMode).toBe(false);
     expect(document.querySelector(".ink-pdf-view")!.classList.contains("ink-reading")).toBe(false);
     expect(host.inputLocked()).toBe(false);
-    host.writerHeld = false;
+    host.writeBlockedReason = "source revision changed";
     toggle.click(); toggle.click();
     expect(host.inputLocked()).toBe(true);
   });
@@ -241,9 +309,9 @@ describe("pdf page preview rail", () => {
     expect(internal.noteIndex).toBe(0);
     key("e");
     expect(document.querySelector('[aria-label="Erase"]')?.getAttribute("aria-pressed")).toBe("true");
-    const host = view as unknown as { undo(): void; writerHeld: boolean };
+    const host = view as unknown as { undo(): void; writeBlockedReason: string | null };
     const undo = vi.spyOn(host, "undo");
-    host.writerHeld = false;
+    host.writeBlockedReason = "source revision changed";
     key("z", { ctrlKey: true });
     expect(undo).not.toHaveBeenCalled();
     key("PageDown");
@@ -252,10 +320,10 @@ describe("pdf page preview rail", () => {
 
   it("allows read-only PDF middle-button panning and clears it when capture is lost", async () => {
     const { view } = await setup();
-    const host = view as unknown as { writerHeld: boolean; scroller: HTMLElement; desktopPan: unknown;
+    const host = view as unknown as { writeBlockedReason: string | null; scroller: HTMLElement; desktopPan: unknown;
       onPointerDown(e: PointerEvent): void; onPointerMove(e: PointerEvent): void; onLostPointerCapture(e: PointerEvent): void;
       capturePointer(id: number): void; releasePointer(id: number): void };
-    host.writerHeld = false;
+    host.writeBlockedReason = "source revision changed";
     vi.spyOn(host, "capturePointer").mockImplementation(() => undefined);
     vi.spyOn(host, "releasePointer").mockImplementation(() => undefined);
     const event = { pointerType: "mouse", pointerId: 2, button: 1, clientX: 200, clientY: 200, preventDefault: vi.fn() } as unknown as PointerEvent;
@@ -310,10 +378,10 @@ describe("pdf page preview rail", () => {
     expect(internal.sidecar.notePages[internal.noteIndex].sourceIndex).toBeUndefined();
   });
 
-  it("blocks menu and boundary insertion after losing the PDF writer lock", async () => {
+  it("blocks menu and boundary insertion when the PDF source revision changes", async () => {
     const { view, internal } = await setup();
-    const host = view as unknown as SwipeInternals & { writerHeld: boolean };
-    host.writerHeld = false;
+    const host = view as unknown as SwipeInternals & { writeBlockedReason: string | null };
+    host.writeBlockedReason = "source revision changed";
     Object.defineProperties(host.scroller, { clientWidth: { value: 800 }, clientHeight: { value: 700 } });
     document.querySelector<HTMLButtonElement>('[aria-label="Add page"]')!.click();
     Array.from(document.querySelectorAll<HTMLButtonElement>(".preview-menu button"))[0].click();
@@ -639,6 +707,23 @@ describe("pdf page preview rail", () => {
     await view.onClose();
   });
 
+  it("hides selected source pages from the handwriting sidecar without changing the PDF", async () => {
+    const { view, internal, sidecar, fakeDoc } = await setup(3);
+    internal.renderAll();
+    document.querySelector<HTMLButtonElement>('[aria-label="Manage pages"]')!.click();
+    thumbAt(0).click();
+    thumbAt(2).click();
+    expect(document.querySelector<HTMLElement>(".ink-rail-count")!.textContent).toBe("2 selected");
+    document.querySelector<HTMLButtonElement>('[aria-label="Delete selected pages"]')!.click();
+    expect(sidecar.notePages.map((page) => page.id)).toEqual([sourcePageId(1)]);
+    expect(sidecar.deletedNotePages).toMatchObject({ [sourcePageId(0)]: expect.any(Number), [sourcePageId(2)]: expect.any(Number) });
+    expect(fakeDoc.doc.numPages).toBe(3);
+    document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')!.click();
+    expect(internal.sidecar.notePages.map((page) => page.id)).toEqual([sourcePageId(0), sourcePageId(1), sourcePageId(2)]);
+    expect(fakeDoc.doc.numPages).toBe(3);
+    await view.onClose();
+  });
+
   it("renders thumbnails on demand for the visible range at thumbnail scale, and serves repaints from the cache", async () => {
     const { view, internal, fakeDoc } = await setupExpanded(8);
     internal.renderAll();
@@ -796,10 +881,10 @@ describe("pdf page preview rail", () => {
     await view.onClose();
   });
 
-  it("opens the page menu and export regardless of the writer lock", async () => {
+  it("opens the page menu and export even when editing is blocked", async () => {
     const { view, internal } = await setup(3);
-    // Read-only state (writer lock) must not turn the buttons dead.
-    (view as unknown as { writerHeld: boolean }).writerHeld = false;
+    // Read-only source state must not turn the buttons dead.
+    (view as unknown as { writeBlockedReason: string | null }).writeBlockedReason = "source revision changed";
     const menu = vi.spyOn(internal as never as { openPageMenu(e: MouseEvent): void }, "openPageMenu").mockImplementation(() => undefined);
     const exportCopy = vi.spyOn(internal as never as { exportHandwrittenCopy(): Promise<void> }, "exportHandwrittenCopy").mockImplementation(async () => undefined);
     document.querySelector<HTMLButtonElement>('button[aria-label="Page options"]')!.click();

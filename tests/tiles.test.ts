@@ -18,6 +18,15 @@ describe("tile spatial index", () => {
     index.sync([b, a, c]);
     expect(index.query({ x: 200, y: 200, width: 100, height: 100 })).toEqual([b, a]);
   });
+  it("exposes bounded spatial queries through the tile renderer", () => {
+    const candidate = stroke("candidate", 0.24, 0.24);
+    const query = vi.fn(() => [candidate]);
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, { active: { index: { query } } });
+    const bounds = { x: 200, y: 200, width: 100, height: 100 };
+    expect(renderer.query(bounds)).toEqual([candidate]);
+    expect(query).toHaveBeenCalledWith(bounds);
+  });
   it("invalidates both old and new cells after movement, and cells after deletion", () => {
     const index = new StrokeIndex(1000, 1000), a = stroke("a", 0.1, 0.1);
     index.sync([a]);
