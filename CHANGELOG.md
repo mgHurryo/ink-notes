@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Clear the previous PDF sidecar when a workspace view starts loading another file, so read-only or failed sidecar resolution cannot leave the old document's notes attached to the new PDF.
 - Recognize default-pen scribble erasing from raw Pencil samples, with conservative repeated-area reversal checks to reduce accidental erasure of connected handwriting. Add a persistent enable toggle and 0–100% sensitivity slider in eraser settings (default 25%); lower values require more deliberate scrubbing. Ordinary/blank-area strokes remain ink.
 
 ## 0.1.3-beta.3

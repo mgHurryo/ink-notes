@@ -33311,12 +33311,18 @@ var PdfInkView = class extends InkWritingView {
     this.noteIndex = Math.max(0, Math.min(this.noteIndex, count - 1));
   }
   resetViewState() {
+    var _a;
     this.finishDesktopZoom(false);
     this.destroySwipeStage();
     this.cancelPdfRender();
     this.finishPointerInput(false);
     this.discardPendingInkPreview();
     this.pendingMergedSidecar = null;
+    this.disposeWorkerSession();
+    this.sidecar = null;
+    this.sidecarRaw = "";
+    this.sidecarFile = null;
+    (_a = this.tiles) == null ? void 0 : _a.setPage(EMPTY_NOTEBOOK.pages[0], this.canvasLogicalWidth, this.canvasLogicalHeight);
     this.pdfDoc = null;
     this.sourcePages = [];
     this.noteIndex = 0;
