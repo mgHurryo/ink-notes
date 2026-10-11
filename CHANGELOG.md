@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add image-library batch deletion with a count/name confirmation and undo of the latest deletion while the library stays open. Existing multi-select group moves now disable with no selection; counts include selections hidden by search/group filters. Deletion removes catalog entries only, retaining managed files for placed images, previews and PDF exports; it does not reclaim disk space.
+
 - Add a dedicated Pointer arrow tool (desktop shortcut A) for image editing. Insertion selects the image immediately; a finger/mouse contact on an image opens its controls, and tapping outside dismisses them. Stylus Pointer and native stylus Touch input cannot select/drag images; handwriting and lasso tools keep their existing behavior. Pointer contacts on blank paper never create ink.
 
 - Add a grouped image library with batch photo/file, vault, path-list, paste and drop imports. Insert reusable managed image copies into Ink and PDF handwriting pages; move, resize, change their layer above/below handwriting and delete individual placements with undo/redo. Images default below handwriting and appear in previews, Markdown embeds and PDF exports. Existing note files remain readable without migration; sync managed image assets with notes and back up before downgrading to an older plugin.

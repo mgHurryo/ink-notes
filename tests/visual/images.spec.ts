@@ -3,6 +3,111 @@ import { expect, test } from "@playwright/test";
 const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a3ioAAAAASUVORK5CYII=", "base64");
 
 for (const width of [360, 1280]) {
+  test(`image library batch move, filtered deletion, cancellation and undo at ${width}px`, async ({ page }) => {
+    const errors: string[] = []; page.on("pageerror", (e) => errors.push(e.message));
+    await page.setViewportSize({ width, height: 900 }); await page.goto("/");
+    await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+    await page.getByRole("button", { name: "Image library", exact: true }).click();
+    const library = page.getByRole("dialog", { name: "Image library", exact: true });
+    const move = library.getByRole("combobox", { name: "Move selected images to group", exact: true });
+    await expect(library.getByRole("button", { name: "Delete selected (0)", exact: true })).toBeDisabled();
+    await expect(move).toBeDisabled();
+    await library.locator('input[type="file"]').setInputFiles(["One", "Two", "Three"].map((name) => ({ name: `${name}.png`, mimeType: "image/png", buffer: png })));
+    await expect(library.locator(".ink-image-library-card")).toHaveCount(3);
+    await library.locator('.ink-image-library-card input[type="checkbox"]').first().check();
+    await library.getByRole("button", { name: "Insert selected (1)", exact: true }).click();
+    const placed = page.locator(".ink-placed-image"); await expect(placed).toHaveCount(1);
+    const original = await page.evaluate(() => (window as any).__inkNotesPreview.view.currentPage().images[0]);
+    const originalBytes = await page.evaluate(async (path) => Array.from(new Uint8Array(await (window as any).__inkNotesPreview.view.imageLibrary.bytes(path))), original.assetPath);
+    await page.getByRole("button", { name: "Image library", exact: true }).click();
+    await library.getByRole("button", { name: "New group", exact: true }).click();
+    const group = page.getByRole("dialog", { name: "New group", exact: true });
+    await group.getByRole("textbox", { name: "Group name" }).fill("Keep");
+    await group.getByRole("button", { name: "Save", exact: true }).click();
+    await expect(group).toHaveCount(0);
+    await library.getByRole("button", { name: "Select visible", exact: true }).click();
+    await move.selectOption({ label: "Keep" });
+    await expect.poll(() => page.evaluate(async () => {
+      const data = await (window as any).__inkNotesPreview.view.imageLibrary.read();
+      return data.assets.every((asset: any) => asset.groupId === data.groups[0].id);
+    })).toBe(true);
+    await library.getByRole("button", { name: "Clear selection", exact: true }).click();
+    await expect(move).toBeDisabled();
+    await library.locator('.ink-image-library-card input[type="checkbox"]').nth(0).check();
+    await library.locator('.ink-image-library-card input[type="checkbox"]').nth(1).check();
+    const search = library.getByRole("searchbox", { name: "Search images", exact: true });
+    await search.fill("Three"); await search.press("Tab");
+    await expect(library.locator(".ink-image-library-card")).toHaveCount(1);
+    await expect(library.getByRole("status")).toHaveText("2 selected (2 hidden by filter)");
+    await library.getByRole("button", { name: "Delete selected (2)", exact: true }).click();
+    const confirmation = page.getByRole("dialog", { name: "Delete library images", exact: true });
+    await expect(confirmation.getByRole("list")).toHaveText("One.pngTwo.png");
+    await expect(confirmation.getByRole("button", { name: "Cancel", exact: true })).toBeFocused();
+    await page.screenshot({ path: `test-results/image-library-delete-${width}.png` });
+    await confirmation.getByRole("button", { name: "Cancel", exact: true }).click();
+    expect(await page.evaluate(async () => (await (window as any).__inkNotesPreview.view.imageLibrary.read()).assets.length)).toBe(3);
+    await library.getByRole("button", { name: "Delete selected (2)", exact: true }).click();
+    await confirmation.getByRole("button", { name: "Delete 2 images", exact: true }).click();
+    await expect(confirmation).toHaveCount(0);
+    await expect(library.getByRole("button", { name: "Delete selected (0)", exact: true })).toBeDisabled();
+    await library.getByRole("button", { name: "Undo last deletion (2)", exact: true }).click();
+    await expect(library.getByRole("button", { name: /Undo last deletion/ })).toHaveCount(0);
+    await search.fill(""); await search.press("Tab");
+    await expect(library.locator(".ink-image-library-card")).toHaveCount(3);
+    await library.getByRole("button", { name: "Select visible", exact: true }).click();
+    await library.getByRole("button", { name: "Delete selected (3)", exact: true }).click();
+    await confirmation.getByRole("button", { name: "Delete 3 images", exact: true }).click();
+    await expect(library.locator(".ink-image-library-card")).toHaveCount(0);
+    await library.press("Escape"); await expect(library).toHaveCount(0);
+    await expect(placed).toBeVisible();
+    expect(await page.evaluate(() => (window as any).__inkNotesPreview.view.currentPage().images[0])).toEqual(original);
+    expect(await page.evaluate(async (path) => Array.from(new Uint8Array(await (window as any).__inkNotesPreview.view.imageLibrary.bytes(path))), original.assetPath)).toEqual(originalBytes);
+    await page.getByRole("button", { name: "Image library", exact: true }).click();
+    await expect(library.locator(".ink-image-library-card")).toHaveCount(0);
+    await expect(library.getByRole("button", { name: /Undo last deletion/ })).toHaveCount(0);
+    expect(errors).toEqual([]);
+  });
+}
+
+test("failed library deletion and undo keep the selection and recoverable batch for retry", async ({ page }) => {
+  await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  await page.getByRole("button", { name: "Image library", exact: true }).click();
+  const library = page.getByRole("dialog", { name: "Image library", exact: true });
+  await library.locator('input[type="file"]').setInputFiles(["One", "Two"].map((name) => ({ name: `${name}.png`, mimeType: "image/png", buffer: png })));
+  await expect(library.locator(".ink-image-library-card")).toHaveCount(2);
+  await library.getByRole("button", { name: "Select visible", exact: true }).click();
+  const failNextWrite = () => page.evaluate(() => {
+    const vault = (window as any).__inkNotesPreview.view.imageLibrary.app.vault, process = vault.process;
+    vault.process = async () => { vault.process = process; throw new Error("Simulated disk full"); };
+  });
+  await library.getByRole("button", { name: "Delete selected (2)", exact: true }).click();
+  const confirmation = page.getByRole("dialog", { name: "Delete library images", exact: true });
+  await failNextWrite(); await confirmation.getByRole("button", { name: "Delete 2 images", exact: true }).click();
+  await expect(confirmation.getByRole("button", { name: "Delete 2 images", exact: true })).toBeEnabled();
+  await expect(library.locator(".ink-image-library-card")).toHaveCount(2);
+  await expect(library.getByRole("status")).toHaveText("2 selected");
+  await confirmation.getByRole("button", { name: "Delete 2 images", exact: true }).click();
+  await expect(confirmation).toHaveCount(0); await expect(library.locator(".ink-image-library-card")).toHaveCount(0);
+  const undo = library.getByRole("button", { name: "Undo last deletion (2)", exact: true });
+  await failNextWrite(); await undo.click();
+  await expect(undo).toBeEnabled(); await expect(library.locator(".ink-image-library-card")).toHaveCount(0);
+  await undo.click(); await expect(library.locator(".ink-image-library-card")).toHaveCount(2);
+  await expect(undo).toHaveCount(0);
+  // A peer removes a selected entry; the next render must not retain a phantom selection.
+  await library.getByRole("button", { name: "Select visible", exact: true }).click();
+  await page.evaluate(async () => {
+    const store = (window as any).__inkNotesPreview.view.imageLibrary;
+    await store.remove([(await store.read()).assets[0].id]);
+  });
+  const search = library.getByRole("searchbox", { name: "Search images", exact: true });
+  await search.fill(".png"); await search.press("Tab");
+  await expect(library.locator(".ink-image-library-card")).toHaveCount(1);
+  await expect(library.getByRole("status")).toHaveText("1 selected");
+  await expect(library.getByRole("button", { name: "Delete selected (1)", exact: true })).toBeEnabled();
+});
+
+for (const width of [360, 1280]) {
   test(`image library batch import, grouping, editing and history at ${width}px`, async ({ page }) => {
     const errors: string[] = []; page.on("pageerror", (e) => errors.push(e.message));
     await page.setViewportSize({ width, height: 900 }); await page.goto("/");

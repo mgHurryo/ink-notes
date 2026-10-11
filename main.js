@@ -23001,6 +23001,28 @@ var ImageLibraryStore = class {
       for (const asset of library.assets) if (ids.includes(asset.id)) asset.groupId = groupId;
     });
   }
+  /** Remove catalog entries only: placed images still reference these immutable files. */
+  async remove(ids) {
+    const selected = new Set(ids);
+    if (!selected.size) return [];
+    let removed = [];
+    await this.update((library) => {
+      removed = library.assets.filter((asset) => selected.has(asset.id));
+      library.assets = library.assets.filter((asset) => !selected.has(asset.id));
+    });
+    return removed;
+  }
+  async restore(assets) {
+    if (!assets.length) return;
+    await this.update((library) => {
+      const existing = new Set(library.assets.map((asset) => asset.id));
+      const groups = new Set(library.groups.map((group) => group.id));
+      for (const asset of assets) if (!existing.has(asset.id)) {
+        library.assets.push({ ...asset, groupId: groups.has(asset.groupId) ? asset.groupId : "" });
+        existing.add(asset.id);
+      }
+    });
+  }
   vaultImages() {
     return this.app.vault.getFiles().filter((file) => IMAGE_EXTENSIONS.test(file.path) && !isManagedImagePath(file.path));
   }
@@ -23140,6 +23162,8 @@ var ImageLibraryModal = class extends import_obsidian2.Modal {
     this.query = "";
     this.busy = false;
     this.closed = false;
+    this.renderRevision = 0;
+    this.lastDeleted = [];
     this.events = new AbortController();
   }
   onOpen() {
@@ -23162,7 +23186,10 @@ var ImageLibraryModal = class extends import_obsidian2.Modal {
     void this.render().catch((error) => this.report(error));
   }
   onClose() {
+    var _a;
     this.closed = true;
+    (_a = this.deleteConfirmation) == null ? void 0 : _a.close();
+    this.lastDeleted = [];
     this.events.abort();
     this.contentEl.empty();
   }
@@ -23172,6 +23199,7 @@ var ImageLibraryModal = class extends import_obsidian2.Modal {
   async operation(run) {
     if (this.busy || this.closed) return;
     this.busy = true;
+    this.renderRevision++;
     this.contentEl.classList.add("is-busy");
     this.contentEl.querySelectorAll("button,input,select").forEach((el) => el.disabled = true);
     try {
@@ -23191,8 +23219,12 @@ var ImageLibraryModal = class extends import_obsidian2.Modal {
     });
   }
   async render() {
+    const revision = ++this.renderRevision;
     const library = await this.store.read();
-    if (this.closed) return;
+    if (this.closed || this.busy || revision !== this.renderRevision) return;
+    const existing = new Set(library.assets.map((asset) => asset.id));
+    for (const id of this.selected) if (!existing.has(id)) this.selected.delete(id);
+    if (this.groupId && this.groupId !== "*" && !library.groups.some((group) => group.id === this.groupId)) this.groupId = "*";
     const el = this.contentEl;
     el.empty();
     el.classList.remove("is-busy");
@@ -23232,7 +23264,7 @@ var ImageLibraryModal = class extends import_obsidian2.Modal {
       assets.forEach((a) => this.selected.add(a.id));
       void this.render().catch((e) => this.report(e));
     });
-    button(bar, "Clear selection", () => {
+    const clear = button(bar, "Clear selection", () => {
       this.selected.clear();
       void this.render().catch((e) => this.report(e));
     });
@@ -23242,6 +23274,19 @@ var ImageLibraryModal = class extends import_obsidian2.Modal {
     move.onchange = () => {
       if (move.value !== "*") void this.operation(() => this.store.move([...this.selected], move.value));
     };
+    const remove = button(bar, "Delete selected", () => this.deleteDialog(library.assets.filter((asset) => this.selected.has(asset.id))));
+    remove.addClass("mod-warning");
+    const count = el.createEl("p", { attr: { role: "status", "aria-live": "polite" } });
+    if (this.lastDeleted.length) {
+      button(bar, `Undo last deletion (${this.lastDeleted.length})`, () => {
+        void this.operation(async () => {
+          await this.store.restore(this.lastDeleted);
+          this.lastDeleted = [];
+          new import_obsidian2.Notice("Image library deletion undone");
+        });
+      });
+      el.createEl("p", { text: "Undo is available for the last deletion until this library closes or another deletion replaces it." });
+    }
     const grid = el.createDiv({ cls: "ink-image-library-grid" });
     for (const asset of assets) {
       const card = grid.createEl("label", { cls: "ink-image-library-card" });
@@ -23250,7 +23295,7 @@ var ImageLibraryModal = class extends import_obsidian2.Modal {
       check.onchange = () => {
         if (check.checked) this.selected.add(asset.id);
         else this.selected.delete(asset.id);
-        updateInsert();
+        updateActions();
       };
       try {
         card.createEl("img", { attr: { src: this.store.url(asset.path), alt: asset.name, loading: "lazy" } });
@@ -23264,11 +23309,53 @@ var ImageLibraryModal = class extends import_obsidian2.Modal {
       this.insert(library.assets.filter((a) => this.selected.has(a.id)));
       this.close();
     });
-    const updateInsert = () => {
-      insert.textContent = `Insert selected (${this.selected.size})`;
-      insert.disabled = !this.selected.size;
+    const updateActions = () => {
+      const size = this.selected.size, hidden = size - assets.filter((asset) => this.selected.has(asset.id)).length;
+      count.textContent = `${size} selected${hidden ? ` (${hidden} hidden by filter)` : ""}`;
+      insert.textContent = `Insert selected (${size})`;
+      insert.disabled = !size;
+      remove.textContent = `Delete selected (${size})`;
+      remove.disabled = !size;
+      move.disabled = !size;
+      clear.disabled = !size;
     };
-    updateInsert();
+    updateActions();
+  }
+  deleteDialog(assets) {
+    if (!assets.length || this.closed || this.busy || this.deleteConfirmation) return;
+    const modal = new import_obsidian2.Modal(this.app);
+    this.deleteConfirmation = modal;
+    modal.setTitle("Delete library images");
+    modal.modalEl.addClass("ink-image-library-confirm");
+    modal.onClose = () => {
+      this.deleteConfirmation = void 0;
+      modal.contentEl.empty();
+    };
+    modal.contentEl.createEl("p", { text: `Remove ${assets.length} selected images from the library, including selections hidden by the current filter?` });
+    const list = modal.contentEl.createEl("ul");
+    assets.slice(0, 10).forEach((asset) => list.createEl("li", { text: asset.name }));
+    if (assets.length > 10) list.createEl("li", { text: `And ${assets.length - 10} more\u2026` });
+    modal.contentEl.createEl("p", { text: "Images already placed in notes stay intact. Image files are kept, so this does not free disk space. You can undo the last deletion while the library stays open." });
+    const actions = modal.contentEl.createDiv({ cls: "ink-image-library-tools" });
+    const cancel = button(actions, "Cancel", () => modal.close());
+    const confirm = button(actions, `Delete ${assets.length} images`, () => {
+      if (this.closed || this.busy) return;
+      confirm.disabled = true;
+      cancel.disabled = true;
+      void this.operation(async () => {
+        const removed = await this.store.remove(assets.map((asset) => asset.id));
+        if (removed.length) this.lastDeleted = removed;
+        assets.forEach((asset) => this.selected.delete(asset.id));
+        modal.close();
+        new import_obsidian2.Notice(`Removed ${removed.length} images from the library`);
+      }).finally(() => {
+        confirm.disabled = false;
+        cancel.disabled = false;
+      });
+    });
+    confirm.addClass("mod-warning");
+    modal.open();
+    cancel.focus();
   }
   groupDialog(id, name = "") {
     const modal = new import_obsidian2.Modal(this.app);

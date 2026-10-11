@@ -72,6 +72,27 @@ export class ImageLibraryStore {
       for (const asset of library.assets) if (ids.includes(asset.id)) asset.groupId = groupId;
     });
   }
+  /** Remove catalog entries only: placed images still reference these immutable files. */
+  async remove(ids: string[]): Promise<ImageAsset[]> {
+    const selected = new Set(ids); if (!selected.size) return [];
+    let removed: ImageAsset[] = [];
+    await this.update((library) => {
+      removed = library.assets.filter((asset) => selected.has(asset.id));
+      library.assets = library.assets.filter((asset) => !selected.has(asset.id));
+    });
+    return removed;
+  }
+  async restore(assets: ImageAsset[]): Promise<void> {
+    if (!assets.length) return;
+    await this.update((library) => {
+      const existing = new Set(library.assets.map((asset) => asset.id));
+      const groups = new Set(library.groups.map((group) => group.id));
+      for (const asset of assets) if (!existing.has(asset.id)) {
+        library.assets.push({ ...asset, groupId: groups.has(asset.groupId) ? asset.groupId : "" });
+        existing.add(asset.id);
+      }
+    });
+  }
   vaultImages(): TFile[] { return this.app.vault.getFiles().filter((file) => IMAGE_EXTENSIONS.test(file.path) && !isManagedImagePath(file.path)); }
   async importVault(paths: string[], groupId: string): Promise<string[]> {
     const errors: string[] = [];
@@ -179,6 +200,9 @@ export class ImageLibraryModal extends Modal {
   private query = "";
   private busy = false;
   private closed = false;
+  private renderRevision = 0;
+  private lastDeleted: ImageAsset[] = [];
+  private deleteConfirmation?: Modal;
   private events = new AbortController();
   constructor(private readonly store: ImageLibraryStore, private readonly insert: (assets: ImageAsset[]) => void) { super(store.app); }
   onOpen(): void {
@@ -190,11 +214,11 @@ export class ImageLibraryModal extends Modal {
     }, { signal: this.events.signal });
     void this.render().catch((error) => this.report(error));
   }
-  onClose(): void { this.closed = true; this.events.abort(); this.contentEl.empty(); }
+  onClose(): void { this.closed = true; this.deleteConfirmation?.close(); this.lastDeleted = []; this.events.abort(); this.contentEl.empty(); }
   private report(error: unknown): void { new Notice(`Image library: ${error instanceof Error ? error.message : String(error)}`, 8000); }
   private async operation(run: () => Promise<unknown>): Promise<void> {
     if (this.busy || this.closed) return;
-    this.busy = true; this.contentEl.classList.add("is-busy");
+    this.busy = true; this.renderRevision++; this.contentEl.classList.add("is-busy");
     this.contentEl.querySelectorAll<HTMLButtonElement | HTMLInputElement | HTMLSelectElement>("button,input,select").forEach((el) => el.disabled = true);
     try { await run(); } catch (error) { this.report(error); }
     finally { this.busy = false; if (!this.closed) await this.render().catch((error) => this.report(error)); }
@@ -204,7 +228,11 @@ export class ImageLibraryModal extends Modal {
     await this.operation(async () => { const errors = await this.store.importFiles(files, group); if (errors.length) this.report(errors.join("\n")); });
   }
   private async render(): Promise<void> {
-    const library = await this.store.read(); if (this.closed) return;
+    const revision = ++this.renderRevision;
+    const library = await this.store.read(); if (this.closed || this.busy || revision !== this.renderRevision) return;
+    const existing = new Set(library.assets.map((asset) => asset.id));
+    for (const id of this.selected) if (!existing.has(id)) this.selected.delete(id);
+    if (this.groupId && this.groupId !== "*" && !library.groups.some((group) => group.id === this.groupId)) this.groupId = "*";
     const el = this.contentEl; el.empty(); el.classList.remove("is-busy");
     const tools = el.createDiv({ cls: "ink-image-library-tools" });
     const filter = tools.createEl("select", { attr: { "aria-label": "Image group" } });
@@ -224,24 +252,64 @@ export class ImageLibraryModal extends Modal {
     const assets = library.assets.filter((a) => (this.groupId === "*" || a.groupId === this.groupId) && a.name.toLowerCase().includes(this.query.toLowerCase()));
     const bar = el.createDiv({ cls: "ink-image-library-tools" });
     button(bar, "Select visible", () => { assets.forEach((a) => this.selected.add(a.id)); void this.render().catch((e) => this.report(e)); });
-    button(bar, "Clear selection", () => { this.selected.clear(); void this.render().catch((e) => this.report(e)); });
+    const clear = button(bar, "Clear selection", () => { this.selected.clear(); void this.render().catch((e) => this.report(e)); });
     const move = bar.createEl("select", { attr: { "aria-label": "Move selected images to group" } });
     move.createEl("option", { text: "Move selected to…", value: "*" });
     for (const g of [{ id: "", name: "Ungrouped" }, ...library.groups]) move.createEl("option", { text: g.name, value: g.id });
     move.onchange = () => { if (move.value !== "*") void this.operation(() => this.store.move([...this.selected], move.value)); };
+    const remove = button(bar, "Delete selected", () => this.deleteDialog(library.assets.filter((asset) => this.selected.has(asset.id))));
+    remove.addClass("mod-warning");
+    const count = el.createEl("p", { attr: { role: "status", "aria-live": "polite" } });
+    if (this.lastDeleted.length) {
+      button(bar, `Undo last deletion (${this.lastDeleted.length})`, () => { void this.operation(async () => {
+        await this.store.restore(this.lastDeleted); this.lastDeleted = [];
+        new Notice("Image library deletion undone");
+      }); });
+      el.createEl("p", { text: "Undo is available for the last deletion until this library closes or another deletion replaces it." });
+    }
     const grid = el.createDiv({ cls: "ink-image-library-grid" });
     for (const asset of assets) {
       const card = grid.createEl("label", { cls: "ink-image-library-card" });
       const check = card.createEl("input", { type: "checkbox" }); check.checked = this.selected.has(asset.id);
-      check.onchange = () => { if (check.checked) this.selected.add(asset.id); else this.selected.delete(asset.id); updateInsert(); };
+      check.onchange = () => { if (check.checked) this.selected.add(asset.id); else this.selected.delete(asset.id); updateActions(); };
       try { card.createEl("img", { attr: { src: this.store.url(asset.path), alt: asset.name, loading: "lazy" } }); }
       catch { card.createSpan({ text: "Missing image" }); }
       card.createSpan({ text: asset.name });
     }
     if (!assets.length) grid.createEl("p", { text: "No images yet. Import photos or files to begin." });
     const insert = button(el, "Insert selected", () => { this.insert(library.assets.filter((a) => this.selected.has(a.id))); this.close(); });
-    const updateInsert = () => { insert.textContent = `Insert selected (${this.selected.size})`; insert.disabled = !this.selected.size; };
-    updateInsert();
+    const updateActions = () => {
+      const size = this.selected.size, hidden = size - assets.filter((asset) => this.selected.has(asset.id)).length;
+      count.textContent = `${size} selected${hidden ? ` (${hidden} hidden by filter)` : ""}`;
+      insert.textContent = `Insert selected (${size})`; insert.disabled = !size;
+      remove.textContent = `Delete selected (${size})`; remove.disabled = !size;
+      move.disabled = !size; clear.disabled = !size;
+    };
+    updateActions();
+  }
+  private deleteDialog(assets: ImageAsset[]): void {
+    if (!assets.length || this.closed || this.busy || this.deleteConfirmation) return;
+    const modal = new Modal(this.app); this.deleteConfirmation = modal;
+    modal.setTitle("Delete library images"); modal.modalEl.addClass("ink-image-library-confirm");
+    modal.onClose = () => { this.deleteConfirmation = undefined; modal.contentEl.empty(); };
+    modal.contentEl.createEl("p", { text: `Remove ${assets.length} selected images from the library, including selections hidden by the current filter?` });
+    const list = modal.contentEl.createEl("ul");
+    assets.slice(0, 10).forEach((asset) => list.createEl("li", { text: asset.name }));
+    if (assets.length > 10) list.createEl("li", { text: `And ${assets.length - 10} more…` });
+    modal.contentEl.createEl("p", { text: "Images already placed in notes stay intact. Image files are kept, so this does not free disk space. You can undo the last deletion while the library stays open." });
+    const actions = modal.contentEl.createDiv({ cls: "ink-image-library-tools" });
+    const cancel = button(actions, "Cancel", () => modal.close());
+    const confirm = button(actions, `Delete ${assets.length} images`, () => {
+      if (this.closed || this.busy) return;
+      confirm.disabled = true; cancel.disabled = true;
+      void this.operation(async () => {
+        const removed = await this.store.remove(assets.map((asset) => asset.id));
+        if (removed.length) this.lastDeleted = removed;
+        assets.forEach((asset) => this.selected.delete(asset.id));
+        modal.close(); new Notice(`Removed ${removed.length} images from the library`);
+      }).finally(() => { confirm.disabled = false; cancel.disabled = false; });
+    });
+    confirm.addClass("mod-warning"); modal.open(); cancel.focus();
   }
   private groupDialog(id?: string, name = ""): void {
     const modal = new Modal(this.app); modal.setTitle(id ? "Rename group" : "New group");

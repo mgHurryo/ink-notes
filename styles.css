@@ -1418,6 +1418,9 @@
 .ink-image-inspector button, .ink-image-library button, .ink-image-library select, .ink-image-library input:not([type=checkbox]) { min-height: 44px; }
 .ink-image-library { width: min(800px, 95vw); }
 .ink-image-library .modal-content { overflow-y: auto; max-height: 75vh; }
+.ink-image-library-confirm { width: min(440px, 95vw); }
+.ink-image-library-confirm .modal-content { overflow-y: auto; max-height: 75vh; overflow-wrap: anywhere; }
+.ink-image-library-confirm button { min-height: 44px; }
 .ink-image-library-tools { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
 .ink-image-library-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(125px, 1fr)); gap: 12px; margin: 12px 0; }
 .ink-image-library-card { display: flex; flex-direction: column; gap: 6px; padding: 8px; border: 1px solid var(--background-modifier-border); border-radius: 8px; overflow-wrap: anywhere; cursor: pointer; }
