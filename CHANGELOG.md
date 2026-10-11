@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+## 0.1.3-beta.3
+
+- Unify pen, finger, mouse and keyboard gestures across Ink and PDF editors. By default, stylus writes while fingers select or move images/handwriting and navigate; opt in to Use finger as pen for single-finger writing, highlighting, erasing and selection, with two-finger navigation. Hold opens clipboard actions, color removal requires an explicit menu choice, and pressure-curve points use an explicit remove action. Cancelled edits roll back before pinch or stylus handoff.
+
 ## 0.1.3-beta.2
 
 - Close lasso/rectangle action menus after copy, cut, delete or paste and on outside presses; empty selections no longer show Paste just because the clipboard contains ink. In editing mode, hold one finger still on the page for 600ms to show a paste-only menu with any tool. Movement, early release, a second finger, stylus input, page changes and viewport interruption cancel the hold; paste retains the active tool and existing clipboard scope. Desktop shortcuts and Lasso settings remain available.

@@ -15,6 +15,7 @@ import { defaultToolState } from "../src/tool-state";
 import type { NotebookStore } from "../src/storage";
 import type { WorkspaceLeaf } from "obsidian";
 import { Menu } from "obsidian";
+import { gestureContract } from "./gesture-contract";
 
 const button = (label: string) => document.querySelector<HTMLButtonElement>('button[aria-label="' + label + '"]')!;
 /** iPads deliver no dblclick for touch; the preset editor opens on two taps. */
@@ -50,6 +51,8 @@ afterEach(async () => {
   // Rail-width persistence is real localStorage in jsdom; keep tests independent.
   window.localStorage.clear();
 });
+
+gestureContract(async () => view);
 
 describe("reference-style editor", () => {
   function selectSampleInk() {
@@ -622,7 +625,7 @@ describe("reference-style editor", () => {
     // the platform picker anchored to it snaps shut mid-adjust.
     expect(picker.isConnected).toBe(true);
   });
-  it("removes a preset on hold, never the last one", () => {
+  it("opens options on hold and removes a preset only explicitly, never the last one", () => {
     vi.useFakeTimers();
     try {
       button("Pen").click();
@@ -631,15 +634,20 @@ describe("reference-style editor", () => {
           .dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
         vi.advanceTimersByTime(600);
       };
-      hold(); hold(); hold(); hold();
+      hold();
+      expect(document.querySelectorAll('.ink-color-swatch[data-brush-tool="pen"]').length).toBe(5);
+      const remove = () => Array.from(document.querySelectorAll<HTMLButtonElement>('.menu button')).find((b) => b.textContent === "Remove preset color")!;
+      remove().click();
+      for (let i = 0; i < 3; i++) { hold(); remove().click(); }
       expect(document.querySelectorAll('.ink-color-swatch[data-brush-tool="pen"]').length).toBe(1);
       hold();
+      expect(remove().disabled).toBe(true); remove().click();
       expect(document.querySelectorAll('.ink-color-swatch[data-brush-tool="pen"]').length).toBe(1);
     } finally {
       vi.useRealTimers();
     }
   });
-  it("does not select the color when a hold removed the preset", () => {
+  it("does not select the color after a hold opens its options", () => {
     vi.useFakeTimers();
     try {
       button("Pen").click();
@@ -654,6 +662,31 @@ describe("reference-style editor", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+  it("cancels color options for movement, another finger, and a closed panel", () => {
+    vi.useFakeTimers();
+    try {
+      button("Pen").click(); const swatch = button("Pen blue");
+      swatch.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true, clientX: 10, clientY: 10 }));
+      const move = new MouseEvent("pointermove", { bubbles: true, clientX: 30, clientY: 10 });
+      Object.defineProperty(move, "pointerId", { value: 1 }); swatch.dispatchEvent(move);
+      vi.advanceTimersByTime(600); expect(document.querySelector('.menu')).toBeNull();
+      swatch.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+      const touch = new Event("touchstart", { bubbles: true }); Object.defineProperty(touch, "touches", { value: [{}, {}] });
+      swatch.dispatchEvent(touch); vi.advanceTimersByTime(600); expect(document.querySelector('.menu')).toBeNull();
+      swatch.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true })); button("Pen").click();
+      vi.advanceTimersByTime(600); expect(document.querySelector('.menu')).toBeNull();
+      expect((view as any).state.palette).toHaveLength(5);
+    } finally { vi.useRealTimers(); }
+  });
+  it("offers the same color options by right-click and keyboard", () => {
+    button("Pen").click(); const swatch = button("Pen blue");
+    swatch.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    expect(document.querySelector('.menu')?.textContent).toContain("Remove preset color");
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    swatch.dispatchEvent(new KeyboardEvent("keydown", { key: "F10", shiftKey: true, bubbles: true, cancelable: true }));
+    expect(document.querySelector('.menu')?.textContent).toContain("Remove preset color");
+    expect((view as any).state.palette).toHaveLength(5);
   });
   it("schedules a shared-settings save when popover and eraser controls change", () => {
     const scheduleSave = vi.fn();

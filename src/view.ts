@@ -321,11 +321,8 @@ export class InkView extends InkWritingView {
     this.registerDomEvent(this.pageScroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(this.pageScroller, "touchcancel", (event) => {
-      this.scheduleZoomHudHide();
       this.finishPinchRender();
-      this.onStylusTouch(event);
-      this.cancelPageFlip();
-      this.touchGesture = null;
+      this.onTouchCancel(event);
     }, { passive: false });
     const observer = new ResizeObserver(() => this.resizeCanvas());
     observer.observe(this.pageScroller);
@@ -1286,8 +1283,8 @@ export class InkView extends InkWritingView {
 
   /**
    * 2D multi-point pressure mapping editor: drag points (endpoints move
-   * vertically), click empty space to add one, double-click a point to
-   * remove it. The curve maps raw pen pressure to the response input and is
+   * vertically), click empty space to add one, select a point and use
+   * Remove point to delete it. The curve maps raw pen pressure to the response input and is
    * captured per stroke; the sample preview re-renders on every change.
    */
 

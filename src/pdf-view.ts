@@ -197,10 +197,7 @@ export class PdfInkView extends InkWritingView {
     this.registerDomEvent(scroller, "touchmove", (event) => this.onTouchMove(event), { passive: false });
     this.registerDomEvent(scroller, "touchend", (event) => this.onTouchStart(event), { passive: false });
     this.registerDomEvent(scroller, "touchcancel", (event) => {
-      this.scheduleZoomHudHide();
-      this.onStylusTouch(event);
-      this.cancelPageFlip();
-      this.touchGesture = null;
+      this.onTouchCancel(event);
     }, { passive: false });
     // Pane operations (splits, drags, sidebar toggles) resize this view
     // without a window resize; stale page geometry there overflowed the pane

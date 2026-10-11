@@ -14,12 +14,13 @@ import type { EraserMode, ToolState } from "./ink-writing";
 import type { InkClipboard } from "./lasso-clipboard";
 
 /** The JSON shape persisted under `toolState` in the plugin data file. */
-export type StoredToolState = Pick<ToolState, "pen" | "highlighter" | "eraserMode" | "eraserSize" | "palette" | "lasso">;
+export type StoredToolState = Pick<ToolState, "pen" | "highlighter" | "eraserMode" | "eraserSize" | "palette" | "lasso" | "fingerAsPen">;
 
 /** Single source of the pristine defaults both editors start from. */
 export function defaultToolState(): ToolState {
   return {
     tool: "pen",
+    fingerAsPen: false,
     pen: { color: "#1b1b1b", width: 3, opacity: 1, smooth: 0, taper: 0, pressureGain: 100, speedGain: 0, pressureCurve: undefined },
     highlighter: { color: "#f2c94c", width: 18, opacity: 0.4 },
     eraserMode: "stroke",
@@ -52,6 +53,7 @@ export function sanitizeToolState(raw: unknown): ToolState {
   const lasso = isRecord(source.lasso) ? source.lasso : {};
   return {
     tool: defaults.tool,
+    fingerAsPen: source.fingerAsPen === true,
     pen: sanitizeBrush(source.pen, defaults.pen, PEN_WIDTH_RANGE, true),
     highlighter: sanitizeBrush(source.highlighter, defaults.highlighter, HIGHLIGHTER_WIDTH_RANGE, false),
     eraserMode: isEraserMode(source.eraserMode) ? source.eraserMode : defaults.eraserMode,
@@ -64,6 +66,7 @@ export function sanitizeToolState(raw: unknown): ToolState {
 /** The plain-JSON snapshot to persist (the active tool stays per session). */
 export function storedToolState(state: ToolState): StoredToolState {
   return {
+    fingerAsPen: state.fingerAsPen,
     pen: storedBrush(state.pen),
     highlighter: storedBrush(state.highlighter),
     eraserMode: state.eraserMode,

@@ -1,4 +1,4 @@
-import { Notice, setIcon } from "obsidian";
+import { Menu, Notice, setIcon } from "obsidian";
 import { InkTool } from "./model";
 import { penOutlineRings } from "./rendering";
 
@@ -33,8 +33,8 @@ export const INK_COLORS = [
  *  middle of the range). */
 export const PRESET_PALETTE_MIN = 1;
 export const PRESET_PALETTE_MAX = 10;
-/** Hold duration that deletes a preset swatch outright. */
-const LONG_PRESS_MS = 550;
+/** Hold opens options; destructive actions always require an explicit click. */
+const LONG_PRESS_MS = 600;
 /** How long the per-swatch picker input stays tappable after a tap on the
  *  swatch: the next tap lands on the input and opens the system picker
  *  natively - programmatic .click() never opens it on iPad. */
@@ -160,6 +160,8 @@ export class BrushPopoverController {
   private openState = false;
   private curveOpen = false;
   private dragIndex = -1;
+  private presetPressTimer: number | undefined;
+  private presetMenu: Menu | undefined;
   /** The tool whose panel was last shown; a switch resets the shared scroll
    *  container so the shorter panel is not left scrolled out of view. */
   private visiblePanel: InkTool | null = null;
@@ -183,6 +185,8 @@ export class BrushPopoverController {
     }
     const body = this.root.createDiv({ cls: "ink-popover-body" });
     this.body = body;
+    this.root.addEventListener("touchstart", (event) => { if (event.touches.length > 1) this.cancelPresetHold(); }, { capture: true });
+    options.registerCleanup?.(() => { this.cancelPresetHold(); this.presetMenu?.hide(); });
     for (const spec of options.tools) this.buildToolPanel(body, spec);
     options.buildExtras?.(body, {
       addRange: (parent, name, min, max, step, value, onChange) => this.addRange(parent, name, min, max, step, value, onChange),
@@ -315,6 +319,7 @@ export class BrushPopoverController {
 
   /** Rebuilds the swatch row from the live palette (after add/edit/remove). */
   private buildSwatchesInto(spec: BrushToolSpec): void {
+    this.cancelPresetHold(); this.presetMenu?.hide();
     const swatches = this.root.querySelector<HTMLElement>(`.ink-color-control[data-brush-tool="${spec.tool}"] .ink-color-swatches`);
     if (!swatches) return;
     swatches.empty();
@@ -330,11 +335,10 @@ export class BrushPopoverController {
       // untappable until a tap on the swatch arms it: the next tap then
       // lands on a real input and opens the system picker natively
       // (programmatic .click() never opens it on iPad - the beta.30
-      // regression). Double-tap = change the preset; a 550ms hold on the
-      // swatch deletes it.
+      // regression). Double-tap edits; hold opens explicit color options.
       const slot = swatches.createDiv({ cls: "ink-swatch-slot" });
       const swatch = slot.createEl("button", { cls: "ink-color-swatch", attr: {
-        type: "button", title: `${label} — double-tap to change, hold to remove`, "aria-label": `${spec.label} ${label.toLowerCase()}`,
+        type: "button", title: `${label} — double-tap to change, hold for options`, "aria-label": `${spec.label} ${label.toLowerCase()}`,
         "aria-pressed": String(settings.color.toLowerCase() === value.toLowerCase()), "data-color": value,
         "data-brush-tool": spec.tool,
       } });
@@ -378,29 +382,56 @@ export class BrushPopoverController {
         swatch.dataset.color = picker.value;
         picker.dataset.color = picker.value;
         swatch.setAttribute("aria-label", `${spec.label} ${newLabel.toLowerCase()}`);
-        swatch.title = `${newLabel} — double-tap to change, hold to remove`;
+        swatch.title = `${newLabel} — double-tap to change, hold for options`;
         current = picker.value;
         this.update();
       };
       picker.addEventListener("input", applyPick);
       picker.addEventListener("change", applyPick);
-      let pressTimer: number | undefined;
-      const cancelPress = (): void => {
-        if (pressTimer !== undefined) { window.clearTimeout(pressTimer); pressTimer = undefined; }
+      const options = (event: MouseEvent): void => {
+        this.cancelPresetHold(); this.presetMenu?.hide();
+        const menu = new Menu(); this.presetMenu = menu;
+        menu.addItem((item) => item.setTitle("Remove preset color").setIcon("trash-2")
+          .setDisabled((this.options.palette?.().length ?? 1) <= PRESET_PALETTE_MIN)
+          .onClick(() => this.removePresetColor(spec, current)));
+        menu.onHide(() => { if (this.presetMenu === menu) this.presetMenu = undefined; });
+        menu.showAtMouseEvent(event);
       };
-      swatch.addEventListener("pointerdown", () => {
-        cancelPress();
-        pressTimer = window.setTimeout(() => {
-          pressTimer = undefined;
+      let origin = { x: 0, y: 0 };
+      swatch.addEventListener("pointerdown", (event) => {
+        this.cancelPresetHold();
+        if (event.button !== 0) return;
+        suppressClick = false; origin = { x: event.clientX, y: event.clientY };
+        this.presetPressTimer = window.setTimeout(() => {
+          this.presetPressTimer = undefined;
+          if (!this.isOpen || !swatch.isConnected) return;
           suppressClick = true;
-          this.removePresetColor(spec, current);
+          options(event);
         }, LONG_PRESS_MS);
       });
-      swatch.addEventListener("pointerup", cancelPress);
-      swatch.addEventListener("pointercancel", cancelPress);
-      swatch.addEventListener("pointerleave", cancelPress);
+      swatch.addEventListener("pointermove", (event) => {
+        if (Math.hypot(event.clientX - origin.x, event.clientY - origin.y) > 10) this.cancelPresetHold();
+      });
+      for (const type of ["pointerup", "pointercancel", "pointerleave"]) swatch.addEventListener(type, () => this.cancelPresetHold());
+      swatch.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        if (!suppressClick || !this.presetMenu) options(event);
+      });
+      swatch.addEventListener("keydown", (event) => {
+        if (event.key === "ContextMenu" || (event.shiftKey && event.key === "F10")) {
+          event.preventDefault(); const rect = swatch.getBoundingClientRect();
+          options(new MouseEvent("contextmenu", { clientX: rect.left, clientY: rect.bottom }));
+        }
+      });
     }
   }
+
+  private cancelPresetHold(): void {
+    if (this.presetPressTimer !== undefined) window.clearTimeout(this.presetPressTimer);
+    this.presetPressTimer = undefined;
+  }
+
+  get optionsOpen(): boolean { return this.presetMenu !== undefined; }
 
   /** Deletes one palette entry outright (the one-swatch minimum holds). */
   private removePresetColor(spec: BrushToolSpec, value: string): void {
@@ -466,6 +497,7 @@ export class BrushPopoverController {
     const resetButton = resetRow.createEl("button", { text: "Reset", attr: { type: "button" } });
     resetButton.addEventListener("click", () => {
       settings.pressureCurve = undefined;
+      selectedIndex = dragIndex = -1; removePoint.disabled = true;
       this.update();
     });
     const editor = curveBody.createDiv({ cls: "ink-curve-editor", attr: { "aria-label": "Pressure mapping curve" } });
@@ -477,6 +509,15 @@ export class BrushPopoverController {
     };
     const curve = (): number[][] => settings.pressureCurve ? settings.pressureCurve.map((point) => [...point]) : [[0, 0], [1, 1]];
     let dragIndex = -1;
+    let selectedIndex = -1;
+    const removePoint = resetRow.createEl("button", { text: "Remove point", attr: { type: "button" } });
+    removePoint.disabled = true;
+    removePoint.addEventListener("click", () => {
+      const points = curve();
+      if (selectedIndex <= 0 || selectedIndex >= points.length - 1) return;
+      points.splice(selectedIndex, 1); settings.pressureCurve = points;
+      selectedIndex = dragIndex = -1; removePoint.disabled = true; this.update();
+    });
     canvas.addEventListener("pointerdown", (event) => {
       const position = hit(event.clientX, event.clientY);
       const points = curve();
@@ -486,11 +527,7 @@ export class BrushPopoverController {
         const d = Math.hypot(points[index][0] - position.x, points[index][1] - position.y);
         if (d < nearestDistance) { nearest = index; nearestDistance = d; }
       }
-      if (event.detail >= 2 && nearest > 0 && nearest < points.length - 1 && points.length > 2) {
-        points.splice(nearest, 1);
-        settings.pressureCurve = points;
-        dragIndex = -1;
-      } else if (nearest >= 0) {
+      if (nearest >= 0) {
         dragIndex = nearest;
       } else if (points.length < 6) {
         const insertAt = points.findIndex((point) => point[0] > position.x);
@@ -503,6 +540,7 @@ export class BrushPopoverController {
         settings.pressureCurve = points;
         dragIndex = index;
       }
+      selectedIndex = dragIndex; removePoint.disabled = selectedIndex <= 0 || selectedIndex >= curve().length - 1;
       canvas.setPointerCapture(event.pointerId);
       this.update();
       event.preventDefault();
@@ -521,12 +559,6 @@ export class BrushPopoverController {
         const low = points[dragIndex - 1][0] + 0.02;
         const high = points[dragIndex + 1][0] - 0.02;
         point[0] = Math.max(low, Math.min(high, position.x));
-      }
-      settings.pressureCurve = points;
-      // Flinging an interior point onto the bottom edge removes it.
-      if (!isEnd && dragIndex > 0 && dragIndex < points.length - 1 && point[1] <= 0.02) {
-        points.splice(dragIndex, 1);
-        dragIndex = -1;
       }
       settings.pressureCurve = points;
       this.update();
@@ -562,6 +594,7 @@ export class BrushPopoverController {
   }
 
   close(): void {
+    this.cancelPresetHold(); this.presetMenu?.hide();
     if (!this.openState) return;
     this.openState = false;
     for (const flush of this.customPickers) flush();

@@ -259,7 +259,7 @@ for (const width of [360, 1280]) {
     await page.screenshot({ path: `test-results/image-controls-${width}.png` });
     await page.getByRole("button", { name: "Pen", exact: true }).click();
     await expect(page.locator(".ink-image-inspector")).toBeHidden();
-    expect(await placed.evaluate((el) => getComputedStyle(el).pointerEvents)).toBe("none");
+    expect(await placed.evaluate((el) => getComputedStyle(el).pointerEvents)).toBe("auto");
     await page.screenshot({ path: `test-results/images-${width}.png` });
     expect(errors).toEqual([]);
   });
@@ -347,7 +347,7 @@ test("image editing dismisses outside and excludes pen and native stylus input i
     el.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, cancelable: true, touches: [touch], changedTouches: [touch] }));
     el.dispatchEvent(new TouchEvent("touchend", { bubbles: true, cancelable: true, touches: [], changedTouches: [touch] }));
   });
-  await expect(inspector).toBeHidden();
+  await expect(inspector).toBeVisible();
   expect(await page.evaluate(() => (window as any).__inkNotesPreview.view.currentPage().strokes.length)).toBe(count);
   for (const tool of ["Pen", "Highlight", "Erase", "Select"]) {
     await page.getByRole("button", { name: tool, exact: true }).click();
