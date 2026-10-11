@@ -118,7 +118,8 @@ export class Modal {
   private escape = (event: KeyboardEvent) => { if (event.key === "Escape") this.close(); };
   constructor(public app?: unknown) {
     this.containerEl.className = "preview-modal-container";
-    this.modalEl.className = "preview-modal";
+    this.modalEl.className = "preview-modal modal";
+    this.contentEl.className = "modal-content";
     this.modalEl.setAttribute("role", "dialog");
     this.modalEl.setAttribute("aria-modal", "true");
     this.modalEl.append(this.titleEl, this.contentEl);

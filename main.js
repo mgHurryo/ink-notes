@@ -23152,6 +23152,15 @@ function button(parent, text, run) {
   el.addEventListener("click", run);
   return el;
 }
+function libraryMenu(parent, label) {
+  const menu = parent.createEl("details", { cls: "ink-image-library-menu" });
+  menu.createEl("summary", { text: label });
+  const panel = menu.createDiv({ cls: "ink-image-library-menu-panel" });
+  panel.addEventListener("click", (e) => {
+    if (e.target.closest("button")) menu.open = false;
+  });
+  return panel;
+}
 var ImageLibraryModal = class extends import_obsidian2.Modal {
   constructor(store, insert) {
     super(store.app);
@@ -23169,6 +23178,21 @@ var ImageLibraryModal = class extends import_obsidian2.Modal {
   onOpen() {
     this.setTitle("Image library");
     this.modalEl.addClass("ink-image-library");
+    this.contentEl.addEventListener("click", (e) => {
+      this.contentEl.querySelectorAll("details[open]").forEach((menu) => {
+        if (!menu.contains(e.target)) menu.open = false;
+      });
+    }, { signal: this.events.signal });
+    this.contentEl.addEventListener("keydown", (e) => {
+      var _a;
+      if (e.key !== "Escape") return;
+      const menu = this.contentEl.querySelector("details[open]");
+      if (!menu) return;
+      menu.open = false;
+      (_a = menu.querySelector("summary")) == null ? void 0 : _a.focus();
+      e.preventDefault();
+      e.stopPropagation();
+    }, { signal: this.events.signal });
     this.contentEl.addEventListener("dragover", (e) => e.preventDefault(), { signal: this.events.signal });
     this.contentEl.addEventListener("drop", (e) => {
       var _a, _b;
@@ -23242,13 +23266,8 @@ var ImageLibraryModal = class extends import_obsidian2.Modal {
       this.query = search.value;
       void this.render().catch((e) => this.report(e));
     };
-    button(tools, "New group", () => this.groupDialog());
-    if (this.groupId && this.groupId !== "*") button(tools, "Rename group", () => {
-      var _a;
-      return this.groupDialog(this.groupId, (_a = library.groups.find((g) => g.id === this.groupId)) == null ? void 0 : _a.name);
-    });
-    const imports = el.createDiv({ cls: "ink-image-library-tools" });
-    const picker = imports.createEl("input", { type: "file", attr: { multiple: "", accept: "image/*", "aria-label": "Import photos or files" } });
+    const imports = libraryMenu(tools, "Import images");
+    const picker = el.createEl("input", { type: "file", attr: { multiple: "", accept: "image/*", "aria-label": "Import photos or files" } });
     picker.hidden = true;
     picker.onchange = () => {
       var _a;
@@ -23257,13 +23276,24 @@ var ImageLibraryModal = class extends import_obsidian2.Modal {
     button(imports, "Photos / files", () => picker.click());
     button(imports, "From vault", () => this.vaultDialog());
     button(imports, "Enter vault paths", () => this.pathDialog());
-    el.createEl("p", { text: "Choose multiple images, drop files here, or paste copied images. Imports are saved as PNG copies (up to 30 MB / 16 MP each). Animated images use their first frame." });
+    imports.createEl("p", { text: "Batch import, drop or paste images. PNG copies, up to 30 MB / 16 MP each. Animated images use their first frame." });
     const assets = library.assets.filter((a) => (this.groupId === "*" || a.groupId === this.groupId) && a.name.toLowerCase().includes(this.query.toLowerCase()));
-    const bar = el.createDiv({ cls: "ink-image-library-tools" });
-    button(bar, "Select visible", () => {
+    const collection = el.createDiv({ cls: "ink-image-library-collection" });
+    collection.createSpan({ text: `${assets.length} images`, cls: "ink-image-library-total" });
+    const groups = libraryMenu(collection, "Groups");
+    button(groups, "New group", () => this.groupDialog());
+    if (this.groupId && this.groupId !== "*") button(groups, "Rename group", () => {
+      var _a;
+      return this.groupDialog(this.groupId, (_a = library.groups.find((g) => g.id === this.groupId)) == null ? void 0 : _a.name);
+    });
+    const selectAll = button(collection, "Select visible", () => {
       assets.forEach((a) => this.selected.add(a.id));
       void this.render().catch((e) => this.report(e));
     });
+    selectAll.disabled = !assets.length;
+    const grid = el.createDiv({ cls: "ink-image-library-grid", attr: { "aria-label": "Library images" } });
+    const footer = el.createDiv({ cls: "ink-image-library-footer" });
+    const bar = footer.createDiv({ cls: "ink-image-library-batch" });
     const clear = button(bar, "Clear selection", () => {
       this.selected.clear();
       void this.render().catch((e) => this.report(e));
@@ -23276,21 +23306,20 @@ var ImageLibraryModal = class extends import_obsidian2.Modal {
     };
     const remove = button(bar, "Delete selected", () => this.deleteDialog(library.assets.filter((asset) => this.selected.has(asset.id))));
     remove.addClass("mod-warning");
-    const count = el.createEl("p", { attr: { role: "status", "aria-live": "polite" } });
+    const primary = footer.createDiv({ cls: "ink-image-library-primary" });
+    const count = primary.createSpan({ attr: { role: "status", "aria-live": "polite" } });
     if (this.lastDeleted.length) {
-      button(bar, `Undo last deletion (${this.lastDeleted.length})`, () => {
+      button(footer, `Undo last deletion (${this.lastDeleted.length})`, () => {
         void this.operation(async () => {
           await this.store.restore(this.lastDeleted);
           this.lastDeleted = [];
           new import_obsidian2.Notice("Image library deletion undone");
         });
       });
-      el.createEl("p", { text: "Undo is available for the last deletion until this library closes or another deletion replaces it." });
     }
-    const grid = el.createDiv({ cls: "ink-image-library-grid" });
     for (const asset of assets) {
       const card = grid.createEl("label", { cls: "ink-image-library-card" });
-      const check = card.createEl("input", { type: "checkbox" });
+      const check = card.createEl("input", { type: "checkbox", attr: { "aria-label": `Select ${asset.name}` } });
       check.checked = this.selected.has(asset.id);
       check.onchange = () => {
         if (check.checked) this.selected.add(asset.id);
@@ -23302,13 +23331,14 @@ var ImageLibraryModal = class extends import_obsidian2.Modal {
       } catch (e) {
         card.createSpan({ text: "Missing image" });
       }
-      card.createSpan({ text: asset.name });
+      card.createSpan({ text: asset.name, cls: "ink-image-library-name", attr: { title: asset.name } });
     }
-    if (!assets.length) grid.createEl("p", { text: "No images yet. Import photos or files to begin." });
-    const insert = button(el, "Insert selected", () => {
+    if (!assets.length) grid.createEl("p", { cls: "ink-image-library-empty", text: library.assets.length ? "No matching images. Try another search or group." : "Your image library is empty. Use Import images, or drop or paste images here." });
+    const insert = button(primary, "Insert selected", () => {
       this.insert(library.assets.filter((a) => this.selected.has(a.id)));
       this.close();
     });
+    insert.addClass("mod-cta");
     const updateActions = () => {
       const size = this.selected.size, hidden = size - assets.filter((asset) => this.selected.has(asset.id)).length;
       count.textContent = `${size} selected${hidden ? ` (${hidden} hidden by filter)` : ""}`;
@@ -23318,6 +23348,7 @@ var ImageLibraryModal = class extends import_obsidian2.Modal {
       remove.disabled = !size;
       move.disabled = !size;
       clear.disabled = !size;
+      bar.hidden = !size;
     };
     updateActions();
   }
@@ -23500,20 +23531,23 @@ var PageImageLayer = class {
         e.preventDefault();
         e.stopPropagation();
       } else this.cancel();
-    }, { signal, passive: false });
+    }, { signal, passive: false, capture: true });
     doc.addEventListener("touchend", (e) => {
       var _a2;
       if (((_a2 = this.drag) == null ? void 0 : _a2.touch) && Array.from(e.changedTouches).some((t) => t.identifier === this.drag.id)) {
         this.finish();
         e.stopPropagation();
       }
-    }, { signal });
+    }, { signal, capture: true });
     doc.addEventListener("touchcancel", () => this.cancel(), { signal });
     (_a = doc.defaultView) == null ? void 0 : _a.addEventListener("blur", () => this.cancel(), { signal });
-    this.bind(this.outline, true);
+    const handle = this.outline.createEl("button", { cls: "ink-image-resize", attr: { type: "button", "aria-label": "Resize image" } });
+    handle.textContent = "\u2198";
+    this.bind(handle, true);
     for (const type of ["pointerdown", "touchstart", "touchmove"]) this.inspector.addEventListener(type, (e) => e.stopPropagation(), { signal });
   }
   dispose() {
+    this.drag = null;
     this.events.abort();
     this.layer.remove();
     this.outline.remove();
@@ -23522,7 +23556,6 @@ var PageImageLayer = class {
   clear() {
     this.cancel();
     this.selectedId = null;
-    this.last = void 0;
     this.outline.hidden = this.inspector.hidden = true;
   }
   select(id) {
@@ -23530,30 +23563,31 @@ var PageImageLayer = class {
     if (!this.context.editable() || !((_a = this.context.page().images) == null ? void 0 : _a.some((image) => image.id === id))) return;
     this.context.select();
     this.selectedId = id;
-    this.last = void 0;
     this.sync();
   }
   sync() {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     const page = this.context.page(), editable = this.context.editable();
     if (this.drag && (this.drag.pageId !== page.id || !editable)) this.cancel();
     if (((_a = this.last) == null ? void 0 : _a.pageId) === page.id && this.last.images === page.images && this.last.editable === editable && this.last.selectedId === this.selectedId) return;
-    this.last = { pageId: page.id, images: page.images, editable, selectedId: this.selectedId };
-    this.layer.empty();
-    for (const image2 of (_b = page.images) != null ? _b : []) {
-      const el = this.layer.createEl("img", { cls: "ink-placed-image", attr: { alt: "Inserted image", draggable: "false" } });
-      try {
-        el.src = this.store.url(image2.assetPath);
-      } catch (e) {
-        el.alt = "Missing image";
+    if (((_b = this.last) == null ? void 0 : _b.pageId) !== page.id || this.last.images !== page.images || this.last.editable !== editable) {
+      this.layer.empty();
+      for (const image2 of (_c = page.images) != null ? _c : []) {
+        const el = this.layer.createEl("img", { cls: "ink-placed-image", attr: { alt: "Inserted image", draggable: "false" } });
+        try {
+          el.src = this.store.url(image2.assetPath);
+        } catch (e) {
+          el.alt = "Missing image";
+        }
+        el.dataset.imageId = image2.id;
+        el.style.zIndex = image2.foreground ? "7" : "0";
+        el.style.pointerEvents = editable ? "auto" : "none";
+        this.position(el, image2);
+        this.bind(el, false);
       }
-      el.dataset.imageId = image2.id;
-      el.style.zIndex = image2.foreground ? "7" : "0";
-      el.style.pointerEvents = editable ? "auto" : "none";
-      this.position(el, image2);
-      this.bind(el, false);
     }
-    const image = ((_c = page.images) != null ? _c : []).find((i) => i.id === this.selectedId);
+    this.last = { pageId: page.id, images: page.images, editable, selectedId: this.selectedId };
+    const image = ((_d = page.images) != null ? _d : []).find((i) => i.id === this.selectedId);
     this.outline.hidden = this.inspector.hidden = !image || !editable;
     if (image && editable) {
       this.position(this.outline, image);
@@ -23582,10 +23616,6 @@ var PageImageLayer = class {
         this.clear();
         this.sync();
       });
-      this.outline.textContent = "";
-      const handle = this.outline.createEl("button", { cls: "ink-image-resize", attr: { type: "button", "aria-label": "Resize image" } });
-      handle.textContent = "\u2198";
-      this.bind(handle, true);
     }
   }
   button(text, run) {
@@ -23661,9 +23691,12 @@ var PageImageLayer = class {
     if (drag && this.context.editable() && this.context.page().id === drag.pageId) this.commit(drag.original, drag.preview);
   }
   cancel() {
-    if (!this.drag) return;
+    const drag = this.drag;
+    if (!drag) return;
     this.drag = null;
-    this.last = void 0;
+    const el = Array.from(this.layer.children).find((node) => node.dataset.imageId === drag.original.id);
+    if (el) this.position(el, drag.original);
+    this.position(this.outline, drag.original);
     this.sync();
   }
   isSelected(image) {
@@ -24820,6 +24853,8 @@ function pasteClipboardStrokes(content, pageId, width, height, target) {
 }
 
 // src/ink-writing.ts
+var PASTE_HOLD_DELAY_MS = 600;
+var PASTE_HOLD_SLOP_PX = 10;
 var STROKE_ERASER_HIT_RADIUS = 10;
 var OVERLAY_PIXEL_BUDGET = 12e6;
 var SAVE_IDLE_DELAY = 1500;
@@ -25148,6 +25183,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
     this.inkClipboard = new InkClipboard();
     this.selectionActions = null;
     this.pasteTarget = null;
+    this.pasteHold = null;
     this.lassoSettingsPopover = null;
     this.lassoSettingsCleanup = null;
     // --- history
@@ -25702,9 +25738,39 @@ var InkWritingView = class extends import_obsidian4.FileView {
     });
     const scroller = this.inputScroller();
     const doc = this.containerEl.ownerDocument;
-    this.registerDomEvent((_a = doc.defaultView) != null ? _a : window, "resize", () => this.positionSelectionActions());
+    this.registerDomEvent((_a = doc.defaultView) != null ? _a : window, "resize", () => {
+      this.cancelPasteHold();
+      this.hideSelectionActions();
+      this.pasteTarget = null;
+    });
     this.registerDomEvent(doc, "scroll", () => this.positionSelectionActions(), true);
+    const dismissActions = (event) => {
+      var _a2, _b;
+      const target = event.target;
+      if (target && ((_a2 = this.selectionActions) == null ? void 0 : _a2.contains(target))) return;
+      this.cancelPasteHold();
+      this.hideSelectionActions();
+      this.pasteTarget = null;
+      if (this.activePointerId === null && this.selectedStrokeIds.size && target && !((_b = this.inputHost()) == null ? void 0 : _b.contains(target))) {
+        this.clearSelection();
+        this.drawStrokes(this.currentPage().strokes);
+      }
+    };
+    this.registerDomEvent(doc, "pointerdown", dismissActions, true);
+    this.registerDomEvent(doc, "touchstart", dismissActions, true);
+    this.registerDomEvent(doc, "touchcancel", () => {
+      this.cancelPasteHold();
+      this.hideSelectionActions();
+      this.pasteTarget = null;
+    }, true);
+    this.registerDomEvent(doc, "touchend", () => this.cancelPasteHold(), true);
+    this.registerDomEvent(scroller, "scroll", () => {
+      this.cancelPasteHold();
+      this.hideSelectionActions();
+      this.pasteTarget = null;
+    }, { passive: true });
     this.register(() => {
+      this.cancelPasteHold();
       this.hideSelectionActions();
       this.closeLassoSettings();
     });
@@ -25750,6 +25816,9 @@ var InkWritingView = class extends import_obsidian4.FileView {
       }, true);
     }
     const reset = () => {
+      this.cancelPasteHold();
+      this.hideSelectionActions();
+      this.pasteTarget = null;
       this.desktopSpaceDown = false;
       scroller.classList.remove("ink-pan-ready");
       this.endDesktopPan();
@@ -25933,6 +26002,11 @@ var InkWritingView = class extends import_obsidian4.FileView {
   }
   onPointerDown(event, source = "pointer") {
     var _a, _b, _c, _d, _e, _f, _g, _h;
+    this.cancelPasteHold();
+    if (event.pointerType !== "touch") {
+      this.hideSelectionActions();
+      this.pasteTarget = null;
+    }
     this.devPointerEvents += 1;
     this.devLastPointerType = event.pointerType || this.devLastPointerType;
     if (this.beginDesktopPan(event)) return;
@@ -26541,16 +26615,25 @@ var InkWritingView = class extends import_obsidian4.FileView {
   }
   // ---------------------------------------------------------------- touch
   onTouchStart(event) {
-    var _a, _b, _c;
-    if (((_a = this.touchGesture) == null ? void 0 : _a.ids.length) === 2) this.scheduleZoomHudHide();
+    var _a, _b, _c, _d, _e;
+    this.cancelPasteHold();
+    if (event.type === "touchstart") {
+      this.hideSelectionActions();
+      this.pasteTarget = null;
+      if (this.activePointerId === null && this.selectedStrokeIds.size && !Array.from((_a = event.changedTouches) != null ? _a : []).some((touch) => touch.touchType === "stylus")) {
+        this.clearSelection();
+        this.drawStrokes(this.currentPage().strokes);
+      }
+    }
+    if (((_b = this.touchGesture) == null ? void 0 : _b.ids.length) === 2) this.scheduleZoomHudHide();
     if (this.nativeMenuOpen()) {
       this.touchGesture = null;
       return;
     }
-    (_b = event.stopPropagation) == null ? void 0 : _b.call(event);
+    (_c = event.stopPropagation) == null ? void 0 : _c.call(event);
     if (this.onStylusTouch(event)) return;
     if (event.cancelable && event.touches.length < 2) event.preventDefault();
-    if (((_c = this.touchGesture) == null ? void 0 : _c.axis) === "x" && event.touches.length > 1) {
+    if (((_d = this.touchGesture) == null ? void 0 : _d.axis) === "x" && event.touches.length > 1) {
       this.cancelPageFlip();
       this.touchGesture = null;
       return;
@@ -26588,6 +26671,20 @@ var InkWritingView = class extends import_obsidian4.FileView {
       pageY: (y - rect.top) / rect.height
     };
     if (b) this.showZoomHud();
+    else if (event.type === "touchstart" && !this.inputLocked() && this.availableClipboard() && ((_e = this.inputHost()) == null ? void 0 : _e.contains(a.target)) && pointInsideRect(a, rect)) {
+      const page = this.currentPage(), gesture = this.touchGesture;
+      const point = { x: gesture.pageX, y: gesture.pageY };
+      this.pasteHold = { x, y, timer: window.setTimeout(() => {
+        this.pasteHold = null;
+        if (this.touchGesture !== gesture || this.currentPage() !== page || this.activePointerId !== null || this.inputLocked() || this.nativeMenuOpen() || !this.availableClipboard()) return;
+        this.pasteTarget = point;
+        this.showSelectionActions(true);
+      }, PASTE_HOLD_DELAY_MS) };
+    }
+  }
+  cancelPasteHold() {
+    if (this.pasteHold) window.clearTimeout(this.pasteHold.timer);
+    this.pasteHold = null;
   }
   /**
    * Finalizes interactions whose pointer the platform lost. iPadOS split-view
@@ -26610,7 +26707,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
     if (Date.now() - this.lastPointerActivityAt > 2500) this.finishPointerInput(false);
   }
   onTouchMove(event) {
-    var _a;
+    var _a, _b;
     if (this.nativeMenuOpen()) {
       this.touchGesture = null;
       return;
@@ -26633,6 +26730,14 @@ var InkWritingView = class extends import_obsidian4.FileView {
       this.onTouchStart(event);
       return;
     }
+    if (this.pasteHold) {
+      if (b || Math.hypot(a.clientX - this.pasteHold.x, a.clientY - this.pasteHold.y) > PASTE_HOLD_SLOP_PX) this.cancelPasteHold();
+      else {
+        event.preventDefault();
+        return;
+      }
+    }
+    if (((_b = this.selectionActions) == null ? void 0 : _b.dataset.pasteOnly) && Math.hypot(a.clientX - gesture.startX, a.clientY - gesture.startY) > PASTE_HOLD_SLOP_PX) this.hideSelectionActions();
     event.preventDefault();
     if (!b) {
       const scroller = this.inputScroller();
@@ -26797,6 +26902,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
   }
   clearSelection() {
     var _a;
+    this.cancelPasteHold();
     (_a = this.pageImages) == null ? void 0 : _a.clear();
     this.selectedStrokeIds.clear();
     this.lassoPath = [];
@@ -26851,8 +26957,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
     } else if (mode === "freehand" && this.lassoPath.length >= 3) {
       this.selectedStrokeIds = new Set(page.strokes.filter((stroke) => stroke.points.some((point) => pointInPolygon(point, this.lassoPath))).map((stroke) => stroke.id));
     }
-    const lastPoint = this.lassoPath[this.lassoPath.length - 1];
-    if (lastPoint) this.pasteTarget = { x: lastPoint.x, y: lastPoint.y };
+    this.pasteTarget = null;
     this.lassoPath = [];
     this.drawStrokes(page.strokes);
     this.showSelectionActions();
@@ -26874,7 +26979,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
       strokes
     });
     if (cut) this.deleteSelection();
-    else this.showSelectionActions();
+    else this.hideSelectionActions();
   }
   deleteSelection() {
     if (this.inputLocked() || this.activePointerId !== null) return;
@@ -26891,7 +26996,6 @@ var InkWritingView = class extends import_obsidian4.FileView {
     this.drawInteractiveStrokes(page.strokes, true);
     this.scheduleSave();
     this.afterInputFullySettled();
-    this.showSelectionActions();
   }
   pasteSelection() {
     var _a;
@@ -26912,27 +27016,36 @@ var InkWritingView = class extends import_obsidian4.FileView {
     this.markChanged(page);
     this.queueStrokePatch(page, strokes, []);
     this.pushCommand(this.erasedStrokesCommand(page.id, [], strokes));
-    this.selectedStrokeIds = new Set(strokes.map((stroke) => stroke.id));
+    this.selectedStrokeIds = this.state.tool === "lasso" ? new Set(strokes.map((stroke) => stroke.id)) : /* @__PURE__ */ new Set();
+    this.hideSelectionActions();
+    this.pasteTarget = null;
     this.drawInteractiveStrokes(page.strokes, true);
     this.scheduleSave();
     this.afterInputFullySettled();
-    this.showSelectionActions();
   }
   hideSelectionActions() {
     var _a;
     (_a = this.selectionActions) == null ? void 0 : _a.remove();
     this.selectionActions = null;
   }
-  showSelectionActions() {
+  showSelectionActions(pasteOnly = false) {
     this.hideSelectionActions();
     if (!this.viewReady) return;
-    const selected = this.selectedStrokes().length > 0;
-    if (this.state.tool !== "lasso" || this.inputLocked() || !selected && !this.availableClipboard()) return;
+    const selected = !pasteOnly && this.selectedStrokes().length > 0;
+    if (this.inputLocked() || (pasteOnly ? !this.availableClipboard() : this.state.tool !== "lasso" || !selected)) return;
     const pop = this.toolbarRoot().createDiv({ cls: "ink-selection-actions", attr: { role: "group", "aria-label": "Selection actions" } });
     this.selectionActions = pop;
+    if (pasteOnly) pop.dataset.pasteOnly = "true";
     for (const type of ["pointerdown", "touchstart", "touchmove"]) pop.addEventListener(type, (event) => event.stopPropagation());
     const add = (icon, label, action, disabled, cls = "") => {
-      const button2 = this.addIconButton(pop, icon, label, action, disabled);
+      const button2 = this.addIconButton(pop, icon, label, () => {
+        try {
+          action();
+        } finally {
+          this.hideSelectionActions();
+          this.pasteTarget = null;
+        }
+      }, disabled);
       if (cls) button2.addClass(cls);
       button2.createSpan({ text: label });
     };
@@ -26948,7 +27061,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     const pop = this.selectionActions;
     if (!pop) return;
-    if (this.inputLocked() || this.state.tool !== "lasso") {
+    if (this.inputLocked() || !pop.dataset.pasteOnly && (this.state.tool !== "lasso" || !this.selectedStrokes().length)) {
       this.hideSelectionActions();
       return;
     }
@@ -26959,7 +27072,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
     const topEdge = Math.max(8, viewport.top + 8), bottomEdge = Math.min(win.innerHeight - 8, viewport.bottom - 8);
     pop.style.maxWidth = `${Math.max(44, rightEdge - leftEdge)}px`;
     pop.style.maxHeight = `${Math.max(44, bottomEdge - topEdge)}px`;
-    const size = { width: pop.offsetWidth, height: pop.offsetHeight }, bounds = selectionBounds(this.selectedStrokes());
+    const size = { width: pop.offsetWidth, height: pop.offsetHeight }, bounds = pop.dataset.pasteOnly ? null : selectionBounds(this.selectedStrokes());
     const x = rect.left + (bounds ? (bounds.minX + bounds.maxX) / 2 : (_c = (_b = this.pasteTarget) == null ? void 0 : _b.x) != null ? _c : 0.5) * rect.width;
     const top = rect.top + ((_f = (_e = bounds == null ? void 0 : bounds.minY) != null ? _e : (_d = this.pasteTarget) == null ? void 0 : _d.y) != null ? _f : 0.5) * rect.height;
     const bottom = rect.top + ((_i = (_h = bounds == null ? void 0 : bounds.maxY) != null ? _h : (_g = this.pasteTarget) == null ? void 0 : _g.y) != null ? _i : 0.5) * rect.height;
@@ -27818,7 +27931,7 @@ var InkWritingView = class extends import_obsidian4.FileView {
       this.state.lasso.crossFileClipboard = toggle.checked;
       this.scheduleToolStateSave();
       paste.disabled = !this.availableClipboard();
-      this.showSelectionActions();
+      this.hideSelectionActions();
     });
     paste.addEventListener("click", () => {
       this.closeLassoSettings();

@@ -194,6 +194,16 @@ function button(parent: HTMLElement, text: string, run: () => void): HTMLButtonE
   const el = parent.createEl("button", { text, attr: { type: "button" } }); el.addEventListener("click", run); return el;
 }
 
+function libraryMenu(parent: HTMLElement, label: string): HTMLElement {
+  const menu = parent.createEl("details", { cls: "ink-image-library-menu" });
+  menu.createEl("summary", { text: label });
+  const panel = menu.createDiv({ cls: "ink-image-library-menu-panel" });
+  panel.addEventListener("click", (e) => {
+    if ((e.target as HTMLElement).closest("button")) menu.open = false;
+  });
+  return panel;
+}
+
 export class ImageLibraryModal extends Modal {
   private selected = new Set<string>();
   private groupId = "*";
@@ -207,6 +217,16 @@ export class ImageLibraryModal extends Modal {
   constructor(private readonly store: ImageLibraryStore, private readonly insert: (assets: ImageAsset[]) => void) { super(store.app); }
   onOpen(): void {
     this.setTitle("Image library"); this.modalEl.addClass("ink-image-library");
+    this.contentEl.addEventListener("click", (e) => {
+      this.contentEl.querySelectorAll<HTMLDetailsElement>("details[open]").forEach((menu) => {
+        if (!menu.contains(e.target as Node)) menu.open = false;
+      });
+    }, { signal: this.events.signal });
+    this.contentEl.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      const menu = this.contentEl.querySelector<HTMLDetailsElement>("details[open]"); if (!menu) return;
+      menu.open = false; menu.querySelector("summary")?.focus(); e.preventDefault(); e.stopPropagation();
+    }, { signal: this.events.signal });
     this.contentEl.addEventListener("dragover", (e) => e.preventDefault(), { signal: this.events.signal });
     this.contentEl.addEventListener("drop", (e) => { e.preventDefault(); void this.importDevice(Array.from(e.dataTransfer?.files ?? [])); }, { signal: this.events.signal });
     this.contentEl.addEventListener("paste", (e) => {
@@ -240,18 +260,24 @@ export class ImageLibraryModal extends Modal {
     filter.value = this.groupId; filter.onchange = () => { this.groupId = filter.value; void this.render().catch((e) => this.report(e)); };
     const search = tools.createEl("input", { type: "search", placeholder: "Search images", attr: { "aria-label": "Search images" } }); search.value = this.query;
     search.onchange = () => { this.query = search.value; void this.render().catch((e) => this.report(e)); };
-    button(tools, "New group", () => this.groupDialog());
-    if (this.groupId && this.groupId !== "*") button(tools, "Rename group", () => this.groupDialog(this.groupId, library.groups.find((g) => g.id === this.groupId)?.name));
-    const imports = el.createDiv({ cls: "ink-image-library-tools" });
-    const picker = imports.createEl("input", { type: "file", attr: { multiple: "", accept: "image/*", "aria-label": "Import photos or files" } }); picker.hidden = true;
+    const imports = libraryMenu(tools, "Import images");
+    const picker = el.createEl("input", { type: "file", attr: { multiple: "", accept: "image/*", "aria-label": "Import photos or files" } }); picker.hidden = true;
     picker.onchange = () => { void this.importDevice(Array.from(picker.files ?? [])); };
     button(imports, "Photos / files", () => picker.click());
     button(imports, "From vault", () => this.vaultDialog());
     button(imports, "Enter vault paths", () => this.pathDialog());
-    el.createEl("p", { text: "Choose multiple images, drop files here, or paste copied images. Imports are saved as PNG copies (up to 30 MB / 16 MP each). Animated images use their first frame." });
+    imports.createEl("p", { text: "Batch import, drop or paste images. PNG copies, up to 30 MB / 16 MP each. Animated images use their first frame." });
     const assets = library.assets.filter((a) => (this.groupId === "*" || a.groupId === this.groupId) && a.name.toLowerCase().includes(this.query.toLowerCase()));
-    const bar = el.createDiv({ cls: "ink-image-library-tools" });
-    button(bar, "Select visible", () => { assets.forEach((a) => this.selected.add(a.id)); void this.render().catch((e) => this.report(e)); });
+    const collection = el.createDiv({ cls: "ink-image-library-collection" });
+    collection.createSpan({ text: `${assets.length} images`, cls: "ink-image-library-total" });
+    const groups = libraryMenu(collection, "Groups");
+    button(groups, "New group", () => this.groupDialog());
+    if (this.groupId && this.groupId !== "*") button(groups, "Rename group", () => this.groupDialog(this.groupId, library.groups.find((g) => g.id === this.groupId)?.name));
+    const selectAll = button(collection, "Select visible", () => { assets.forEach((a) => this.selected.add(a.id)); void this.render().catch((e) => this.report(e)); });
+    selectAll.disabled = !assets.length;
+    const grid = el.createDiv({ cls: "ink-image-library-grid", attr: { "aria-label": "Library images" } });
+    const footer = el.createDiv({ cls: "ink-image-library-footer" });
+    const bar = footer.createDiv({ cls: "ink-image-library-batch" });
     const clear = button(bar, "Clear selection", () => { this.selected.clear(); void this.render().catch((e) => this.report(e)); });
     const move = bar.createEl("select", { attr: { "aria-label": "Move selected images to group" } });
     move.createEl("option", { text: "Move selected to…", value: "*" });
@@ -259,31 +285,32 @@ export class ImageLibraryModal extends Modal {
     move.onchange = () => { if (move.value !== "*") void this.operation(() => this.store.move([...this.selected], move.value)); };
     const remove = button(bar, "Delete selected", () => this.deleteDialog(library.assets.filter((asset) => this.selected.has(asset.id))));
     remove.addClass("mod-warning");
-    const count = el.createEl("p", { attr: { role: "status", "aria-live": "polite" } });
+    const primary = footer.createDiv({ cls: "ink-image-library-primary" });
+    const count = primary.createSpan({ attr: { role: "status", "aria-live": "polite" } });
     if (this.lastDeleted.length) {
-      button(bar, `Undo last deletion (${this.lastDeleted.length})`, () => { void this.operation(async () => {
+      button(footer, `Undo last deletion (${this.lastDeleted.length})`, () => { void this.operation(async () => {
         await this.store.restore(this.lastDeleted); this.lastDeleted = [];
         new Notice("Image library deletion undone");
       }); });
-      el.createEl("p", { text: "Undo is available for the last deletion until this library closes or another deletion replaces it." });
     }
-    const grid = el.createDiv({ cls: "ink-image-library-grid" });
     for (const asset of assets) {
       const card = grid.createEl("label", { cls: "ink-image-library-card" });
-      const check = card.createEl("input", { type: "checkbox" }); check.checked = this.selected.has(asset.id);
+      const check = card.createEl("input", { type: "checkbox", attr: { "aria-label": `Select ${asset.name}` } }); check.checked = this.selected.has(asset.id);
       check.onchange = () => { if (check.checked) this.selected.add(asset.id); else this.selected.delete(asset.id); updateActions(); };
       try { card.createEl("img", { attr: { src: this.store.url(asset.path), alt: asset.name, loading: "lazy" } }); }
       catch { card.createSpan({ text: "Missing image" }); }
-      card.createSpan({ text: asset.name });
+      card.createSpan({ text: asset.name, cls: "ink-image-library-name", attr: { title: asset.name } });
     }
-    if (!assets.length) grid.createEl("p", { text: "No images yet. Import photos or files to begin." });
-    const insert = button(el, "Insert selected", () => { this.insert(library.assets.filter((a) => this.selected.has(a.id))); this.close(); });
+    if (!assets.length) grid.createEl("p", { cls: "ink-image-library-empty", text: library.assets.length ? "No matching images. Try another search or group." : "Your image library is empty. Use Import images, or drop or paste images here." });
+    const insert = button(primary, "Insert selected", () => { this.insert(library.assets.filter((a) => this.selected.has(a.id))); this.close(); });
+    insert.addClass("mod-cta");
     const updateActions = () => {
       const size = this.selected.size, hidden = size - assets.filter((asset) => this.selected.has(asset.id)).length;
       count.textContent = `${size} selected${hidden ? ` (${hidden} hidden by filter)` : ""}`;
       insert.textContent = `Insert selected (${size})`; insert.disabled = !size;
       remove.textContent = `Delete selected (${size})`; remove.disabled = !size;
       move.disabled = !size; clear.disabled = !size;
+      bar.hidden = !size;
     };
     updateActions();
   }

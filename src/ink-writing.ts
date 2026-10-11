@@ -42,6 +42,9 @@ import { canvasResolution, clampPercent, drawInkStroke, normalizePressureCurve, 
 import { defaultToolState, type SharedToolState } from "./tool-state";
 import { InkClipboard, pasteClipboardStrokes } from "./lasso-clipboard";
 
+const PASTE_HOLD_DELAY_MS = 600;
+const PASTE_HOLD_SLOP_PX = 10;
+
 export interface ToolState {
   tool: InkTool;
   pen: BrushSettings;
@@ -620,6 +623,7 @@ export abstract class InkWritingView extends FileView {
   private inkClipboard = new InkClipboard();
   private selectionActions: HTMLElement | null = null;
   private pasteTarget: { x: number; y: number } | null = null;
+  private pasteHold: { timer: number; x: number; y: number } | null = null;
   protected lassoSettingsPopover: HTMLElement | null = null;
   private lassoSettingsCleanup: (() => void) | null = null;
 
@@ -1132,9 +1136,24 @@ export abstract class InkWritingView extends FileView {
     this.register(() => { this.pageImages?.dispose(); this.pageImages = undefined; });
     const scroller = this.inputScroller();
     const doc = this.containerEl.ownerDocument;
-    this.registerDomEvent(doc.defaultView ?? window, "resize", () => this.positionSelectionActions());
+    this.registerDomEvent(doc.defaultView ?? window, "resize", () => {
+      this.cancelPasteHold(); this.hideSelectionActions(); this.pasteTarget = null;
+    });
     this.registerDomEvent(doc, "scroll", () => this.positionSelectionActions(), true);
-    this.register(() => { this.hideSelectionActions(); this.closeLassoSettings(); });
+    const dismissActions = (event: Event) => {
+      const target = event.target as Node | null;
+      if (target && this.selectionActions?.contains(target)) return;
+      this.cancelPasteHold(); this.hideSelectionActions(); this.pasteTarget = null;
+      if (this.activePointerId === null && this.selectedStrokeIds.size && target && !this.inputHost()?.contains(target)) {
+        this.clearSelection(); this.drawStrokes(this.currentPage().strokes);
+      }
+    };
+    this.registerDomEvent(doc, "pointerdown", dismissActions, true);
+    this.registerDomEvent(doc, "touchstart", dismissActions, true);
+    this.registerDomEvent(doc, "touchcancel", () => { this.cancelPasteHold(); this.hideSelectionActions(); this.pasteTarget = null; }, true);
+    this.registerDomEvent(doc, "touchend", () => this.cancelPasteHold(), true);
+    this.registerDomEvent(scroller, "scroll", () => { this.cancelPasteHold(); this.hideSelectionActions(); this.pasteTarget = null; }, { passive: true });
+    this.register(() => { this.cancelPasteHold(); this.hideSelectionActions(); this.closeLassoSettings(); });
     scroller.tabIndex = 0;
     this.registerDomEvent(scroller, "pointerdown", (event) => {
       if (event.pointerType !== "mouse" || this.nativeMenuOpen()) return;
@@ -1169,6 +1188,7 @@ export abstract class InkWritingView extends FileView {
       }, true);
     }
     const reset = () => {
+      this.cancelPasteHold(); this.hideSelectionActions(); this.pasteTarget = null;
       this.desktopSpaceDown = false;
       scroller.classList.remove("ink-pan-ready");
       this.endDesktopPan();
@@ -1289,6 +1309,8 @@ export abstract class InkWritingView extends FileView {
   }
 
   protected onPointerDown(event: InkPointerSample, source: InteractionContext["source"] = "pointer"): void {
+    this.cancelPasteHold();
+    if (event.pointerType !== "touch") { this.hideSelectionActions(); this.pasteTarget = null; }
     this.devPointerEvents += 1;
     this.devLastPointerType = event.pointerType || this.devLastPointerType;
     if (this.beginDesktopPan(event)) return;
@@ -1959,6 +1981,14 @@ export abstract class InkWritingView extends FileView {
   // ---------------------------------------------------------------- touch
 
   protected onTouchStart(event: TouchEvent): void {
+    this.cancelPasteHold();
+    if (event.type === "touchstart") {
+      this.hideSelectionActions(); this.pasteTarget = null;
+      if (this.activePointerId === null && this.selectedStrokeIds.size
+        && !Array.from(event.changedTouches ?? []).some((touch) => touch.touchType === "stylus")) {
+        this.clearSelection(); this.drawStrokes(this.currentPage().strokes);
+      }
+    }
     if (this.touchGesture?.ids.length === 2) this.scheduleZoomHudHide();
     // A native menu owns the surface until dismissed: let its outside-tap
     // dismissal see this event instead of swallowing it (the menu otherwise
@@ -2007,6 +2037,22 @@ export abstract class InkWritingView extends FileView {
       pageY: (y - rect.top) / rect.height,
     };
     if (b) this.showZoomHud();
+    else if (event.type === "touchstart" && !this.inputLocked() && this.availableClipboard()
+      && this.inputHost()?.contains(a.target as Node) && pointInsideRect(a, rect)) {
+      const page = this.currentPage(), gesture = this.touchGesture;
+      const point = { x: gesture.pageX, y: gesture.pageY };
+      this.pasteHold = { x, y, timer: window.setTimeout(() => {
+        this.pasteHold = null;
+        if (this.touchGesture !== gesture || this.currentPage() !== page || this.activePointerId !== null
+          || this.inputLocked() || this.nativeMenuOpen() || !this.availableClipboard()) return;
+        this.pasteTarget = point; this.showSelectionActions(true);
+      }, PASTE_HOLD_DELAY_MS) };
+    }
+  }
+
+  private cancelPasteHold(): void {
+    if (this.pasteHold) window.clearTimeout(this.pasteHold.timer);
+    this.pasteHold = null;
   }
 
   /**
@@ -2048,6 +2094,11 @@ export abstract class InkWritingView extends FileView {
       this.onTouchStart(event);
       return;
     }
+    if (this.pasteHold) {
+      if (b || Math.hypot(a.clientX - this.pasteHold.x, a.clientY - this.pasteHold.y) > PASTE_HOLD_SLOP_PX) this.cancelPasteHold();
+      else { event.preventDefault(); return; }
+    }
+    if (this.selectionActions?.dataset.pasteOnly && Math.hypot(a.clientX - gesture.startX, a.clientY - gesture.startY) > PASTE_HOLD_SLOP_PX) this.hideSelectionActions();
     event.preventDefault();
     if (!b) {
       const scroller = this.inputScroller();
@@ -2227,6 +2278,7 @@ export abstract class InkWritingView extends FileView {
   }
 
   protected clearSelection(): void {
+    this.cancelPasteHold();
     this.pageImages?.clear();
     this.selectedStrokeIds.clear();
     this.lassoPath = [];
@@ -2284,8 +2336,7 @@ export abstract class InkWritingView extends FileView {
     } else if (mode === "freehand" && this.lassoPath.length >= 3) {
       this.selectedStrokeIds = new Set(page.strokes.filter((stroke) => stroke.points.some((point) => pointInPolygon(point, this.lassoPath))).map((stroke) => stroke.id));
     }
-    const lastPoint = this.lassoPath[this.lassoPath.length - 1];
-    if (lastPoint) this.pasteTarget = { x: lastPoint.x, y: lastPoint.y };
+    this.pasteTarget = null;
     this.lassoPath = [];
     this.drawStrokes(page.strokes);
     this.showSelectionActions();
@@ -2303,7 +2354,7 @@ export abstract class InkWritingView extends FileView {
     this.inkClipboard.copy({ filePath: this.file?.path ?? "", width: this.canvasLogicalWidth,
       height: this.canvasLogicalHeight, strokes });
     if (cut) this.deleteSelection();
-    else this.showSelectionActions();
+    else this.hideSelectionActions();
   }
 
   protected deleteSelection(): void {
@@ -2321,7 +2372,6 @@ export abstract class InkWritingView extends FileView {
     this.drawInteractiveStrokes(page.strokes, true);
     this.scheduleSave();
     this.afterInputFullySettled();
-    this.showSelectionActions();
   }
 
   protected pasteSelection(): void {
@@ -2341,11 +2391,11 @@ export abstract class InkWritingView extends FileView {
     this.markChanged(page);
     this.queueStrokePatch(page, strokes, []);
     this.pushCommand(this.erasedStrokesCommand(page.id, [], strokes));
-    this.selectedStrokeIds = new Set(strokes.map((stroke) => stroke.id));
+    this.selectedStrokeIds = this.state.tool === "lasso" ? new Set(strokes.map((stroke) => stroke.id)) : new Set();
+    this.hideSelectionActions(); this.pasteTarget = null;
     this.drawInteractiveStrokes(page.strokes, true);
     this.scheduleSave();
     this.afterInputFullySettled();
-    this.showSelectionActions();
   }
 
   private hideSelectionActions(): void {
@@ -2353,16 +2403,19 @@ export abstract class InkWritingView extends FileView {
     this.selectionActions = null;
   }
 
-  private showSelectionActions(): void {
+  private showSelectionActions(pasteOnly = false): void {
     this.hideSelectionActions();
     if (!this.viewReady) return;
-    const selected = this.selectedStrokes().length > 0;
-    if (this.state.tool !== "lasso" || this.inputLocked() || (!selected && !this.availableClipboard())) return;
+    const selected = !pasteOnly && this.selectedStrokes().length > 0;
+    if (this.inputLocked() || (pasteOnly ? !this.availableClipboard() : this.state.tool !== "lasso" || !selected)) return;
     const pop = this.toolbarRoot().createDiv({ cls: "ink-selection-actions", attr: { role: "group", "aria-label": "Selection actions" } });
     this.selectionActions = pop;
+    if (pasteOnly) pop.dataset.pasteOnly = "true";
     for (const type of ["pointerdown", "touchstart", "touchmove"] as const) pop.addEventListener(type, (event) => event.stopPropagation());
     const add = (icon: string, label: string, action: () => void, disabled: boolean, cls = ""): void => {
-      const button = this.addIconButton(pop, icon, label, action, disabled);
+      const button = this.addIconButton(pop, icon, label, () => {
+        try { action(); } finally { this.hideSelectionActions(); this.pasteTarget = null; }
+      }, disabled);
       if (cls) button.addClass(cls);
       button.createSpan({ text: label });
     };
@@ -2378,7 +2431,7 @@ export abstract class InkWritingView extends FileView {
   private positionSelectionActions(): void {
     const pop = this.selectionActions;
     if (!pop) return;
-    if (this.inputLocked() || this.state.tool !== "lasso") { this.hideSelectionActions(); return; }
+    if (this.inputLocked() || (!pop.dataset.pasteOnly && (this.state.tool !== "lasso" || !this.selectedStrokes().length))) { this.hideSelectionActions(); return; }
     const rect = this.inputRect(), viewport = this.inputScroller().getBoundingClientRect();
     const rootRect = this.toolbarRoot().getBoundingClientRect();
     const win = pop.ownerDocument.defaultView ?? window;
@@ -2387,7 +2440,7 @@ export abstract class InkWritingView extends FileView {
     pop.style.maxWidth = `${Math.max(44, rightEdge - leftEdge)}px`;
     pop.style.maxHeight = `${Math.max(44, bottomEdge - topEdge)}px`;
     // Layout dimensions stay stable while the entrance animation scales the panel.
-    const size = { width: pop.offsetWidth, height: pop.offsetHeight }, bounds = selectionBounds(this.selectedStrokes());
+    const size = { width: pop.offsetWidth, height: pop.offsetHeight }, bounds = pop.dataset.pasteOnly ? null : selectionBounds(this.selectedStrokes());
     const x = rect.left + (bounds ? (bounds.minX + bounds.maxX) / 2 : this.pasteTarget?.x ?? 0.5) * rect.width;
     const top = rect.top + (bounds?.minY ?? this.pasteTarget?.y ?? 0.5) * rect.height;
     const bottom = rect.top + (bounds?.maxY ?? this.pasteTarget?.y ?? 0.5) * rect.height;
@@ -3264,7 +3317,7 @@ export abstract class InkWritingView extends FileView {
       this.state.lasso.crossFileClipboard = toggle.checked;
       this.scheduleToolStateSave();
       paste.disabled = !this.availableClipboard();
-      this.showSelectionActions();
+      this.hideSelectionActions();
     });
     paste.addEventListener("click", () => { this.closeLassoSettings(); this.pasteSelection(); });
     const doc = pop.ownerDocument, win = doc.defaultView ?? window;
