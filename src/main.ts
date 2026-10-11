@@ -4,7 +4,7 @@ import { InkView, VIEW_TYPE_INK } from "./view";
 import { INK_EXTENSION, NotebookStore } from "./storage";
 import { createInkEmbedProcessor } from "./embed";
 import { InkWorkerService } from "./worker-service";
-import { PdfInkView, PdfWriterArbiter, VIEW_TYPE_PDF_INK } from "./pdf-view";
+import { PdfInkView, VIEW_TYPE_PDF_INK } from "./pdf-view";
 import { PdfSidecarStore } from "./pdf-store";
 import { PDF_INK_FOLDER, PDF_SIDECAR_EXTENSION } from "./pdf-sidecar";
 import { PDF_VIEW_ENHANCER_PLUGIN_IDS, PdfTabTakeover } from "./pdf-takeover";
@@ -23,7 +23,6 @@ export default class InkNotesPlugin extends Plugin {
   private store!: NotebookStore;
   private workers!: InkWorkerService;
   private pdfStore!: PdfSidecarStore;
-  private arbiter!: PdfWriterArbiter;
   private takeover!: PdfTabTakeover;
   config: InkNotesSettings = { ...DEFAULT_SETTINGS };
   /** Tool settings shared by both editors; loaded sanitized in onload and
@@ -132,11 +131,10 @@ export default class InkNotesPlugin extends Plugin {
   /**
    * PDF handwriting support: a custom view for PDF tabs, installed by
    * wrapping the public WorkspaceLeaf.setViewState choke point, plus the
-   * sidecar store, writer arbitration, and vault event wiring.
+   * sidecar store and vault event wiring.
    */
   private configurePdfSupport(): void {
     this.pdfStore = new PdfSidecarStore(this.app);
-    this.arbiter = new PdfWriterArbiter();
     this.takeover = new PdfTabTakeover(() => ({
       enabled: this.config.pdfOpenMode !== "native",
       preferInk: this.config.pdfOpenMode === "ink",
@@ -152,7 +150,7 @@ export default class InkNotesPlugin extends Plugin {
     }), VIEW_TYPE_PDF_INK);
     this.registerView(VIEW_TYPE_PDF_INK, (leaf) => {
       const view = new PdfInkView(leaf);
-      view.configure({ store: this.pdfStore, workers: this.workers, takeover: this.takeover, arbiter: this.arbiter, toolState: this.toolStateBinding });
+      view.configure({ store: this.pdfStore, workers: this.workers, takeover: this.takeover, toolState: this.toolStateBinding });
       return view;
     });
     if (this.app.vault) {

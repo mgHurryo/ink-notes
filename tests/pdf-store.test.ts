@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { TFile } from "obsidian";
 import type { App, Vault } from "obsidian";
 import { PdfSidecarFormatError, createSidecar } from "../src/pdf-sidecar";
@@ -25,6 +25,7 @@ class FakeVault {
   async createFolder(): Promise<void> {}
 
   async create(path: string, raw: string): Promise<TFile> {
+    if (this.entries.has(path)) throw new Error("file already exists");
     const file = this.makeFile(path);
     this.entries.set(path, { file, raw });
     return file;
@@ -102,6 +103,35 @@ describe("createFor", () => {
     vault.process(created, () => "manually edited");
     await store.createFor(pdfFile, FINGERPRINT, SOURCE_PAGES);
     expect(vault.rawOf(created.path)).toBe("manually edited");
+  });
+
+  it("returns the winning sidecar when two panes create it concurrently", async () => {
+    const { vault, store } = setup();
+    const pdf = vault.put(PDF_PATH, "%PDF");
+    const create = vault.create.bind(vault);
+    vi.spyOn(vault, "create").mockImplementation(async (path, raw) => {
+      await Promise.resolve();
+      return create(path, raw);
+    });
+    const [first, second] = await Promise.all([
+      store.createFor(pdf, FINGERPRINT, SOURCE_PAGES), store.createFor(pdf, FINGERPRINT, SOURCE_PAGES),
+    ]);
+    expect(first).toBe(second);
+    expect(vault.getFiles().filter(file => file.name.endsWith(".pdfink.json"))).toHaveLength(1);
+    expect((await store.read(first)).source.sha256).toBe(FINGERPRINT.sha256);
+  });
+
+  it("accepts a concurrently created folder but still propagates real create failures", async () => {
+    const { vault, store } = setup();
+    const pdf = vault.put(PDF_PATH, "%PDF");
+    vi.spyOn(vault, "createFolder").mockImplementationOnce(async () => {
+      vault.put("A_pdfinkwrittern", "");
+      throw new Error("folder already exists");
+    });
+    await expect(store.createFor(pdf, FINGERPRINT, SOURCE_PAGES)).resolves.toBeDefined();
+    vi.spyOn(vault, "create").mockRejectedValueOnce(new Error("disk full"));
+    const other = vault.put("other.pdf", "%PDF");
+    await expect(store.createFor(other, FINGERPRINT, SOURCE_PAGES)).rejects.toThrow("disk full");
   });
 });
 

@@ -6,7 +6,7 @@ import { InkWorkerService } from "../src/worker-service";
 import { PdfSidecarStore, serializeSidecar } from "../src/pdf-store";
 import { createSidecar, insertBlankNotePage, sourcePageId } from "../src/pdf-sidecar";
 import type { PdfSidecar } from "../src/pdf-sidecar";
-import { PdfInkView, PdfWriterArbiter, VIEW_TYPE_PDF_INK } from "../src/pdf-view";
+import { PdfInkView, VIEW_TYPE_PDF_INK } from "../src/pdf-view";
 import { PdfTabTakeover } from "../src/pdf-takeover";
 
 const FINGERPRINT = { sha256: "a".repeat(64), byteLength: 100 };
@@ -14,6 +14,7 @@ const SOURCE_PAGES = [{ width: 595.28, height: 841.89, rotation: 0 }];
 
 interface VaultCalls {
   created: string[];
+  createdContents: string[];
 }
 
 interface PdfViewInternals {
@@ -22,11 +23,11 @@ interface PdfViewInternals {
   mode: string;
   sidecar: PdfSidecar;
   sidecarRaw: string;
+  sidecarFile: TFile | null;
+  pendingMergedSidecar: PdfSidecar | null;
   dirty: boolean;
   writeBlockedReason: string | null;
-  writerHeld: boolean;
-  acquireWriter(): void;
-  releaseWriter(): void;
+  canEdit(): boolean;
   noteIndex: number;
   canvasLogicalWidth: number;
   canvasLogicalHeight: number;
@@ -34,8 +35,6 @@ interface PdfViewInternals {
   predictedTip: InkPoint[] | null;
   activeStroke: InkStroke | null;
   attachSidecar(sidecar: PdfSidecar, raw: string, file: TFile | null): void;
-  acquireWriter(): void;
-  releaseWriter(): void;
   flushSaveNow(): Promise<{ status: string; message?: string }>;
   markSidecarChanged(): void;
   withPageUndo(change: () => boolean, label: string): void;
@@ -46,6 +45,8 @@ interface PdfViewInternals {
   finalizeInput(): void;
   undo(): void;
   redo(): void;
+  startPendingInkCommit(page: PdfSidecar["notebook"]["pages"][number]): void;
+  renderAll(): void;
 }
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
@@ -88,23 +89,22 @@ function setup() {
   };
   const workers = { createSession: vi.fn(() => session) } as unknown as InkWorkerService;
 
-  const vaultCalls: VaultCalls = { created: [] };
+  const vaultCalls: VaultCalls = { created: [], createdContents: [] };
   const vault = {
-    async create(path: string) {
+    async create(path: string, data?: string) {
       vaultCalls.created.push(path);
+      if (typeof data === "string") vaultCalls.createdContents.push(data);
       return { path };
     },
     getAbstractFileByPath: () => null,
   };
 
-  const arbiter = new PdfWriterArbiter();
   const takeover = new PdfTabTakeover(() => ({ enabled: true, enhancerActive: false, isPdfFile: () => true }), VIEW_TYPE_PDF_INK);
   const view = new PdfInkView({} as WorkspaceLeaf);
   view.configure({
     store: store as unknown as PdfSidecarStore,
     workers,
     takeover,
-    arbiter,
   });
   view.file = { path: "docs/lecture.pdf", basename: "lecture" } as TFile;
   const internal = view as unknown as PdfViewInternals;
@@ -113,6 +113,8 @@ function setup() {
   const fakeTiles = new Proxy({}, {
     get: (_target, property: string) => {
       if (property === "queryNear") return () => [];
+      if (property === "commitInk") return (_strokes: unknown, _viewport: unknown, _density: unknown,
+        committed: (result: boolean) => void) => committed(true);
       return vi.fn();
     },
   }) as unknown as PdfViewInternals & Record<string, ReturnType<typeof vi.fn>>;
@@ -148,53 +150,234 @@ function setup() {
 
   internal.attachSidecar(sidecar, raw, sidecarFile);
 
-  return { view, internal, store, session, appliedOps, sidecar, sidecarFile, vaultCalls, arbiter };
+  return { view, internal, store, session, appliedOps, sidecar, sidecarFile, vaultCalls };
 }
 
-describe("writer arbitration", () => {
-  it("allows a single writer per PDF and rejects a second until released", () => {
-    const arbiter = new PdfWriterArbiter();
-    expect(arbiter.acquire("a.pdf", "view-1")).toBe(true);
-    expect(arbiter.acquire("a.pdf", "view-2")).toBe(false);
-    expect(arbiter.acquire("b.pdf", "view-2")).toBe(true);
-    arbiter.release("a.pdf", "view-2"); // wrong holder: no effect
-    expect(arbiter.acquire("a.pdf", "view-2")).toBe(false);
-    arbiter.release("a.pdf", "view-1");
-    expect(arbiter.acquire("a.pdf", "view-2")).toBe(true);
-  });
-});
+describe("split-pane edit availability", () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.stubGlobal("window", globalThis); });
 
-describe("writer lock", () => {
-  beforeEach(() => {
-    vi.useFakeTimers();
-    vi.stubGlobal("window", globalThis);
+  it("allows two independent panes of the same PDF to write", () => {
+    const first = setup();
+    const second = setup();
+    expect(first.internal.canEdit()).toBe(true);
+    expect(second.internal.canEdit()).toBe(true);
+    first.internal.onPointerDown(pointer(60, 60));
+    second.internal.onPointerDown(pointer(160, 60));
+    first.internal.onPointerUp(pointer(80, 90));
+    second.internal.onPointerUp(pointer(180, 90));
+    expect(first.internal.sidecar.notebook.pages[0].strokes).toHaveLength(1);
+    expect(second.internal.sidecar.notebook.pages[0].strokes).toHaveLength(1);
   });
 
-  it("opens writable PDFs with the writer held from sidecar attach", () => {
-    const { internal } = setup();
-    // The view is always in editing shape; writability is the lock state.
-    expect(internal.writerHeld).toBe(true);
-  });
-
-  it("ignores pen input while the writer is not held", () => {
+  it("still blocks ink when the source revision is invalid", () => {
     const { internal, sidecar } = setup();
     internal.writeBlockedReason = "fingerprint mismatch";
-    internal.releaseWriter();
-    internal.acquireWriter();
-    // In the real load path the block exists before the sidecar attaches,
-    // so re-acquiring must refuse.
-    expect(internal.writerHeld).toBe(false);
+    expect(internal.canEdit()).toBe(false);
     internal.onPointerDown(pointer(100, 100));
     expect(sidecar.notebook.pages[0].strokes).toHaveLength(0);
   });
+});
 
-  it("enforces one writer per PDF across two views", async () => {
-    const first = setup();
-    const second = setup();
-    void first; void second;
-    const arbiter = new PdfWriterArbiter();
-    expect(arbiter.acquire("docs/lecture.pdf", "view-1")).toBe(true);
-    expect(arbiter.acquire("docs/lecture.pdf", "view-2")).toBe(false);
+describe("split-pane sidecar synchronization", () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.stubGlobal("window", globalThis); });
+
+  function split() {
+    const panes = [setup(), setup()];
+    let raw = serializeSidecar(panes[0].internal.sidecar);
+    for (const pane of panes) {
+      pane.internal.attachSidecar(JSON.parse(raw) as PdfSidecar, raw, pane.sidecarFile);
+      pane.store.readRaw.mockImplementation(async () => raw);
+      pane.store.writeIfUnchanged.mockImplementation(async (_file, expected, next) => {
+        if (raw !== expected) return false;
+        raw = next;
+        return true;
+      });
+    }
+    const settle = (pane: typeof panes[number]) => {
+      pane.internal.startPendingInkCommit(pane.internal.sidecar.notebook.pages[pane.internal.noteIndex]);
+    };
+    const draw = (pane: typeof panes[number], x: number) => {
+      pane.internal.onPointerDown(pointer(x, 60));
+      pane.internal.onPointerUp(pointer(x + 30, 90));
+      settle(pane);
+    };
+    const refresh = () => Promise.all(panes.map(pane => pane.view.reloadExternalSidecar(pane.sidecarFile.path)));
+    return { panes, draw, settle, refresh, disk: () => JSON.parse(raw) as PdfSidecar };
+  }
+
+  it("retains both panes' concurrent strokes on disk and synchronizes each pane", async () => {
+    const { panes: [left, right], draw, refresh, disk } = split();
+    draw(left, 60); draw(right, 160);
+    const ids = [left.internal.sidecar.notebook.pages[0].strokes[0].id,
+      right.internal.sidecar.notebook.pages[0].strokes[0].id];
+    const outcomes = await Promise.all([left.internal.flushSaveNow(), right.internal.flushSaveNow()]);
+    expect(outcomes.every(outcome => outcome.status === "saved")).toBe(true);
+    expect(disk().notebook.pages[0].strokes.map(stroke => stroke.id).sort()).toEqual(ids.sort());
+    await refresh();
+    for (const pane of [left, right]) {
+      expect(pane.internal.sidecar.notebook.pages[0].strokes).toHaveLength(2);
+      expect(pane.internal.canEdit()).toBe(true);
+      expect(pane.vaultCalls.created).toHaveLength(0);
+    }
+  });
+
+  it("defers peer state through an active stroke and applies it when tile commit settles", async () => {
+    const { panes: [left, right], draw, settle, refresh } = split();
+    right.internal.onPointerDown(pointer(160, 60));
+    const active = right.internal.activeStroke;
+    draw(left, 60);
+    await left.internal.flushSaveNow();
+    await refresh();
+    expect(right.internal.activeStroke).toBe(active);
+    expect(right.internal.sidecar.notebook.pages[0].strokes).toHaveLength(1);
+    right.internal.onPointerMove(pointer(180, 90));
+    right.internal.onPointerUp(pointer(200, 100));
+    expect(right.internal.sidecar.notebook.pages[0].strokes).toHaveLength(1);
+    settle(right);
+    expect(right.internal.sidecar.notebook.pages[0].strokes).toHaveLength(2);
+    await right.internal.flushSaveNow();
+    await refresh();
+    expect(left.internal.sidecar.notebook.pages[0].strokes).toHaveLength(2);
+  });
+
+  it("keeps unsaved local ink dirty when a peer refresh arrives", async () => {
+    const { panes: [left, right], draw, refresh, disk } = split();
+    draw(left, 60); draw(right, 160);
+    await left.internal.flushSaveNow();
+    await refresh();
+    expect(right.internal.sidecar.notebook.pages[0].strokes).toHaveLength(2);
+    expect(right.internal.dirty).toBe(true);
+    await right.internal.flushSaveNow();
+    expect(disk().notebook.pages[0].strokes).toHaveLength(2);
+    expect(right.internal.dirty).toBe(false);
+  });
+
+  it("flushes newer ink added while a prior save is in flight", async () => {
+    const { panes: [left, right], draw, refresh, disk } = split();
+    draw(left, 60); draw(right, 160);
+    const write = right.store.writeIfUnchanged.getMockImplementation()!;
+    let release!: () => void;
+    right.store.writeIfUnchanged.mockImplementationOnce(async (...args) => {
+      await new Promise<void>(done => { release = done; });
+      return write(...args);
+    });
+    const saving = right.internal.flushSaveNow();
+    draw(right, 260);
+    await left.internal.flushSaveNow();
+    await refresh();
+    release();
+    await expect(saving).resolves.toMatchObject({ status: "saved" });
+    await refresh();
+    expect(disk().notebook.pages[0].strokes).toHaveLength(3);
+    expect(right.internal.dirty).toBe(false);
+    expect(left.internal.sidecar.notebook.pages[0].strokes).toHaveLength(3);
+  });
+
+  it("includes queued peer ink in a save without replacing an active stroke", async () => {
+    const { panes: [left, right], draw, settle, refresh, disk } = split();
+    draw(left, 60); draw(right, 160);
+    right.internal.onPointerDown(pointer(260, 60));
+    const active = right.internal.activeStroke;
+    await left.internal.flushSaveNow();
+    await refresh();
+    await right.internal.flushSaveNow();
+    expect(right.internal.activeStroke).toBe(active);
+    expect(disk().notebook.pages[0].strokes).toHaveLength(3);
+    right.internal.onPointerMove(pointer(280, 90));
+    right.internal.onPointerUp(pointer(300, 100));
+    settle(right);
+    await right.internal.flushSaveNow();
+    await refresh();
+    expect(left.internal.sidecar.notebook.pages[0].strokes).toHaveLength(3);
+    expect(right.internal.dirty).toBe(false);
+  });
+
+  it("merges peer deletions without resurrecting ink from a stale pane", async () => {
+    const { panes: [left, right], draw, refresh, disk } = split();
+    draw(left, 60); await left.internal.flushSaveNow(); await refresh();
+    const deleted = left.internal.sidecar.notebook.pages[0].strokes[0].id;
+    left.internal.undo(); // delete left's own stroke before any peer change
+    draw(right, 160);
+    await Promise.all([left.internal.flushSaveNow(), right.internal.flushSaveNow()]);
+    await refresh();
+    expect(disk().notebook.pages[0].strokes).toHaveLength(1);
+    expect(disk().notebook.pages[0].deletedStrokeIds).toContain(deleted);
+    for (const pane of [left, right]) expect(pane.internal.sidecar.notebook.pages[0].strokes[0].id).not.toBe(deleted);
+  });
+
+  it("preserves pane selection through peer insertion and keeps both page additions", async () => {
+    const { panes: [left, right], refresh, disk } = split();
+    left.internal.withPageUndo(() => !!insertBlankNotePage(left.internal.sidecar, sourcePageId(0)), "insert");
+    right.internal.withPageUndo(() => !!insertBlankNotePage(right.internal.sidecar, sourcePageId(0)), "insert");
+    const rightSelected = right.internal.sidecar.notePages[1].id;
+    right.internal.noteIndex = 1;
+    await Promise.all([left.internal.flushSaveNow(), right.internal.flushSaveNow()]);
+    await refresh();
+    expect(disk().notePages).toHaveLength(3);
+    expect(right.internal.sidecar.notePages[right.internal.noteIndex].id).toBe(rightSelected);
+    expect(right.internal.sidecar.notePages).toHaveLength(3);
+  });
+
+  it("ignores late refreshes after unloading and foreign PDF revision state", async () => {
+    const { panes: [left, right] } = split();
+    const foreign = JSON.parse(serializeSidecar(right.internal.sidecar)) as PdfSidecar;
+    foreign.source.sha256 = "b".repeat(64);
+    right.store.readRaw.mockResolvedValueOnce(serializeSidecar(foreign));
+    await right.view.reloadExternalSidecar(right.sidecarFile.path);
+    expect(right.internal.sidecar.source.sha256).toBe(FINGERPRINT.sha256);
+    right.internal.markSidecarChanged();
+    await expect(right.internal.flushSaveNow()).resolves.toMatchObject({ status: "saved" });
+    let resolve!: (raw: string) => void;
+    right.store.readRaw.mockImplementationOnce(() => new Promise<string>(done => { resolve = done; }));
+    const refresh = right.view.reloadExternalSidecar(right.sidecarFile.path);
+    await right.view.onUnloadFile(right.view.file!);
+    resolve(serializeSidecar(left.internal.sidecar));
+    await refresh;
+    expect(right.internal.sidecar).toBeNull();
+  });
+
+  it("blocks stale saves after a source revision change and keeps deferred peer ink in recovery", async () => {
+    const { panes: [left, right], draw, refresh, disk } = split();
+    draw(right, 160);
+    right.internal.onPointerDown(pointer(260, 60));
+    const localIds = right.internal.sidecar.notebook.pages[0].strokes.map((stroke) => stroke.id);
+    draw(left, 60);
+    await left.internal.flushSaveNow();
+    await refresh();
+    const peerStrokeId = disk().notebook.pages[0].strokes[0].id;
+    await right.internal.flushSaveNow();
+    expect(right.internal.sidecar.notebook.pages[0].strokes.map((stroke) => stroke.id)).not.toContain(peerStrokeId);
+    expect(disk().notebook.pages[0].strokes.map((stroke) => stroke.id)).toContain(peerStrokeId);
+    const writesBeforeBlock = right.store.writeIfUnchanged.mock.calls.length;
+
+    right.view.sourcePdfModified();
+    expect(right.internal.writeBlockedReason).toContain("source PDF changed");
+    expect(right.internal.pendingMergedSidecar?.notebook.pages[0].strokes.map((stroke) => stroke.id))
+      .toContain(peerStrokeId);
+
+    await expect(right.internal.flushSaveNow()).resolves.toMatchObject({ status: "failed" });
+    expect(right.store.writeIfUnchanged.mock.calls.length).toBe(writesBeforeBlock);
+    expect(disk().notebook.pages[0].strokes.map((stroke) => stroke.id))
+      .toEqual(expect.arrayContaining([...localIds, peerStrokeId]));
+
+    await right.view.onClose();
+    expect(right.vaultCalls.created).toHaveLength(1);
+    const recovery = JSON.parse(right.vaultCalls.createdContents[0]) as PdfSidecar;
+    expect(recovery.notebook.pages[0].strokes.map((stroke) => stroke.id))
+      .toEqual(expect.arrayContaining([...localIds, peerStrokeId]));
+  });
+
+  it("ignores external sidecar refreshes after the source revision is blocked", async () => {
+    const { panes: [left, right], draw, refresh, disk } = split();
+    right.view.sourcePdfModified();
+    draw(left, 60);
+    await left.internal.flushSaveNow();
+    await refresh();
+    expect(disk().notebook.pages[0].strokes).toHaveLength(1);
+    expect(right.internal.sidecar.notebook.pages[0].strokes).toHaveLength(0);
+    expect(right.internal.pendingMergedSidecar).toBeNull();
+    await expect(right.internal.flushSaveNow()).resolves.toMatchObject({ status: "saved" });
+    expect(right.store.writeIfUnchanged).not.toHaveBeenCalled();
   });
 });
 
@@ -256,6 +439,38 @@ describe("save gating", () => {
       expect.stringContaining('"format": 1'),
     );
     expect(internal.dirty).toBe(false);
+  });
+
+  it("stops CAS retries if the source changes during the disk read", async () => {
+    const { view, internal, store } = setup();
+    let release!: (raw: string) => void;
+    store.writeIfUnchanged.mockResolvedValue(false);
+    store.readRaw.mockImplementationOnce(() => new Promise<string>((resolve) => { release = resolve; }));
+    internal.markSidecarChanged();
+    const saving = internal.flushSaveNow();
+    for (let i = 0; i < 10 && !release; i++) await Promise.resolve();
+    expect(release).toBeDefined();
+    view.sourcePdfModified();
+    release(serializeSidecar(internal.sidecar));
+    await expect(saving).resolves.toMatchObject({ status: "failed" });
+    expect(store.writeIfUnchanged).toHaveBeenCalledTimes(1);
+    expect(internal.dirty).toBe(true);
+  });
+
+  it("waits for an in-flight write before closing a blocked pane", async () => {
+    const { view, internal, store, session } = setup();
+    let release!: (saved: boolean) => void;
+    store.writeIfUnchanged.mockImplementationOnce(() => new Promise<boolean>((resolve) => { release = resolve; }));
+    internal.markSidecarChanged();
+    const saving = internal.flushSaveNow();
+    view.sourcePdfModified();
+    const closing = view.onClose();
+    await Promise.resolve();
+    expect(session.dispose).not.toHaveBeenCalled();
+    release(true);
+    await Promise.all([saving, closing]);
+    expect(session.dispose).toHaveBeenCalled();
+    expect(store.writeIfUnchanged).toHaveBeenCalledTimes(1);
   });
 
   it("keeps a conflict copy and reports conflict when the disk keeps changing", async () => {
@@ -331,7 +546,7 @@ describe("PDF plugin handoff and source revisions", () => {
   beforeEach(() => { vi.useFakeTimers(); vi.stubGlobal("window", globalThis); });
 
   it("tries a recovery copy on close if updating the sidecar fails and releases resources", async () => {
-    const { view, internal, store, vaultCalls, arbiter, session } = setup();
+    const { view, internal, store, vaultCalls, session } = setup();
     internal.onPointerDown(pointer(60, 60));
     internal.onPointerMove(pointer(140, 100));
     store.writeIfUnchanged.mockRejectedValue(new Error("process failed"));
@@ -339,11 +554,11 @@ describe("PDF plugin handoff and source revisions", () => {
     expect(vaultCalls.created).toHaveLength(1);
     expect(vaultCalls.created[0]).toMatch(/\.conflict-\d+\.pdfink\.json$/);
     expect(session.dispose).toHaveBeenCalled();
-    expect(arbiter.acquire("docs/lecture.pdf", "another-view")).toBe(true);
+    expect(internal.activeStroke).toBeNull();
   });
 
-  it("saves the active stroke before unloading and releases the writer after saving", async () => {
-    const { view, internal, store, arbiter } = setup();
+  it("saves the active stroke before unloading and clears the sidecar after saving", async () => {
+    const { view, internal, store } = setup();
     internal.onPointerDown(pointer(60, 60));
     internal.onPointerMove(pointer(140, 100));
     await view.onUnloadFile(view.file!);
@@ -351,17 +566,48 @@ describe("PDF plugin handoff and source revisions", () => {
     const saved = JSON.parse(store.writeIfUnchanged.mock.calls[0][2] as string);
     expect(saved.notebook.pages[0].strokes).toHaveLength(1);
     expect(saved.notebook.pages[0].strokes[0].points.length).toBeGreaterThan(1);
-    expect(arbiter.acquire("docs/lecture.pdf", "another-view")).toBe(true);
+    expect(internal.sidecar).toBeNull();
   });
 
-  it("keeps notes and writer ownership when unloading cannot save", async () => {
-    const { view, internal, store, arbiter } = setup();
+  it("recovers a conflict copy and unloads when saving fails", async () => {
+    const { view, internal, store, vaultCalls, session } = setup();
     internal.markSidecarChanged();
     store.writeIfUnchanged.mockRejectedValue(new Error("disk full"));
+    await view.onUnloadFile(view.file!);
+    expect(vaultCalls.created).toHaveLength(1);
+    expect(vaultCalls.created[0]).toMatch(/\.conflict-\d+\.pdfink\.json$/);
+    expect(internal.sidecar).toBeNull();
+    expect(session.dispose).toHaveBeenCalled();
+  });
+
+  it("keeps local ink in a conflict copy when the source changes before unload", async () => {
+    const { view, internal, vaultCalls, session } = setup();
+    internal.onPointerDown(pointer(60, 60));
+    internal.onPointerMove(pointer(140, 100));
+    view.sourcePdfModified();
+
+    await view.onUnloadFile(view.file!);
+
+    expect(vaultCalls.created).toHaveLength(1);
+    const recovery = JSON.parse(vaultCalls.createdContents[0]) as PdfSidecar;
+    expect(recovery.notebook.pages[0].strokes).toHaveLength(1);
+    expect(internal.sidecar).toBeNull();
+    expect(internal.sidecarFile).toBeNull();
+    expect(session.dispose).toHaveBeenCalled();
+  });
+
+  it("tears down after both the save and conflict recovery fail", async () => {
+    const { view, internal, store, session } = setup();
+    const vault = internal.app.vault as { create: (path: string, data?: string) => Promise<unknown> };
+    vault.create = async () => { throw new Error("recovery disk full"); };
+    internal.markSidecarChanged();
+    store.writeIfUnchanged.mockRejectedValue(new Error("disk full"));
+
     await expect(view.onUnloadFile(view.file!)).rejects.toThrow("disk full");
-    expect(internal.sidecar).not.toBeNull();
-    expect(internal.dirty).toBe(true);
-    expect(arbiter.acquire("docs/lecture.pdf", "another-view")).toBe(false);
+
+    expect(internal.sidecar).toBeNull();
+    expect(internal.sidecarFile).toBeNull();
+    expect(session.dispose).toHaveBeenCalled();
   });
 
   it("returns source page numbers rather than inserted blank-page positions and keeps the leaf native", async () => {
@@ -407,7 +653,7 @@ describe("PDF plugin handoff and source revisions", () => {
       await Promise.resolve();
       expect(restore).not.toHaveBeenCalled();
       expect(internal.activeStroke).toBe(stroke);
-      expect(internal.writerHeld).toBe(true);
+      expect(internal.canEdit()).toBe(true);
     });
 
   it("keeps a taken-over PDF in handwriting through host state delivery and tab refocus", async () => {
@@ -435,7 +681,7 @@ describe("PDF plugin handoff and source revisions", () => {
       view.setEphemeralState({ focus: true }); // return to the tab
       await Promise.resolve();
       expect(currentType).toBe(VIEW_TYPE_PDF_INK);
-      expect(internal.writerHeld).toBe(true);
+      expect(internal.canEdit()).toBe(true);
       // A focus update must not suppress future ordinary opens on this leaf.
       await host.openFile(view.file!);
       expect(currentType).toBe(VIEW_TYPE_PDF_INK);
@@ -456,11 +702,11 @@ describe("PDF plugin handoff and source revisions", () => {
     const { view, internal, store } = setup();
     Object.assign(internal.app.vault as object, { readBinary: vi.fn(async () => new ArrayBuffer(100)) });
     await view.checkSourcePdfRevision();
-    expect(internal.writerHeld).toBe(true);
+    expect(internal.canEdit()).toBe(true);
     internal.onPointerDown(pointer(60, 60));
     store.computeFingerprint.mockResolvedValue({ sha256: "b".repeat(64), byteLength: 100 });
     await view.checkSourcePdfRevision();
-    expect(internal.writerHeld).toBe(false);
+    expect(internal.canEdit()).toBe(false);
     expect(internal.dirty).toBe(true);
     expect(internal.sidecar.notebook.pages[0].strokes).toHaveLength(1);
     internal.onPointerDown(pointer(90, 90));
@@ -477,7 +723,7 @@ describe("PDF plugin handoff and source revisions", () => {
     await view.exportHandwrittenCopy();
     expect(store.computeFingerprint).toHaveBeenCalledOnce();
     expect(createBinary).not.toHaveBeenCalled();
-    expect(internal.writerHeld).toBe(false);
+    expect(internal.canEdit()).toBe(false);
     expect(internal.sidecar.source.sha256).toBe(FINGERPRINT.sha256);
   });
 });

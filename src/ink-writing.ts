@@ -1829,7 +1829,7 @@ export abstract class InkWritingView extends FileView {
     // app chrome entirely, so Obsidian's sidebar edge-swipe can never fire
     // mid-write, whatever the entry point. Navigation gestures (pan,
     // pinch-zoom, page flip) deliberately stay available while editing is
-    // locked (reading mode, PDF writer arbitration) - only ink input is
+    // locked (reading mode or invalid PDF source state) - only ink input is
     // gated, and that happens in onPointerDown.
     event.stopPropagation?.();
     if (this.onStylusTouch(event)) return;

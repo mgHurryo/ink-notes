@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("obsidian", async () => import("../dev/obsidian"));
-import { PdfInkView, PdfWriterArbiter, VIEW_TYPE_PDF_INK } from "../src/pdf-view";
+import { PdfInkView, VIEW_TYPE_PDF_INK } from "../src/pdf-view";
 import { PdfSidecarStore, serializeSidecar } from "../src/pdf-store";
 import { createSidecar, insertBlankNotePage, sourcePageId } from "../src/pdf-sidecar";
 import type { PdfSidecar } from "../src/pdf-sidecar";
@@ -69,7 +69,6 @@ async function setup(sourcePageCount = 3) {
     store: store as unknown as PdfSidecarStore,
     workers,
     takeover: new PdfTabTakeover(() => ({ enabled: false, enhancerActive: false, isPdfFile: () => true }), VIEW_TYPE_PDF_INK),
-    arbiter: new PdfWriterArbiter(),
   });
   view.file = { path: "docs/lecture.pdf", basename: "lecture" } as TFile;
   await view.onOpen();
@@ -191,11 +190,11 @@ afterEach(async () => {
 });
 
 describe("pdf page preview rail", () => {
-  it("switches PDF reading mode without changing navigation or writer ownership", async () => {
+  it("switches PDF reading mode without changing navigation or sidecar writability", async () => {
     const { view, internal, sidecar } = await setup(2);
     const host = view as unknown as { readingMode: boolean; setReadingMode(value: boolean): void;
       addBlankPage(index: number): void; withPageUndo(change: () => boolean, label: string): void;
-      writerHeld: boolean; inputLocked(): boolean; state: { tool: string }; ensureSwipeStage(offset: number): void;
+      writeBlockedReason: string | null; inputLocked(): boolean; state: { tool: string }; ensureSwipeStage(offset: number): void;
       exportHandwrittenCopy(): Promise<void> };
     const before = serializeSidecar(sidecar);
     const toggle = document.querySelector<HTMLButtonElement>('[aria-label="Reading mode"]')!;
@@ -203,7 +202,7 @@ describe("pdf page preview rail", () => {
     expect(host.readingMode).toBe(true);
     expect(toggle.getAttribute("aria-pressed")).toBe("true");
     expect(document.querySelector(".ink-pdf-view")!.classList.contains("ink-reading")).toBe(true);
-    expect(host.writerHeld).toBe(true);
+    expect(host.writeBlockedReason).toBeNull();
     expect(host.inputLocked()).toBe(true);
     const scroller = document.querySelector<HTMLElement>(".ink-pdf-scroller")!;
     scroller.dispatchEvent(new KeyboardEvent("keydown", { key: "PageDown", bubbles: true }));
@@ -222,7 +221,7 @@ describe("pdf page preview rail", () => {
     expect(host.readingMode).toBe(false);
     expect(document.querySelector(".ink-pdf-view")!.classList.contains("ink-reading")).toBe(false);
     expect(host.inputLocked()).toBe(false);
-    host.writerHeld = false;
+    host.writeBlockedReason = "source revision changed";
     toggle.click(); toggle.click();
     expect(host.inputLocked()).toBe(true);
   });
@@ -241,9 +240,9 @@ describe("pdf page preview rail", () => {
     expect(internal.noteIndex).toBe(0);
     key("e");
     expect(document.querySelector('[aria-label="Erase"]')?.getAttribute("aria-pressed")).toBe("true");
-    const host = view as unknown as { undo(): void; writerHeld: boolean };
+    const host = view as unknown as { undo(): void; writeBlockedReason: string | null };
     const undo = vi.spyOn(host, "undo");
-    host.writerHeld = false;
+    host.writeBlockedReason = "source revision changed";
     key("z", { ctrlKey: true });
     expect(undo).not.toHaveBeenCalled();
     key("PageDown");
@@ -252,10 +251,10 @@ describe("pdf page preview rail", () => {
 
   it("allows read-only PDF middle-button panning and clears it when capture is lost", async () => {
     const { view } = await setup();
-    const host = view as unknown as { writerHeld: boolean; scroller: HTMLElement; desktopPan: unknown;
+    const host = view as unknown as { writeBlockedReason: string | null; scroller: HTMLElement; desktopPan: unknown;
       onPointerDown(e: PointerEvent): void; onPointerMove(e: PointerEvent): void; onLostPointerCapture(e: PointerEvent): void;
       capturePointer(id: number): void; releasePointer(id: number): void };
-    host.writerHeld = false;
+    host.writeBlockedReason = "source revision changed";
     vi.spyOn(host, "capturePointer").mockImplementation(() => undefined);
     vi.spyOn(host, "releasePointer").mockImplementation(() => undefined);
     const event = { pointerType: "mouse", pointerId: 2, button: 1, clientX: 200, clientY: 200, preventDefault: vi.fn() } as unknown as PointerEvent;
@@ -310,10 +309,10 @@ describe("pdf page preview rail", () => {
     expect(internal.sidecar.notePages[internal.noteIndex].sourceIndex).toBeUndefined();
   });
 
-  it("blocks menu and boundary insertion after losing the PDF writer lock", async () => {
+  it("blocks menu and boundary insertion when the PDF source revision changes", async () => {
     const { view, internal } = await setup();
-    const host = view as unknown as SwipeInternals & { writerHeld: boolean };
-    host.writerHeld = false;
+    const host = view as unknown as SwipeInternals & { writeBlockedReason: string | null };
+    host.writeBlockedReason = "source revision changed";
     Object.defineProperties(host.scroller, { clientWidth: { value: 800 }, clientHeight: { value: 700 } });
     document.querySelector<HTMLButtonElement>('[aria-label="Add page"]')!.click();
     Array.from(document.querySelectorAll<HTMLButtonElement>(".preview-menu button"))[0].click();
@@ -796,10 +795,10 @@ describe("pdf page preview rail", () => {
     await view.onClose();
   });
 
-  it("opens the page menu and export regardless of the writer lock", async () => {
+  it("opens the page menu and export even when editing is blocked", async () => {
     const { view, internal } = await setup(3);
-    // Read-only state (writer lock) must not turn the buttons dead.
-    (view as unknown as { writerHeld: boolean }).writerHeld = false;
+    // Read-only source state must not turn the buttons dead.
+    (view as unknown as { writeBlockedReason: string | null }).writeBlockedReason = "source revision changed";
     const menu = vi.spyOn(internal as never as { openPageMenu(e: MouseEvent): void }, "openPageMenu").mockImplementation(() => undefined);
     const exportCopy = vi.spyOn(internal as never as { exportHandwrittenCopy(): Promise<void> }, "exportHandwrittenCopy").mockImplementation(async () => undefined);
     document.querySelector<HTMLButtonElement>('button[aria-label="Page options"]')!.click();

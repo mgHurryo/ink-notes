@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Allow both editing panes of the same PDF to write, erase and add note pages. Concurrent sidecar saves merge strokes, deletion markers and page changes instead of overwriting another pane's notes.
+- Preserve deferred peer handwriting when the source PDF changes while a split pane is still applying it. Stale panes become read-only and no longer save old coordinates; local and peer notes are retained together in a conflict copy for recovery. External sidecar refreshes are ignored after the source revision is blocked, and normal saves avoid an unnecessary full merge when no peer state is pending. Merging external edits still resets that pane's undo/redo history to prevent stale snapshots from overwriting peer work. iPad, Obsidian and PDF++ runtime combinations remain unverified.
+- Recover a conflict copy before unloading a PDF when its latest handwriting cannot be saved, including source-revision blocks. PDF teardown now runs even when both the normal save and recovery copy fail, so a replaced tab cannot retain stale sidecar or worker state.
+
 ## 0.1.2 - 2026-10-10
 
 - Fix ordinary PDF opens bypassing Ink Notes first when the host supplies focus flags, empty fragments or native viewport memory. Track the original public openFile request so passive state added during dispatch does not override an explicit handwriting preference.
