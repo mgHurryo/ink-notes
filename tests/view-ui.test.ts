@@ -55,6 +55,21 @@ afterEach(async () => {
 gestureContract(async () => view);
 
 describe("reference-style editor", () => {
+  it("duplicates sticky boards with independent note/stroke ownership and content", () => {
+    const host = view as any, page = host.notebook.pages[0];
+    button("Add sticky note").click();
+    const sticky = page.stickyNotes[0];
+    sticky.strokes.push({ id: "source-ink", pageId: sticky.id, tool: "pen", width: 3, opacity: 1, color: "#000000",
+      points: [{ x: 4, y: 8, pressure: .5, t: 1 }], createdAt: 1, updatedAt: 1 });
+    Array.from(document.querySelectorAll<HTMLButtonElement>('.ink-sticky-editor button')).find((button) => button.textContent === "Cancel")!.click();
+    host.duplicateCurrentPage();
+    const duplicate = host.notebook.pages[1], copy = duplicate.stickyNotes[0];
+    expect(copy.id).not.toBe(page.stickyNotes[0].id);
+    expect(copy.pageId).toBe(duplicate.id); expect(copy.strokes[0].pageId).toBe(copy.id);
+    expect(copy.strokes[0].id).not.toBe(page.stickyNotes[0].strokes[0].id);
+    expect(copy.strokes[0].points).toEqual(page.stickyNotes[0].strokes[0].points);
+    copy.strokes[0].points[0].x = 90; expect(page.stickyNotes[0].strokes[0].points[0].x).toBe(4);
+  });
   function selectSampleInk() {
     const host = view as unknown as { notebook: ReturnType<typeof createNotebook>; canvasLogicalWidth: number; canvasLogicalHeight: number;
       lassoPath: { x: number; y: number; pressure: number; t: number }[]; finishLasso(page: InkPage): void; clearSelection(): void };
@@ -406,7 +421,7 @@ describe("reference-style editor", () => {
     const labels = (selector: string) => Array.from(toolbar.querySelectorAll(selector))
       .map((el) => el.getAttribute("aria-label"));
     expect(labels(".ink-toolbar-start button")).toEqual(["Pages", "Undo", "Redo"]);
-    expect(labels(".ink-toolbar-section-draw button")).toEqual(["Pen", "Highlight", "Erase", "Select"]);
+    expect(labels(".ink-toolbar-section-draw button")).toEqual(["Pen", "Highlight", "Erase", "Select", "Add sticky note"]);
     expect(labels(".ink-toolbar-section-document button")).toEqual(["Reading mode", "Add page", "Export as PDF", "Page options"]);
   });
 

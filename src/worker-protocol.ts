@@ -1,4 +1,6 @@
 import type { InkImage, InkNotebook, InkPage, InkPoint, InkStroke, PaperStyle } from "./model";
+import { cloneSticky } from "./sticky-model";
+import type { StickyNote } from "./sticky-model";
 
 // Six doubles per sample keeps the hot path structured-clone free without
 // dropping Pencil metadata. The layout is x, y, pressure, tiltX, tiltY,
@@ -6,6 +8,8 @@ import type { InkImage, InkNotebook, InkPage, InkPoint, InkStroke, PaperStyle } 
 export type PackedStrokePoints = Float64Array;
 
 export type NotebookOperation =
+  | { type: "patch-sticky-notes"; pageId: string; upsert: StickyNote[]; remove: string[]; deletedStickyNotes: Record<string, number>;
+      pageUpdatedAt: number; notebookUpdatedAt: number }
   | { type: "patch-images"; pageId: string; upsert: InkImage[]; remove: string[]; deletedImageIds: string[];
       pageUpdatedAt: number; notebookUpdatedAt: number }
   | {
@@ -177,5 +181,5 @@ export function cloneStrokeValue(stroke: InkStroke): InkStroke {
 }
 
 export function clonePageValue(page: InkPage): InkPage {
-  return { ...page, images: page.images?.map((image) => ({ ...image })), deletedImageIds: [...(page.deletedImageIds ?? [])], strokes: page.strokes.map(cloneStrokeValue), deletedStrokeIds: [...page.deletedStrokeIds] };
+  return { ...page, stickyNotes: page.stickyNotes?.map(cloneSticky), deletedStickyNotes: { ...page.deletedStickyNotes }, images: page.images?.map((image) => ({ ...image })), deletedImageIds: [...(page.deletedImageIds ?? [])], strokes: page.strokes.map(cloneStrokeValue), deletedStrokeIds: [...page.deletedStrokeIds] };
 }

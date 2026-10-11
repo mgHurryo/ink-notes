@@ -13,7 +13,9 @@ import type { NotebookStore } from "../src/storage";
 import { InkClipboard } from "../src/lasso-clipboard";
 import { defaultToolState, type SharedToolState } from "../src/tool-state";
 import type { InkNotebook, InkStroke } from "../src/model";
+import { mergeNotebooks } from "../src/model";
 import type { ImageLibraryStore } from "../src/image-library";
+import type { StickyNote } from "../src/sticky-model";
 import { gestureContract } from "./gesture-contract";
 
 const FINGERPRINT = { sha256: "a".repeat(64), byteLength: 100 };
@@ -149,6 +151,57 @@ it("edits PDF page images, restores deletion with fresh IDs, and keeps images se
   await view.navigatePages(-1); expect(document.querySelectorAll(".ink-placed-image")).toHaveLength(1);
   editor.setReadingMode(true); editor.drawSelection(100, 100);
   expect((document.querySelector(".ink-placed-image") as HTMLElement).style.pointerEvents).toBe("none");
+});
+
+it("persists PDF sticky notes independently, locates their page and preserves content on resize", async () => {
+  const { view, sidecar } = await setup(2); const editor = view as any, pageId = sidecar.notePages[0].id;
+  const note: StickyNote = { id: "pdf-sticky", pageId, x: .1, y: .1, width: .5, height: .3, title: "Review", keywords: "exam", text: "PDF text",
+    textUpdatedAt: 1, color: "#fff1a8", collapsed: false, preview: true, scrollX: 0, scrollY: 0, boardPageWidth: 600,
+    strokes: [], deletedStrokeIds: [], createdAt: 1, updatedAt: 1 };
+  editor.changeSticky(undefined, note);
+  expect(sidecar.notebook.pages[0].stickyNotes).toHaveLength(1);
+  const original = sidecar.notebook.pages[0].stickyNotes![0];
+  editor.changeSticky(original, { ...original, width: .2 });
+  expect(sidecar.notebook.pages[0].stickyNotes![0].text).toBe("PDF text");
+  editor.undo(); expect(sidecar.notebook.pages[0].stickyNotes![0].width).toBe(.5);
+  editor.redo(); expect(sidecar.notebook.pages[0].stickyNotes![0].width).toBe(.2);
+  await view.navigatePages(1); expect(document.querySelectorAll(".ink-sticky-note")).toHaveLength(0);
+  await view.revealSticky(pageId, note.id); expect(document.querySelectorAll(".ink-sticky-note")).toHaveLength(1);
+  await expect(view.revealSticky("missing-page", note.id)).rejects.toThrow("no longer exists");
+  expect(document.querySelector('[aria-label="Edit sticky note"]')).not.toBeNull();
+  Array.from(document.querySelectorAll<HTMLButtonElement>('.ink-sticky-editor button')).find((button) => button.textContent === "Cancel")!.click();
+  editor.setReadingMode(true); editor.changeSticky(sidecar.notebook.pages[0].stickyNotes![0], { ...original, text: "Blocked" });
+  expect(sidecar.notebook.pages[0].stickyNotes![0].text).toBe("PDF text");
+});
+
+it("keeps erased sticky ink removed after repeated undo, redo and stale saves", async () => {
+  const { view, sidecar } = await setup(1), editor = view as any;
+  const page = sidecar.notebook.pages[0], pageId = page.id;
+  const note: StickyNote = { id: "sticky-history", pageId, x: .1, y: .1, width: .5, height: .3, title: "History", keywords: "", text: "",
+    textUpdatedAt: 1, color: "#fff1a8", collapsed: false, preview: true, scrollX: 0, scrollY: 0, boardPageWidth: 600,
+    strokes: [{ id: "original-ink", pageId: "sticky-history", tool: "pen", color: "#000000", width: 3, opacity: 1,
+      points: [{ x: .2, y: .3, pressure: .5, t: 1 }], createdAt: 1, updatedAt: 1 }], deletedStrokeIds: [], createdAt: 1, updatedAt: 1 };
+  editor.changeSticky(undefined, note);
+  editor.changeSticky(page.stickyNotes![0], { ...page.stickyNotes![0], strokes: [], deletedStrokeIds: ["original-ink"] });
+  for (let iteration = 0; iteration < 3; iteration++) {
+    editor.undo(); expect(page.stickyNotes![0].strokes).toHaveLength(1);
+    const savedUndo = JSON.parse(JSON.stringify(sidecar.notebook));
+    editor.redo(); expect(page.stickyNotes![0].strokes).toHaveLength(0);
+    expect(mergeNotebooks(sidecar.notebook, savedUndo).pages[0].stickyNotes![0].strokes).toHaveLength(0);
+  }
+  editor.undo();
+  const restored = page.stickyNotes![0];
+  editor.changeSticky(restored, { ...restored, width: .2 });
+  editor.changeSticky(restored, { ...restored, text: "Stale drag draft" });
+  expect(page.stickyNotes![0].text).toBe("");
+  editor.undo(); editor.redo();
+  expect(page.stickyNotes![0].strokes).toHaveLength(1);
+  expect(mergeNotebooks(sidecar.notebook, JSON.parse(JSON.stringify(sidecar.notebook))).pages[0].stickyNotes![0].strokes).toHaveLength(1);
+  await view.revealSticky(pageId, note.id);
+  expect(document.querySelector('.ink-sticky-editor')).not.toBeNull();
+  await view.onUnloadFile(view.file!);
+  expect(document.querySelector('.ink-sticky-editor')).toBeNull();
+  expect(document.querySelector('.ink-sticky-layer')).toBeNull();
 });
 
 interface SwipeInternals {
@@ -730,7 +783,7 @@ describe("pdf page preview rail", () => {
     const root = document.querySelector<HTMLElement>(".ink-pdf-view")!;
     const labels = (selector: string) => Array.from(root.querySelectorAll(selector)).map((el) => el.getAttribute("aria-label"));
     expect(labels(".ink-toolbar-start button")).toEqual(["Pages", "Undo", "Redo"]);
-    expect(labels(".ink-toolbar-section-draw button")).toEqual(["Pen", "Highlight", "Erase", "Select"]);
+    expect(labels(".ink-toolbar-section-draw button")).toEqual(["Pen", "Highlight", "Erase", "Select", "Add sticky note"]);
     expect(labels(".ink-toolbar-section-document button")).toEqual(["Reading mode", "Add page", "Export PDF with handwriting", "Page options"]);
     expect(root.classList.contains("ink-rail-hidden")).toBe(true);
     const toggle = document.querySelector<HTMLButtonElement>('button[aria-label="Pages"]')!;

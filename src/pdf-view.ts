@@ -304,6 +304,7 @@ export class PdfInkView extends InkWritingView {
   }
 
   async onUnloadFile(_file: TFile): Promise<void> {
+    this.disposeStickyNotes();
     this.finishPointerInput(false);
     this.clearSelection();
     this.closeLassoSettings();
@@ -1121,6 +1122,10 @@ export class PdfInkView extends InkWritingView {
     if (this.flipSettling) this.tiles?.previewInteractiveCells(
       cellKeys(this.viewport, this.canvasLogicalWidth, this.canvasLogicalHeight), this.viewport,
       (window.devicePixelRatio || 1) * this.zoom);
+  }
+  protected async revealStickyPage(pageId: string): Promise<void> {
+    const index = this.sidecar?.notePages.findIndex((page) => page.id === pageId) ?? -1;
+    if (index >= 0) await this.navigatePages(index - this.noteIndex);
   }
 
   private setZoom(zoom: number, target?: { x: number; y: number }, anchor?: { x: number; y: number }): void {

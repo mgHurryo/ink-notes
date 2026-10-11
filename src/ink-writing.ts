@@ -17,6 +17,9 @@
 import { FileView, Menu, Notice, setIcon } from "obsidian";
 import { ImageLibraryModal, ImageLibraryStore, placedImage } from "./image-library";
 import { PageImageLayer } from "./page-images";
+import { StickyNoteLayer, markdownStickyLink } from "./sticky-notes";
+import { cloneSticky, StickyNote } from "./sticky-model";
+import type { StickySearchEntry } from "./sticky-index";
 import type { InkImage } from "./model";
 import {
   MAX_RAW_POINT_SAMPLES,
@@ -474,10 +477,85 @@ function isPointerCaptureError(error: unknown): boolean {
 export abstract class InkWritingView extends FileView {
   protected imageLibrary?: ImageLibraryStore;
   private pageImages?: PageImageLayer;
+  private stickies?: StickyNoteLayer;
+  protected disposeStickyNotes(): void { this.stickies?.dispose(); this.stickies = undefined; }
+  protected abstract revealStickyPage(pageId: string): Promise<void>;
+  stickyIndexEntries(): StickySearchEntry[] {
+    return this.currentNotebook().pages.flatMap((page) => (page.stickyNotes ?? []).map((note) => ({
+      file: this.file?.path ?? "", pageId: page.id, pageTitle: page.title, note: cloneSticky(note),
+    })));
+  }
+  async revealSticky(pageId: string, id: string): Promise<void> {
+    const file = this.file;
+    await this.revealStickyPage(pageId);
+    if (file !== this.file || !this.viewReady) throw new Error("The notebook changed before the link opened");
+    if (this.currentPage().id !== pageId || !this.currentPage().stickyNotes?.some((note) => note.id === id)) throw new Error("Sticky note no longer exists on this page");
+    this.syncStickyNotes(); this.stickies?.open(id);
+  }
+  private syncStickyNotes(): void {
+    if (!this.viewReady) return;
+    const host = this.inputHost(); if (!host) return;
+    if (this.stickies?.host !== host) {
+      this.stickies?.dispose();
+      this.stickies = new StickyNoteLayer(host, this.app, {
+        page: () => this.currentPage(), geometry: () => ({ width: this.canvasLogicalWidth, height: this.canvasLogicalHeight }),
+        editable: () => !this.inputLocked(), pointer: () => this.state.tool === "pointer",
+        brush: () => ({ color: this.state.pen.color, width: this.state.pen.width, opacity: this.state.pen.opacity }),
+        link: (note) => markdownStickyLink(this.file?.path ?? "", note, this.app.vault?.getName?.() ?? ""),
+        change: (before, after) => this.changeSticky(before, after),
+      });
+    }
+    this.stickies.sync();
+  }
+  private addSticky(): void {
+    if (this.inputLocked()) return;
+    this.finishPointerInput(false); const now = Date.now(), page = this.currentPage();
+    const note: StickyNote = { id: newId("sticky"), pageId: page.id, x: .2, y: .2, width: .5, height: .35,
+      title: "Sticky note", keywords: "", text: "", textUpdatedAt: now, color: "#fff1a8", collapsed: false, preview: true,
+      scrollX: 0, scrollY: 0, boardPageWidth: this.canvasLogicalWidth, strokes: [], deletedStrokeIds: [], createdAt: now, updatedAt: now };
+    this.selectWritingTool("pointer"); this.changeSticky(undefined, note); this.stickies?.open(note.id);
+  }
+  private changeSticky(before: StickyNote | undefined, after: StickyNote | undefined): void {
+    if (this.inputLocked()) return;
+    const pageId = (before ?? after)!.pageId, id = (before ?? after)!.id;
+    if (before && this.pageById(pageId)?.stickyNotes?.find((note) => note.id === id)?.updatedAt !== before.updatedAt) {
+      new Notice("This sticky note changed in another pane. Reopen it before editing."); return;
+    }
+    const restoredIds = new Map<string, string>();
+    const apply = (template: StickyNote | undefined) => {
+      const page = this.pageById(pageId); if (!page) return;
+      const existing = page.stickyNotes?.find((note) => note.id === id);
+      const now = Math.max(Date.now(), page.updatedAt + 1, existing?.updatedAt ?? 0, (page.deletedStickyNotes?.[id] ?? 0) + 1);
+      const note = template ? { ...cloneSticky(template), updatedAt: now, textUpdatedAt: template.text === existing?.text ? existing.textUpdatedAt : now } : undefined;
+      if (note && existing) {
+        const removed = new Set(existing.deletedStrokeIds);
+        note.strokes = note.strokes.map((stroke) => {
+          let strokeId = restoredIds.get(stroke.id) ?? stroke.id;
+          if (removed.has(strokeId)) strokeId = newId("sticky-ink");
+          restoredIds.set(stroke.id, strokeId);
+          return strokeId === stroke.id ? stroke : { ...stroke, id: strokeId, updatedAt: now };
+        });
+        const desiredIds = new Set(note.strokes.map((stroke) => stroke.id));
+        // Undo restores erased ink with new ids. Redo must tombstone those ids
+        // too, otherwise merging the previously saved undo resurrects them.
+        note.deletedStrokeIds = [...new Set([...note.deletedStrokeIds, ...existing.deletedStrokeIds,
+          ...existing.strokes.filter((stroke) => !desiredIds.has(stroke.id)).map((stroke) => stroke.id)])];
+      }
+      page.stickyNotes = [...(page.stickyNotes ?? []).filter((note) => note.id !== id), ...(note ? [note] : [])];
+      if (!note) page.deletedStickyNotes = { ...page.deletedStickyNotes, [id]: now };
+      this.markChanged(page); page.updatedAt = now; this.currentNotebook().updatedAt = now;
+      this.queueWorkerOperation({ type: "patch-sticky-notes", pageId, upsert: note ? [note] : [], remove: [id],
+        deletedStickyNotes: page.deletedStickyNotes ?? {}, pageUpdatedAt: now, notebookUpdatedAt: now });
+      this.syncStickyNotes(); this.scheduleSave(); this.afterInputFullySettled();
+    };
+    const original = before ? cloneSticky(before) : undefined, desired = after ? cloneSticky(after) : undefined;
+    apply(desired); this.pushCommand({ undo: () => apply(original), redo: () => apply(desired) });
+  }
 
   useImageLibrary(store: ImageLibraryStore): void { this.imageLibrary = store; }
 
   private syncPageImages(): void {
+    this.syncStickyNotes();
     if (!this.imageLibrary || !this.viewReady) return;
     const host = this.inputHost(); if (!host) return;
     if (this.pageImages?.host !== host) {
@@ -1076,6 +1154,7 @@ export abstract class InkWritingView extends FileView {
     this.addToolButton(draw, "lasso-select", "Select", "lasso");
     if (this.imageLibrary) this.addToolButton(draw, "mouse-pointer-2", "Pointer", "pointer");
     if (this.imageLibrary) this.addIconButton(draw, "image-plus", "Image library", () => this.openImageLibrary());
+    this.addIconButton(draw, "sticky-note", "Add sticky note", () => this.addSticky());
   }
 
   protected buildReadingModeButton(parent: HTMLElement): void {
@@ -1099,6 +1178,7 @@ export abstract class InkWritingView extends FileView {
     this.updateReadingModeButton();
     this.updateHistoryButtons();
     this.refreshEraserCursor();
+    this.syncStickyNotes();
   }
 
   protected onReadingModeChanged(): void {}
@@ -1184,7 +1264,7 @@ export abstract class InkWritingView extends FileView {
   protected desktopResetZoom(): void {}
 
   protected registerDesktopInput(): void {
-    this.register(() => { this.pageImages?.dispose(); this.pageImages = undefined; });
+    this.register(() => { this.pageImages?.dispose(); this.pageImages = undefined; this.stickies?.dispose(); this.stickies = undefined; });
     const scroller = this.inputScroller();
     const doc = this.containerEl.ownerDocument;
     this.registerDomEvent(doc.defaultView ?? window, "resize", () => {
@@ -1220,6 +1300,7 @@ export abstract class InkWritingView extends FileView {
     scroller.tabIndex = 0;
     this.registerDomEvent(scroller, "pointerdown", (event) => {
       if (event.pointerType !== "mouse" || this.nativeMenuOpen()) return;
+      if ((event.target as HTMLElement)?.closest?.(".ink-sticky-note")) return;
       scroller.focus({ preventScroll: true });
       if (this.beginDesktopPan(event)) event.stopPropagation();
     }, true);

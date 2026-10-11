@@ -3,6 +3,7 @@ import { InkNotebook, InkPage, normalizeNotebook } from "./model";
 import { drawInkStroke } from "./rendering";
 import { InkEmbedSpec, parseInkEmbed } from "./embed-spec";
 import { ImageLibraryStore } from "./image-library";
+import { paintPageStickies } from "./sticky-rendering";
 export { parseInkEmbed } from "./embed-spec";
 
 export function createInkEmbedProcessor(app: App, open: (file: TFile, pageId?: string) => Promise<void>, images?: ImageLibraryStore) {
@@ -65,6 +66,14 @@ class InkEmbedChild extends MarkdownRenderChild {
       img.style.left = `${image.x * 100}%`; img.style.top = `${image.y * 100}%`;
       img.style.width = `${image.width * 100}%`; img.style.height = `${image.height * 100}%`;
       img.style.zIndex = image.foreground ? "2" : "0";
+    }
+    if (page.stickyNotes?.length) {
+      const overlay = frame.createEl("canvas", { cls: "ink-embed-stickies" });
+      overlay.width = canvas.width; overlay.height = canvas.height;
+      const ctx = overlay.getContext("2d"); if (ctx) {
+        const scale = overlay.width / notebook.pageWidth; ctx.scale(scale, scale);
+        paintPageStickies(ctx, page.stickyNotes, notebook.pageWidth, notebook.pageHeight);
+      }
     }
     const button = next.createEl("button", { cls: "ink-embed-open", attr: { type: "button", "aria-label": "Open Ink notebook" } });
     setIcon(button, "external-link");

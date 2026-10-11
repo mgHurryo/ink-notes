@@ -21,6 +21,7 @@ vi.mock("obsidian", async (importOriginal) => ({
     registerView = vi.fn(); registerExtensions = vi.fn(); addRibbonIcon = vi.fn(); addCommand = vi.fn(); addSettingTab = vi.fn(); registerEvent = vi.fn();
     loadData = vi.fn(async () => ({})); saveData = vi.fn(async () => undefined);
     registerMarkdownCodeBlockProcessor = registerMarkdown;
+    registerObsidianProtocolHandler = vi.fn();
     register = register;
   },
   Notice: class { constructor(message: string) { notice(message); } },
@@ -99,6 +100,26 @@ describe("plugin event synchronization", () => {
     (plugin.saveData as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("disk full"));
     await toggles[0].change!(false);
     expect(notice).toHaveBeenCalledWith("Ink Notes could not save input settings: disk full");
+  });
+
+  it("registers sticky search and opens external Markdown links in a matching handwriting pane", async () => {
+    const plugin = new InkNotesPlugin({} as never, {} as never); await plugin.onload();
+    const commands = (plugin.addCommand as ReturnType<typeof vi.fn>).mock.calls.map(([command]) => command);
+    expect(commands.some((command) => command.id === "find-sticky-notes")).toBe(true);
+    const handler = (plugin.registerObsidianProtocolHandler as ReturnType<typeof vi.fn>).mock.calls.find(([action]) => action === "ink-notes-sticky")![1];
+    const file = Object.assign(new TFile(), { path: "Paper.pdf", extension: "pdf" });
+    const revealSticky = vi.fn(async () => undefined), leaf = { view: Object.assign(Object.create(PdfInkView.prototype), { file, revealSticky }) };
+    const revealLeaf = vi.fn(async () => undefined);
+    Object.assign(plugin.app, { vault: { getName: () => "Vault A", getAbstractFileByPath: (path: string) => path === file.path ? file : null } });
+    Object.assign(plugin.app.workspace, { revealLeaf, getLeavesOfType: () => [leaf] });
+    handler({ vault: "Vault A", file: file.path, page: "p", sticky: "n" });
+    await vi.waitFor(() => expect(revealSticky).toHaveBeenCalledWith("p", "n"));
+    expect(revealLeaf).toHaveBeenCalledWith(leaf);
+    handler({ vault: "Other vault", file: file.path, page: "p", sticky: "n" });
+    expect(revealSticky).toHaveBeenCalledOnce();
+    handler({ file: file.path }); expect(notice).toHaveBeenCalledWith("Sticky note link is incomplete");
+    handler({ file: "missing.ink", page: "p", sticky: "n" });
+    await vi.waitFor(() => expect(notice).toHaveBeenCalledWith(expect.stringContaining("Notebook or PDF not found")));
   });
 
   it("settings expose and immediately apply the three viewer choices, and report save failures", async () => {

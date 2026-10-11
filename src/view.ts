@@ -36,6 +36,7 @@ export {
   distance,
 } from "./ink-writing";
 import { canvasResolution, drawInkStroke, scaledStroke } from "./rendering";
+import { cloneSticky } from "./sticky-model";
 import { BrushPopoverController, BrushSettings } from "./brush-popover";
 import { TileRenderer, cellKeys } from "./tiles";
 import type { NotebookOperation } from "./worker-protocol";
@@ -121,6 +122,7 @@ export class InkView extends InkWritingView {
   revealPage(pageId: string): void {
     this.navigateToPage(pageId);
   }
+  protected revealStickyPage(pageId: string): Promise<void> { return this.navigateToPage(pageId); }
 
   async onOpen(): Promise<void> {
     this.root = this.containerEl.children[1] as HTMLElement;
@@ -200,6 +202,7 @@ export class InkView extends InkWritingView {
   }
 
   async onUnloadFile(file: TFile): Promise<void> {
+    this.disposeStickyNotes();
     this.pageNavigationGeneration += 1;
     this.destroySwipeStage();
     this.finishPointerInput(false);
@@ -1516,6 +1519,7 @@ function cloneNotebook(notebook: InkNotebook): InkNotebook {
       ...page,
       strokes: page.strokes.map(cloneStroke),
       images: page.images?.map((image) => ({ ...image })),
+      stickyNotes: page.stickyNotes?.map(cloneSticky), deletedStickyNotes: { ...page.deletedStickyNotes },
       deletedImageIds: [...(page.deletedImageIds ?? [])],
       deletedStrokeIds: [...page.deletedStrokeIds],
     })),
@@ -1523,7 +1527,7 @@ function cloneNotebook(notebook: InkNotebook): InkNotebook {
 }
 
 function clonePage(page: InkPage): InkPage {
-  return { ...page, images: page.images?.map((image) => ({ ...image })), deletedImageIds: [...(page.deletedImageIds ?? [])], strokes: page.strokes.map(cloneStroke), deletedStrokeIds: [...page.deletedStrokeIds] };
+  return { ...page, stickyNotes: page.stickyNotes?.map(cloneSticky), deletedStickyNotes: { ...page.deletedStickyNotes }, images: page.images?.map((image) => ({ ...image })), deletedImageIds: [...(page.deletedImageIds ?? [])], strokes: page.strokes.map(cloneStroke), deletedStrokeIds: [...page.deletedStrokeIds] };
 }
 
 function clonePageAsNew(page: InkPage, title: string, now = Date.now()): InkPage {
@@ -1534,6 +1538,12 @@ function clonePageAsNew(page: InkPage, title: string, now = Date.now()): InkPage
     title,
     images: page.images?.map((image) => ({ ...image, id: newId("placed-image"), pageId, createdAt: now, updatedAt: now })),
     deletedImageIds: [],
+    stickyNotes: page.stickyNotes?.map((note) => {
+      const copy = cloneSticky(note), id = newId("sticky");
+      return { ...copy, id, pageId, createdAt: now, updatedAt: now,
+        strokes: copy.strokes.map((stroke) => ({ ...stroke, id: newId("sticky-ink"), pageId: id })) };
+    }),
+    deletedStickyNotes: {},
     strokes: page.strokes.map((stroke) => ({ ...cloneStroke(stroke), id: newId("stroke"), pageId, createdAt: now, updatedAt: now })),
     deletedStrokeIds: [],
     createdAt: now,
@@ -1596,6 +1606,9 @@ function reconcileNotebook(target: InkNotebook, incoming: InkNotebook, selectedP
 }
 
 function reconcilePage(target: InkPage, incoming: InkPage): boolean {
+  const stickyChanged = JSON.stringify(target.stickyNotes ?? []) !== JSON.stringify(incoming.stickyNotes ?? []);
+  if (stickyChanged) target.stickyNotes = incoming.stickyNotes?.map(cloneSticky);
+  target.deletedStickyNotes = { ...incoming.deletedStickyNotes };
   const imagesChanged = JSON.stringify(target.images ?? []) !== JSON.stringify(incoming.images ?? []);
   if (imagesChanged) target.images = incoming.images?.map((image) => ({ ...image }));
   target.deletedImageIds = [...(incoming.deletedImageIds ?? [])];
@@ -1618,7 +1631,7 @@ function reconcilePage(target: InkPage, incoming: InkPage): boolean {
     ? target.deletedStrokeIds : [...incoming.deletedStrokeIds];
   target.createdAt = incoming.createdAt;
   target.updatedAt = incoming.updatedAt;
-  return inkChanged || imagesChanged;
+  return inkChanged || imagesChanged || stickyChanged;
 }
 
 function strokeAppearanceEqual(left: InkStroke, right: InkStroke): boolean {

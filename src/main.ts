@@ -12,6 +12,7 @@ import { sanitizeToolState, storedToolState, ToolStateSaver, type SharedToolStat
 import type { ToolState } from "./ink-writing";
 import { InkClipboard } from "./lasso-clipboard";
 import { ImageLibraryStore } from "./image-library";
+import { StickySearchModal, StickySearchEntry, StickyHandwritingIndexer } from "./sticky-index";
 
 interface InkNotesSettings {
   pdfOpenMode: "native" | "compatible" | "ink";
@@ -22,6 +23,35 @@ const DEFAULT_SETTINGS: InkNotesSettings = {
 };
 
 export default class InkNotesPlugin extends Plugin {
+  private stickyHandwritingIndexer?: StickyHandwritingIndexer;
+  /** Optional adapter hook; registration alone never triggers recognition or sends data. */
+  setStickyHandwritingIndexer(indexer: StickyHandwritingIndexer | undefined): void { this.stickyHandwritingIndexer = indexer; }
+  private liveStickyEntries(): { files: string[]; entries: StickySearchEntry[] } {
+    const entries: StickySearchEntry[] = [], files: string[] = [];
+    for (const type of [VIEW_TYPE_INK, VIEW_TYPE_PDF_INK]) for (const leaf of this.app.workspace.getLeavesOfType(type)) {
+      if (leaf.view instanceof InkView || leaf.view instanceof PdfInkView) { files.push(leaf.view.file?.path ?? ""); entries.push(...leaf.view.stickyIndexEntries()); }
+    }
+    const byId = new Map<string, StickySearchEntry>();
+    for (const entry of entries) {
+      const id = `${entry.file}\0${entry.pageId}\0${entry.note.id}`, previous = byId.get(id);
+      if (!previous || entry.note.updatedAt > previous.note.updatedAt) byId.set(id, entry);
+    }
+    return { files, entries: [...byId.values()] };
+  }
+  private async locateSticky(filePath: string, page: string, sticky: string): Promise<void> {
+    const file = this.app.vault.getAbstractFileByPath(filePath);
+    if (!(file instanceof TFile) || !["pdf", INK_EXTENSION].includes(file.extension.toLowerCase())) throw new Error("Notebook or PDF not found");
+    let leaf = [...this.app.workspace.getLeavesOfType(VIEW_TYPE_INK), ...this.app.workspace.getLeavesOfType(VIEW_TYPE_PDF_INK)]
+      .find((leaf) => (leaf.view instanceof InkView || leaf.view instanceof PdfInkView) && leaf.view.file?.path === file.path);
+    if (!leaf) {
+      leaf = this.app.workspace.getLeaf("tab");
+      if (file.extension.toLowerCase() === "pdf") await leaf.setViewState({ type: VIEW_TYPE_PDF_INK, state: { file: file.path } });
+      else await leaf.openFile(file);
+    }
+    await this.app.workspace.revealLeaf(leaf);
+    if (leaf.view instanceof InkView || leaf.view instanceof PdfInkView) await leaf.view.revealSticky(page, sticky);
+    else throw new Error("The handwriting view could not be opened");
+  }
   private imageLibrary?: ImageLibraryStore;
   private store!: NotebookStore;
   private workers!: InkWorkerService;
@@ -62,6 +92,13 @@ export default class InkNotesPlugin extends Plugin {
     this.registerView(VIEW_TYPE_INK, (leaf) => this.createView(leaf));
     this.registerExtensions([INK_EXTENSION], VIEW_TYPE_INK);
     this.configurePdfSupport();
+    this.addCommand({ id: "find-sticky-notes", name: "Find sticky notes", callback: () => new StickySearchModal(this.app,
+      (entry) => this.locateSticky(entry.file, entry.pageId, entry.note.id), () => this.liveStickyEntries(), this.stickyHandwritingIndexer).open() });
+    this.registerObsidianProtocolHandler("ink-notes-sticky", (params) => {
+      if (params.vault && params.vault !== this.app.vault.getName()) return;
+      if (!params.file || !params.page || !params.sticky) { new Notice("Sticky note link is incomplete"); return; }
+      this.runAsync(this.locateSticky(params.file, params.page, params.sticky), "locate sticky note");
+    });
     this.addRibbonIcon("pen-line", "Open Ink Notes", () => this.runAsync(this.openNotebook(), "open a notebook"));
     this.addCommand({ id: "open-ink-notebook", name: "Open Ink Notebook",
       hotkeys: [{ modifiers: ["Mod", "Shift"], key: "o" }],
