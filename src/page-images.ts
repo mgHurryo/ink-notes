@@ -42,31 +42,39 @@ export class PageImageLayer {
     doc.addEventListener("pointermove", (e) => { if (this.drag && !this.drag.touch && e.pointerId === this.drag.id) { this.move(e.clientX, e.clientY); e.preventDefault(); e.stopPropagation(); } }, { signal, passive: false });
     doc.addEventListener("pointerup", (e) => { if (this.drag && !this.drag.touch && e.pointerId === this.drag.id) { this.finish(); e.stopPropagation(); } }, { signal });
     doc.addEventListener("pointercancel", () => this.cancel(), { signal });
+    // The handwriting scroller consumes bubbling touch events. An active
+    // image gesture must handle its stream before viewport navigation does.
     doc.addEventListener("touchmove", (e) => { if (!this.drag?.touch) return; const touch = Array.from(e.touches).find((t) => t.identifier === this.drag!.id);
-      if (touch && e.touches.length === 1) { this.move(touch.clientX, touch.clientY); e.preventDefault(); e.stopPropagation(); } else this.cancel(); }, { signal, passive: false });
-    doc.addEventListener("touchend", (e) => { if (this.drag?.touch && Array.from(e.changedTouches).some((t) => t.identifier === this.drag!.id)) { this.finish(); e.stopPropagation(); } }, { signal });
+      if (touch && e.touches.length === 1) { this.move(touch.clientX, touch.clientY); e.preventDefault(); e.stopPropagation(); } else this.cancel(); }, { signal, passive: false, capture: true });
+    doc.addEventListener("touchend", (e) => { if (this.drag?.touch && Array.from(e.changedTouches).some((t) => t.identifier === this.drag!.id)) { this.finish(); e.stopPropagation(); } }, { signal, capture: true });
     doc.addEventListener("touchcancel", () => this.cancel(), { signal });
     doc.defaultView?.addEventListener("blur", () => this.cancel(), { signal });
-    this.bind(this.outline, true);
+    const handle = this.outline.createEl("button", { cls: "ink-image-resize", attr: { type: "button", "aria-label": "Resize image" } });
+    handle.textContent = "↘"; this.bind(handle, true);
     for (const type of ["pointerdown", "touchstart", "touchmove"] as const) this.inspector.addEventListener(type, (e) => e.stopPropagation(), { signal });
   }
-  dispose(): void { this.events.abort(); this.layer.remove(); this.outline.remove(); this.inspector.remove(); }
-  clear(): void { this.cancel(); this.selectedId = null; this.last = undefined; this.outline.hidden = this.inspector.hidden = true; }
+  dispose(): void { this.drag = null; this.events.abort(); this.layer.remove(); this.outline.remove(); this.inspector.remove(); }
+  clear(): void { this.cancel(); this.selectedId = null; this.outline.hidden = this.inspector.hidden = true; }
   select(id: string): void {
     if (!this.context.editable() || !this.context.page().images?.some((image) => image.id === id)) return;
-    this.context.select(); this.selectedId = id; this.last = undefined; this.sync();
+    this.context.select(); this.selectedId = id; this.sync();
   }
   sync(): void {
     const page = this.context.page(), editable = this.context.editable();
     if (this.drag && (this.drag.pageId !== page.id || !editable)) this.cancel();
     if (this.last?.pageId === page.id && this.last.images === page.images && this.last.editable === editable && this.last.selectedId === this.selectedId) return;
-    this.last = { pageId: page.id, images: page.images, editable, selectedId: this.selectedId }; this.layer.empty();
-    for (const image of page.images ?? []) {
-      const el = this.layer.createEl("img", { cls: "ink-placed-image", attr: { alt: "Inserted image", draggable: "false" } });
-      try { el.src = this.store.url(image.assetPath); } catch { el.alt = "Missing image"; }
-      el.dataset.imageId = image.id; el.style.zIndex = image.foreground ? "7" : "0";
-      el.style.pointerEvents = editable ? "auto" : "none"; this.position(el, image); this.bind(el, false);
+    // Native Touch keeps targeting the element first touched. Selecting an
+    // image must not detach that element halfway through the contact.
+    if (this.last?.pageId !== page.id || this.last.images !== page.images || this.last.editable !== editable) {
+      this.layer.empty();
+      for (const image of page.images ?? []) {
+        const el = this.layer.createEl("img", { cls: "ink-placed-image", attr: { alt: "Inserted image", draggable: "false" } });
+        try { el.src = this.store.url(image.assetPath); } catch { el.alt = "Missing image"; }
+        el.dataset.imageId = image.id; el.style.zIndex = image.foreground ? "7" : "0";
+        el.style.pointerEvents = editable ? "auto" : "none"; this.position(el, image); this.bind(el, false);
+      }
     }
+    this.last = { pageId: page.id, images: page.images, editable, selectedId: this.selectedId };
     const image = (page.images ?? []).find((i) => i.id === this.selectedId);
     this.outline.hidden = this.inspector.hidden = !image || !editable;
     if (image && editable) {
@@ -88,9 +96,6 @@ export class PageImageLayer {
         this.context.change([image], []); this.clear(); this.sync();
       });
       this.button("Done", () => { this.clear(); this.sync(); });
-      this.outline.textContent = "";
-      const handle = this.outline.createEl("button", { cls: "ink-image-resize", attr: { type: "button", "aria-label": "Resize image" } });
-      handle.textContent = "↘"; this.bind(handle, true);
     }
   }
   private button(text: string, run: () => void): void { const b = this.inspector.createEl("button", { text, attr: { type: "button" } }); b.onclick = run; }
@@ -133,7 +138,12 @@ export class PageImageLayer {
     const drag = this.drag; this.drag = null;
     if (drag && this.context.editable() && this.context.page().id === drag.pageId) this.commit(drag.original, drag.preview);
   }
-  private cancel(): void { if (!this.drag) return; this.drag = null; this.last = undefined; this.sync(); }
+  private cancel(): void {
+    const drag = this.drag; if (!drag) return; this.drag = null;
+    const el = Array.from(this.layer.children).find((node) => (node as HTMLElement).dataset.imageId === drag.original.id) as HTMLElement | undefined;
+    if (el) this.position(el, drag.original);
+    this.position(this.outline, drag.original); this.sync();
+  }
   private isSelected(image: InkImage): boolean {
     return this.context.editable() && this.selectedId === image.id && this.context.page().id === image.pageId
       && !!this.context.page().images?.some((current) => current.id === image.id);

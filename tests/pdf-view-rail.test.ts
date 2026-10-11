@@ -92,6 +92,38 @@ async function setup(sourcePageCount = 3, imageLibrary?: ImageLibraryStore) {
 const thumbs = () => document.querySelectorAll<HTMLButtonElement>(".ink-pdf-view .ink-page-thumb");
 const thumbAt = (index: number) => thumbs()[index]!;
 
+it("routes image-target finger movement before PDF navigation and keeps native touch targets attached", async () => {
+  const { view, internal, sidecar } = await setup(2, { url: () => "data:image/png;base64,", image: async () => document.createElement("img") } as unknown as ImageLibraryStore);
+  internal.renderAll();
+  document.querySelector<HTMLButtonElement>('[aria-label="Pointer"]')!.click();
+  const editor = view as any, page = sidecar.notebook.pages[0];
+  editor.changeImages(page.id, [], [{ id: "pdf-touch-image", pageId: page.id, assetPath: "Ink Notes/Images/assets/a.png", x: .1, y: .1, width: .3, height: .3,
+    foreground: false, createdAt: 1, updatedAt: 1 }]);
+  const host = document.querySelector<HTMLElement>(".ink-pdf-ink-host")!;
+  vi.spyOn(host, "getBoundingClientRect").mockReturnValue({ x: 0, y: 0, left: 0, top: 0, width: 1000, height: 1500, right: 1000, bottom: 1500, toJSON: () => ({}) });
+  const dispatch = (target: HTMLElement, type: string, x: number, y: number) => {
+    const finger = { identifier: 41, target, clientX: x, clientY: y, touchType: "direct" };
+    const event = new Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperties(event, { touches: { value: type === "touchend" ? [] : [finger] }, changedTouches: { value: [finger] } });
+    target.dispatchEvent(event);
+  };
+  const image = document.querySelector<HTMLElement>(".ink-placed-image")!;
+  dispatch(image, "touchstart", 150, 200);
+  expect(image.isConnected).toBe(true);
+  dispatch(image, "touchmove", 200, 230);
+  expect(parseFloat(image.style.left)).toBeCloseTo(15);
+  dispatch(image, "touchend", 200, 230);
+  expect(page.images![0].x).toBeCloseTo(.15); expect(page.images![0].y).toBeCloseTo(.12);
+  expect(editor.touchGesture).toBeNull(); expect(editor.noteIndex).toBe(0);
+  const handle = document.querySelector<HTMLElement>('[aria-label="Resize image"]')!;
+  dispatch(handle, "touchstart", 400, 600);
+  expect(handle.isConnected).toBe(true);
+  dispatch(handle, "touchmove", 460, 660); dispatch(handle, "touchend", 460, 660);
+  expect(page.images![0].width).toBeCloseTo(.36); expect(page.images![0].height).toBeCloseTo(.36);
+  editor.undo(); expect(page.images![0].width).toBeCloseTo(.3);
+  editor.undo(); expect(page.images![0].x).toBeCloseTo(.1);
+});
+
 it("edits PDF page images, restores deletion with fresh IDs, and keeps images separate across pages", async () => {
   const { view, internal, sidecar } = await setup(2, { url: () => "data:image/png;base64,", image: async () => document.createElement("img") } as unknown as ImageLibraryStore);
   internal.renderAll();

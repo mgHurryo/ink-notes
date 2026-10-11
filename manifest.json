@@ -1,7 +1,7 @@
 {
   "id": "ink-notes",
   "name": "Ink Notes",
-  "version": "0.1.3-beta.1",
+  "version": "0.1.3-beta.2",
   "minAppVersion": "1.5.7",
   "description": "Create handwritten notebooks and annotate PDFs with pressure-aware ink stored in your vault.",
   "author": "Ink Notes",
