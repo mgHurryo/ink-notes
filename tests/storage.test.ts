@@ -2,9 +2,31 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { App, TFile } from "obsidian";
 import { createNotebook } from "../src/model";
 import { NotebookFormatError, NotebookStore } from "../src/storage";
+import { parseStoredJson, serializeStoredJson } from "../src/storage-codec";
 
 describe("NotebookStore", () => {
   afterEach(() => vi.useRealTimers());
+  it("reads compressed notebooks and merges peer strokes without reviving deletion tombstones", async () => {
+    const remote=createNotebook(), page=remote.pages[0];
+    const dense={...stroke("remote",page.id,1),points:Array.from({length:500},(_,i)=>({x:i/1000,y:.3,pressure:.7,t:i+1}))};
+    page.strokes=[dense]; page.deletedStrokeIds=["erased"];
+    let raw=serializeStoredJson(remote); expect(raw).toContain("INK-GZIP-1");
+    const vault={ read:vi.fn(async()=>raw), process:vi.fn(async (_file:TFile,update:(raw:string)=>string)=>{raw=update(raw);}) };
+    const store=new NotebookStore({vault} as unknown as App), file={path:"Ink Notes/Compressed.ink"} as TFile;
+    expect((await store.read(file)).pages[0].strokes[0].points).toEqual(dense.points);
+    const local=structuredClone(remote); local.pages[0].strokes=[stroke("local",page.id,2),stroke("erased",page.id,2)];
+    const result=await store.save(file,local);
+    expect(result.pages[0].strokes.map(s=>s.id)).toEqual(["remote","local"]);
+    expect(parseStoredJson(raw).pages[0].strokes[0].points).toEqual(dense.points);
+  });
+
+  it("refuses corrupted compressed files and preserves their exact disk contents",async()=>{
+    let raw="INK-GZIP-1\nAAAA\n";
+    const vault={process:vi.fn(async (_file:TFile,update:(raw:string)=>string)=>{raw=update(raw);})};
+    const store=new NotebookStore({vault} as unknown as App);
+    await expect(store.save({path:"Ink Notes/Corrupt.ink"} as TFile,createNotebook())).rejects.toBeInstanceOf(NotebookFormatError);
+    expect(raw).toBe("INK-GZIP-1\nAAAA\n");
+  });
   it("returns and persists the merged notebook", async () => {
     const remote = createNotebook("Shared");
     const page = remote.pages[0];
@@ -22,7 +44,7 @@ describe("NotebookStore", () => {
     const merged = await store.save({} as TFile, local);
 
     expect(merged.pages[0].strokes.map((entry) => entry.id)).toEqual(["remote", "local"]);
-    expect(JSON.parse(raw).pages[0].strokes.map((entry: { id: string }) => entry.id)).toEqual(["remote", "local"]);
+    expect(parseStoredJson(raw).pages[0].strokes.map((entry: { id: string }) => entry.id)).toEqual(["remote", "local"]);
   });
 
   it("refuses to overwrite an existing notebook with invalid JSON", async () => {

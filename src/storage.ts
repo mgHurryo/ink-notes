@@ -1,5 +1,6 @@
 import { App, TAbstractFile, TFile, Vault } from "obsidian";
 import { InkNotebook, createNotebook, mergeNotebooks, normalizeNotebook } from "./model";
+import { parseStoredJson, serializeStoredJson } from "./storage-codec";
 
 export const INK_EXTENSION = "ink";
 export const INK_FOLDER = "Ink Notes";
@@ -32,7 +33,7 @@ export class NotebookStore {
 
   async read(file: TFile): Promise<InkNotebook> {
     const raw = await this.readRaw(file);
-    return normalizeNotebook(JSON.parse(raw));
+    return normalizeNotebook(parseStoredJson(raw));
   }
 
   async readRaw(file: TFile): Promise<string> {
@@ -63,9 +64,9 @@ export class NotebookStore {
       await this.vault.process(file, (raw) => {
         let latest: InkNotebook;
         try {
-          latest = normalizeNotebook(JSON.parse(raw));
+          latest = normalizeNotebook(parseStoredJson(raw));
         } catch (error) {
-          throw new NotebookFormatError(`Cannot save ${file.path || "notebook"}: existing file is not valid JSON`);
+          throw new NotebookFormatError(`Cannot save ${file.path || "notebook"}: existing file is corrupt or uses an unsupported encoding`);
         }
         merged = mergeNotebooks(latest, next);
         expectedWrite = serialize(merged);
@@ -120,5 +121,5 @@ export class NotebookStore {
 }
 
 function serialize(notebook: InkNotebook): string {
-  return `${JSON.stringify(notebook, null, 2)}\n`;
+  return serializeStoredJson(notebook);
 }

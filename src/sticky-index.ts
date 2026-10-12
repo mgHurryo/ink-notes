@@ -2,6 +2,7 @@ import { App, Modal, Notice, TFile } from "obsidian";
 import { normalizeNotebook } from "./model";
 import { normalizeSidecar, PDF_INK_FOLDER, PDF_SIDECAR_EXTENSION } from "./pdf-sidecar";
 import { cloneSticky, StickyNote, stickyText } from "./sticky-model";
+import { parseStoredJson } from "./storage-codec";
 
 export interface StickySearchEntry { file: string; pageId: string; pageTitle: string; note: StickyNote; handwritingTerms?: string[]; }
 /** Optional local/remote recognition adapter. Nothing is transmitted by default.
@@ -24,7 +25,7 @@ export async function collectStickyEntries(app: App, signal: AbortSignal): Promi
     const pdf = file.parent?.path === PDF_INK_FOLDER && file.name.endsWith(`.${PDF_SIDECAR_EXTENSION}`);
     if (file.extension !== "ink" && !pdf) continue;
     try {
-      const raw = JSON.parse(await app.vault.read(file));
+      const raw = parseStoredJson(await app.vault.read(file));
       if (signal.aborted) break;
       const sidecar = pdf ? normalizeSidecar(raw) : undefined;
       if (!sidecar && (raw.schema !== 2 || !Array.isArray(raw.pages))) throw new Error("Invalid notebook format");

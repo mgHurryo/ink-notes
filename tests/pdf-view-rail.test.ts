@@ -1,3 +1,4 @@
+import { parseStoredJson, serializeStoredJson } from "../src/storage-codec";
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("obsidian", async () => import("../dev/obsidian"));
@@ -68,6 +69,7 @@ async function setup(sourcePageCount = 3, imageLibrary?: ImageLibraryStore) {
   const session = {
     canRenderTiles: () => false,
     initializeRaw: vi.fn(async () => sidecar.notebook),
+    serializeStorage: vi.fn(async (value: unknown) => serializeStoredJson(value)),
     apply: vi.fn(async () => ({ type: "operation-applied", revision: 0 })),
     dispose: vi.fn(),
   };
@@ -112,7 +114,7 @@ it("keeps mounted PDF tiles, preview buttons and background caches through ink-o
   const setPage = vi.spyOn(editor.tiles, "setPage"), rebuild = vi.spyOn(editor, "rebuildRailButtons");
   const backgrounds = [...cache]; fakeDoc.getPage.mockClear();
   for (let i = 0; i < 3; i++) {
-    const remote = JSON.parse(serializeSidecar(editor.sidecar)) as PdfSidecar;
+    const remote = parseStoredJson(serializeSidecar(editor.sidecar)) as PdfSidecar;
     remote.notebook.pages[0].strokes.push({...local, id:`peer-${i}`, points:[{x:.6,y:.6,pressure:.5,t:1}]});
     editor.receiveMergedSidecar(remote);
     expect(editor.currentPage()).toBe(page); expect(page.strokes[0]).toBe(local);
@@ -130,7 +132,7 @@ it("keeps mounted PDF tiles, preview buttons and background caches through ink-o
 it("updates a remote PDF page's preview without touching the selected canvas or zoom", async () => {
   const { view, internal } = await setupExpanded(2); internal.renderAll();
   const editor = view as any, selected = editor.currentPage();
-  const remote = JSON.parse(serializeSidecar(editor.sidecar)) as PdfSidecar;
+  const remote = parseStoredJson(serializeSidecar(editor.sidecar)) as PdfSidecar;
   const other = remote.notebook.pages[1];
   other.strokes.push({id:"peer-other",pageId:other.id,tool:"pen",color:"#000",width:3,opacity:1,
     points:[{x:.1,y:.1,pressure:.5,t:1}],createdAt:1,updatedAt:1});

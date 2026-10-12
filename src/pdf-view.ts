@@ -22,6 +22,7 @@ import {
   sidecarPathFor,
 } from "./pdf-sidecar";
 import { PdfSidecarStore, serializeSidecar } from "./pdf-store";
+import { parseStoredJson } from "./storage-codec";
 import { PdfExportError, exportHandwrittenPdf, exportPathFor, sidecarHasInk } from "./pdf-export";
 import { PdfTabTakeover, hasNativeNavigation } from "./pdf-takeover";
 import { paintPageImages } from "./image-library";
@@ -350,7 +351,7 @@ export class PdfInkView extends InkWritingView {
     if (generation !== this.loadGeneration || this.sidecarFile !== file || !this.sidecar) return;
     if (raw === null || raw === this.sidecarRaw) return;
     try {
-      const sidecar = normalizeSidecar(JSON.parse(raw));
+      const sidecar = normalizeSidecar(parseStoredJson(raw));
       this.receiveMergedSidecar(sidecar);
     } catch {
       // Corrupt external state: keep the in-memory sidecar, never write over it.
@@ -507,7 +508,7 @@ export class PdfInkView extends InkWritingView {
       try {
         const raw = await this.store.readRaw(existing);
         if (generation !== this.loadGeneration) return;
-        const sidecar = normalizeSidecar(JSON.parse(raw));
+        const sidecar = normalizeSidecar(parseStoredJson(raw));
         if (sidecar.source.sha256 !== fingerprint.sha256 || sidecar.source.byteLength !== fingerprint.byteLength) {
           this.writeBlockedReason = "This PDF changed since these notes were created; handwriting is read-only for this copy";
         } else if (sidecar.source.path !== file.path) {
@@ -556,7 +557,7 @@ export class PdfInkView extends InkWritingView {
       const created = await this.store.createFor(file, fingerprint, this.sourcePages);
       const raw = await this.store.readRaw(created);
       if (generation !== this.loadGeneration) return;
-      this.attachSidecar(normalizeSidecar(JSON.parse(raw)), raw, created);
+      this.attachSidecar(normalizeSidecar(parseStoredJson(raw)), raw, created);
     } catch (error) {
       if (generation === this.loadGeneration) this.setStatus(`Could not create the notes file: ${messageOf(error)}`, true);
     }
@@ -570,7 +571,7 @@ export class PdfInkView extends InkWritingView {
     new RecoveryChoiceModal(this.app, candidates, async (chosen) => {
       if (!chosen || !this.file) return;
       try {
-        const sidecar = normalizeSidecar(JSON.parse(await this.store.readRaw(chosen)));
+        const sidecar = normalizeSidecar(parseStoredJson(await this.store.readRaw(chosen)));
         sidecar.source.path = this.file.path;
         if (!this.store.sidecarFileFor(this.file.path)) {
           await this.app.vault.rename(chosen, sidecarPathFor(this.file.path));
@@ -1083,13 +1084,13 @@ export class PdfInkView extends InkWritingView {
       return;
     }
     this.finishPointerInput(false);
-    const before = serializeSidecar(this.sidecar);
+    const before = JSON.stringify(this.sidecar);
     const beforePageId = this.sidecar.notePages[this.noteIndex]?.id;
     if (!change()) {
       new Notice(`Ink Notes could not ${label}: source PDF pages are permanent`);
       return;
     }
-    const after = serializeSidecar(this.sidecar);
+    const after = JSON.stringify(this.sidecar);
     const afterPageId = this.sidecar.notePages[this.noteIndex]?.id;
     this.markSidecarChanged();
     this.syncNotebookToWorker();
@@ -1810,7 +1811,24 @@ export class PdfInkView extends InkWritingView {
     });
   }
 
+  private async serializeSidecarForSave(sidecar: PdfSidecar): Promise<string> {
+    const session = this.workerSession;
+    if (!session) return serializeSidecar(sidecar);
+    // Waiting on the worker permits more handwriting/peer edits. Freeze this
+    // save candidate first, preserving the existing CAS and revision checks.
+    const snapshot: PdfSidecar = { ...sidecar, source: { ...sidecar.source },
+      sourcePages: sidecar.sourcePages.map(page => ({ ...page })), notePages: sidecar.notePages.map(page => ({ ...page })),
+      deletedNotePages: { ...sidecar.deletedNotePages }, notebook: { ...sidecar.notebook,
+        pages: sidecar.notebook.pages.map(clonePageValue), pageOrder: [...sidecar.notebook.pageOrder], deletedPages: { ...sidecar.notebook.deletedPages } } };
+    try { return await session.serializeStorage(snapshot); }
+    catch (error) {
+      if (this.workerSession === session) this.disableWorkerSession(error);
+      return serializeSidecar(snapshot);
+    }
+  }
+
   private async performSave(): Promise<SaveOutcome> {
+    const file = this.sidecarFile!, generation = this.loadGeneration;
     let latestRaw = this.sidecarRaw;
     for (let attempt = 0; attempt <= SAVE_CONFLICT_RETRIES; attempt++) {
       if (this.writeBlockedReason) return { status: "failed", message: this.writeBlockedReason };
@@ -1818,8 +1836,10 @@ export class PdfInkView extends InkWritingView {
       // Pending peer state must also reach disk when a save finishes mid-stroke.
       const snapshot = this.pendingMergedSidecar ? mergeSidecars(this.pendingMergedSidecar, this.sidecar!) : this.sidecar!;
       const next = { ...snapshot, updatedAt: Date.now() };
-      const nextRaw = serializeSidecar(next);
-      if (await this.store.writeIfUnchanged(this.sidecarFile!, this.sidecarRaw, nextRaw)) {
+      const expectedRaw = this.sidecarRaw;
+      const nextRaw = await this.serializeSidecarForSave(next);
+      if (generation !== this.loadGeneration || this.sidecarFile !== file || this.writeBlockedReason) return { status: "failed", message: this.writeBlockedReason || "PDF changed during save" };
+      if (await this.store.writeIfUnchanged(file, expectedRaw, nextRaw)) {
         this.sidecarRaw = nextRaw;
         this.dirty = this.editRevision !== revision;
         if (this.pendingMergedSidecar) this.receiveMergedSidecar(next);
@@ -1836,7 +1856,7 @@ export class PdfInkView extends InkWritingView {
       if (this.writeBlockedReason) return { status: "failed", message: this.writeBlockedReason };
       let latest: PdfSidecar;
       try {
-        latest = normalizeSidecar(JSON.parse(latestRaw));
+        latest = normalizeSidecar(parseStoredJson(latestRaw));
       } catch {
         return this.saveConflictCopy(latestRaw, "the notes file on disk is corrupt or uses an unknown format");
       }
@@ -1847,8 +1867,9 @@ export class PdfInkView extends InkWritingView {
         const mergeRevision = this.editRevision;
         const merged = mergeSidecars(latest, this.pendingMergedSidecar
           ? mergeSidecars(this.pendingMergedSidecar, this.sidecar!) : this.sidecar!);
-        const mergedRaw = serializeSidecar(merged);
-        if (await this.store.writeIfUnchanged(this.sidecarFile!, latestRaw, mergedRaw)) {
+        const mergedRaw = await this.serializeSidecarForSave(merged);
+        if (generation !== this.loadGeneration || this.sidecarFile !== file || this.writeBlockedReason) return { status: "failed", message: this.writeBlockedReason || "PDF changed during save" };
+        if (await this.store.writeIfUnchanged(file, latestRaw, mergedRaw)) {
           this.sidecarRaw = mergedRaw;
           this.dirty = this.editRevision !== mergeRevision;
           this.receiveMergedSidecar(merged);
