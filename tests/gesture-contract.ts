@@ -154,7 +154,7 @@ export function gestureContract(create: () => Promise<any>): void {
       for (const p of path.slice(1, -1)) editor.onPointerMove(sample(p.x, p.y));
       editor.onPointerUp(sample(path.at(-1)!.x, path.at(-1)!.y));
       expect(page.strokes).toEqual(underlying); expect(page.stickyNotes![0].strokes).toEqual(covered);
-      expect(page.stickyNotes![1].strokes.length).toBeGreaterThan(1);
+      expect(page.stickyNotes![1].strokes).toHaveLength(2);
       expect(page.stickyNotes![1].deletedStrokeIds).toContain(original[0].id);
       expect(editor.undoStack).toHaveLength(history + 1);
       const clipped = page.stickyNotes![1].strokes.map((s) => s.points);

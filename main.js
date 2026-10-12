@@ -26660,7 +26660,7 @@ function eraseStrokeSegmentsByScribble(stroke, path, radius, width, height, canE
   const bounds = boundsForPointSets([path]);
   if (!bounds) return null;
   const scribble = { ...stroke, points: path };
-  const result = splitErasedStrokeSamples(sampleStrokeForEraser(stroke.points, radius, width, height), (point) => point.x >= bounds.minX - radius / width && point.x <= bounds.maxX + radius / width && point.y >= bounds.minY - radius / height && point.y <= bounds.maxY + radius / height && canErasePoint(point) && strokeIntersectsEraser(scribble, point, radius, "circle", width, height));
+  const result = splitErasedStrokeSamples(sampleStrokeForEraser(stroke.points, radius, width, height), (point) => point.x >= bounds.minX - radius / width && point.x <= bounds.maxX + radius / width && point.y >= bounds.minY - radius / height && point.y <= bounds.maxY + radius / height && canErasePoint(point));
   return result.erased ? result.segments : null;
 }
 function eraseStrokeSegments(stroke, center, radius, mode, width, height) {

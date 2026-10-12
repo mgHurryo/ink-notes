@@ -318,11 +318,14 @@ export function eraseStrokeSegmentsByScribble(stroke: InkStroke, path: InkPoint[
   canErasePoint: (point: InkPoint) => boolean = () => true): InkPoint[][] | null {
   const bounds = boundsForPointSets([path]);
   if (!bounds) return null;
-  const scribble = { ...stroke, points: path };
+  // Fill the complete gesture bounds as well as the nib path. Testing only
+  // the sampled path leaves islands between successive loops, which render as
+  // tiny dots. A rectangle is deterministic for circles, waves and rotated
+  // scribbles and matches the user's visible scrub area.
   const result = splitErasedStrokeSamples(sampleStrokeForEraser(stroke.points, radius, width, height), (point) =>
     point.x >= bounds.minX - radius / width && point.x <= bounds.maxX + radius / width
     && point.y >= bounds.minY - radius / height && point.y <= bounds.maxY + radius / height
-    && canErasePoint(point) && strokeIntersectsEraser(scribble, point, radius, "circle", width, height));
+    && canErasePoint(point));
   return result.erased ? result.segments : null;
 }
 
