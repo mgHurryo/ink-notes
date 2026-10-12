@@ -105,6 +105,10 @@ Handwriting recognition is not bundled. An optional [handwriting index interface
 
 ## Desktop navigation
 
+New Ink/PDF tabs start in **Reading mode** on phones, small mobile screens, desktop computers and unknown devices. Large mobile tablets start in editing mode. iPad split windows keep the tablet default even when their pane is narrow. The default uses device facts once, never the live pane width. Your mode selection belongs to each tab, survives workspace restoration and stays unchanged when resizing, rotating or splitting the window. Tabs may use different modes.
+
+Obsidian cannot reliably report whether a stylus is paired before its first contact, so tablets use the handwriting-first default even without a connected pen. Use the mode button to choose reading or editing explicitly; connecting/disconnecting a pen does not change your selection.
+
 Mouse wheel and two-finger trackpad scrolling first move within the current page. At the top/bottom boundary, continued scrolling by about 100 pixels changes to the previous/next page. Horizontal trackpad scrolling and **Shift+wheel** follow the same rule at the left/right boundary. Returning vertically to the previous page lands at its bottom; moving forward lands at the top. Pixel, line and page wheel units are supported.
 
 Decaying trackpad inertia is limited to one page per gesture. Reverse direction, pause briefly, or start a renewed flick after its tail to continue navigating. Navigation requests during animations or saves are combined into the latest destination instead of dropped. **PageUp/PageDown**, **Home/End** and **Alt+Left/Right** navigate; **Ctrl/Cmd+wheel**, **+/-** and **0** zoom/reset. **Space+drag** or middle-button drag pans in editing mode; left drag pans in reading mode. Text fields and nested scroll panels keep their own interaction.

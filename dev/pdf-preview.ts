@@ -22,6 +22,7 @@ export async function openPdfPreview(): Promise<PdfInkView> {
   view.configure({ store, workers: new InkWorkerService(console.warn),
     takeover: new PdfTabTakeover(() => ({ enabled: false, enhancerActive: false, isPdfFile: () => true }), VIEW_TYPE_PDF_INK) });
   view.file = Object.assign(new TFile(), { path: "Preview.pdf", basename: "Preview" });
+  await view.setState({ readingMode: false }, { history: false });
   await view.onOpen();
   const internal = view as any;
   internal.attachSidecar(sidecar, raw, Object.assign(new TFile(), { path: "Preview.pdfink.json" }));

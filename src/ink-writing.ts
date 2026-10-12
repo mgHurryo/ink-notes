@@ -14,7 +14,8 @@
  * notebook semantics.
  */
 
-import { FileView, Menu, Notice, setIcon } from "obsidian";
+import { FileView, Menu, Notice, Platform, setIcon, type ViewStateResult } from "obsidian";
+import { defaultReadingMode } from "./device-mode";
 import { ImageLibraryModal, ImageLibraryStore, placedImage } from "./image-library";
 import { PageImageLayer } from "./page-images";
 import { StickyNoteLayer, markdownStickyLink } from "./sticky-notes";
@@ -914,6 +915,32 @@ export abstract class InkWritingView extends FileView {
   // ------------------------------------------------------------------ seams
 
   protected readingMode = false;
+  private readingModeInitialized = false;
+
+  getState(): Record<string, unknown> {
+    this.initializeReadingMode();
+    return { ...super.getState(), readingMode: this.readingMode };
+  }
+
+  async setState(state: Record<string, unknown>, result: ViewStateResult): Promise<void> {
+    // Restore before file loading builds object layers or accepts input.
+    if (typeof state?.readingMode === "boolean") {
+      this.readingModeInitialized = true;
+      if (this.viewReady) this.setReadingMode(state.readingMode);
+      else this.readingMode = state.readingMode;
+    }
+    await super.setState(state, result);
+  }
+
+  private initializeReadingMode(): void {
+    if (!this.readingModeInitialized) {
+      this.readingMode = defaultReadingMode(Platform, {
+        width: window.screen.width, height: window.screen.height,
+        userAgent: navigator.userAgent, maxTouchPoints: navigator.maxTouchPoints,
+      });
+      this.readingModeInitialized = true;
+    }
+  }
 
   /** The notebook model this editor writes into (drives op metadata). */
   protected abstract currentNotebook(): InkNotebook;
@@ -1328,12 +1355,15 @@ export abstract class InkWritingView extends FileView {
   }
 
   protected buildReadingModeButton(parent: HTMLElement): void {
+    this.initializeReadingMode();
+    this.toolbarRoot().toggleClass("ink-reading", this.readingMode);
     const button = this.addIconButton(parent, "book-open", "Reading mode", () => this.setReadingMode(!this.readingMode));
     button.classList.add("ink-reading-toggle");
     this.updateReadingModeButton();
   }
 
   protected setReadingMode(reading: boolean): void {
+    this.readingModeInitialized = true;
     if (reading === this.readingMode) return;
     this.finishPointerInput(false);
     this.endDesktopPan();
@@ -1349,6 +1379,7 @@ export abstract class InkWritingView extends FileView {
     this.updateHistoryButtons();
     this.refreshEraserCursor();
     this.syncStickyNotes();
+    this.app.workspace.requestSaveLayout();
   }
 
   protected onReadingModeChanged(): void {}

@@ -1,5 +1,9 @@
 import { createElement, icons } from "lucide";
 
+// The editing preview/test host emulates a tablet. Device-default tests set
+// these facts explicitly; production reads Obsidian's real Platform object.
+export const Platform = { isDesktopApp: false, isMobileApp: true, isPhone: false, isTablet: true };
+
 // Minimal host adapter for exercising the real plugin view in a browser.
 function createEl(this: HTMLElement, tag: string, options: any = {}) {
   const element = document.createElement(tag);
@@ -24,7 +28,7 @@ Object.assign(HTMLElement.prototype, {
   setCssStyles(this: HTMLElement, styles: Record<string, string>) { Object.assign(this.style, styles); },
 });
 export class FileView {
-  app = { scope: {} };
+  app = { scope: {}, workspace: { requestSaveLayout() {} } };
   containerEl = document.querySelector<HTMLElement>("#host")!;
   /** Obsidian's ItemView exposes the .view-content pane as contentEl; the
    *  preview shell provides it as containerEl.children[1], mirroring the
@@ -37,6 +41,8 @@ export class FileView {
   scope: any;
   cleanups: (() => void)[] = [];
   constructor(_leaf: any) {}
+  getState(): Record<string, unknown> { return {}; }
+  async setState(_state: unknown, _result: unknown): Promise<void> {}
   register(callback: () => void) { this.cleanups.push(callback); }
   registerDomEvent(target: EventTarget, name: string, callback: any, options?: any) {
     target.addEventListener(name, callback, options);

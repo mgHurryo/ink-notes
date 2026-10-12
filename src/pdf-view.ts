@@ -179,6 +179,7 @@ export class PdfInkView extends InkWritingView {
     root.addClass("ink-pdf-view", "ink-pdf-editing", "ink-rail-hidden");
     this.root = root;
     this.renderToolbar(root);
+    root.toggleClass("ink-pdf-editing", !this.readingMode);
     this.statusEl = root.createDiv({ cls: "ink-pdf-status" });
     // The page rail rides left of the page scroller for the whole life of
     // the view (no toggle button - same as the notebook editor's rail).
