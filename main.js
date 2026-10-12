@@ -26502,6 +26502,7 @@ function pasteClipboardStrokes(content, pageId, width, height, target) {
 var PASTE_HOLD_DELAY_MS = 600;
 var PASTE_HOLD_SLOP_PX = 10;
 var MAX_SCRIBBLE_GESTURE_POINTS = 2048;
+var SCRIBBLE_REFERENCE_SIZE = 24;
 var STROKE_ERASER_HIT_RADIUS = 10;
 var OVERLAY_PIXEL_BUDGET = 12e6;
 var SAVE_IDLE_DELAY = 1500;
@@ -26613,46 +26614,77 @@ function isScribbleEraseGesture(points, eraserSize, width, height, sensitivity) 
   const duration = filtered[filtered.length - 1].t - filtered[0].t;
   const ease = Math.max(0, Math.min(100, sensitivity)) / 100;
   const minimumTurns = Math.round(6 - 3 * ease);
-  const horizontal = boundsWidth >= boundsHeight;
-  const span = horizontal ? boundsWidth : boundsHeight;
-  const coordinate = (point) => horizontal ? point.x * width : point.y * height;
-  let extreme = coordinate(filtered[0]), direction = 0, traversals = 0;
-  const travel = Math.max(8, span * 0.6);
-  for (const point of filtered.slice(1)) {
-    const value = coordinate(point);
-    if (direction === 0) {
-      if (Math.abs(value - extreme) >= travel) {
-        direction = Math.sign(value - extreme);
+  const countTraversals = (axisX, axisY) => {
+    const coordinates = filtered.map((point) => point.x * width * axisX + point.y * height * axisY);
+    let minimum = Number.POSITIVE_INFINITY, maximum = Number.NEGATIVE_INFINITY;
+    for (const value of coordinates) {
+      minimum = Math.min(minimum, value);
+      maximum = Math.max(maximum, value);
+    }
+    let extreme = coordinates[0], initialMinimum = extreme, initialMaximum = extreme, direction = 0, traversals = 0;
+    const travel = Math.max(8, (maximum - minimum) * 0.6);
+    for (const value of coordinates.slice(1)) {
+      if (direction === 0) {
+        initialMinimum = Math.min(initialMinimum, value);
+        initialMaximum = Math.max(initialMaximum, value);
+        if (initialMaximum - initialMinimum >= travel) {
+          direction = value === initialMaximum ? 1 : -1;
+          extreme = value;
+          traversals++;
+        }
+      } else if ((value - extreme) * direction >= 0) {
+        extreme = value;
+      } else if ((extreme - value) * direction >= travel) {
+        direction *= -1;
         extreme = value;
         traversals++;
       }
-    } else if ((value - extreme) * direction >= 0) {
-      extreme = value;
-    } else if ((extreme - value) * direction >= travel) {
-      direction *= -1;
-      extreme = value;
-      traversals++;
     }
-  }
-  return turns >= minimumTurns && traversals >= minimumTurns + 1 && pathLength >= Math.max(96, eraserSize * 3) && boundsDiagonal >= eraserSize * 0.5 && pathLength / Math.max(1, boundsDiagonal) >= 4.8 - 1.6 * ease && duration >= 0 && duration <= 1800;
+    return traversals;
+  };
+  if (pathLength < Math.max(96, eraserSize * 3) || boundsDiagonal < eraserSize * 0.5 || duration < 0 || duration > 1800) return false;
+  const density = pathLength / Math.max(1, boundsDiagonal);
+  const horizontalTraversals = countTraversals(1, 0);
+  const verticalTraversals = countTraversals(0, 1);
+  const dominantTraversals = boundsWidth >= boundsHeight ? horizontalTraversals : verticalTraversals;
+  if (turns >= minimumTurns && dominantTraversals >= minimumTurns + 1 && density >= 4.8 - 1.6 * ease) return true;
+  const diagonal = Math.SQRT1_2;
+  return density >= 5.2 - 1.2 * ease && Math.max(
+    horizontalTraversals,
+    verticalTraversals,
+    countTraversals(diagonal, diagonal),
+    countTraversals(diagonal, -diagonal)
+  ) >= minimumTurns + 2;
 }
-function strokeIntersectsScribble(stroke, path, radius, width, height) {
-  const samples = sampleStrokeForEraser(path, Math.max(1, radius / 2), width, height);
-  return samples.some((point) => strokeIntersectsEraser(stroke, point, radius + 1, "circle", width, height));
+function eraseStrokeSegmentsByScribble(stroke, path, radius, width, height, canErasePoint = () => true) {
+  const bounds = boundsForPointSets([path]);
+  if (!bounds) return null;
+  const scribble = { ...stroke, points: path };
+  const result = splitErasedStrokeSamples(sampleStrokeForEraser(stroke.points, radius, width, height), (point) => point.x >= bounds.minX - radius / width && point.x <= bounds.maxX + radius / width && point.y >= bounds.minY - radius / height && point.y <= bounds.maxY + radius / height && canErasePoint(point) && strokeIntersectsEraser(scribble, point, radius, "circle", width, height));
+  return result.erased ? result.segments : null;
 }
 function eraseStrokeSegments(stroke, center, radius, mode, width, height) {
+  return splitErasedStrokeSamples(
+    sampleStrokeForEraser(stroke.points, radius, width, height),
+    (point) => pointInsideEraser(point, center, radius, mode, width, height)
+  ).segments;
+}
+function splitErasedStrokeSamples(samples, contains) {
   const segments = [];
   let segment = [];
+  let erased = false;
   const flush = () => {
     if (segment.length > 0) segments.push(segment);
     segment = [];
   };
-  for (const point of sampleStrokeForEraser(stroke.points, radius, width, height)) {
-    if (pointInsideEraser(point, center, radius, mode, width, height)) flush();
-    else segment.push({ ...point });
+  for (const point of samples) {
+    if (contains(point)) {
+      flush();
+      erased = true;
+    } else segment.push({ ...point });
   }
   flush();
-  return segments;
+  return { segments, erased };
 }
 function pointInsideEraser(point, center, radius, mode, width, height) {
   const dx = (point.x - center.x) * width;
@@ -29660,7 +29692,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
       else this.renderInteractionFrame();
     });
   }
-  finishPointerInput(_includeFinalSample = false) {
+  finishPointerInput(completed = false) {
     var _a, _b, _c;
     this.flushPenModeler();
     this.finalizeStrokeRecord();
@@ -29713,7 +29745,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
       });
       this.pushCommand(this.erasedStrokesCommand(page.id, this.erasedStrokes, this.eraserReplacements));
       this.drawInteractiveStrokes(page.strokes, true);
-    } else if (this.activeStroke && !(interaction.tool === "pen" && this.state.scribbleErase && this.finishScribbleErase(page, this.activeStroke, this.scribbleGesturePoints))) {
+    } else if (this.activeStroke && !(completed && interaction.tool === "pen" && this.state.scribbleErase && this.finishScribbleErase(page, this.activeStroke, this.scribbleGesturePoints))) {
       this.markChanged(page);
       this.retainActivePreview();
       this.queueWorkerOperation({
@@ -29747,9 +29779,9 @@ var InkWritingView = class extends import_obsidian6.FileView {
     this.afterInputFullySettled();
   }
   finishScribbleErase(page, gesture, path) {
-    var _a, _b, _c, _d;
-    if (!isScribbleEraseGesture(path, this.state.eraserSize, this.canvasLogicalWidth, this.canvasLogicalHeight, this.state.scribbleSensitivity)) return false;
-    const radius = this.state.eraserSize / 2;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    if (!isScribbleEraseGesture(path, SCRIBBLE_REFERENCE_SIZE, this.canvasLogicalWidth, this.canvasLogicalHeight, this.state.scribbleSensitivity)) return false;
+    const radius = Math.max(2, Math.min(4, gesture.width / 2));
     let minX = Number.POSITIVE_INFINITY, minY = Number.POSITIVE_INFINITY;
     let maxX = Number.NEGATIVE_INFINITY, maxY = Number.NEGATIVE_INFINITY;
     for (const point of path) {
@@ -29770,22 +29802,32 @@ var InkWritingView = class extends import_obsidian6.FileView {
     const indexed = ((_a = this.tiles) == null ? void 0 : _a.query) ? this.tiles.query(search) : page.strokes;
     const candidates = [...new Map([
       ...indexed,
+      ...(_c = (_b = this.stickyInput) == null ? void 0 : _b.proxies.values()) != null ? _c : [],
       ...this.pendingInkStrokes,
-      ...(_b = this.committingInkStrokes) != null ? _b : []
+      ...(_d = this.committingInkStrokes) != null ? _d : []
     ].map((stroke) => [stroke.id, stroke])).values()].filter((stroke) => stroke.id !== gesture.id);
-    const removed = candidates.filter((stroke) => strokeIntersectsScribble(
-      stroke,
-      path,
-      radius,
-      this.canvasLogicalWidth,
-      this.canvasLogicalHeight
-    ));
+    const notes = [...(_f = (_e = this.stickyInput) == null ? void 0 : _e.notes) != null ? _f : []].reverse().filter((note) => !note.collapsed).map((note) => ({ id: note.id, bounds: stickyBounds(note, this.stickyGeometry()) }));
+    const removed = [], replacements = [];
+    const now = Date.now();
+    for (const stroke of candidates) {
+      const owner = (_g = this.stickyInput) == null ? void 0 : _g.owners.get(stroke.id);
+      const segments = eraseStrokeSegmentsByScribble(stroke, path, radius, this.canvasLogicalWidth, this.canvasLogicalHeight, (point) => {
+        const top2 = notes.find(({ bounds: r }) => point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom);
+        return (top2 == null ? void 0 : top2.id) === (owner == null ? void 0 : owner.id);
+      });
+      if (segments === null) continue;
+      removed.push(stroke);
+      for (const points of segments) {
+        const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, createdAt: now, updatedAt: now };
+        replacements.push(replacement);
+        if (owner) (_h = this.stickyInput) == null ? void 0 : _h.owners.set(replacement.id, owner);
+      }
+    }
     if (removed.length === 0) return false;
+    this.materializePendingInkPreview(page);
     const removedIds = [gesture.id, ...removed.map((stroke) => stroke.id)];
     this.deleteStrokes(page, removedIds);
-    this.pendingInkStrokes = this.pendingInkStrokes.filter((stroke) => stroke.id !== gesture.id);
-    if (this.pendingInkStrokes.length === 0) this.pendingInkPageId = null;
-    (_c = this.confirmedStrokeOutlines) == null ? void 0 : _c.delete(gesture.id);
+    page.strokes.push(...replacements);
     this.markChanged(page);
     this.queueWorkerOperation({
       type: "complete-stroke",
@@ -29797,14 +29839,24 @@ var InkWritingView = class extends import_obsidian6.FileView {
     this.queueWorkerOperation({
       type: "patch-strokes",
       pageId: page.id,
-      upsert: [],
+      upsert: replacements.map(cloneStroke),
       remove: removedIds,
       deletedStrokeIds: [...page.deletedStrokeIds],
       pageUpdatedAt: page.updatedAt,
       notebookUpdatedAt: this.currentNotebook().updatedAt
     });
-    (_d = this.tiles) == null ? void 0 : _d.patchStrokes([], removedIds, page.strokes);
-    this.pushCommand(this.erasedStrokesCommand(page.id, removed.map(cloneStroke), []));
+    (_i = this.tiles) == null ? void 0 : _i.patchStrokes(
+      replacements.filter((stroke) => {
+        var _a2;
+        return !((_a2 = this.stickyInput) == null ? void 0 : _a2.owners.has(stroke.id));
+      }),
+      removedIds,
+      page.strokes.filter((stroke) => {
+        var _a2;
+        return !((_a2 = this.stickyInput) == null ? void 0 : _a2.owners.has(stroke.id));
+      })
+    );
+    this.pushCommand(this.erasedStrokesCommand(page.id, removed.map(cloneStroke), replacements));
     this.activeStroke = null;
     this.drawInteractiveStrokes(page.strokes, true);
     return true;
@@ -30051,7 +30103,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
       updateSensitivityLabel();
       this.scheduleToolStateSave();
     });
-    scribbleRow.createDiv({ cls: "ink-settings-label", text: "Low: fewer accidental erases. High: fewer back-and-forth strokes needed." });
+    scribbleRow.createDiv({ cls: "ink-settings-label", text: "Scrub, loop or wave repeatedly over ink with the pen. Low: fewer accidental erases. High: fewer repetitions needed." });
     const syncSizeVisibility = () => {
       sizeRow.style.display = this.state.eraserMode === "stroke" ? "none" : "";
     };

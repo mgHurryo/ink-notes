@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { defaultToolState } from "../src/tool-state";
 import type { InkPage } from "../src/model";
+import { rotateScribble, scribbleLoops, scribbleWaves } from "./scribble-fixtures";
 
 /** Run the same real DOM input contract against both editor implementations. */
 export function gestureContract(create: () => Promise<any>): void {
@@ -29,6 +30,91 @@ export function gestureContract(create: () => Promise<any>): void {
       };
       return { editor, page, host, finger, send, draw };
     }
+
+    it.each(["loops", "horizontal waves", "vertical waves"])("locally erases %s with the normal pen and preserves adjacent ink, undo and redo", async (shape) => {
+      const { editor, page } = await setup();
+      editor.capturePointer = vi.fn(); editor.releasePointer = vi.fn();
+      editor.state.tool = "pen"; editor.state.pen.smooth = 100; editor.state.scribbleSensitivity = 25;
+      let time = 1000;
+      const sample = (x: number, y: number) => ({ pointerType: "pen", pointerId: 42, clientX: x, clientY: y, pressure: .5,
+        timeStamp: time += 4, preventDefault() {} });
+      editor.onPointerDown(sample(100, 500)); editor.onPointerMove(sample(900, 500)); editor.onPointerUp(sample(900, 500));
+      const original = structuredClone(page.strokes[0]);
+      const adjacent = { ...structuredClone(original), id: "adjacent", points: original.points.map((p) => ({ ...p, y: .59 })) };
+      page.strokes.push(adjacent); editor.queueStrokePatch(page, [adjacent], []);
+      editor.state.eraserMode = "stroke"; editor.state.eraserSize = 160;
+      const fixture = shape === "loops" ? scribbleLoops() : rotateScribble(scribbleWaves(), shape === "horizontal waves" ? 90 : 0);
+      const path = fixture.map((p) => ({ x: 300 + p.x * 4, y: 300 + p.y * 4 }));
+      const history = editor.undoStack.length;
+      editor.onPointerDown(sample(path[0].x, path[0].y));
+      for (const p of path.slice(1, -1)) editor.onPointerMove(sample(p.x, p.y));
+      const last = path[path.length - 1]; editor.onPointerUp(sample(last.x, last.y));
+      expect(page.deletedStrokeIds).toContain(original.id);
+      expect(page.strokes).toContainEqual(adjacent);
+      const remaining = page.strokes.filter((s) => s.id !== adjacent.id);
+      expect(remaining.length).toBeGreaterThanOrEqual(2);
+      expect(Math.min(...remaining.flatMap((s) => s.points.map((p) => p.x)))).toBeCloseTo(original.points[0].x);
+      expect(Math.max(...remaining.flatMap((s) => s.points.map((p) => p.x)))).toBeCloseTo(original.points.at(-1)!.x);
+      expect(editor.undoStack).toHaveLength(history + 1);
+      expect(editor.pendingInkStrokes).toHaveLength(0);
+      expect(editor.committingInkStrokes).toBeNull();
+      editor.undo(); expect(page.strokes).toHaveLength(2);
+      expect(page.strokes.find((s) => s.id !== adjacent.id)!.points).toEqual(original.points);
+      editor.redo(); expect(page.strokes.filter((s) => s.id !== adjacent.id).map((s) => s.points)).toEqual(remaining.map((s) => s.points));
+    });
+
+    it("clips scribbling to visible sticky ink and leaves the page and covered notes untouched", async () => {
+      const { editor, page } = await setup();
+      editor.capturePointer = vi.fn(); editor.releasePointer = vi.fn(); editor.state.tool = "pen"; editor.state.pen.smooth = 0;
+      let time = 1000;
+      const sample = (x: number, y: number) => ({ pointerType: "pen", pointerId: 42, clientX: x, clientY: y, pressure: .5,
+        timeStamp: time += 4, preventDefault() {} });
+      const drawLine = () => { editor.onPointerDown(sample(300, 500)); editor.onPointerMove(sample(680, 500)); editor.onPointerUp(sample(680, 500)); };
+      drawLine(); const underlying = structuredClone(page.strokes);
+      editor.addSticky(); let note = page.stickyNotes![0]; editor.changeSticky(note, { ...note, x: .2, y: .35, width: .5, height: .3, boardPageWidth: 1000 });
+      drawLine(); const covered = structuredClone(page.stickyNotes![0].strokes);
+      editor.addSticky(); note = page.stickyNotes![1]; editor.changeSticky(note, { ...note, x: .2, y: .35, width: .5, height: .3, boardPageWidth: 1000 });
+      drawLine(); const original = structuredClone(page.stickyNotes![1].strokes);
+      // The normal page tile index deliberately does not contain sticky projections.
+      vi.spyOn(editor.tiles, "query").mockImplementation(() => page.strokes.filter((s) => !editor.stickyInput?.owners.has(s.id)));
+      const path = scribbleWaves().map((p) => ({ x: 300 + p.x * 4, y: 300 + p.y * 4 }));
+      const history = editor.undoStack.length;
+      editor.onPointerDown(sample(path[0].x, path[0].y));
+      for (const p of path.slice(1, -1)) editor.onPointerMove(sample(p.x, p.y));
+      editor.onPointerUp(sample(path.at(-1)!.x, path.at(-1)!.y));
+      expect(page.strokes).toEqual(underlying); expect(page.stickyNotes![0].strokes).toEqual(covered);
+      expect(page.stickyNotes![1].strokes.length).toBeGreaterThan(1);
+      expect(page.stickyNotes![1].deletedStrokeIds).toContain(original[0].id);
+      expect(editor.undoStack).toHaveLength(history + 1);
+      const clipped = page.stickyNotes![1].strokes.map((s) => s.points);
+      editor.undo(); expect(page.stickyNotes![1].strokes.map((s) => s.points)).toEqual(original.map((s) => s.points));
+      editor.redo(); expect(page.stickyNotes![1].strokes.map((s) => s.points)).toEqual(clipped);
+      expect(page.strokes).toEqual(underlying); expect(page.stickyNotes![0].strokes).toEqual(covered);
+    });
+
+    it.each(["disabled", "blank paper", "highlighter", "cancelled"])("keeps smooth scribbles from erasing in %s input", async (scenario) => {
+      const { editor, page } = await setup();
+      editor.capturePointer = vi.fn(); editor.releasePointer = vi.fn(); editor.state.tool = "pen"; editor.state.pen.smooth = 0;
+      let time = 1000;
+      const sample = (x: number, y: number) => ({ pointerType: "pen", pointerId: 42, clientX: x, clientY: y, pressure: .5,
+        timeStamp: time += 4, preventDefault() {} });
+      if (scenario !== "blank paper") {
+        editor.onPointerDown(sample(300, 500)); editor.onPointerMove(sample(700, 500)); editor.onPointerUp(sample(700, 500));
+      }
+      const original = structuredClone(page.strokes);
+      if (scenario === "disabled") editor.state.scribbleErase = false;
+      if (scenario === "highlighter") editor.state.tool = "highlighter";
+      const path = scribbleLoops().map((p) => ({ x: 300 + p.x * 4, y: 300 + p.y * 4 }));
+      editor.onPointerDown(sample(path[0].x, path[0].y));
+      for (const p of path.slice(1, -1)) editor.onPointerMove(sample(p.x, p.y));
+      const last = sample(path.at(-1)!.x, path.at(-1)!.y);
+      if (scenario === "cancelled") editor.onPointerCancel(last); else editor.onPointerUp(last);
+      for (const stroke of original) expect(page.strokes).toContainEqual(stroke);
+      // Interrupted stylus handwriting is retained by the existing input
+      // contract, but it must not become a destructive erase command.
+      expect(page.strokes).toHaveLength(original.length + 1);
+      expect(page.deletedStrokeIds).not.toContain(original[0]?.id);
+    });
 
     it("keeps fingers off ink by default and immediately writes/highlights/erases when opted in", async () => {
       const { editor, page, draw } = await setup();

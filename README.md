@@ -45,6 +45,12 @@ If the explicit command is missing, check that Ink Notes is enabled in this vaul
 - Read-only Markdown `ink` code-block embeds with optional page targeting.
 - No native dependency, so the plugin is packaged once for all Obsidian platforms.
 
+### Scribble to erase with the pen
+
+Keep **Pen** selected and repeatedly scrub, draw connected overlapping circles, or draw dense horizontal/vertical waves over existing ink. Rotated scrubs and repeated figure-eight marks also work. The gesture and covered ink disappear together; only touched portions of existing strokes are erased, preserving the rest of a connected word or long line. Scribbling on an expanded sticky erases its visible handwriting without deleting ink hidden underneath. Undo restores the original ink in one step.
+
+Open **Erase** settings to enable **Scribble erase with pen** and adjust **Scribble sensitivity**. Lower sensitivity requires more repetitions and reduces accidental erases; the conservative default remains 25%. The regular eraser's size/mode does not expand scribble coverage. A single strike-through, isolated circle, sparse wave or ordinary progressing handwriting stays as ink; scribbles on empty paper also stay as ink. Recognition requires a compact, repetitive single pen contact completed within 1.8 seconds. Very dense repetitive handwriting or diagrams can resemble erasing; lower sensitivity or disable the feature when drawing those shapes.
+
 ### Copy handwriting with the lasso
 
 Choose **Select** and circle or rectangle-select handwriting to show **Copy**, **Cut**, **Delete** and **Paste**. The menu fits above or below the selection and wraps on narrow screens. It closes after an action or an outside press; ordinary taps on empty paper do not open a paste menu. In editing mode, hold one finger still on the page for about **600 ms** to show **Paste** at that location with any tool selected. Moving more than 10 screen pixels, lifting early, adding another finger or starting stylus input cancels the hold. Paste keeps the current tool; in Select mode the pasted handwriting remains selected for moving. Cut, paste and delete support undo/redo; copying keeps the original strokes.
