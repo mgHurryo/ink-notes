@@ -1,6 +1,6 @@
 import type { StickyNote } from "./sticky-model";
 import { STICKY_HEADER } from "./sticky-ink";
-import { STICKY_UNIT, stickyPosition } from "./sticky-model";
+import { STICKY_UNIT, stickyPosition, stickyTextBoxes, stickyText, stickyFont, stickyFontSize } from "./sticky-model";
 import { drawInkStroke } from "./rendering";
 import { App, Component, MarkdownRenderer } from "obsidian";
 
@@ -13,13 +13,19 @@ async function markdownImage(note: StickyNote, context: StickyMarkdownContext, v
   const component = new Component(); component.load();
   const el = document.createElement("div");
   try {
-    await MarkdownRenderer.render(context.app, note.text, el, context.source, component);
+    for (const box of stickyTextBoxes(note)) {
+      if (!box.text) continue;
+      const frame = document.createElement("div"), content = document.createElement("div");
+      frame.setAttribute("style", `position:absolute;left:${box.x - note.scrollX}px;top:${box.y - note.scrollY}px;width:${box.width}px;font:${stickyFont(box, true)};${box.height === undefined ? "" : `height:${box.height}px;overflow:hidden;`}`);
+      await MarkdownRenderer.render(context.app, box.text, content, context.source, component);
+      frame.append(content); el.append(frame);
+    }
     el.querySelectorAll("img,image,use,iframe,video,audio,object,script,style,link").forEach((node) => node.remove());
     const body = document.createElementNS("http://www.w3.org/1999/xhtml", "div");
-    body.setAttribute("style", `font:20px/1.4 sans-serif;color:#25221d;position:absolute;left:${16 - note.scrollX}px;top:${16 - note.scrollY}px;width:${Math.max(60, note.textWidth ?? note.width * note.boardPageWidth - 32)}px`);
+    body.setAttribute("style", "font:20px/1.4 sans-serif;color:#25221d;position:relative;");
     body.append(...Array.from(el.childNodes));
     body.querySelectorAll("*").forEach((node) => {
-      for (const attr of Array.from(node.attributes)) if (attr.name !== "href" || node.tagName.toLowerCase() !== "a") node.removeAttribute(attr.name);
+      for (const attr of Array.from(node.attributes)) if (!(attr.name === "style" && node.parentElement === body) && (attr.name !== "href" || node.tagName.toLowerCase() !== "a")) node.removeAttribute(attr.name);
       if (node.tagName.toLowerCase() === "p") node.setAttribute("style", "margin:0 0 12px");
       if (/^h[1-6]$/i.test(node.tagName)) {
         const sizes = [2, 1.5, 1.17, 1, .83, .67];
@@ -54,9 +60,26 @@ export function paintStickyBoard(ctx: CanvasRenderingContext2D, note: StickyNote
   else ctx.clearRect(0, 0, width, height);
   ctx.scale(scale, scale); ctx.translate(-note.scrollX, -note.scrollY);
   ctx.fillStyle = "#202020"; ctx.font = "20px sans-serif"; ctx.textBaseline = "top";
-  const lines = stickyTextLines(note.text);
-  const first = Math.max(0, Math.floor((note.scrollY - 16) / 28));
-  for (let index = first; index < Math.min(lines.length, first + Math.ceil(height / scale / 28) + 2); index++) ctx.fillText(lines[index], 16, 16 + index * 28);
+  for (const box of stickyTextBoxes(note)) {
+    if (!box.text) continue;
+    ctx.font = stickyFont(box);
+    const lineHeight = stickyFontSize(box.fontSize) * 1.4;
+    const lines: string[] = [];
+    for (const paragraph of stickyTextLines(box.text)) {
+      let line = "";
+      for (const char of paragraph) {
+        if (line && ctx.measureText(line + char).width > box.width) { lines.push(line); line = ""; }
+        line += char;
+      }
+      lines.push(line);
+    }
+    const first = Math.max(0, Math.floor((note.scrollY - box.y) / lineHeight));
+    if (first >= lines.length) continue;
+    ctx.save();
+    if (box.height !== undefined) { ctx.beginPath(); ctx.rect(box.x, box.y, box.width, box.height); ctx.clip(); }
+    for (let index = first; index < Math.min(lines.length, first + Math.ceil(height / scale / lineHeight) + 2); index++) ctx.fillText(lines[index], box.x, box.y + index * lineHeight);
+    ctx.restore();
+  }
   for (const stroke of note.strokes) drawInkStroke(ctx, stroke, STICKY_UNIT, STICKY_UNIT);
   ctx.restore();
 }
@@ -71,7 +94,7 @@ export function stickyFrameWidth(note: StickyNote, pageWidth: number): number {
 /** The folded icon previews the same board viewport without mutating content. */
 export function paintStickyIcon(ctx: CanvasRenderingContext2D, note: StickyNote, width: number, height: number, pageAspect: number): void {
   ctx.save(); ctx.fillStyle = note.color; ctx.fillRect(0, 0, width, height);
-  if (note.preview && (note.text || note.strokes.length)) {
+  if (note.preview && (stickyText(note) || note.strokes.length)) {
     const boardWidth = note.width * note.boardPageWidth;
     const boardHeight = Math.max(1, note.height * note.boardPageWidth * pageAspect - STICKY_HEADER);
     const scale = Math.min((width - width * .15) / boardWidth, (height - height * .15) / boardHeight);
@@ -109,8 +132,9 @@ export async function stickyPng(note: StickyNote, pageWidth: number, pageHeight:
   const canvas = document.createElement("canvas"); canvas.width = Math.max(1, Math.ceil(width * scale)); canvas.height = Math.max(1, Math.ceil(height * scale));
   const ctx = canvas.getContext("2d"); if (!ctx) throw new Error("Sticky note rendering is unavailable");
   ctx.scale(scale, scale); paintStickyFrame(ctx, { ...note, x: 0, y: 0, text: markdown && !note.collapsed ? "" : note.text,
-    strokes: markdown && note.text && !note.collapsed ? [] : note.strokes }, pageWidth, pageHeight);
-  if (markdown && note.text && !note.collapsed) {
+    textBoxes: markdown && !note.collapsed ? [] : note.textBoxes,
+    strokes: markdown && stickyText(note) && !note.collapsed ? [] : note.strokes }, pageWidth, pageHeight);
+  if (markdown && stickyText(note) && !note.collapsed) {
     const boardScale = pageWidth / note.boardPageWidth;
     const img = await markdownImage(note, markdown, width / boardScale, Math.max(1, height / boardScale - STICKY_HEADER));
     ctx.save(); ctx.beginPath(); ctx.rect(0, STICKY_HEADER * boardScale, width, height - STICKY_HEADER * boardScale); ctx.clip();

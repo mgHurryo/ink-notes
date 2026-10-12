@@ -138,7 +138,7 @@ test("outside writing commits inline text first; panning and shrinking preserve 
   expect((await state(page)).stickyNotes[0].collapsed).toBe(true); expect((await state(page)).stickyNotes[0].text).toBe("Updated draft");
   await card.getByRole("button", { name: "Expand", exact: true }).click();
   await page.getByRole("button", { name: "Pointer", exact: true }).click();
-  await draw(page, r.x + 100, r.y + 90, r.x + 50, r.y + 50);
+  await page.keyboard.down("Alt"); await draw(page, r.x + 100, r.y + 90, r.x + 50, r.y + 50); await page.keyboard.up("Alt");
   expect((await state(page)).stickyNotes[0].scrollY).toBeGreaterThan(30);
   const layoutWidth = await card.locator(".ink-sticky-markdown").evaluate((el) => el.style.width);
   const h = (await card.getByRole("button", { name: "Resize note", exact: true }).boundingBox())!;

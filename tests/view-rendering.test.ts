@@ -284,6 +284,7 @@ it("repaints only changed eraser cells during the interaction", () => {
 
 it("moves a cached lasso preview without rebuilding stroke geometry", () => {
   const v = view();
+  v.inputRect = vi.fn(() => ({ width: 800, height: 1000 }));
   v.lassoCanvas = { style: {} };
   const points = [{ x: 0.2, y: 0.2, pressure: 0.5, t: 1 }];
   v.lassoDrag = {
