@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import { defaultToolState } from "../src/tool-state";
 import type { InkPage } from "../src/model";
 import { rotateScribble, scribbleLoops, scribbleWaves } from "./scribble-fixtures";
+import { SHAPES } from "../src/shapes";
+import type { NotebookOperation } from "../src/worker-protocol";
 
 /** Run the same real DOM input contract against both editor implementations. */
 export function gestureContract(create: () => Promise<any>): void {
@@ -30,6 +32,198 @@ export function gestureContract(create: () => Promise<any>): void {
       };
       return { editor, page, host, finger, send, draw };
     }
+
+    async function desktopSetup() {
+      const { editor } = await setup();
+      const scroller = editor.inputScroller() as HTMLElement;
+      let top = 0, left = 0;
+      Object.defineProperties(scroller, {
+        clientHeight: { configurable: true, value: 600 }, scrollHeight: { configurable: true, value: 1200 },
+        clientWidth: { configurable: true, value: 800 }, scrollWidth: { configurable: true, value: 800 },
+        scrollTop: { configurable: true, get: () => top, set: (v: number) => { top = Math.max(0, Math.min(600, v)); } },
+        scrollLeft: { configurable: true, get: () => left, set: (v: number) => { left = Math.max(0, Math.min(0, v)); } },
+      });
+      const settle = vi.spyOn(editor, "swipeSettle").mockImplementation(() => undefined);
+      vi.spyOn(editor, "swipeDrag").mockImplementation(() => undefined);
+      const wheel = (x: number, y: number, options: WheelEventInit = {}, target: HTMLElement = scroller) => {
+        const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX: x, deltaY: y, ...options });
+        target.dispatchEvent(event); return event;
+      };
+      return { editor, scroller, settle, wheel };
+    }
+
+    it.each(SHAPES)("draws %s live through the shape menu and finalizes one undoable stroke", async (kind, label) => {
+      const { editor, page } = await setup();
+      editor.capturePointer = vi.fn(); editor.releasePointer = vi.fn();
+      const operation = vi.spyOn(editor, "queueWorkerOperation");
+      const button = editor.toolbarRoot().querySelector('[data-tool="shape"]') as HTMLButtonElement;
+      button.click();
+      const choice = Array.from(document.querySelectorAll<HTMLButtonElement>(".menu button")).find(b => b.textContent === label)!;
+      expect(choice).toBeDefined(); choice.click();
+      const sample = (x: number, y: number) => ({ pointerId: 42, pointerType: "pen", clientX: x, clientY: y, pressure: .7 });
+      const history = editor.undoStack.length;
+      editor.onPointerDown(sample(200, 200)); editor.onPointerMove(sample(600, 500));
+      expect(page.strokes).toHaveLength(1);
+      expect(page.strokes[0].points.length).toBeGreaterThan(1);
+      expect(page.strokes[0].tool).toBe("pen");
+      editor.onPointerUp(sample(650, 550));
+      const points = structuredClone(page.strokes[0].points);
+      expect(operation.mock.calls.some(([value]) => { const op = value as NotebookOperation;
+        return op.type === "finalize-stroke" && JSON.stringify(op.stroke.points) === JSON.stringify(points); })).toBe(true);
+      expect(editor.undoStack).toHaveLength(history + 1);
+      editor.undo(); expect(page.strokes).toHaveLength(0);
+      editor.redo(); expect(page.strokes[0].points).toEqual(points);
+      // Re-tapping the same menu trigger closes it, rather than moving it.
+      button.click(); expect(document.querySelector(".menu")).not.toBeNull();
+      button.click(); expect(document.querySelector(".menu")).toBeNull();
+    });
+
+    it.each(["pointer", "stylus-touch"])("straightens held %s input after two seconds, tolerates jitter and adjusts the endpoint", async source => {
+      const { editor, page } = await setup();
+      editor.capturePointer = vi.fn(); editor.releasePointer = vi.fn(); editor.state.pen.smooth = 60;
+      const operation = vi.spyOn(editor, "queueWorkerOperation");
+      vi.useFakeTimers();
+      try {
+        let time = 100;
+        const sample = (x: number, y: number) => ({ pointerId: 42, pointerType: "pen", clientX: x, clientY: y, pressure: .6, timeStamp: time += 10 });
+        editor.onPointerDown(sample(200, 200), source);
+        for (const [x,y] of [[300,201], [400,199], [500,200]]) editor.onPointerMove(sample(x,y), source);
+        vi.advanceTimersByTime(1500); editor.onPointerMove(sample(501,200), source);
+        vi.advanceTimersByTime(499); expect(editor.geometricStroke).toBeNull();
+        vi.advanceTimersByTime(1); expect(page.strokes[0].points).toHaveLength(2);
+        expect(page.strokes[0].points[0].x).toBeCloseTo(.2);
+        editor.onPointerMove(sample(700,250), source);
+        expect(page.strokes[0].points).toHaveLength(2);
+        expect(page.strokes[0].points[1].x).toBeCloseTo(.7);
+        editor.onPointerUp(sample(700,250), source);
+        expect(page.strokes[0].points).toHaveLength(2);
+        expect(operation.mock.calls.some(([op]) => (op as NotebookOperation).type === "finalize-stroke")).toBe(true);
+        editor.undo(); expect(page.strokes).toHaveLength(0);
+        editor.redo(); expect(page.strokes[0].points).toHaveLength(2);
+      } finally { vi.useRealTimers(); }
+    });
+
+    it("keeps shape drawing under the existing finger opt-in", async () => {
+      const { editor, page, draw } = await setup();
+      draw("shape"); expect(page.strokes).toHaveLength(0);
+      editor.state.fingerAsPen = true;
+      draw("shape"); expect(page.strokes).toHaveLength(1);
+      expect(page.strokes[0].points).toHaveLength(5);
+    });
+
+    it("ignores a late freehand Worker outline after a held line replaces its points", async () => {
+      const { editor } = await setup();
+      editor.capturePointer = vi.fn(); editor.releasePointer = vi.fn(); editor.state.pen.smooth = 0;
+      const queue = vi.spyOn(editor, "queueWorkerOperation").mockImplementation(() => undefined);
+      vi.useFakeTimers();
+      try {
+        const sample = (x: number, y: number) => ({ pointerId:42, pointerType:"pen", clientX:x, clientY:y, pressure:.6 });
+        editor.onPointerDown(sample(200,200)); editor.onPointerMove(sample(300,201)); editor.onPointerMove(sample(500,200));
+        editor.flushWorkerStrokePoints();
+        const append = queue.mock.calls.find(([value]) => (value as NotebookOperation).type === "append-stroke-points")!;
+        expect(append).toBeDefined();
+        vi.advanceTimersByTime(2000);
+        (append[2] as (value: unknown) => void)({ type:"operation-applied", strokeId:editor.activeStroke.id,
+          outline:new Float32Array([0,0,1,1]), sampleCount:100 });
+        expect(editor.confirmedStrokeOutlines.has(editor.activeStroke.id)).toBe(false);
+        expect(editor.activeStroke.points).toHaveLength(2);
+        editor.finishPointerInput(true);
+      } finally { vi.useRealTimers(); }
+    });
+
+    it.each(["shape", "hold"])("routes %s ink into a sticky note with one-step undo", async kind => {
+      const { editor, page } = await setup();
+      editor.capturePointer = vi.fn(); editor.releasePointer = vi.fn(); editor.state.pen.smooth = 0;
+      editor.addSticky(); const note = page.stickyNotes![0];
+      editor.changeSticky(note, { ...note, x:.2, y:.2, width:.5, height:.5, boardPageWidth:1000 });
+      editor.state.tool = kind === "shape" ? "shape" : "pen";
+      const sample = (x: number, y: number) => ({ pointerId:42, pointerType:"pen", clientX:x, clientY:y, pressure:.6 });
+      vi.useFakeTimers();
+      try {
+        editor.onPointerDown(sample(300,350)); editor.onPointerMove(sample(400,351)); editor.onPointerMove(sample(600,350));
+        if (kind === "hold") vi.advanceTimersByTime(2000);
+        editor.onPointerUp(sample(600,350));
+        expect(page.strokes).toHaveLength(0);
+        expect(page.stickyNotes![0].strokes.length).toBeGreaterThan(0);
+        const points = structuredClone(page.stickyNotes![0].strokes.map(s => s.points));
+        editor.undo(); expect(page.stickyNotes![0].strokes).toHaveLength(0);
+        editor.redo(); expect(page.stickyNotes![0].strokes.map(s => s.points)).toEqual(points);
+      } finally { vi.useRealTimers(); }
+    });
+
+    it.each(["lift", "cancel", "tool", "reading", "blur", "moving", "curve", "highlighter"])("does not straighten after %s", async scenario => {
+      const { editor, page } = await setup();
+      editor.capturePointer = vi.fn(); editor.releasePointer = vi.fn(); editor.state.pen.smooth = 0;
+      vi.useFakeTimers();
+      try {
+        const sample = (x: number, y: number) => ({ pointerId: 42, pointerType: "pen", clientX: x, clientY: y, pressure: .6 });
+        if (scenario === "highlighter") editor.state.tool = "highlighter";
+        editor.onPointerDown(sample(200,200)); editor.onPointerMove(sample(300,scenario === "curve" ? 300 : 201));
+        editor.onPointerMove(sample(500,200));
+        if (scenario === "lift") editor.onPointerUp(sample(500,200));
+        if (scenario === "cancel") editor.onPointerCancel(sample(500,200));
+        if (scenario === "tool") editor.selectWritingTool("eraser");
+        if (scenario === "reading") editor.setReadingMode(true);
+        if (scenario === "blur") window.dispatchEvent(new Event("blur"));
+        if (scenario === "moving") { vi.advanceTimersByTime(1500); editor.onPointerMove(sample(600,200)); vi.advanceTimersByTime(1000); }
+        else vi.advanceTimersByTime(2500);
+        expect(editor.geometricStroke).toBeNull();
+        expect(page.strokes[0].points.length).toBeGreaterThan(2);
+        editor.finishPointerInput(false);
+      } finally { vi.useRealTimers(); }
+    });
+
+    it.each([0, 1, 2])("scrolls inside the page before vertical boundary navigation (wheel mode %s)", async (mode) => {
+      const { scroller, settle, wheel } = await desktopSetup();
+      const amount = mode === 0 ? 120 : mode === 1 ? 8 : 1;
+      wheel(0, amount, { deltaMode: mode });
+      expect(scroller.scrollTop).toBeGreaterThan(0);
+      expect(settle).not.toHaveBeenCalled();
+      scroller.scrollTop = 600;
+      expect(wheel(0, amount, { deltaMode: mode }).defaultPrevented).toBe(true);
+      expect(settle).toHaveBeenCalledWith(1, 0, "top");
+      wheel(0, -amount, { deltaMode: mode }); // Reverse immediately, without waiting for inertia to expire.
+      expect(scroller.scrollTop).toBeLessThan(600);
+      scroller.scrollTop = 0;
+      wheel(0, -amount, { deltaMode: mode });
+      expect(settle).toHaveBeenLastCalledWith(-1, 0, "bottom");
+    });
+
+    it.each(["abrupt", "gradual"])("rearms trackpad navigation on reversal and %s renewed motion, but ignores decaying inertia", async (ramp) => {
+      const { wheel, settle } = await desktopSetup();
+      wheel(140, 0);
+      for (const delta of [90, 60, 30, 10, 4]) wheel(delta, 0);
+      expect(settle).toHaveBeenCalledTimes(1);
+      if (ramp === "gradual") for (const delta of [8, 20, 35]) wheel(delta, 0);
+      wheel(140, 0); // New flick after the inertia tail, with no idle interval.
+      expect(settle).toHaveBeenCalledTimes(2);
+      wheel(-140, 0);
+      expect(settle).toHaveBeenLastCalledWith(-1, 0, undefined);
+      expect(settle).toHaveBeenCalledTimes(3);
+    });
+
+    it("keeps nested editing and scroll surfaces independent from document navigation", async () => {
+      const { wheel, settle, scroller } = await desktopSetup();
+      const textarea = document.createElement("textarea"); scroller.append(textarea);
+      expect(wheel(140, 140, {}, textarea).defaultPrevented).toBe(false);
+      const nested = document.createElement("div"); nested.style.overflowY = "auto"; scroller.append(nested);
+      Object.defineProperties(nested, { clientHeight: { value: 100 }, scrollHeight: { value: 300 } });
+      expect(wheel(0, 140, {}, nested).defaultPrevented).toBe(false);
+      expect(settle).not.toHaveBeenCalled();
+      expect(wheel(0, 140, { altKey: true }).defaultPrevented).toBe(false);
+    });
+
+    it("accepts page keys during an ongoing handoff without enabling edits", async () => {
+      const { editor, scroller } = await desktopSetup();
+      const navigate = vi.spyOn(editor, "desktopNavigate").mockImplementation(() => undefined);
+      editor.flipSettling = true;
+      const key = new KeyboardEvent("keydown", { key: "PageDown", bubbles: true, cancelable: true });
+      scroller.dispatchEvent(key);
+      expect(key.defaultPrevented).toBe(true);
+      expect(navigate).toHaveBeenCalledWith("next");
+      scroller.dispatchEvent(new KeyboardEvent("keydown", { key: "e", bubbles: true }));
+      expect(editor.state.tool).toBe("pen");
+    });
 
     it.each(["loops", "horizontal waves", "vertical waves"])("locally erases %s with the normal pen and preserves adjacent ink, undo and redo", async (shape) => {
       const { editor, page } = await setup();
@@ -83,7 +277,7 @@ export function gestureContract(create: () => Promise<any>): void {
       for (const p of path.slice(1, -1)) editor.onPointerMove(sample(p.x, p.y));
       editor.onPointerUp(sample(path.at(-1)!.x, path.at(-1)!.y));
       expect(page.strokes).toEqual(underlying); expect(page.stickyNotes![0].strokes).toEqual(covered);
-      expect(page.stickyNotes![1].strokes.length).toBeGreaterThan(1);
+      expect(page.stickyNotes![1].strokes).toHaveLength(2);
       expect(page.stickyNotes![1].deletedStrokeIds).toContain(original[0].id);
       expect(editor.undoStack).toHaveLength(history + 1);
       const clipped = page.stickyNotes![1].strokes.map((s) => s.points);

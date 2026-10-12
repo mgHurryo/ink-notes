@@ -103,6 +103,30 @@ Sticky notes appear in previews, Ink embeds and exported PDFs. PDF export render
 
 Handwriting recognition is not bundled. An optional [handwriting index interface](docs/sticky-handwriting-index.md) allows another integration to provide recognized search terms. Without an integration, Ink Notes does not send handwriting anywhere or run recognition.
 
+## Page text boxes
+
+In an Ink notebook or PDF, choose the toolbar's **Add text box** (T on desktop) to insert text directly on the page and start typing. Add as many independent boxes as needed. These boxes have a transparent background, with no sticky-note title bar or folded state. They use the same inline Markdown editor and font controls as sticky text: local font presets, size, bold, italic and optional **Scale text with box**. Resizing changes wrapping and the visible window; font size stays fixed unless that option is enabled.
+
+Tap to select a box, drag with a finger to move it, and drag its selected bottom-right handle to resize. With a mouse or pen, **Pointer** selects and moves boxes; drawing tools continue handwriting on the page, including over text. Insertion selects Pointer automatically. Double-tap/double-click or **Edit text box** opens inline editing; click outside or Ctrl/Cmd+Enter to apply, Escape to cancel. Tap outside to hide the controls. Arrow keys move a focused box, Shift makes larger steps, Alt+arrows resize, Enter edits and Delete removes. Reading mode displays text without editing controls.
+
+Text objects support undo/redo, synchronization, page previews, Ink embeds and PDF export. They reuse the existing note-object storage in the `.ink` file or PDF sidecar; the source PDF is unchanged. Right-click or long-press a box for editing, formatting, deletion and Markdown links, including paragraph ids. Enlarge a box to reveal text clipped by its saved dimensions. Typed content is included in the existing note search. Older builds may display page text as sticky cards, so keep a backup before downgrading.
+
+## Shapes and hold to straighten
+
+In editing mode, choose **Shapes** in either an Ink notebook or PDF, select **Line, Arrow, Rectangle, Square, Ellipse, Circle or Triangle**, then drag to draw. Shapes use the current pen color, width and opacity with uniform thickness. They are ordinary handwriting strokes: lasso selection, erasing, copy/paste, undo/redo, saving and PDF export use the existing workflow. Press **S** on desktop to reuse the last selected shape; tap Shapes again to change it. Fingers navigate unless **Use finger as pen** is enabled.
+
+With **Pen**, draw a fairly straight stroke of at least 40 page pixels, keep the nib touching the page, and stop moving for **2 seconds**. The stroke becomes a straight line between its endpoints; keep dragging to adjust the endpoint and lift to finish. Small resting jitter is tolerated. Curves, short marks and backtracking strokes are excluded. Lifting, cancelling, changing tools/modes or losing window focus cancels a pending hold.
+
+## Desktop navigation
+
+New Ink/PDF tabs start in **Reading mode** on phones, small mobile screens, desktop computers and unknown devices. Large mobile tablets start in editing mode. iPad split windows keep the tablet default even when their pane is narrow. The default uses device facts once, never the live pane width. Your mode selection belongs to each tab, survives workspace restoration and stays unchanged when resizing, rotating or splitting the window. Tabs may use different modes.
+
+Obsidian cannot reliably report whether a stylus is paired before its first contact, so tablets use the handwriting-first default even without a connected pen. Use the mode button to choose reading or editing explicitly; connecting/disconnecting a pen does not change your selection.
+
+Mouse wheel and two-finger trackpad scrolling first move within the current page. At the top/bottom boundary, continued scrolling by about 100 pixels changes to the previous/next page. Horizontal trackpad scrolling and **Shift+wheel** follow the same rule at the left/right boundary. Returning vertically to the previous page lands at its bottom; moving forward lands at the top. Pixel, line and page wheel units are supported.
+
+Decaying trackpad inertia is limited to one page per gesture. Reverse direction, pause briefly, or start a renewed flick after its tail to continue navigating. Navigation requests during animations or saves are combined into the latest destination instead of dropped. **PageUp/PageDown**, **Home/End** and **Alt+Left/Right** navigate; **Ctrl/Cmd+wheel**, **+/-** and **0** zoom/reset. **Space+drag** or middle-button drag pans in editing mode; left drag pans in reading mode. Text fields and nested scroll panels keep their own interaction.
+
 ## UI Preview
 
 Run `npm run preview` and open http://127.0.0.1:4173 to exercise the actual editor view with a lightweight browser host. Preview notes are in memory only; Vault storage and sync must be verified in Obsidian. The layout responds to the editor pane width, including split panes and mobile screens.

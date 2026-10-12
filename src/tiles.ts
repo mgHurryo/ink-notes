@@ -92,6 +92,13 @@ export class StrokeIndex {
     return keys;
   }
 
+  // Reconciliation has compared every rendering field. Advance only an index
+  // that represented that exact pre-merge revision; never hide unindexed edits.
+  acknowledgeMetadata(stroke: InkStroke, previousUpdatedAt: number): void {
+    const entry = this.entries.get(stroke.id);
+    if (entry?.stroke === stroke && entry.revision === previousUpdatedAt) entry.revision = stroke.updatedAt;
+  }
+
   patch(upsert: readonly InkStroke[], remove: readonly string[], order: readonly InkStroke[]): string[] {
     const changed = new Set<string>();
     for (const id of remove) {
@@ -243,6 +250,10 @@ export class TileRenderer {
 
   sync(strokes: InkStroke[], exclude?: StrokeExclusion): void {
     this.active?.index.sync(strokes, exclude);
+  }
+
+  acknowledgeStrokeMetadata(stroke: InkStroke, previousUpdatedAt: number): void {
+    for (const state of this.states.values()) state.index.acknowledgeMetadata(stroke, previousUpdatedAt);
   }
 
   patchStrokes(upsert: readonly InkStroke[], remove: readonly string[], order: readonly InkStroke[]): string[] {

@@ -240,6 +240,56 @@ describe("split-pane sidecar synchronization", () => {
     }
   });
 
+  it("retains page and stroke identity without a full render during repeated peer saves", async () => {
+    const { panes: [left, right], draw, refresh, disk } = split();
+    draw(right, 160); await right.internal.flushSaveNow(); await refresh();
+    const page = right.internal.sidecar.notebook.pages[0], local = page.strokes[0];
+    const render = vi.mocked(right.internal.renderAll); render.mockClear();
+    const redraw = vi.spyOn(right.internal as any, "drawStrokes");
+    for (let i = 0; i < 4; i++) {
+      draw(left, 60 + i * 30); await left.internal.flushSaveNow(); await refresh();
+      expect(right.internal.sidecar.notebook.pages[0]).toBe(page);
+      expect(page.strokes.find(s => s.id === local.id)).toBe(local);
+      expect(page.strokes).toHaveLength(i + 2);
+      expect(render).not.toHaveBeenCalled();
+    }
+    expect(redraw).toHaveBeenCalledTimes(4);
+    await right.internal.flushSaveNow();
+    expect(disk().notebook.pages[0].strokes).toHaveLength(5);
+  });
+
+  it("adopts peer timestamps without rendering, clearing history or dirtying a clean save", async () => {
+    const { panes: [left, right], draw, refresh } = split();
+    draw(right, 160); await right.internal.flushSaveNow(); await refresh();
+    const page = right.internal.sidecar.notebook.pages[0], stroke = page.strokes[0];
+    const remote = JSON.parse(serializeSidecar(left.internal.sidecar)) as PdfSidecar;
+    remote.updatedAt += 1000; remote.notebook.updatedAt += 1000;
+    remote.notebook.pages[0].updatedAt += 1000; remote.notebook.pages[0].strokes[0].updatedAt += 1000;
+    right.store.readRaw.mockResolvedValueOnce(serializeSidecar(remote));
+    vi.mocked(right.internal.renderAll).mockClear();
+    const redraw = vi.spyOn(right.internal as any, "drawStrokes");
+    const history = (right.internal as any).undoStack, revision = (right.internal as any).editRevision;
+    await right.view.reloadExternalSidecar(right.sidecarFile.path);
+    expect(right.internal.sidecar.notebook.pages[0]).toBe(page);
+    expect(page.strokes[0]).toBe(stroke);
+    expect(stroke.updatedAt).toBe(remote.notebook.pages[0].strokes[0].updatedAt);
+    expect(right.internal.renderAll).not.toHaveBeenCalled(); expect(redraw).not.toHaveBeenCalled();
+    expect((right.internal as any).undoStack).toBe(history);
+    expect((right.internal as any).editRevision).toBe(revision); expect(right.internal.dirty).toBe(false);
+  });
+
+  it("snapshots queued Worker replacements so the next stroke cannot mutate them", async () => {
+    const { panes: [left, right], draw, refresh } = split();
+    draw(left,60); await left.internal.flushSaveNow(); await refresh();
+    const operation = [...right.appliedOps].reverse().find(op => op.type === "replace-notebook");
+    expect(operation?.type).toBe("replace-notebook");
+    if (operation?.type !== "replace-notebook") throw new Error("Missing peer replacement");
+    right.internal.onPointerDown(pointer(160,60));
+    expect(operation.notebook.pages[0].strokes).toHaveLength(1);
+    expect(right.internal.sidecar.notebook.pages[0].strokes).toHaveLength(2);
+    right.internal.onPointerUp(pointer(180,90));
+  });
+
   it("defers peer state through an active stroke and applies it when tile commit settles", async () => {
     const { panes: [left, right], draw, settle, refresh } = split();
     right.internal.onPointerDown(pointer(160, 60));

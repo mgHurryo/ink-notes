@@ -33,7 +33,7 @@ export function stickyStrokeFromPage(stroke: InkStroke, note: StickyNote, g: Pag
  * Midpoint ownership chooses the topmost expanded note. Frame resizing never
  * rescales stored board coordinates. */
 export function splitStickyStroke(stroke: InkStroke, notes: readonly StickyNote[], g: PageGeometry): { page: InkStroke[]; notes: Map<string, InkStroke[]> } {
-  const frames = notes.filter((n) => !n.collapsed).map((note) => ({ note, ...stickyBounds(note, g) }));
+  const frames = notes.filter((n) => n.kind !== "text" && !n.collapsed).map((note) => ({ note, ...stickyBounds(note, g) }));
   const topFirst = [...frames].reverse();
   const owner = (p: InkPoint) => topFirst.find((r) => p.x >= r.left && p.x <= r.right && p.y >= r.top && p.y <= r.bottom)?.note;
   const runs: { note?: StickyNote; points: InkPoint[] }[] = [];

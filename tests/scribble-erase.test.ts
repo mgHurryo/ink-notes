@@ -79,13 +79,14 @@ describe("local scribble clipping", () => {
     points: [{ x: .1, y: .5, pressure: .2, t: 100, tiltX: 10, tiltY: 20 }, { x: .9, y: .5, pressure: .8, t: 200, tiltX: 30, tiltY: 40 }] };
   const points = (path: ScribblePosition[]) => path.map((p, i) => ({ x: p.x / 100, y: p.y / 100, pressure: .5, t: i }));
 
-  it("clips a sparse two-point stroke without connecting erased gaps or deleting either tail", () => {
+  it("fills the scrub region without leaving islands and preserves both outside tails", () => {
     const original = structuredClone(line);
     const segments = eraseStrokeSegmentsByScribble(line, points(scribbleWaves(4, 50)), 2, 100, 100)!;
-    expect(segments.length).toBeGreaterThan(2);
+    expect(segments).toHaveLength(2);
     expect(segments[0][0]).toEqual(line.points[0]);
     expect(segments.at(-1)!.at(-1)).toEqual(line.points[1]);
-    for (let i = 1; i < segments.length; i++) expect(segments[i][0].x - segments[i - 1].at(-1)!.x).toBeGreaterThan(.02);
+    expect(segments[0].at(-1)!.x).toBeLessThan(.3);
+    expect(segments[1][0].x).toBeGreaterThan(.8);
     for (const point of segments.flat()) {
       expect(point.pressure).toBeCloseTo(.2 + (point.x - .1) / .8 * .6);
       expect(point.t).toBeCloseTo(100 + (point.x - .1) / .8 * 100);
@@ -94,9 +95,9 @@ describe("local scribble clipping", () => {
     expect(line).toEqual(original);
   });
 
-  it("leaves untouched points inside loop bounds and returns null for an unaffected stroke", () => {
+  it("erases points enclosed by a closed scribble and preserves an unaffected stroke", () => {
     const dot = { ...line, points: [{ x: .35, y: .5, pressure: .5, t: 1 }] };
-    expect(eraseStrokeSegmentsByScribble(dot, points(scribbleLoops(4, 0)), 2, 100, 100)).toBeNull();
+    expect(eraseStrokeSegmentsByScribble(dot, points(scribbleLoops(4, 0)), 2, 100, 100)).toEqual([]);
     const nearby = { ...line, points: line.points.map((p) => ({ ...p, y: .74 })) };
     expect(eraseStrokeSegmentsByScribble(nearby, points(scribbleLoops(4, 0)), 2, 100, 100)).toBeNull();
   });

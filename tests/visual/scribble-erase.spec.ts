@@ -38,7 +38,7 @@ for (const mode of ["ink", "pdf"]) for (const layer of ["page", "sticky"]) {
     for (const fixture of [scribbleLoops(), scribbleWaves()]) {
       await draw(fixture.map((p) => ({ x: cx + p.x - 50, y: cy + p.y - 50 })));
       const clipped = await state(); expect(clipped.active).toBeNull(); expect(clipped.history).toBe(original.history + 1);
-      expect(clipped.strokes.length).toBeGreaterThanOrEqual(2);
+      expect(clipped.strokes).toHaveLength(2);
       const xs = clipped.strokes.flatMap((s) => s.points.map((p) => p.x));
       expect(Math.min(...xs)).toBeCloseTo(original.strokes[0].points[0].x);
       expect(Math.max(...xs)).toBeCloseTo(original.strokes[0].points.at(-1)!.x);

@@ -58,6 +58,7 @@ const workers = new InkWorkerService((message) => console.warn(message));
 const view = new InkView({} as WorkspaceLeaf, store as unknown as NotebookStore, workers);
 view.useImageLibrary(new ImageLibraryStore(imageVaultApp()));
 void (async () => {
+  await view.setState({ readingMode: false }, { history: false });
   await view.onOpen();
   await view.onLoadFile({ path: "Ink Notes/Preview.ink", basename: "Preview" } as TFile);
   const compareRenderer = async (mode: RendererComparisonMode = "pen") => {
