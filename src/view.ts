@@ -327,7 +327,7 @@ export class InkView extends InkWritingView {
       this.finishPinchRender();
       this.onTouchCancel(event);
     }, { passive: false });
-    const observer = new ResizeObserver(() => this.resizeCanvas());
+    const observer = new ResizeObserver(() => { this.resizeCanvas(); this.revealInlineEditor(); });
     observer.observe(this.pageScroller);
     this.register(() => observer.disconnect());
   }

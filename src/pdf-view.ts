@@ -207,6 +207,7 @@ export class PdfInkView extends InkWritingView {
       this.prewarmToken += 1;
       this.neighbourCache.clear();
       this.layoutPage();
+      this.revealInlineEditor();
       if (this.resizeRenderTimer !== undefined) window.clearTimeout(this.resizeRenderTimer);
       this.resizeRenderTimer = window.setTimeout(() => void this.renderPdfPage(), 100);
     });
@@ -1186,6 +1187,7 @@ export class PdfInkView extends InkWritingView {
   private layoutPage(refine = true): void {
     if (!this.scroller || !this.pageWrap) return;
     const lockedLevel = this.zoomLocked ? this.zoomLevel() : null;
+    const previousWidth = this.pageBaseWidth;
     const display = this.rotatedSize(this.currentNotePage());
     this.pageBaseWidth = Math.max(200, this.scroller.clientWidth - PDF_PAGE_PADDING * 2) || 700;
     this.pageBaseHeight = this.pageBaseWidth * display.height / display.width;
@@ -1197,7 +1199,13 @@ export class PdfInkView extends InkWritingView {
     // every page up ~1.4x past the pane, and Reset recomputed the same
     // broken value.
     const contentHeight = Math.max(1, this.scroller.clientHeight - PDF_PAGE_PADDING * 2);
-    this.fitZoom = Math.max(0.05, Math.min(1, contentHeight / this.pageBaseHeight));
+    // A software keyboard changes the viewport, not the document's fit.
+    // Keep the existing fit while inline editing; the smaller viewport scrolls.
+    const inlineEditing = this.scroller.contains(this.scroller.ownerDocument.activeElement)
+      && this.scroller.ownerDocument.activeElement?.matches(".ink-sticky-inline-input");
+    if (!inlineEditing || previousWidth !== this.pageBaseWidth) {
+      this.fitZoom = Math.max(0.05, Math.min(1, contentHeight / this.pageBaseHeight));
+    }
     if (lockedLevel !== null) this.zoom = this.fitZoom * lockedLevel;
     else if (!this.zoomTouched) this.zoom = this.fitZoom;
     this.updateZoomHud();
