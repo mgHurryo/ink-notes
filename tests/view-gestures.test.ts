@@ -297,7 +297,7 @@ describe("page touch navigation", () => {
     expect(drags.at(-1)).toBe(120);
   });
 
-  it("preserves cursor-centered wheel zoom and ignores ordinary scrolling", () => {
+  it("preserves cursor-centered wheel zoom", () => {
     const { view, point } = setup();
     const anchor = point(320, 430);
     const event = { ctrlKey: true, metaKey: false, deltaY: -20, clientX: 320, clientY: 430, preventDefault: vi.fn() };
@@ -308,11 +308,6 @@ describe("page touch navigation", () => {
     expect(view.resizeCanvas).not.toHaveBeenCalled();
     expect(point(320, 430).x).toBeCloseTo(anchor.x);
     expect(point(320, 430).y).toBeCloseTo(anchor.y);
-    event.ctrlKey = false;
-    event.preventDefault.mockClear();
-    view.onWheel(event);
-    expect(event.preventDefault).not.toHaveBeenCalled();
-    expect(view.zoom).toBeCloseTo(1.08);
   });
 
   it("holds the desktop raster until wheel zoom ends and preserves cursor anchoring", () => {

@@ -1,5 +1,80 @@
 import { expect, test } from "@playwright/test";
 
+for (const mode of ["ink", "pdf"] as const) {
+for (const reducedMotion of ["no-preference", "reduce"] as const) {
+test(`${mode}, ${reducedMotion}: vertical native wheel scrolls the page, then flips at its boundary and returns to the previous bottom`, async ({ page }) => {
+  await page.emulateMedia({ reducedMotion });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  await page.evaluate(async (mode) => {
+    if (mode === "pdf") await (window as any).__inkNotesPreview.openPdf();
+    const view = (window as any).__inkNotesPreview.view;
+    if (mode === "ink") {
+      view.duplicateCurrentPage();
+      await view.navigateToPage(view.notebook.pages[0].id);
+    } else {
+      view.addBlankPage(1); await view.navigatePages(-view.noteIndex);
+    }
+    view.setZoom(2); view.zoomLocked = true;
+    const scroller = view.inputScroller() as HTMLElement;
+    scroller.scrollTop = 100;
+  }, mode);
+  const scroller = page.locator(mode === "ink" ? ".ink-page-scroller" : ".ink-pdf-scroller");
+  const status = page.locator(mode === "ink" ? ".ink-page-status" : ".ink-pdf-page-indicator");
+  const box = await scroller.boundingBox();
+  await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+  await page.mouse.wheel(0, 120);
+  await expect.poll(() => scroller.evaluate(el => el.scrollTop)).toBeGreaterThan(100);
+  await expect(status).toHaveText("1 / 2");
+  await scroller.evaluate(el => { el.scrollTop = el.scrollHeight; });
+  await page.mouse.wheel(0, 140);
+  await expect(status).toHaveText("2 / 2");
+  await expect(page.locator(".ink-swipe-stage")).toHaveCount(0);
+  expect(await scroller.evaluate(el => el.scrollTop)).toBe(0);
+  await page.mouse.wheel(0, -140);
+  await expect(status).toHaveText("1 / 2");
+  await expect(page.locator(".ink-swipe-stage")).toHaveCount(0);
+  await expect.poll(() => scroller.evaluate(el => Math.abs(el.scrollTop - (el.scrollHeight - el.clientHeight)))).toBeLessThan(2);
+});
+}
+}
+
+test("renewed trackpad flicks and page keys coalesce while the previous page is still saving", async ({ page }) => {
+  await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  await page.evaluate(async () => {
+    const scope = window as any, view = scope.__inkNotesPreview.view;
+    for (let i = 1; i < 5; i++) view.duplicateCurrentPage();
+    await view.navigateToPage(view.notebook.pages[0].id);
+    const barrier = view.workerSession.barrier.bind(view.workerSession);
+    let held = false;
+    view.workerSession.barrier = async (revision: number) => {
+      await barrier(revision);
+      if (!held) { held = true; await new Promise<void>(resolve => { scope.releaseWheelBarrier = resolve; }); }
+    };
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    scroller.focus();
+    scope.flick = (direction = 1) => {
+      for (const deltaX of [140, 90, 60, 30, 10, 4]) scroller.dispatchEvent(new WheelEvent("wheel", {
+        bubbles: true, cancelable: true, deltaX: direction * deltaX,
+      }));
+    };
+    scope.flick();
+    document.getAnimations().forEach(animation => animation.finish());
+  });
+  await expect.poll(() => page.evaluate(() => typeof (window as any).releaseWheelBarrier)).toBe("function");
+  await page.evaluate(() => { (window as any).flick(); (window as any).flick(); });
+  await page.keyboard.press("PageDown");
+  await expect(page.locator(".ink-page-status")).toHaveText("1 / 5");
+  await page.evaluate(() => (window as any).releaseWheelBarrier());
+  await expect(page.locator(".ink-page-status")).toHaveText("5 / 5");
+  await expect(page.locator(".ink-swipe-stage")).toHaveCount(0);
+  // Reverse without waiting for a quiet wheel interval.
+  await page.evaluate(() => (window as any).flick(-1));
+  await expect(page.locator(".ink-page-status")).toHaveText("4 / 5");
+});
+
 test("desktop mouse middle button and space drag pan without creating ink", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");

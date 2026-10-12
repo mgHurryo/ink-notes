@@ -771,7 +771,7 @@ export class InkView extends InkWritingView {
     return Math.max(this.pageScroller.clientWidth, this.pageElement.offsetWidth) + 16;
   }
 
-  protected swipeSettle(delta: number, travel = 0): void {
+  protected swipeSettle(delta: number, travel = 0, scrollEdge?: "top" | "bottom"): void {
     // Guard every settle path, including cancellation and a second touchend.
     if (this.flipSettling) return;
     const extent = this.pageExtent;
@@ -783,7 +783,7 @@ export class InkView extends InkWritingView {
     const flip = create || (!insert && delta !== 0 && side === delta);
     const from = this.swipeDragOffset;
     const to = flip ? -side * this.swipePitch() : 0;
-    const isCurrent = this.beginPageSwipe(this.pageIndex + (flip ? delta : 0), this.notebook.pages.length);
+    const isCurrent = this.beginPageSwipe(this.pageIndex + (flip ? delta : 0), this.notebook.pages.length, scrollEdge);
     this.flipSettling = true;
     this.animatePageSwipe(stage ? [extent, stage] : [extent], from, to, () => {
       if (!isCurrent()) return;

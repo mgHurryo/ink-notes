@@ -1037,7 +1037,7 @@ export abstract class InkWritingView extends FileView {
   protected swipeDrag(_offset: number): void {}
   /** View hook: the drag ended. delta is -1/+1 to flip (animated slide to
    *  the neighbouring page) or 0 to spring back. */
-  protected swipeSettle(_delta: number, _travel = 0): void {}
+  protected swipeSettle(_delta: number, _travel = 0, _scrollEdge?: "top" | "bottom"): void {}
 
   protected pageInsertThreshold(): number {
     return Math.max(120, Math.min(240, this.inputScroller().clientWidth * 0.35));
@@ -1069,26 +1069,27 @@ export abstract class InkWritingView extends FileView {
 
   protected flipSettling = false;
   private pageSwipeAnimations: Animation[] = [];
-  private pageSwipeRequest: { target: number; count: number } | null = null;
+  private pageSwipeRequest: { target: number; count: number; scrollEdge?: "top" | "bottom" } | null = null;
 
   /** Track the requested destination, including swipes made while saving/rendering. */
-  protected beginPageSwipe(target: number, count: number): () => boolean {
-    const request = { target, count };
+  protected beginPageSwipe(target: number, count: number, scrollEdge?: "top" | "bottom"): () => boolean {
+    const request = { target, count, scrollEdge };
     this.pageSwipeRequest = request;
     return () => this.flipSettling && this.pageSwipeRequest === request;
   }
 
   /** Coalesce desktop navigation into the in-flight swipe handoff. */
-  protected queuePageSwipeTarget(target: number): boolean {
+  protected queuePageSwipeTarget(target: number, scrollEdge?: "top" | "bottom"): boolean {
     const request = this.pageSwipeRequest;
     if (!this.flipSettling || !request) return false;
     request.target = Math.max(0, Math.min(request.count - 1, target));
+    request.scrollEdge = scrollEdge;
     return true;
   }
 
-  protected queuePageSwipeDelta(delta: number): boolean {
+  protected queuePageSwipeDelta(delta: number, scrollEdge?: "top" | "bottom"): boolean {
     const request = this.pageSwipeRequest;
-    return request ? this.queuePageSwipeTarget(request.target + delta) : false;
+    return request ? this.queuePageSwipeTarget(request.target + delta, scrollEdge) : false;
   }
 
   protected clearPageSwipeTarget(): void { this.pageSwipeRequest = null; }
@@ -1097,11 +1098,16 @@ export abstract class InkWritingView extends FileView {
   protected async navigatePageSwipe(navigate: (index: number) => Promise<void>,
     index: () => number, isCurrent: () => boolean): Promise<void> {
     while (isCurrent() && this.pageSwipeRequest !== null) {
-      const target = this.pageSwipeRequest.target;
+      const { target, scrollEdge } = this.pageSwipeRequest;
       if (target === index()) return;
       await navigate(target);
       // A failed or superseded navigation must not retry indefinitely.
       if (index() !== target) return;
+      if (isCurrent() && scrollEdge && this.pageSwipeRequest?.target === target
+        && this.pageSwipeRequest.scrollEdge === scrollEdge) {
+        const scroller = this.inputScroller();
+        scroller.scrollTop = scrollEdge === "bottom" ? scroller.scrollHeight - scroller.clientHeight : 0;
+      }
     }
   }
 
@@ -1369,6 +1375,8 @@ export abstract class InkWritingView extends FileView {
   private desktopWheelTravel = 0;
   private desktopWheelTimer: number | undefined;
   private desktopWheelFlipped = false;
+  private desktopWheelAxis: "x" | "y" | null = null;
+  private desktopWheelLastDelta = 0;
 
   /** Snapshot the trigger press before the host dismisses its menu on pointerdown. */
   protected beginPageOptionsMenu(event: MouseEvent): Menu | null {
@@ -1499,7 +1507,8 @@ export abstract class InkWritingView extends FileView {
       scroller.classList.remove("ink-pan-ready");
       this.endDesktopPan();
       if (this.desktopWheelTimer !== undefined) window.clearTimeout(this.desktopWheelTimer);
-      this.desktopWheelTravel = 0; this.desktopWheelFlipped = false;
+      this.desktopWheelTimer = undefined;
+      this.resetDesktopWheel();
     };
     if (doc.defaultView) this.registerDomEvent(doc.defaultView, "blur", reset);
     this.register(reset);
@@ -1507,9 +1516,10 @@ export abstract class InkWritingView extends FileView {
   }
 
   private onDesktopKeyDown(event: KeyboardEvent): boolean {
-    if (this.activePointerId !== null || this.desktopPan || this.flipSettling) return false;
+    if (this.activePointerId !== null || this.desktopPan) return false;
     const key = event.key.toLowerCase();
     if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+      if (this.flipSettling) return false;
       if (key === "+" || key === "=") { this.desktopZoom(1.1); return true; }
       if (key === "-") { this.desktopZoom(1 / 1.1); return true; }
       if (key === "0") { this.desktopResetZoom(); return true; }
@@ -1533,6 +1543,7 @@ export abstract class InkWritingView extends FileView {
     };
     const destination = destinations[key];
     if (destination) { this.desktopNavigate(destination); return true; }
+    if (this.flipSettling) return false;
     if (key === "+" || key === "=") { this.desktopZoom(1.1); return true; }
     if (key === "-") { this.desktopZoom(1 / 1.1); return true; }
     if (key === "0") { this.desktopResetZoom(); return true; }
@@ -1571,12 +1582,29 @@ export abstract class InkWritingView extends FileView {
     if (pan) this.releasePointer(pan.pointerId);
   }
 
+  private resetDesktopWheel(): void {
+    this.desktopWheelTravel = 0;
+    this.desktopWheelFlipped = false;
+    this.desktopWheelAxis = null;
+    this.desktopWheelLastDelta = 0;
+  }
+
   protected onWheel(event: WheelEvent): void {
     // Wheel navigation can join the pending destination during a swipe.
-    if (this.nativeMenuOpen() || this.activePointerId !== null || this.desktopPan) return;
+    if (event.defaultPrevented || event.altKey || this.nativeMenuOpen() || this.activePointerId !== null || this.desktopPan) return;
     const scroller = this.inputScroller();
-    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? scroller.clientHeight : 1;
-    const x = event.deltaX * unit, y = event.deltaY * unit;
+    const target = event.target as HTMLElement | null;
+    if (target?.closest?.('input, textarea, select, [contenteditable], [role="dialog"]')) return;
+    // Nested text/menus own their scroll even at their boundary; do not turn
+    // editing a sticky note into document navigation.
+    for (let element = target; element && element !== scroller; element = element.parentElement) {
+      const style = window.getComputedStyle(element);
+      if ((/(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight)
+        || (/(auto|scroll)/.test(style.overflowX) && element.scrollWidth > element.clientWidth)) return;
+    }
+    const unit = event.deltaMode === 1 ? 16 : 1;
+    const x = event.deltaX * (event.deltaMode === 2 ? scroller.clientWidth : unit);
+    const y = event.deltaY * (event.deltaMode === 2 ? scroller.clientHeight : unit);
     if (event.ctrlKey || event.metaKey) {
       event.preventDefault();
       if (this.flipSettling) return;
@@ -1584,33 +1612,40 @@ export abstract class InkWritingView extends FileView {
       this.showZoomHud(); this.scheduleZoomHudHide();
       return;
     }
-    if (event.shiftKey && !x && y) {
-      event.preventDefault();
-      scroller.scrollLeft += y;
-      return;
-    }
-    if (event.deltaMode !== 0 || Math.abs(x) < Math.abs(y) * 1.5 || !x) return;
-    // One page per wheel burst: residual trackpad inertia cannot flip again.
+    const axis = event.shiftKey || Math.abs(x) > Math.abs(y) * 1.5 ? "x" : "y";
+    const movement = axis === "x" ? (x || (event.shiftKey ? y : 0)) : y;
+    if (!movement) return;
+    // WheelEvent has no portable gesture phase. Rearm on direction/axis change
+    // or strong renewed motion after a small inertia tail, besides idle expiry.
+    const reversed = Math.sign(movement) !== Math.sign(this.desktopWheelLastDelta);
+    const renewed = this.desktopWheelFlipped && Math.abs(this.desktopWheelLastDelta) <= 12 && Math.abs(movement) >= 40;
+    if (axis !== this.desktopWheelAxis || reversed || renewed) this.resetDesktopWheel();
+    this.desktopWheelAxis = axis;
+    // Keep the smallest tail sample after a flip: a new flick may ramp up over
+    // several events rather than jump from tiny to large in a single event.
+    this.desktopWheelLastDelta = this.desktopWheelFlipped
+      ? Math.sign(movement) * Math.min(Math.abs(this.desktopWheelLastDelta), Math.abs(movement)) : movement;
     if (this.desktopWheelTimer !== undefined) window.clearTimeout(this.desktopWheelTimer);
     this.desktopWheelTimer = window.setTimeout(() => {
-      this.desktopWheelTimer = undefined; this.desktopWheelTravel = 0; this.desktopWheelFlipped = false;
+      this.desktopWheelTimer = undefined; this.resetDesktopWheel();
     }, 180);
     event.preventDefault();
-    if (!this.flipSettling) {
-      const before = scroller.scrollLeft;
-      scroller.scrollLeft += x;
-      // Compare actual movement: scrollbar gutters can obscure the edge.
-      if (Math.abs(scroller.scrollLeft - before) > 0.5) { this.desktopWheelTravel = 0; return; }
-    }
     if (this.desktopWheelFlipped) return;
-    if (Math.sign(this.desktopWheelTravel) !== Math.sign(x)) this.desktopWheelTravel = 0;
-    this.desktopWheelTravel += x;
+    if (!this.flipSettling) {
+      const property = axis === "x" ? "scrollLeft" : "scrollTop";
+      const before = scroller[property];
+      scroller[property] += movement;
+      // Compare actual movement: scrollbar gutters can obscure the edge.
+      if (Math.abs(scroller[property] - before) > 0.5) { this.desktopWheelTravel = 0; return; }
+    }
+    this.desktopWheelTravel += movement;
     if (Math.abs(this.desktopWheelTravel) >= 100) {
       this.desktopWheelFlipped = true;
-      const delta = x > 0 ? 1 : -1;
-      if (this.queuePageSwipeDelta(delta)) return;
+      const delta = movement > 0 ? 1 : -1;
+      const scrollEdge = axis === "y" ? (delta > 0 ? "top" : "bottom") : undefined;
+      if (this.queuePageSwipeDelta(delta, scrollEdge)) return;
       this.swipeDrag(-delta * 24);
-      this.swipeSettle(delta);
+      this.swipeSettle(delta, 0, scrollEdge);
     }
   }
 

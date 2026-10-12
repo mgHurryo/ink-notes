@@ -24,6 +24,27 @@ this is tied to a selection, not to tapping arbitrary blank paper. No new
 double-tap page reset, two-finger undo or three-finger clipboard shortcuts
 are introduced. Such gestures would conflict with page navigation or OS actions.
 
+## Desktop scrolling
+
+The shared Ink/PDF input layer consumes normal wheel events to scroll the page
+on the dominant axis. It changes pages only after scrolling stops at that axis's
+boundary and accumulated outward movement reaches 100 CSS pixels. A wheel event
+that still moves the page does not also turn it. Shift+wheel selects the horizontal
+axis. Line/page units are converted before scrolling; Ctrl/Cmd+wheel keeps its
+cursor-centered zoom behavior.
+
+A decaying inertia tail cannot turn another page. Idle for 180 ms, reversal,
+axis change, or renewed motion of at least 40 pixels after a tail of at most
+12 pixels rearms navigation. The tail minimum is retained so gradual new flicks
+can rearm too. These are bounded fallbacks because WheelEvent exposes no portable
+gesture start/end or inertia flag; physical trackpads still need device testing.
+
+Vertical navigation lands at the top of the next page or the bottom of the previous
+page. Pending page requests reuse the swipe destination queue, including
+PageUp/PageDown, Home/End and Alt+Left/Right during animations/saves. Editing
+shortcuts stay blocked during the handoff. Text inputs and nested scroll surfaces
+retain their native wheel handling; Alt+wheel remains available to sticky boards.
+
 ## No stylus
 
 Enable **Use finger as pen** in the plugin's **Input and gestures** settings.

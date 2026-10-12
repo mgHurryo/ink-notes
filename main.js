@@ -26930,6 +26930,8 @@ var InkWritingView = class extends import_obsidian6.FileView {
     this.desktopSpaceDown = false;
     this.desktopWheelTravel = 0;
     this.desktopWheelFlipped = false;
+    this.desktopWheelAxis = null;
+    this.desktopWheelLastDelta = 0;
   }
   disposeStickyNotes() {
     var _a;
@@ -27394,7 +27396,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
   }
   /** View hook: the drag ended. delta is -1/+1 to flip (animated slide to
    *  the neighbouring page) or 0 to spring back. */
-  swipeSettle(_delta, _travel = 0) {
+  swipeSettle(_delta, _travel = 0, _scrollEdge) {
   }
   pageInsertThreshold() {
     return Math.max(120, Math.min(240, this.inputScroller().clientWidth * 0.35));
@@ -27423,32 +27425,38 @@ var InkWritingView = class extends import_obsidian6.FileView {
     menu.showAtMouseEvent(event);
   }
   /** Track the requested destination, including swipes made while saving/rendering. */
-  beginPageSwipe(target, count) {
-    const request = { target, count };
+  beginPageSwipe(target, count, scrollEdge) {
+    const request = { target, count, scrollEdge };
     this.pageSwipeRequest = request;
     return () => this.flipSettling && this.pageSwipeRequest === request;
   }
   /** Coalesce desktop navigation into the in-flight swipe handoff. */
-  queuePageSwipeTarget(target) {
+  queuePageSwipeTarget(target, scrollEdge) {
     const request = this.pageSwipeRequest;
     if (!this.flipSettling || !request) return false;
     request.target = Math.max(0, Math.min(request.count - 1, target));
+    request.scrollEdge = scrollEdge;
     return true;
   }
-  queuePageSwipeDelta(delta) {
+  queuePageSwipeDelta(delta, scrollEdge) {
     const request = this.pageSwipeRequest;
-    return request ? this.queuePageSwipeTarget(request.target + delta) : false;
+    return request ? this.queuePageSwipeTarget(request.target + delta, scrollEdge) : false;
   }
   clearPageSwipeTarget() {
     this.pageSwipeRequest = null;
   }
   /** Coalesce rapid swipes instead of replaying a backlog of animations/renders. */
   async navigatePageSwipe(navigate, index, isCurrent) {
+    var _a;
     while (isCurrent() && this.pageSwipeRequest !== null) {
-      const target = this.pageSwipeRequest.target;
+      const { target, scrollEdge } = this.pageSwipeRequest;
       if (target === index()) return;
       await navigate(target);
       if (index() !== target) return;
+      if (isCurrent() && scrollEdge && ((_a = this.pageSwipeRequest) == null ? void 0 : _a.target) === target && this.pageSwipeRequest.scrollEdge === scrollEdge) {
+        const scroller = this.inputScroller();
+        scroller.scrollTop = scrollEdge === "bottom" ? scroller.scrollHeight - scroller.clientHeight : 0;
+      }
     }
   }
   resumePageSwipeDrag() {
@@ -27889,17 +27897,18 @@ var InkWritingView = class extends import_obsidian6.FileView {
       scroller.classList.remove("ink-pan-ready");
       this.endDesktopPan();
       if (this.desktopWheelTimer !== void 0) window.clearTimeout(this.desktopWheelTimer);
-      this.desktopWheelTravel = 0;
-      this.desktopWheelFlipped = false;
+      this.desktopWheelTimer = void 0;
+      this.resetDesktopWheel();
     };
     if (doc.defaultView) this.registerDomEvent(doc.defaultView, "blur", reset);
     this.register(reset);
     this.registerDomEvent(scroller, "wheel", (event) => this.onWheel(event), { passive: false });
   }
   onDesktopKeyDown(event) {
-    if (this.activePointerId !== null || this.desktopPan || this.flipSettling) return false;
+    if (this.activePointerId !== null || this.desktopPan) return false;
     const key = event.key.toLowerCase();
     if ((event.ctrlKey || event.metaKey) && !event.altKey) {
+      if (this.flipSettling) return false;
       if (key === "+" || key === "=") {
         this.desktopZoom(1.1);
         return true;
@@ -27960,6 +27969,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
       this.desktopNavigate(destination);
       return true;
     }
+    if (this.flipSettling) return false;
     if (key === "+" || key === "=") {
       this.desktopZoom(1.1);
       return true;
@@ -28021,11 +28031,25 @@ var InkWritingView = class extends import_obsidian6.FileView {
     }
     if (pan) this.releasePointer(pan.pointerId);
   }
+  resetDesktopWheel() {
+    this.desktopWheelTravel = 0;
+    this.desktopWheelFlipped = false;
+    this.desktopWheelAxis = null;
+    this.desktopWheelLastDelta = 0;
+  }
   onWheel(event) {
-    if (this.nativeMenuOpen() || this.activePointerId !== null || this.desktopPan) return;
+    var _a;
+    if (event.defaultPrevented || event.altKey || this.nativeMenuOpen() || this.activePointerId !== null || this.desktopPan) return;
     const scroller = this.inputScroller();
-    const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? scroller.clientHeight : 1;
-    const x = event.deltaX * unit, y = event.deltaY * unit;
+    const target = event.target;
+    if ((_a = target == null ? void 0 : target.closest) == null ? void 0 : _a.call(target, 'input, textarea, select, [contenteditable], [role="dialog"]')) return;
+    for (let element = target; element && element !== scroller; element = element.parentElement) {
+      const style = window.getComputedStyle(element);
+      if (/(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight || /(auto|scroll)/.test(style.overflowX) && element.scrollWidth > element.clientWidth) return;
+    }
+    const unit = event.deltaMode === 1 ? 16 : 1;
+    const x = event.deltaX * (event.deltaMode === 2 ? scroller.clientWidth : unit);
+    const y = event.deltaY * (event.deltaMode === 2 ? scroller.clientHeight : unit);
     if (event.ctrlKey || event.metaKey) {
       event.preventDefault();
       if (this.flipSettling) return;
@@ -28034,36 +28058,38 @@ var InkWritingView = class extends import_obsidian6.FileView {
       this.scheduleZoomHudHide();
       return;
     }
-    if (event.shiftKey && !x && y) {
-      event.preventDefault();
-      scroller.scrollLeft += y;
-      return;
-    }
-    if (event.deltaMode !== 0 || Math.abs(x) < Math.abs(y) * 1.5 || !x) return;
+    const axis = event.shiftKey || Math.abs(x) > Math.abs(y) * 1.5 ? "x" : "y";
+    const movement = axis === "x" ? x || (event.shiftKey ? y : 0) : y;
+    if (!movement) return;
+    const reversed = Math.sign(movement) !== Math.sign(this.desktopWheelLastDelta);
+    const renewed = this.desktopWheelFlipped && Math.abs(this.desktopWheelLastDelta) <= 12 && Math.abs(movement) >= 40;
+    if (axis !== this.desktopWheelAxis || reversed || renewed) this.resetDesktopWheel();
+    this.desktopWheelAxis = axis;
+    this.desktopWheelLastDelta = this.desktopWheelFlipped ? Math.sign(movement) * Math.min(Math.abs(this.desktopWheelLastDelta), Math.abs(movement)) : movement;
     if (this.desktopWheelTimer !== void 0) window.clearTimeout(this.desktopWheelTimer);
     this.desktopWheelTimer = window.setTimeout(() => {
       this.desktopWheelTimer = void 0;
-      this.desktopWheelTravel = 0;
-      this.desktopWheelFlipped = false;
+      this.resetDesktopWheel();
     }, 180);
     event.preventDefault();
+    if (this.desktopWheelFlipped) return;
     if (!this.flipSettling) {
-      const before = scroller.scrollLeft;
-      scroller.scrollLeft += x;
-      if (Math.abs(scroller.scrollLeft - before) > 0.5) {
+      const property = axis === "x" ? "scrollLeft" : "scrollTop";
+      const before = scroller[property];
+      scroller[property] += movement;
+      if (Math.abs(scroller[property] - before) > 0.5) {
         this.desktopWheelTravel = 0;
         return;
       }
     }
-    if (this.desktopWheelFlipped) return;
-    if (Math.sign(this.desktopWheelTravel) !== Math.sign(x)) this.desktopWheelTravel = 0;
-    this.desktopWheelTravel += x;
+    this.desktopWheelTravel += movement;
     if (Math.abs(this.desktopWheelTravel) >= 100) {
       this.desktopWheelFlipped = true;
-      const delta = x > 0 ? 1 : -1;
-      if (this.queuePageSwipeDelta(delta)) return;
+      const delta = movement > 0 ? 1 : -1;
+      const scrollEdge = axis === "y" ? delta > 0 ? "top" : "bottom" : void 0;
+      if (this.queuePageSwipeDelta(delta, scrollEdge)) return;
       this.swipeDrag(-delta * 24);
-      this.swipeSettle(delta);
+      this.swipeSettle(delta, 0, scrollEdge);
     }
   }
   onPointerDown(event, source = "pointer") {
@@ -32087,7 +32113,7 @@ var InkView = class extends InkWritingView {
   swipePitch() {
     return Math.max(this.pageScroller.clientWidth, this.pageElement.offsetWidth) + 16;
   }
-  swipeSettle(delta, travel = 0) {
+  swipeSettle(delta, travel = 0, scrollEdge) {
     if (this.flipSettling) return;
     const extent = this.pageExtent;
     if (!extent) {
@@ -32101,7 +32127,7 @@ var InkView = class extends InkWritingView {
     const flip = create || !insert && delta !== 0 && side === delta;
     const from = this.swipeDragOffset;
     const to = flip ? -side * this.swipePitch() : 0;
-    const isCurrent = this.beginPageSwipe(this.pageIndex + (flip ? delta : 0), this.notebook.pages.length);
+    const isCurrent = this.beginPageSwipe(this.pageIndex + (flip ? delta : 0), this.notebook.pages.length, scrollEdge);
     this.flipSettling = true;
     this.animatePageSwipe(stage ? [extent, stage] : [extent], from, to, () => {
       if (!isCurrent()) return;
@@ -35193,7 +35219,7 @@ var PdfInkView = class extends InkWritingView {
     var _a, _b, _c, _d;
     return Math.max((_b = (_a = this.scroller) == null ? void 0 : _a.clientWidth) != null ? _b : 0, (_d = (_c = this.pageWrap) == null ? void 0 : _c.offsetWidth) != null ? _d : 0) + 16;
   }
-  swipeSettle(delta, travel = 0) {
+  swipeSettle(delta, travel = 0, scrollEdge) {
     var _a, _b, _c, _d;
     if (this.flipSettling) return;
     const wrap = this.pageWrap;
@@ -35210,7 +35236,8 @@ var PdfInkView = class extends InkWritingView {
     const to = flip ? -side * this.swipePitch() : 0;
     const isCurrent = this.beginPageSwipe(
       this.noteIndex + (flip ? delta : 0),
-      (_d = (_c = (_a = this.sidecar) == null ? void 0 : _a.notePages.length) != null ? _c : (_b = this.pdfDoc) == null ? void 0 : _b.numPages) != null ? _d : 1
+      (_d = (_c = (_a = this.sidecar) == null ? void 0 : _a.notePages.length) != null ? _c : (_b = this.pdfDoc) == null ? void 0 : _b.numPages) != null ? _d : 1,
+      scrollEdge
     );
     this.flipSettling = true;
     this.animatePageSwipe(stage ? [wrap, stage] : [wrap], from, to, () => {
