@@ -49,6 +49,7 @@ import { InkClipboard, pasteClipboardStrokes } from "./lasso-clipboard";
 const PASTE_HOLD_DELAY_MS = 600;
 const PASTE_HOLD_SLOP_PX = 10;
 const MAX_SCRIBBLE_GESTURE_POINTS = 2_048;
+const SCRIBBLE_REFERENCE_SIZE = 24;
 
 export interface ToolState {
   tool: InkTool;
@@ -228,7 +229,7 @@ export function strokeIntersectsEraser(stroke: InkStroke, center: InkPoint, radi
   return false;
 }
 
-function isScribbleEraseGesture(points: InkPoint[], eraserSize: number, width: number, height: number, sensitivity: number): boolean {
+export function isScribbleEraseGesture(points: InkPoint[], eraserSize: number, width: number, height: number, sensitivity: number): boolean {
   if (points.length < 8) return false;
   const filtered = [points[0]];
   for (const point of points.slice(1)) {
@@ -274,46 +275,76 @@ function isScribbleEraseGesture(points: InkPoint[], eraserSize: number, width: n
   // Connected writing often has many corners but advances across the page.
   // Require repeated substantial traversals of the same bounding region,
   // ignoring short backhooks and sample jitter between those traversals.
-  const horizontal = boundsWidth >= boundsHeight;
-  const span = horizontal ? boundsWidth : boundsHeight;
-  const coordinate = (point: InkPoint): number => horizontal ? point.x * width : point.y * height;
-  let extreme = coordinate(filtered[0]), direction = 0, traversals = 0;
-  const travel = Math.max(8, span * 0.6);
-  for (const point of filtered.slice(1)) {
-    const value = coordinate(point);
-    if (direction === 0) {
-      if (Math.abs(value - extreme) >= travel) { direction = Math.sign(value - extreme); extreme = value; traversals++; }
-    } else if ((value - extreme) * direction >= 0) {
-      extreme = value;
-    } else if ((extreme - value) * direction >= travel) {
-      direction *= -1; extreme = value; traversals++;
+  const countTraversals = (axisX: number, axisY: number): number => {
+    const coordinates = filtered.map((point) => point.x * width * axisX + point.y * height * axisY);
+    let minimum = Number.POSITIVE_INFINITY, maximum = Number.NEGATIVE_INFINITY;
+    for (const value of coordinates) { minimum = Math.min(minimum, value); maximum = Math.max(maximum, value); }
+    let extreme = coordinates[0], initialMinimum = extreme, initialMaximum = extreme, direction = 0, traversals = 0;
+    const travel = Math.max(8, (maximum - minimum) * 0.6);
+    for (const value of coordinates.slice(1)) {
+      if (direction === 0) {
+        // A wave can start halfway between its peaks. Track its first range
+        // instead of requiring it to travel a full range from pointerdown.
+        initialMinimum = Math.min(initialMinimum, value); initialMaximum = Math.max(initialMaximum, value);
+        if (initialMaximum - initialMinimum >= travel) {
+          direction = value === initialMaximum ? 1 : -1; extreme = value; traversals++;
+        }
+      } else if ((value - extreme) * direction >= 0) {
+        extreme = value;
+      } else if ((extreme - value) * direction >= travel) {
+        direction *= -1; extreme = value; traversals++;
+      }
     }
-  }
-  return turns >= minimumTurns && traversals >= minimumTurns + 1
-    && pathLength >= Math.max(96, eraserSize * 3)
-    && boundsDiagonal >= eraserSize * 0.5
-    && pathLength / Math.max(1, boundsDiagonal) >= 4.8 - 1.6 * ease
-    && duration >= 0 && duration <= 1_800;
+    return traversals;
+  };
+  if (pathLength < Math.max(96, eraserSize * 3) || boundsDiagonal < eraserSize * 0.5
+    || duration < 0 || duration > 1_800) return false;
+  const density = pathLength / Math.max(1, boundsDiagonal);
+  const horizontalTraversals = countTraversals(1, 0);
+  const verticalTraversals = countTraversals(0, 1);
+  const dominantTraversals = boundsWidth >= boundsHeight ? horizontalTraversals : verticalTraversals;
+  if (turns >= minimumTurns && dominantTraversals >= minimumTurns + 1 && density >= 4.8 - 1.6 * ease) return true;
+
+  // Smooth loops and waves do not have sharp sample-to-sample corners. Count
+  // substantial excursions on either axis (also diagonals for rotated marks).
+  // More repetitions and higher density keep isolated circles, ordinary waves
+  // and handwriting that advances across a line from becoming erase commands.
+  const diagonal = Math.SQRT1_2;
+  return density >= 5.2 - 1.2 * ease && Math.max(horizontalTraversals, verticalTraversals,
+    countTraversals(diagonal, diagonal), countTraversals(diagonal, -diagonal)) >= minimumTurns + 2;
 }
 
-function strokeIntersectsScribble(stroke: InkStroke, path: InkPoint[], radius: number, width: number, height: number): boolean {
-  const samples = sampleStrokeForEraser(path, Math.max(1, radius / 2), width, height);
-  return samples.some((point) => strokeIntersectsEraser(stroke, point, radius + 1, "circle", width, height));
+export function eraseStrokeSegmentsByScribble(stroke: InkStroke, path: InkPoint[], radius: number, width: number, height: number,
+  canErasePoint: (point: InkPoint) => boolean = () => true): InkPoint[][] | null {
+  const bounds = boundsForPointSets([path]);
+  if (!bounds) return null;
+  const scribble = { ...stroke, points: path };
+  const result = splitErasedStrokeSamples(sampleStrokeForEraser(stroke.points, radius, width, height), (point) =>
+    point.x >= bounds.minX - radius / width && point.x <= bounds.maxX + radius / width
+    && point.y >= bounds.minY - radius / height && point.y <= bounds.maxY + radius / height
+    && canErasePoint(point) && strokeIntersectsEraser(scribble, point, radius, "circle", width, height));
+  return result.erased ? result.segments : null;
 }
 
 export function eraseStrokeSegments(stroke: InkStroke, center: InkPoint, radius: number, mode: Exclude<EraserMode, "stroke">, width: number, height: number): InkPoint[][] {
+  return splitErasedStrokeSamples(sampleStrokeForEraser(stroke.points, radius, width, height),
+    (point) => pointInsideEraser(point, center, radius, mode, width, height)).segments;
+}
+
+function splitErasedStrokeSamples(samples: InkPoint[], contains: (point: InkPoint) => boolean): { segments: InkPoint[][]; erased: boolean } {
   const segments: InkPoint[][] = [];
   let segment: InkPoint[] = [];
+  let erased = false;
   const flush = () => {
     if (segment.length > 0) segments.push(segment);
     segment = [];
   };
-  for (const point of sampleStrokeForEraser(stroke.points, radius, width, height)) {
-    if (pointInsideEraser(point, center, radius, mode, width, height)) flush();
+  for (const point of samples) {
+    if (contains(point)) { flush(); erased = true; }
     else segment.push({ ...point });
   }
   flush();
-  return segments;
+  return { segments, erased };
 }
 
 function pointInsideEraser(point: InkPoint, center: InkPoint, radius: number, mode: EraserMode, width: number, height: number): boolean {
@@ -502,6 +533,7 @@ export abstract class InkWritingView extends FileView {
       this.stickies = new StickyNoteLayer(host, this.app, {
         page: () => this.currentPage(),
         editable: () => !this.inputLocked(), pointer: () => this.state.tool === "pointer",
+        lasso: () => this.state.tool === "lasso",
         fingerAsPen: () => this.state.fingerAsPen,
         source: () => this.file?.path ?? "", busy: () => this.activePointerId !== null,
         link: (note, block) => markdownStickyLink(this.file?.path ?? "", note, this.app.vault?.getName?.() ?? "", block),
@@ -534,12 +566,25 @@ export abstract class InkWritingView extends FileView {
       new Notice("This sticky note changed in another pane. Reopen it before editing."); return;
     }
     const restoredIds = new Map<string, string>();
+    const restoredTextIds = new Map<string, string>();
     const apply = (template: StickyNote | undefined) => {
       const page = this.pageById(pageId); if (!page) return;
       const existing = page.stickyNotes?.find((note) => note.id === id);
       const now = Math.max(Date.now(), page.updatedAt + 1, existing?.updatedAt ?? 0, (page.deletedStickyNotes?.[id] ?? 0) + 1);
       const note = template ? { ...cloneSticky(template), textWidth: Math.max(60, template.textWidth ?? (before ?? template).width * template.boardPageWidth - 32),
-        updatedAt: now, textUpdatedAt: template.text === existing?.text ? existing.textUpdatedAt : now } : undefined;
+        updatedAt: now, textUpdatedAt: existing && ["text", "textX", "textY", "textWidth", "textHeight", "textFontSize", "textFontFamily", "textBold", "textItalic", "textScaleText"].every((key) =>
+          template[key as keyof StickyNote] === existing[key as keyof StickyNote]) ? existing.textUpdatedAt : now } : undefined;
+      if (note) {
+        note.deletedTextBoxes = { ...note.deletedTextBoxes, ...existing?.deletedTextBoxes };
+        note.textBoxes = (note.textBoxes ?? []).map((box) => {
+          let boxId = restoredTextIds.get(box.id) ?? box.id;
+          if (note.deletedTextBoxes![boxId]) boxId = newId("sticky-text");
+          restoredTextIds.set(box.id, boxId);
+          const previous = existing?.textBoxes?.find((item) => item.id === boxId);
+          return previous && JSON.stringify({ ...box, id: boxId }) === JSON.stringify(previous) ? { ...previous } : { ...box, id: boxId, updatedAt: now };
+        });
+        for (const box of existing?.textBoxes ?? []) if (!note.textBoxes.some((item) => item.id === box.id)) note.deletedTextBoxes[box.id] = now;
+      }
       if (note && existing) {
         const removed = new Set(existing.deletedStrokeIds);
         note.strokes = note.strokes.map((stroke) => {
@@ -1268,7 +1313,7 @@ export abstract class InkWritingView extends FileView {
     this.addToolButton(draw, "highlighter", "Highlight", "highlighter");
     this.addToolButton(draw, "eraser", "Erase", "eraser");
     this.addToolButton(draw, "lasso-select", "Select", "lasso");
-    if (this.imageLibrary) this.addToolButton(draw, "mouse-pointer-2", "Pointer", "pointer");
+    this.addToolButton(draw, "mouse-pointer-2", "Pointer", "pointer");
     if (this.imageLibrary) this.addIconButton(draw, "image-plus", "Image library", () => this.openImageLibrary());
     this.addIconButton(draw, "sticky-note", "Add sticky note", () => this.addSticky());
   }
@@ -1416,7 +1461,7 @@ export abstract class InkWritingView extends FileView {
     scroller.tabIndex = 0;
     this.registerDomEvent(scroller, "pointerdown", (event) => {
       if (event.pointerType !== "mouse" || this.nativeMenuOpen()) return;
-      if ((event.target as HTMLElement)?.closest?.(".ink-sticky-note")) return;
+      if ((event.target as HTMLElement)?.closest?.(".ink-sticky-note") && !this.desktopSpaceDown && event.button !== 1) return;
       scroller.focus({ preventScroll: true });
       if (this.beginDesktopPan(event)) event.stopPropagation();
     }, true);
@@ -1636,7 +1681,9 @@ export abstract class InkWritingView extends FileView {
     }
     if (tool === "lasso") {
       this.hideSelectionActions();
-      if (this.isPointInSelection(point)) {
+      const hit = this.strokeAtLassoPoint(point, page, rect);
+      if (hit && !this.selectedStrokeIds.has(hit.id)) this.selectedStrokeIds = new Set([hit.id]);
+      if (hit || this.isPointInSelection(point)) {
         const strokes = this.selectedStrokes();
         const before = new Map(strokes.map((stroke) => [stroke.id, clonePoints(stroke.points)]));
         this.lassoDrag = {
@@ -1809,6 +1856,9 @@ export abstract class InkWritingView extends FileView {
     }
     if (this.activePointerId !== event.pointerId || (this.interaction?.source ?? "pointer") !== source) return;
     this.eraserPointerInside = false;
+    if (this.interaction?.tool === "lasso") {
+      this.pendingLassoPoint = null; this.lassoPath = []; this.lassoDrag = null; this.hideLassoPreview();
+    }
     this.finishPointerInput(false);
   }
 
@@ -2586,6 +2636,8 @@ export abstract class InkWritingView extends FileView {
       const bounds = this.lassoDrag.bounds;
       const dx = constrainDelta(point.x - this.lassoDrag.start.x, bounds?.minX ?? 0, bounds?.maxX ?? 1);
       const dy = constrainDelta(point.y - this.lassoDrag.start.y, bounds?.minY ?? 0, bounds?.maxY ?? 1);
+      const rect = this.inputRect();
+      if (!this.lassoDrag.dx && !this.lassoDrag.dy && Math.hypot(dx * rect.width, dy * rect.height) < 6) return false;
       if (dx === this.lassoDrag.dx && dy === this.lassoDrag.dy) return false;
       this.lassoDrag.dx = dx;
       this.lassoDrag.dy = dy;
@@ -2612,6 +2664,24 @@ export abstract class InkWritingView extends FileView {
     return strokes.filter((stroke) => this.selectedStrokeIds.has(stroke.id));
   }
 
+  /** Hit visible ink segments, including sparse lines, using the eraser's
+   * proven geometry. A tap selects the topmost stroke; empty paper still
+   * begins the configured freehand/rectangle selection. */
+  private strokeAtLassoPoint(point: InkPoint, page: InkPage, rect: DOMRect): InkStroke | undefined {
+    const radius = 8 * this.canvasLogicalWidth / Math.max(1, rect.width);
+    const indexed = this.tiles?.queryNear ? this.tiles.queryNear(point, radius) : page.strokes;
+    const candidates = new Set([...indexed, ...(this.stickyInput?.proxies.values() ?? [])].map((stroke) => stroke.id));
+    const top = [...(this.stickyInput?.notes ?? [])].reverse().find((note) => {
+      if (note.collapsed) return false;
+      const bounds = stickyBounds(note, this.stickyGeometry());
+      return point.x >= bounds.left && point.x <= bounds.right && point.y >= bounds.top && point.y <= bounds.bottom;
+    });
+    return [...page.strokes].reverse().find((stroke) => {
+      if (!candidates.has(stroke.id) || this.stickyInput?.owners.get(stroke.id)?.id !== top?.id) return false;
+      return strokeIntersectsEraser(stroke, point, radius + stroke.width / 2, "circle", this.canvasLogicalWidth, this.canvasLogicalHeight);
+    });
+  }
+
   protected isPointInSelection(point: InkPoint): boolean {
     const bounds = selectionBounds(this.selectedStrokes());
     const padding = 0.008;
@@ -2622,6 +2692,7 @@ export abstract class InkWritingView extends FileView {
   protected clearSelection(): void {
     this.cancelPasteHold();
     this.pageImages?.clear();
+    this.stickies?.clear();
     this.selectedStrokeIds.clear();
     this.lassoPath = [];
     this.lassoDrag = null;
@@ -3200,7 +3271,7 @@ export abstract class InkWritingView extends FileView {
     });
   }
 
-  protected finishPointerInput(_includeFinalSample = false): void {
+  protected finishPointerInput(completed = false): void {
     this.flushPenModeler();
     this.finalizeStrokeRecord();
     const interaction = this.interaction;
@@ -3250,7 +3321,7 @@ export abstract class InkWritingView extends FileView {
       });
       this.pushCommand(this.erasedStrokesCommand(page.id, this.erasedStrokes, this.eraserReplacements));
       this.drawInteractiveStrokes(page.strokes, true);
-    } else if (this.activeStroke && !(interaction.tool === "pen" && this.state.scribbleErase
+    } else if (this.activeStroke && !(completed && interaction.tool === "pen" && this.state.scribbleErase
       && this.finishScribbleErase(page, this.activeStroke, this.scribbleGesturePoints))) {
       this.markChanged(page);
       // Retain a complete vector preview without copying the full high-density
@@ -3283,8 +3354,12 @@ export abstract class InkWritingView extends FileView {
   }
 
   private finishScribbleErase(page: InkPage, gesture: InkStroke, path: InkPoint[]): boolean {
-    if (!isScribbleEraseGesture(path, this.state.eraserSize, this.canvasLogicalWidth, this.canvasLogicalHeight, this.state.scribbleSensitivity)) return false;
-    const radius = this.state.eraserSize / 2;
+    // Recognition uses a stable logical size too: changing the ordinary eraser
+    // must not make the same pen gesture stop qualifying as a scribble.
+    if (!isScribbleEraseGesture(path, SCRIBBLE_REFERENCE_SIZE, this.canvasLogicalWidth, this.canvasLogicalHeight, this.state.scribbleSensitivity)) return false;
+    // A crossing-out mark erases locally, regardless of the regular eraser's
+    // mode/size. A narrow nib-sized tolerance must not erase neighbouring ink.
+    const radius = Math.max(2, Math.min(4, gesture.width / 2));
     let minX = Number.POSITIVE_INFINITY, minY = Number.POSITIVE_INFINITY;
     let maxX = Number.NEGATIVE_INFINITY, maxY = Number.NEGATIVE_INFINITY;
     for (const point of path) {
@@ -3305,20 +3380,37 @@ export abstract class InkWritingView extends FileView {
     const indexed = this.tiles?.query ? this.tiles.query(search) : page.strokes;
     const candidates = [...new Map([
       ...indexed,
+      ...(this.stickyInput?.proxies.values() ?? []),
       ...this.pendingInkStrokes,
       ...(this.committingInkStrokes ?? []),
     ].map((stroke) => [stroke.id, stroke])).values()]
       .filter((stroke) => stroke.id !== gesture.id);
-    const removed = candidates.filter((stroke) => strokeIntersectsScribble(
-      stroke, path, radius, this.canvasLogicalWidth, this.canvasLogicalHeight,
-    ));
+    const notes = [...(this.stickyInput?.notes ?? [])].reverse().filter((note) => !note.collapsed)
+      .map((note) => ({ id: note.id, bounds: stickyBounds(note, this.stickyGeometry()) }));
+    const removed: InkStroke[] = [], replacements: InkStroke[] = [];
+    const now = Date.now();
+    for (const stroke of candidates) {
+      const owner = this.stickyInput?.owners.get(stroke.id);
+      const segments = eraseStrokeSegmentsByScribble(stroke, path, radius, this.canvasLogicalWidth, this.canvasLogicalHeight, (point) => {
+        const top = notes.find(({ bounds: r }) => point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom);
+        return top?.id === owner?.id;
+      });
+      if (segments === null) continue;
+      removed.push(stroke);
+      for (const points of segments) {
+        const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, createdAt: now, updatedAt: now };
+        replacements.push(replacement);
+        if (owner) this.stickyInput?.owners.set(replacement.id, owner);
+      }
+    }
     if (removed.length === 0) return false;
 
+    // Cancel older overlay/tile commits before replacing their strokes so an
+    // idle commit cannot paint the just-erased originals back onto the page.
+    this.materializePendingInkPreview(page);
     const removedIds = [gesture.id, ...removed.map((stroke) => stroke.id)];
     this.deleteStrokes(page, removedIds);
-    this.pendingInkStrokes = this.pendingInkStrokes.filter((stroke) => stroke.id !== gesture.id);
-    if (this.pendingInkStrokes.length === 0) this.pendingInkPageId = null;
-    this.confirmedStrokeOutlines?.delete(gesture.id);
+    page.strokes.push(...replacements);
     this.markChanged(page);
     this.queueWorkerOperation({
       type: "complete-stroke", pageId: page.id, strokeId: gesture.id,
@@ -3327,14 +3419,15 @@ export abstract class InkWritingView extends FileView {
     this.queueWorkerOperation({
       type: "patch-strokes",
       pageId: page.id,
-      upsert: [],
+      upsert: replacements.map(cloneStroke),
       remove: removedIds,
       deletedStrokeIds: [...page.deletedStrokeIds],
       pageUpdatedAt: page.updatedAt,
       notebookUpdatedAt: this.currentNotebook().updatedAt,
     });
-    this.tiles?.patchStrokes([], removedIds, page.strokes);
-    this.pushCommand(this.erasedStrokesCommand(page.id, removed.map(cloneStroke), []));
+    this.tiles?.patchStrokes(replacements.filter((stroke) => !this.stickyInput?.owners.has(stroke.id)), removedIds,
+      page.strokes.filter((stroke) => !this.stickyInput?.owners.has(stroke.id)));
+    this.pushCommand(this.erasedStrokesCommand(page.id, removed.map(cloneStroke), replacements));
     this.activeStroke = null;
     this.drawInteractiveStrokes(page.strokes, true);
     return true;
@@ -3601,7 +3694,7 @@ export abstract class InkWritingView extends FileView {
       updateSensitivityLabel();
       this.scheduleToolStateSave();
     });
-    scribbleRow.createDiv({ cls: "ink-settings-label", text: "Low: fewer accidental erases. High: fewer back-and-forth strokes needed." });
+    scribbleRow.createDiv({ cls: "ink-settings-label", text: "Scrub, loop or wave repeatedly over ink with the pen. Low: fewer accidental erases. High: fewer repetitions needed." });
     // The stroke eraser ignores the size (fixed hit radius) - offer the
     // slider only for the shapes that use it.
     const syncSizeVisibility = (): void => {
@@ -3796,6 +3889,7 @@ export abstract class InkWritingView extends FileView {
     this.finishPointerInput(false);
     this.onToolSelected(tool);
     this.pageImages?.clear();
+    this.stickies?.clear();
     this.state.tool = tool;
     if (tool !== "lasso") this.clearSelection();
     if (!isBrushTool(tool)) this.brushPopover?.close();
