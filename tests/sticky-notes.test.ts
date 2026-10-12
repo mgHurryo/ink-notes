@@ -20,6 +20,21 @@ export function note(pageId: string): StickyNote {
 }
 
 describe("sticky note persistence and search", () => {
+  it("keeps overlapping notes in creation order through edits, worker saves and merges", () => {
+    const book = createNotebook(), page = book.pages[0];
+    const back = { ...note(page.id), id: "back", createdAt: 1 }, front = { ...note(page.id), id: "front", createdAt: 2 };
+    page.stickyNotes = [back, front];
+    const edited = { ...back, title: "Updated behind the front note", updatedAt: 9 };
+    applyNotebookOperation(book, { type: "patch-sticky-notes", pageId: page.id, remove: [back.id], upsert: [edited],
+      deletedStickyNotes: {}, pageUpdatedAt: 9, notebookUpdatedAt: 9 });
+    expect(page.stickyNotes.map((n) => n.id)).toEqual(["back", "front"]);
+    expect(page.stickyNotes[0].title).toBe(edited.title);
+    const loaded = normalizeNotebook(JSON.parse(JSON.stringify(book)));
+    expect(loaded.pages[0].stickyNotes!.map((n) => n.id)).toEqual(["back", "front"]);
+    const peer = structuredClone(loaded); peer.pages[0].stickyNotes!.reverse();
+    expect(mergeNotebooks(loaded, peer).pages[0].stickyNotes!.map((n) => n.id)).toEqual(["back", "front"]);
+    expect(normalizeNotebook(peer).pages[0].stickyNotes!.map((n) => n.id)).toEqual(["back", "front"]);
+  });
   it("renders a fixed content coordinate space when the visible frame changes", () => {
     const sticky = note("p"); sticky.strokes[0].points = [sticky.strokes[0].points[0]];
     const ctx = { save: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(), fillRect: vi.fn(), scale: vi.fn(), translate: vi.fn(), fillText: vi.fn(), arc: vi.fn(), fill: vi.fn(), restore: vi.fn() };

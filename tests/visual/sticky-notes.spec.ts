@@ -91,6 +91,8 @@ test("shared lasso copies and removes board ink; paste uses destination layer", 
   await ready(page); const board = page.getByLabel("Sticky handwriting board"), r = (await board.boundingBox())!;
   await draw(page, r.x + 30, r.y + 80, r.x + 120, r.y + 90);
   await page.getByRole("button", { name: "Select", exact: true }).click();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".ink-size-popover")).toBeHidden();
   await page.evaluate(() => (window as any).__inkNotesPreview.view.state.lasso.mode = "rectangle");
   await draw(page, r.x + 15, r.y + 60, r.x + 145, r.y + 110);
   await expect(page.getByRole("button", { name: "Copy", exact: true })).toBeVisible();

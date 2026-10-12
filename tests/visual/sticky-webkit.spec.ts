@@ -2,6 +2,36 @@ import { expect, test } from "@playwright/test";
 
 test.skip(({ browserName }) => browserName !== "webkit", "Run with playwright.webkit.config.ts");
 
+for (const mode of ["ink", "pdf"]) test(`WebKit ${mode}: overlapping notes retain visible text and native label controls`, async ({ page }) => {
+  await page.setViewportSize({ width: 820, height: 1000 }); await page.goto("/");
+  await expect(page.locator("html")).toHaveAttribute("data-ink-ready", "true");
+  if (mode === "pdf") await page.evaluate(() => (window as any).__inkNotesPreview.openPdf());
+  await page.evaluate(() => {
+    const v = (window as any).__inkNotesPreview.view; v.addSticky();
+    let n = v.currentPage().stickyNotes[0]; v.changeSticky(n, { ...n, x: .12, y: .18, text: "Back note" });
+    v.addSticky(); n = v.currentPage().stickyNotes[1];
+    v.changeSticky(n, { ...n, x: .30, y: .30, title: "Review", text: "**Visible Markdown**", color: "#ffd5df" });
+  });
+  const front = page.locator(".ink-sticky-note").last(), header = (await front.locator(".ink-sticky-header").boundingBox())!;
+  const png = await page.screenshot();
+  const color = await page.evaluate(async ({ data, x, y }) => {
+    const img = new Image(); img.src = `data:image/png;base64,${data}`; await img.decode();
+    const canvas = document.createElement("canvas"); canvas.width = img.width; canvas.height = img.height;
+    const ctx = canvas.getContext("2d")!; ctx.drawImage(img, 0, 0);
+    return [...ctx.getImageData(Math.round(x * devicePixelRatio), Math.round(y * devicePixelRatio), 1, 1).data];
+  }, { data: png.toString("base64"), x: header.x + 120, y: header.y + 8 });
+  expect(color[1]).toBeLessThan(235); expect(color[2]).toBeGreaterThan(210);
+  await expect(front.locator("strong")).toHaveText("Visible Markdown");
+  expect(await front.locator("canvas").evaluate((el: HTMLCanvasElement) => el.getContext("2d")!.getImageData(2, 2, 1, 1).data[3])).toBe(0);
+  await front.getByRole("button", { name: "Fold", exact: true }).tap();
+  await front.locator(".ink-sticky-title").tap(); await expect(front).not.toHaveClass(/is-collapsed/);
+  // Detached folded labels must not leave their long-press timer running.
+  await page.waitForTimeout(650); await expect(page.locator(".menu")).toHaveCount(0);
+  const options = front.getByRole("button", { name: "Sticky note options", exact: true });
+  await options.tap(); await expect(page.locator(".menu")).toBeVisible();
+  await options.tap(); await expect(page.locator(".menu")).toHaveCount(0);
+});
+
 for (const mode of ["ink", "pdf"]) for (const axis of ["horizontal", "vertical"]) test(`WebKit ${mode}: touch controls and handwriting track ${axis} page motion`, async ({ page }) => {
   await page.setViewportSize({ width: 820, height: 900 }); await page.goto("/");
   await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");

@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Keep each sticky note in a separate stacking context so overlapping titles, paper, Markdown and ink paint as complete cards. Use a transparent DOM ink canvas so it no longer hides typed content; PDF snapshots retain opaque paper.
+- Stabilize stacking by creation order across editing, worker updates, reloads and split-pane merges. Stagger new notes and give new notes wider frames on narrow pages.
+- Unify expanded and folded note movement through the entire title, enlarge and normalize icon controls, and move secondary actions into the native options menu for narrow frames. Support double-tap typing on blank boards, title long-press menus, repeated-button menu dismissal and touch movement thresholds; finger-as-pen retains writing behavior. Prevent native text dragging from cancelling lasso gestures.
+- Preserve stored handwriting coordinates, fixed text layout, inline editing, reading-mode folding, shared writing tools, links and export. Physical iPad validation remains pending; the previously reported hardware-only handwriting drift is not confirmed fixed.
+
 ## 0.1.3-beta.6 - 2026-10-12
 
 - Restore native touch activation of sticky-note fold, expand, Markdown editing and option controls by isolating the full control contact from page gestures. Route sticky move/resize contacts before page navigation and avoid duplicate Touch/Pointer ownership. Preserve current text drafts when starting a drag, and refresh committed text after outside gestures or cancellation.

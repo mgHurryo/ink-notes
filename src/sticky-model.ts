@@ -16,6 +16,11 @@ export interface StickyNote {
   createdAt: number; updatedAt: number;
 }
 
+/** Creation order is shared by DOM, ink ownership, workers and merged saves. */
+export function compareStickyOrder(a: StickyNote, b: StickyNote): number {
+  return a.createdAt - b.createdAt || a.id.localeCompare(b.id);
+}
+
 export function cloneSticky(note: StickyNote): StickyNote {
   return { ...note, deletedStrokeIds: [...note.deletedStrokeIds], strokes: note.strokes.map((stroke) => ({ ...stroke,
     points: stroke.points.map((point) => ({ ...point })), dynamics: stroke.dynamics ? { ...stroke.dynamics,
