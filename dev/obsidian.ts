@@ -107,6 +107,7 @@ export class TFile {}
 export function normalizePath(path: string): string { return path.replace(/\\/g, "/").replace(/\/+/g, "/"); }
 export class WorkspaceLeaf {}
 export class App {}
+export async function loadPdfJs(): Promise<never> { throw new Error("PDF decoding is unavailable in the browser preview fixture"); }
 /** pdf-view's RecoveryChoiceModal extends this at module load; the preview
  *  never opens one, the jsdom unit tests only need the class to exist. */
 export class Modal {

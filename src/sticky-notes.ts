@@ -52,8 +52,9 @@ export class StickyNoteLayer {
       // Let the native click complete before replacing its button target.
       setTimeout(() => { if (!signal.aborted) { this.pendingTextRefresh = false; this.last = undefined; this.sync(); } }, 0);
     };
-    doc.addEventListener("pointerup", refreshText, { signal });
-    doc.addEventListener("touchend", refreshText, { signal });
+    doc.addEventListener("pointerup", (event) => { if (event.pointerType !== "touch") refreshText(); }, { signal, capture: true });
+    doc.addEventListener("touchend", refreshText, { signal, capture: true });
+    doc.addEventListener("click", refreshText, { signal });
     doc.addEventListener("touchstart", (event) => {
       if (this.drag && event.touches.length > 1) { this.drag = undefined; this.last = undefined; this.sync(); }
     }, { signal, capture: true });
@@ -63,7 +64,7 @@ export class StickyNoteLayer {
       const dx = (event.clientX - drag.x) / drag.rect.width, dy = (event.clientY - drag.y) / drag.rect.height;
       const note = movedNote(drag.note, dx, dy, drag.resize, drag.pan);
       if (drag.pan) this.preview([note]); else { this.position(drag.element, note); if (drag.resize) this.preview([note]); }
-    }, { signal, passive: false });
+    }, { signal, passive: false, capture: true });
     const finish = (event: PointerEvent) => {
       const drag = this.drag; if (!drag || drag.touch || drag.pointer !== event.pointerId) return; this.drag = undefined;
       if (event.type === "pointerup" && this.context.editable() && this.context.page().id === drag.page) {
@@ -71,9 +72,9 @@ export class StickyNoteLayer {
         const after = movedNote(drag.note, dx, dy, drag.resize, drag.pan);
         this.context.change(drag.note, after);
       }
-      this.last = undefined; this.sync(); event.stopPropagation();
+      refreshText(); this.last = undefined; this.sync(); event.stopPropagation();
     };
-    doc.addEventListener("pointerup", finish, { signal }); doc.addEventListener("pointercancel", finish, { signal });
+    doc.addEventListener("pointerup", finish, { signal, capture: true }); doc.addEventListener("pointercancel", finish, { signal, capture: true });
     doc.addEventListener("touchmove", (event) => {
       const drag = this.drag; if (!drag?.touch) return;
       const touch = Array.from(event.touches).find((t) => t.identifier === drag.pointer);
@@ -82,7 +83,7 @@ export class StickyNoteLayer {
       const dx = (touch.clientX - drag.x) / drag.rect.width, dy = (touch.clientY - drag.y) / drag.rect.height;
       const note = movedNote(drag.note, dx, dy, drag.resize, drag.pan);
       if (drag.pan) this.preview([note]); else { this.position(drag.element, note); if (drag.resize) this.preview([note]); }
-    }, { signal, passive: false });
+    }, { signal, passive: false, capture: true });
     doc.addEventListener("touchend", (event) => {
       const drag = this.drag; if (!drag?.touch) return;
       const touch = Array.from(event.changedTouches).find((t) => t.identifier === drag.pointer); if (!touch) return;
@@ -91,10 +92,10 @@ export class StickyNoteLayer {
         const dx = (touch.clientX - drag.x) / drag.rect.width, dy = (touch.clientY - drag.y) / drag.rect.height;
         this.context.change(drag.note, movedNote(drag.note, dx, dy, drag.resize, drag.pan));
       }
-      this.last = undefined; this.sync(); event.stopPropagation();
-    }, { signal });
-    doc.addEventListener("touchcancel", () => { this.drag = undefined; this.last = undefined; this.sync(); }, { signal });
-    doc.defaultView?.addEventListener("blur", () => { this.drag = undefined; this.last = undefined; this.sync(); }, { signal });
+      refreshText(); this.last = undefined; this.sync(); event.stopPropagation();
+    }, { signal, capture: true });
+    doc.addEventListener("touchcancel", () => { this.drag = undefined; refreshText(); this.last = undefined; this.sync(); }, { signal, capture: true });
+    doc.defaultView?.addEventListener("blur", () => { this.drag = undefined; refreshText(); this.last = undefined; this.sync(); }, { signal });
   }
   dispose(): void { this.events.abort(); this.cards.abort(); this.markdown.unload(); this.menu?.hide(); clearTimeout(this.hold); this.layer.remove(); }
   private position(el: HTMLElement, note: StickyNote): void {
@@ -147,9 +148,10 @@ export class StickyNoteLayer {
   private edit(note: StickyNote, field: "title" | "text" | "keywords", parent: HTMLElement): void {
     if (!this.context.editable() || this.context.busy()) return;
     if (this.editing) { this.editing.input.focus(); return; }
+    const current = this.context.page().stickyNotes?.find((n) => n.id === note.id); if (!current) return;
     const input = parent.createEl(field === "text" ? "textarea" : "input", { cls: "ink-sticky-inline-input", attr: { "aria-label": field === "text" ? "Sticky Markdown" : `Sticky ${field}` } });
-    input.value = note[field]; this.editing = { id: note.id, field, base: cloneSticky(note), input };
-    for (const type of ["pointerdown", "touchstart", "touchmove", "keydown"] as const) input.addEventListener(type, (e) => e.stopPropagation());
+    input.value = current[field]; this.editing = { id: current.id, field, base: cloneSticky(current), input };
+    for (const type of ["pointerdown", "pointermove", "pointerup", "pointercancel", "touchstart", "touchmove", "touchend", "touchcancel", "keydown"] as const) input.addEventListener(type, (e) => e.stopPropagation());
     input.onblur = () => this.commitText();
     input.onkeydown = (e) => {
       if (e.key === "Escape") { this.editing = undefined; this.last = undefined; this.sync(); }
@@ -185,7 +187,11 @@ export class StickyNoteLayer {
   sync(): void {
     const page = this.context.page(), editable = this.context.editable(), width = this.host.clientWidth;
     if (!editable) this.editing = undefined;
-    if (this.last?.page !== page.id) { this.editing = undefined; this.drag = undefined; this.menu?.hide(); }
+    // Invalidating the render cache (for example after a text commit) is not
+    // a page change, and must not cancel the contact that committed the text.
+    if (this.editing && this.editing.base.pageId !== page.id) this.editing = undefined;
+    if (this.drag && this.drag.page !== page.id) this.drag = undefined;
+    if (this.last && this.last.page !== page.id) this.menu?.hide();
     if (this.editing || this.drag || this.pendingTextRefresh) return;
     if (this.last?.page === page.id && this.last.notes === page.stickyNotes && this.last.editable === editable && this.last.width === width) return;
     const frameKey = (note: StickyNote) => {
@@ -217,7 +223,7 @@ export class StickyNoteLayer {
       }, { signal: this.cards.signal });
       const bindDrag = (element: HTMLElement, resize: boolean, pan = false) => {
         element.addEventListener("pointerdown", (e) => {
-          if (!editable || this.context.busy() || pan && !this.context.pointer() || e.pointerType === "pen" && !this.context.pointer() || e.button !== 0 || pan && (e.target as HTMLElement).closest("a")) return;
+          if (e.pointerType === "touch" || !editable || this.context.busy() || pan && !this.context.pointer() || e.pointerType === "pen" && !this.context.pointer() || e.button !== 0 || pan && (e.target as HTMLElement).closest("a")) return;
           e.preventDefault(); e.stopPropagation();
           const rect = this.host.getBoundingClientRect();
           const current = this.context.page().stickyNotes?.find((n) => n.id === note.id); if (!current) return;
@@ -236,9 +242,10 @@ export class StickyNoteLayer {
       button(header, note.collapsed ? "Expand" : "Fold", note.collapsed ? "maximize-2" : "minimize-2", () => this.update(note, { collapsed: !note.collapsed }));
       if (!note.collapsed && editable) button(header, "Type on sticky note", "type", () => this.edit(note, "text", card));
       button(header, "Sticky note options", "ellipsis", () => { const r = header.getBoundingClientRect(); this.showMenu(note, r.right, r.bottom); });
-      // Chrome stops the shared writing handler without cancelling native
-      // button activation. The board itself never cancels/breaks Pencil input.
-      for (const type of ["pointerdown", "touchstart", "touchmove"] as const) header.addEventListener(type, (e) => e.stopPropagation(), { signal: this.cards.signal });
+      // Isolate the whole control contact: a bubbling touchend otherwise
+      // reaches the page recognizer, which cancels the button's native click.
+      // Active drags run in document capture before these chrome shields.
+      for (const type of ["pointerdown", "pointermove", "pointerup", "pointercancel", "touchstart", "touchmove", "touchend", "touchcancel"] as const) header.addEventListener(type, (e) => e.stopPropagation(), { signal: this.cards.signal });
       if (!note.collapsed || note.preview) {
         const board = card.createDiv({ cls: "ink-sticky-board", attr: { "aria-label": "Sticky handwriting board" } });
         if (!note.collapsed) bindDrag(board, false, true);
@@ -282,7 +289,7 @@ export class StickyNoteLayer {
         }, { signal: this.cards.signal, capture: true });
         if (note.collapsed) {
           board.onclick = () => { if (this.suppressTap) { this.suppressTap = false; return; } this.open(note.id); };
-          for (const type of ["pointerdown", "touchstart", "touchmove"] as const) board.addEventListener(type, (e) => e.stopPropagation(), { signal: this.cards.signal });
+          for (const type of ["pointerdown", "pointermove", "pointerup", "pointercancel", "touchstart", "touchmove", "touchend", "touchcancel"] as const) board.addEventListener(type, (e) => e.stopPropagation(), { signal: this.cards.signal });
         }
         // Alt-wheel scrolls the unbounded board without changing page zoom.
         board.addEventListener("wheel", (e) => {
