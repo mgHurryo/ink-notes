@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.3-beta.6 - 2026-10-12
 
 - Restore native touch activation of sticky-note fold, expand, Markdown editing and option controls by isolating the full control contact from page gestures. Route sticky move/resize contacts before page navigation and avoid duplicate Touch/Pointer ownership. Preserve current text drafts when starting a drag, and refresh committed text after outside gestures or cancellation.
 - Add Chromium touch and WebKit regressions for sticky controls and handwriting alignment in Ink/PDF surfaces. Physical iPad handwriting drift remains unresolved; browser checks do not reproduce it.
