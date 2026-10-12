@@ -1,4 +1,4 @@
-import { mergeSticky, normalizeSticky } from "./sticky-model";
+import { compareStickyOrder, mergeSticky, normalizeSticky } from "./sticky-model";
 import type { StickyNote } from "./sticky-model";
 
 export type InkTool = "pen" | "highlighter" | "eraser" | "lasso" | "pointer";
@@ -237,7 +237,7 @@ function mergePages(base: InkPage, incoming: InkPage): InkPage {
     strokes: [...strokes.values()].sort((a, b) => a.createdAt - b.createdAt),
     deletedStrokeIds,
     ...(base.stickyNotes || incoming.stickyNotes || base.deletedStickyNotes || incoming.deletedStickyNotes ? {
-      stickyNotes: [...stickyNotes.values()].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)), deletedStickyNotes,
+      stickyNotes: [...stickyNotes.values()].sort(compareStickyOrder), deletedStickyNotes,
     } : {}),
     ...(base.images || incoming.images || base.deletedImageIds || incoming.deletedImageIds ? {
       images: [...images.values()].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)), deletedImageIds,
@@ -263,7 +263,7 @@ function normalizePage(value: unknown): InkPage | null {
     deletedStrokeIds,
     ...(Array.isArray(raw.stickyNotes) || raw.deletedStickyNotes ? {
       stickyNotes: (Array.isArray(raw.stickyNotes) ? raw.stickyNotes : []).map((note) => normalizeSticky(note, pageId))
-        .filter((note): note is StickyNote => !!note && note.updatedAt > (deletedStickyNotes[note.id] ?? 0)), deletedStickyNotes,
+        .filter((note): note is StickyNote => !!note && note.updatedAt > (deletedStickyNotes[note.id] ?? 0)).sort(compareStickyOrder), deletedStickyNotes,
     } : {}),
     ...(Array.isArray(raw.images) || Array.isArray(raw.deletedImageIds) ? {
       images: (Array.isArray(raw.images) ? raw.images : []).map((image) => normalizeImage(image, pageId))

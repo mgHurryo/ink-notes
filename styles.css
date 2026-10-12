@@ -1449,33 +1449,47 @@
 .ink-image-library-confirm button { min-height: 44px; }
 /* Sticky boards sit above paper, below the shared writing overlays. */
 .ink-sticky-layer { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
-.ink-sticky-note { position: absolute; pointer-events: auto; display: flex; flex-direction: column; overflow: hidden; color: #25221d; border-radius: 10px 10px 3px 3px; box-shadow: 0 4px 14px #0002; outline: 1px solid #00000012; }
-.ink-sticky-header { position: relative; display: flex; align-items: center; gap: 8px; flex-shrink: 0; height: 44px; min-height: 0; padding: 0 4px; touch-action: none; background: #ffffff18; }
-.ink-sticky-header button, .ink-sticky-resize { display: flex; align-items: center; justify-content: center; background: transparent; border: 0; box-shadow: none; color: inherit; padding: 0; flex-shrink: 0; width: 32px; height: 100%; cursor: pointer; }
-.ink-sticky-header button:hover, .ink-sticky-header button:focus-visible { background: #0000000b; border-radius: 6px; }
-.ink-sticky-header button svg, .ink-sticky-resize svg { width: 16px; height: 16px; }
-.ink-sticky-header button[aria-label="Move sticky note"] { cursor: grab; width: 20px; opacity: .45; }
-.ink-sticky-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 600; cursor: text; }
+.ink-sticky-note { position: absolute; isolation: isolate; container-type: inline-size; pointer-events: auto; display: flex; flex-direction: column; overflow: hidden; color: #25221d; border-radius: 10px; box-shadow: 0 3px 12px #0000001a; outline: 1px solid #00000020; user-select: none; -webkit-user-select: none; }
+.ink-sticky-note:is(.is-active, :focus-within) { outline: 2px solid var(--interactive-accent, #478bce); }
+.ink-sticky-header { position: relative; z-index: 2; display: flex; align-items: center; gap: 4px; flex-shrink: 0; height: 44px; min-height: 0; padding: 0 4px; touch-action: none; background: #ffffff30; box-shadow: inset 0 -1px #0000000c; }
+.ink-sticky-header button, .ink-sticky-resize { display: flex; align-items: center; justify-content: center; background: transparent; border: 0; box-shadow: none; color: inherit; padding: 0; margin: 0; min-width: 0; min-height: 0; flex: 0 0 44px; width: 44px; height: 100%; border-radius: 6px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+.ink-sticky-header button:hover, .ink-sticky-header button:focus-visible { background: #0000000b; }
+.ink-sticky-header button:focus-visible, .ink-sticky-resize:focus-visible { outline: 2px solid var(--interactive-accent, #478bce); outline-offset: -3px; }
+.ink-sticky-header button svg, .ink-sticky-resize svg { display: block; flex: 0 0 20px; width: 20px; height: 20px; stroke-width: 1.75; pointer-events: none; }
+.ink-sticky-header .ink-sticky-move { flex: 1 1 0; width: auto; min-width: 32px; justify-content: flex-start; gap: 6px; padding: 0 6px; cursor: grab; }
+.ink-sticky-move:active { cursor: grabbing; }
+.ink-sticky-move svg { opacity: .45; }
+.ink-sticky-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 600 13px/1.2 var(--font-interface, sans-serif); text-align: left; }
 .ink-sticky-board { position: relative; flex: 1; min-height: 0; overflow: hidden; touch-action: none; }
 .ink-sticky-board canvas { z-index: 1; position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .ink-sticky-markdown { position: absolute; font: 20px/1.4 sans-serif; color: inherit; }
 .ink-sticky-markdown > :first-child { margin-top: 0; }
+.ink-sticky-markdown :is(h1,h2,h3,h4,h5,h6) { color: inherit; line-height: 1.4; margin: 0 0 12px; }
+.ink-sticky-markdown h1 { font-size: 2em; }
+.ink-sticky-markdown h2 { font-size: 1.5em; }
+.ink-sticky-markdown h3 { font-size: 1.17em; }
 .ink-sticky-markdown p { margin: 0 0 12px; }
 .ink-sticky-markdown a { pointer-events: auto; }
-.ink-sticky-resize { position: absolute; bottom: 0; right: 0; width: 44px; height: 44px; opacity: .55; cursor: nwse-resize; touch-action: none; }
-.ink-sticky-inline-input { position: absolute; inset: 44px 8px 8px; z-index: 10; width: calc(100% - 16px); height: calc(100% - 52px); background: #ffffffc0 !important; color: #202020 !important; font: 18px/1.4 sans-serif; resize: none; border-radius: 4px; }
+.ink-sticky-hint { position: absolute; inset: 16px; color: #25221d99; font: 13px/1.5 var(--font-interface, sans-serif); pointer-events: none; }
+.ink-sticky-hint[hidden] { display: none; }
+.ink-sticky-resize { position: absolute; z-index: 2; bottom: 0; right: 0; width: 44px; height: 44px; opacity: .55; cursor: nwse-resize; touch-action: none; }
+.ink-sticky-resize:hover { opacity: 1; background: #0000000b; }
+.ink-sticky-inline-input { position: absolute; inset: var(--sticky-header-height, 44px) 8px 8px; z-index: 10; width: calc(100% - 16px); height: calc(100% - var(--sticky-header-height, 44px) - 8px); background: #ffffffeb !important; color: #202020 !important; font: 18px/1.4 sans-serif; resize: none; border-radius: 6px; user-select: text; -webkit-user-select: text; }
 .ink-sticky-header .ink-sticky-inline-input { inset: 2px 36px; width: calc(100% - 72px); height: calc(100% - 4px); font-size: 14px; }
 .ink-sticky-note.is-collapsed { border-radius: 8px; cursor: pointer; }
 .ink-sticky-note.is-collapsed .ink-sticky-title { cursor: pointer; }
 .ink-sticky-note.is-collapsed .ink-sticky-header { gap: 4px; }
-.ink-sticky-note.is-collapsed .ink-sticky-header button[aria-label="Move sticky note"] { display: none; }
+.ink-sticky-note.is-collapsed .ink-sticky-move { cursor: pointer; }
+.ink-sticky-note.is-collapsed .ink-sticky-move svg { display: none; }
 .ink-sticky-note.is-collapsed .ink-sticky-board { pointer-events: auto; }
 .ink-sticky-search { width: min(850px, 95vw); }
 .ink-sticky-search .modal-content { max-height: 80vh; overflow: auto; }
 .ink-sticky-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; }
 .ink-sticky-search button, .ink-sticky-search input { min-height: 44px; }
 .ink-sticky-search input { width: 100%; }
-@media (pointer: coarse) { .ink-sticky-header button { width: 44px; } .ink-sticky-header { gap: 4px; } }
+/* Narrow frames keep the main actions reachable; typing also lives in … and double-tap. */
+@container (max-width: 240px) { .ink-sticky-header .ink-sticky-type { display: none; } }
+@container (max-width: 140px) { .ink-sticky-header button:is([aria-label="Fold"], [aria-label="Expand"]) { display: none; } }
 .ink-sticky-results button { width: 100%; height: auto; text-align: left; white-space: normal; overflow-wrap: anywhere; }
 .ink-embed-stickies { position: absolute; inset: 0; width: 100%; height: 100%; z-index: 3; pointer-events: none; }
 .ink-image-library-tools { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }

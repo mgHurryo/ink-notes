@@ -18,7 +18,7 @@ import { FileView, Menu, Notice, setIcon } from "obsidian";
 import { ImageLibraryModal, ImageLibraryStore, placedImage } from "./image-library";
 import { PageImageLayer } from "./page-images";
 import { StickyNoteLayer, markdownStickyLink } from "./sticky-notes";
-import { cloneSticky, StickyNote } from "./sticky-model";
+import { cloneSticky, compareStickyOrder, StickyNote } from "./sticky-model";
 import { splitStickyStroke, stickyStrokeOnPage, stickyStrokeFromPage, stickyBounds } from "./sticky-ink";
 import type { StickySearchEntry } from "./sticky-index";
 import type { InkImage } from "./model";
@@ -502,6 +502,7 @@ export abstract class InkWritingView extends FileView {
       this.stickies = new StickyNoteLayer(host, this.app, {
         page: () => this.currentPage(),
         editable: () => !this.inputLocked(), pointer: () => this.state.tool === "pointer",
+        fingerAsPen: () => this.state.fingerAsPen,
         source: () => this.file?.path ?? "", busy: () => this.activePointerId !== null,
         link: (note, block) => markdownStickyLink(this.file?.path ?? "", note, this.app.vault?.getName?.() ?? "", block),
         change: (before, after) => this.changeSticky(before, after),
@@ -511,8 +512,16 @@ export abstract class InkWritingView extends FileView {
   }
   private addSticky(): void {
     if (this.inputLocked()) return;
-    this.finishPointerInput(false); const now = Date.now(), page = this.currentPage();
-    const note: StickyNote = { id: newId("sticky"), pageId: page.id, x: .2, y: .2, width: .5, height: .35,
+    this.finishPointerInput(false); const page = this.currentPage();
+    const now = (page.stickyNotes ?? []).reduce((time, note) => Math.max(time, note.createdAt + 1), Date.now());
+    const width = this.canvasLogicalWidth < 480 ? .8 : .5;
+    // Stagger new cards so repeated insertion leaves their titles accessible.
+    const positions = Array.from({ length: 16 }, (_, i) => ({
+      x: Math.min(1 - width, .08 + i % 4 * .06), y: .14 + Math.floor(i / 4) * .06 + i % 4 * .035,
+    }));
+    const position = positions.find((p) => !page.stickyNotes?.some((n) =>
+      Math.abs(n.x - p.x) < .025 && Math.abs(n.y - p.y) < .025)) ?? positions[0];
+    const note: StickyNote = { id: newId("sticky"), pageId: page.id, ...position, width, height: .35,
       title: "Sticky note", keywords: "", text: "", textUpdatedAt: now, color: "#fff1a8", collapsed: false, preview: true,
       scrollX: 0, scrollY: 0, boardPageWidth: this.canvasLogicalWidth, strokes: [], deletedStrokeIds: [], createdAt: now, updatedAt: now };
     this.changeSticky(undefined, note);
@@ -545,7 +554,7 @@ export abstract class InkWritingView extends FileView {
         note.deletedStrokeIds = [...new Set([...note.deletedStrokeIds, ...existing.deletedStrokeIds,
           ...existing.strokes.filter((stroke) => !desiredIds.has(stroke.id)).map((stroke) => stroke.id)])];
       }
-      page.stickyNotes = [...(page.stickyNotes ?? []).filter((note) => note.id !== id), ...(note ? [note] : [])];
+      page.stickyNotes = [...(page.stickyNotes ?? []).filter((note) => note.id !== id), ...(note ? [note] : [])].sort(compareStickyOrder);
       if (!note) page.deletedStickyNotes = { ...page.deletedStickyNotes, [id]: now };
       this.markChanged(page); page.updatedAt = now; this.currentNotebook().updatedAt = now;
       this.queueWorkerOperation({ type: "patch-sticky-notes", pageId, upsert: note ? [note] : [], remove: [id],
