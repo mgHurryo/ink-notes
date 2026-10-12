@@ -890,7 +890,13 @@ export abstract class InkWritingView extends FileView {
   protected revealInlineEditor(): void {
     const scroller = this.inputScroller(), input = scroller.ownerDocument.activeElement;
     if (input?.matches(".ink-sticky-inline-input") && scroller.contains(input)) {
-      input.scrollIntoView({ block: "nearest", inline: "nearest" });
+      // Native scrollIntoView can scroll the Obsidian pane and WebView too.
+      // Only move our canvas scroller, using the actual clipped viewport.
+      const field = input.getBoundingClientRect(), viewport = scroller.getBoundingClientRect();
+      if (field.top < viewport.top) scroller.scrollTop += field.top - viewport.top;
+      else if (field.bottom > viewport.bottom) scroller.scrollTop += Math.min(field.top - viewport.top, field.bottom - viewport.bottom);
+      if (field.left < viewport.left) scroller.scrollLeft += field.left - viewport.left;
+      else if (field.right > viewport.right) scroller.scrollLeft += Math.min(field.left - viewport.left, field.right - viewport.right);
     }
   }
   /** Zoom applied for a two-finger pinch (value already computed). */

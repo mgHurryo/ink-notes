@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.3-beta.9 - 2026-10-12
+
+- Prevent Obsidian safe-area padding from reducing the PDF canvas during sticky keyboard editing. Keep automatic scrolling inside the plugin canvas rather than scrolling outer panes or the WebView.
+- Preserve folded sticky anchors through repeated expansion, folding, reloads and worker saves. Expanded notes fit inward without rewriting their folded position; ink routing and PDF export use the same display origin.
+- Replace folded sticky headers with a single preview icon. Tap to open, double-tap to type, drag with a finger or mouse, and long-press/right-click for actions and index links. Folded previews remain plain-text/ink overviews.
+- Add host safe-area, keyboard editing, icon interaction, edge-anchor and geometry regressions. Verified 660 unit tests, 46 Chromium checks and 18 WebKit checks. Physical iPad keyboard and full Obsidian/plugin validation remain pending; browser PDF tests use blank sidecar fixtures.
+
 ## 0.1.3-beta.8 - 2026-10-12
 
 - Keep the current PDF fit while editing sticky titles, Markdown or keywords through keyboard-driven viewport height changes. Reveal the focused editor after pane resizing, preserve drafts and zoom lock, and use a 16px title input to avoid iOS small-input zoom.

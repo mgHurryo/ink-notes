@@ -10,6 +10,72 @@ async function ready(page: Page, mode: "ink" | "pdf") {
 }
 
 for (const mode of ["ink", "pdf"] as const) {
+  test(`${mode}: host safe-area padding and keyboard leave the canvas usable for every inline field`, async ({ page }) => {
+    await ready(page, mode);
+    await page.evaluate(() => {
+      document.querySelector("#host")!.classList.add("workspace-leaf-content");
+      (window as any).__inkNotesPreview.view.contentEl.classList.add("view-content");
+    });
+    // Installed Obsidian 1.14.4 app.css: host padding is more specific than a view class.
+    await page.addStyleTag({ content: `.workspace-leaf-content { display:flex; flex-direction:column; overflow:hidden; }
+      .workspace-leaf-content .view-content { padding:12px 12px 32px; padding-bottom:max(var(--safe-area-inset-bottom),32px); overflow:auto; }` });
+    const card = page.locator(".ink-sticky-note");
+    for (const field of ["title", "text", "keywords"]) {
+      if (field === "title") await card.locator(".ink-sticky-title").dblclick();
+      else if (field === "text") await card.getByRole("button", { name: "Type on sticky note", exact: true }).click();
+      else {
+        await card.getByRole("button", { name: "Sticky note options", exact: true }).click();
+        await page.locator(".menu").getByRole("button", { name: "Edit keywords", exact: true }).click();
+      }
+      const input = card.getByRole("textbox", { name: field === "text" ? "Sticky Markdown" : `Sticky ${field}` });
+      await input.fill(`Keyboard draft: ${field}`);
+      await page.evaluate(() => document.documentElement.style.setProperty("--safe-area-inset-bottom", "384px"));
+      await page.setViewportSize({ width: 820, height: 420 });
+      await expect(input).toBeFocused();
+      await expect.poll(() => page.evaluate(() => {
+        const v = (window as any).__inkNotesPreview.view, scroller = v.inputScroller(), root = v.contentEl;
+        const viewport = scroller.getBoundingClientRect(), bounds = root.getBoundingClientRect(), input = document.activeElement!.getBoundingClientRect();
+        return getComputedStyle(root).paddingBottom === "0px" && Math.abs(viewport.bottom - bounds.bottom) < 2
+          && viewport.height > 300 && input.top >= viewport.top - 1 && input.top < viewport.bottom
+          && root.scrollTop === 0 && document.querySelector("#host")!.scrollTop === 0 && window.scrollY === 0;
+      })).toBe(true);
+      if (field === "text") await page.screenshot({ path: `test-results/sticky-host-keyboard-${mode}.png` });
+      await input.press(field === "text" ? "Control+Enter" : "Enter");
+      await page.setViewportSize({ width: 820, height: 1000 });
+      await page.evaluate(() => document.documentElement.style.setProperty("--safe-area-inset-bottom", "0px"));
+      expect(await page.evaluate((field) => (window as any).__inkNotesPreview.view.currentPage().stickyNotes[0][field], field)).toBe(`Keyboard draft: ${field}`);
+    }
+  });
+
+  test(`${mode}: folded icon previews content, opens on tap, edits on double tap and exposes actions on hold`, async ({ page }) => {
+    await ready(page, mode);
+    await page.evaluate(() => {
+      const v = (window as any).__inkNotesPreview.view, n = v.currentPage().stickyNotes[0];
+      v.changeSticky(n, { ...n, text: "Preview words", title: "Reminder", collapsed: true });
+    });
+    const card = page.locator(".ink-sticky-note"), icon = card.getByRole("button", { name: "Expand", exact: true });
+    await expect(card.locator("button")).toHaveCount(1); await expect(card.locator(".ink-sticky-header")).toHaveCount(0);
+    const preview = await icon.locator("canvas").evaluate((el: HTMLCanvasElement) => el.toDataURL());
+    await icon.click({ button: "right" });
+    await page.locator(".menu").getByRole("button", { name: "Preview when folded", exact: true }).click();
+    expect(await icon.locator("canvas").evaluate((el: HTMLCanvasElement) => el.toDataURL())).not.toBe(preview);
+    const r = (await icon.boundingBox())!, x = r.x + r.width / 2, y = r.y + r.height / 2;
+    await page.touchscreen.tap(x, y); await expect(card).not.toHaveClass(/is-collapsed/);
+    await page.touchscreen.tap(x, y); await expect(card.getByRole("textbox", { name: "Sticky Markdown" })).toBeFocused();
+    await card.getByRole("textbox", { name: "Sticky Markdown" }).press("Escape");
+    await card.getByRole("button", { name: "Fold", exact: true }).tap();
+    await icon.evaluate((el) => {
+      const r = el.getBoundingClientRect(), t = { target: el, identifier: 20, clientX: r.x + 10, clientY: r.y + 10 };
+      const e = new Event("touchstart", { bubbles: true, cancelable: true });
+      Object.defineProperties(e, { touches: { value: [t] }, changedTouches: { value: [t] } }); el.dispatchEvent(e);
+    });
+    await expect(page.locator(".menu").getByRole("button", { name: "Copy link to sticky note", exact: true })).toBeVisible();
+    await icon.evaluate((el) => {
+      const e = new Event("touchend", { bubbles: true, cancelable: true });
+      Object.defineProperties(e, { touches: { value: [] }, changedTouches: { value: [{ identifier: 20 }] } }); el.dispatchEvent(e);
+    });
+    await expect(card).toHaveClass(/is-collapsed/);
+  });
   for (const locked of [false, true]) test(`${mode}: keyboard viewport preserves inline title, page scale and zoom lock (${locked})`, async ({ page }) => {
     await ready(page, mode);
     const card = page.locator(".ink-sticky-note");
@@ -59,7 +125,7 @@ for (const mode of ["ink", "pdf"] as const) {
     const card = page.locator(".ink-sticky-note");
     for (const corner of ["bottom-right", "top-right", "bottom-left", "top-left"]) {
       await card.getByRole("button", { name: "Fold", exact: true }).click();
-      const r = (await card.getByRole("button", { name: "Move sticky note", exact: true }).boundingBox())!;
+      const r = (await card.getByRole("button", { name: "Expand", exact: true }).boundingBox())!;
       const host = await page.evaluate(() => {
         const r = (window as any).__inkNotesPreview.view.inputRect(); return { x: r.left, y: r.top, width: r.width, height: r.height };
       });
@@ -73,10 +139,15 @@ for (const mode of ["ink", "pdf"] as const) {
       else expect(folded.x).toBe(0);
       if (corner.startsWith("bottom")) { expect(folded.y).toBeGreaterThan(1 - folded.height); expect(frame.y + frame.height).toBeCloseTo(host.y + host.height, 0); }
       else expect(folded.y).toBe(0);
-      await card.locator(".ink-sticky-title").click();
+      await card.getByRole("button", { name: "Expand", exact: true }).click();
       const expanded = await page.evaluate(() => (window as any).__inkNotesPreview.view.currentPage().stickyNotes[0]);
-      expect(expanded.collapsed).toBe(false); expect(expanded.x + expanded.width).toBeLessThanOrEqual(1);
-      expect(expanded.y + expanded.height).toBeLessThanOrEqual(1); expect(expanded.width).toBe(original.width); expect(expanded.height).toBe(original.height);
+      expect(expanded.collapsed).toBe(false); expect(expanded.x).toBe(folded.x); expect(expanded.y).toBe(folded.y);
+      const visible = (await card.boundingBox())!;
+      expect(visible.x + visible.width).toBeLessThanOrEqual(host.x + host.width + 1);
+      expect(visible.y + visible.height).toBeLessThanOrEqual(host.y + host.height + 1);
+      await card.getByRole("button", { name: "Fold", exact: true }).click();
+      expect(await page.evaluate(() => { const n = (window as any).__inkNotesPreview.view.currentPage().stickyNotes[0]; return { x: n.x, y: n.y }; })).toEqual({ x: folded.x, y: folded.y });
+      await card.getByRole("button", { name: "Expand", exact: true }).click(); expect(expanded.width).toBe(original.width); expect(expanded.height).toBe(original.height);
       expect(expanded.strokes).toEqual(original.strokes); expect(expanded.text).toBe(original.text);
     }
   });
