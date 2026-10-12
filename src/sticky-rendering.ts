@@ -46,9 +46,12 @@ async function markdownImage(note: StickyNote, context: StickyMarkdownContext, v
 export function stickyTextLines(text: string): string[] { return text.replace(/\r/g, "").split("\n"); }
 
 /** Paint only the viewport. Changing its dimensions never changes stored content. */
-export function paintStickyBoard(ctx: CanvasRenderingContext2D, note: StickyNote, width: number, height: number, scale = 1): void {
+export function paintStickyBoard(ctx: CanvasRenderingContext2D, note: StickyNote, width: number, height: number, scale = 1, background = true): void {
   ctx.save(); ctx.beginPath(); ctx.rect(0, 0, width, height); ctx.clip();
-  ctx.fillStyle = note.color; ctx.fillRect(0, 0, width, height);
+  // The DOM already owns the paper and Markdown below this ink canvas.
+  // Snapshots still paint their own opaque paper by default.
+  if (background) { ctx.fillStyle = note.color; ctx.fillRect(0, 0, width, height); }
+  else ctx.clearRect(0, 0, width, height);
   ctx.scale(scale, scale); ctx.translate(-note.scrollX, -note.scrollY);
   ctx.fillStyle = "#202020"; ctx.font = "20px sans-serif"; ctx.textBaseline = "top";
   const lines = stickyTextLines(note.text);

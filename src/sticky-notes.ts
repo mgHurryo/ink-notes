@@ -7,6 +7,7 @@ import { STICKY_HEADER } from "./sticky-ink";
 interface StickyContext {
   page: () => InkPage;
   editable: () => boolean; pointer: () => boolean;
+  fingerAsPen: () => boolean;
   change: (before: StickyNote | undefined, after: StickyNote | undefined) => void;
   link: (note: StickyNote, block?: string) => string; source: () => string;
   busy: () => boolean;
@@ -31,18 +32,31 @@ export class StickyNoteLayer {
   private menu?: Menu;
   private hold?: ReturnType<typeof setTimeout>;
   private suppressTap = false;
+  private menuNote?: string;
+  private closeMenuTarget?: HTMLElement;
   private pendingTextRefresh = false;
   private readFrames = new Map<string, boolean>();
   private target?: { id: string; block: string };
   private editing?: { id: string; field: "title" | "text" | "keywords"; base: StickyNote; input: HTMLInputElement | HTMLTextAreaElement };
   private last?: { page: string; notes: StickyNote[] | undefined; editable: boolean; width: number };
-  private drag?: { pointer: number; touch: boolean; page: string; note: StickyNote; rect: DOMRect; x: number; y: number; resize: boolean; element: HTMLElement; pan?: number };
+  private drag?: { pointer: number; touch: boolean; page: string; note: StickyNote; rect: DOMRect; x: number; y: number; resize: boolean; element: HTMLElement; pan?: number; moved?: boolean };
   constructor(readonly host: HTMLElement, private app: App, private context: StickyContext) {
     this.layer = host.createDiv({ cls: "ink-sticky-layer" }); this.markdown.load();
     const signal = this.events.signal, doc = host.ownerDocument;
     const commitOutside = (event: Event) => {
+      if (event.type === "touchstart") this.suppressTap = false;
+      const target = event.target as HTMLElement;
+      const toggle = target.closest?.('.ink-sticky-header button[aria-label="Sticky note options"]');
+      // Host menus dismiss in document capture, before the button click.
+      // Remember that this contact closes the menu rather than reopening it.
+      if (toggle && this.menuNote && this.menuNote === toggle.closest<HTMLElement>(".ink-sticky-note")?.dataset.stickyId) {
+        this.closeMenuTarget = toggle as HTMLElement; this.menu?.hide();
+      } else if (!this.closeMenuTarget?.contains(target)) this.closeMenuTarget = undefined;
       if (this.editing && !this.editing.input.contains(event.target as Node)) {
         this.pendingTextRefresh = true; this.commitText();
+      }
+      if (!this.layer.contains(event.target as Node)) {
+        this.layer.querySelector(".is-active")?.classList.remove("is-active");
       }
     };
     doc.addEventListener("pointerdown", commitOutside, { signal, capture: true });
@@ -53,26 +67,31 @@ export class StickyNoteLayer {
       setTimeout(() => { if (!signal.aborted) { this.pendingTextRefresh = false; this.last = undefined; this.sync(); } }, 0);
     };
     doc.addEventListener("pointerup", (event) => { if (event.pointerType !== "touch") refreshText(); }, { signal, capture: true });
-    doc.addEventListener("touchend", refreshText, { signal, capture: true });
+    doc.addEventListener("touchend", () => { clearTimeout(this.hold); refreshText(); }, { signal, capture: true });
     doc.addEventListener("click", refreshText, { signal });
     doc.addEventListener("touchstart", (event) => {
-      if (this.drag && event.touches.length > 1) { this.drag = undefined; this.last = undefined; this.sync(); }
+      if (this.drag && event.touches.length > 1) { clearTimeout(this.hold); this.drag = undefined; this.last = undefined; this.sync(); }
     }, { signal, capture: true });
     doc.addEventListener("pointermove", (event) => {
       const drag = this.drag; if (!drag || drag.touch || drag.pointer !== event.pointerId) return;
       event.preventDefault(); event.stopPropagation();
+      if (!drag.moved && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 6) return;
+      drag.moved = true;
       const dx = (event.clientX - drag.x) / drag.rect.width, dy = (event.clientY - drag.y) / drag.rect.height;
       const note = movedNote(drag.note, dx, dy, drag.resize, drag.pan);
       if (drag.pan) this.preview([note]); else { this.position(drag.element, note); if (drag.resize) this.preview([note]); }
     }, { signal, passive: false, capture: true });
     const finish = (event: PointerEvent) => {
       const drag = this.drag; if (!drag || drag.touch || drag.pointer !== event.pointerId) return; this.drag = undefined;
+      const moved = drag.moved || Math.hypot(event.clientX - drag.x, event.clientY - drag.y) >= 6;
       if (event.type === "pointerup" && this.context.editable() && this.context.page().id === drag.page) {
         const dx = (event.clientX - drag.x) / drag.rect.width, dy = (event.clientY - drag.y) / drag.rect.height;
         const after = movedNote(drag.note, dx, dy, drag.resize, drag.pan);
-        this.context.change(drag.note, after);
+        if (moved && (dx || dy)) this.context.change(drag.note, after);
+        else { this.position(drag.element, drag.note); if (drag.pan || drag.resize) this.preview([drag.note]); }
       }
-      refreshText(); this.last = undefined; this.sync(); event.stopPropagation();
+      if (event.type !== "pointerup") { this.last = undefined; this.sync(); }
+      refreshText(); if (moved || event.type === "pointercancel") event.stopPropagation();
     };
     doc.addEventListener("pointerup", finish, { signal, capture: true }); doc.addEventListener("pointercancel", finish, { signal, capture: true });
     doc.addEventListener("touchmove", (event) => {
@@ -80,6 +99,8 @@ export class StickyNoteLayer {
       const touch = Array.from(event.touches).find((t) => t.identifier === drag.pointer);
       if (!touch || event.touches.length !== 1) { this.drag = undefined; this.last = undefined; this.sync(); return; }
       event.preventDefault(); event.stopPropagation();
+      if (!drag.moved && Math.hypot(touch.clientX - drag.x, touch.clientY - drag.y) < 6) return;
+      drag.moved = true; clearTimeout(this.hold);
       const dx = (touch.clientX - drag.x) / drag.rect.width, dy = (touch.clientY - drag.y) / drag.rect.height;
       const note = movedNote(drag.note, dx, dy, drag.resize, drag.pan);
       if (drag.pan) this.preview([note]); else { this.position(drag.element, note); if (drag.resize) this.preview([note]); }
@@ -88,14 +109,24 @@ export class StickyNoteLayer {
       const drag = this.drag; if (!drag?.touch) return;
       const touch = Array.from(event.changedTouches).find((t) => t.identifier === drag.pointer); if (!touch) return;
       this.drag = undefined;
+      const moved = drag.moved || Math.hypot(touch.clientX - drag.x, touch.clientY - drag.y) >= 6;
       if (this.context.editable() && this.context.page().id === drag.page) {
         const dx = (touch.clientX - drag.x) / drag.rect.width, dy = (touch.clientY - drag.y) / drag.rect.height;
-        this.context.change(drag.note, movedNote(drag.note, dx, dy, drag.resize, drag.pan));
+        if (moved && (dx || dy)) this.context.change(drag.note, movedNote(drag.note, dx, dy, drag.resize, drag.pan));
+        else {
+          this.position(drag.element, drag.note); if (drag.pan || drag.resize) this.preview([drag.note]);
+          // A native touch drag prevents the synthetic click. Restore tap-to-open explicitly.
+          if (!moved && drag.note.collapsed && !this.suppressTap) {
+            // Do not let WebKit retarget a compatibility click onto the newly
+            // expanded card's controls after replacing this folded label.
+            event.preventDefault(); this.open(drag.note.id);
+          }
+        }
       }
-      refreshText(); this.last = undefined; this.sync(); event.stopPropagation();
-    }, { signal, capture: true });
-    doc.addEventListener("touchcancel", () => { this.drag = undefined; refreshText(); this.last = undefined; this.sync(); }, { signal, capture: true });
-    doc.defaultView?.addEventListener("blur", () => { this.drag = undefined; refreshText(); this.last = undefined; this.sync(); }, { signal });
+      refreshText(); if (moved) event.stopPropagation();
+    }, { signal, capture: true, passive: false });
+    doc.addEventListener("touchcancel", () => { clearTimeout(this.hold); this.drag = undefined; refreshText(); this.last = undefined; this.sync(); }, { signal, capture: true });
+    doc.defaultView?.addEventListener("blur", () => { clearTimeout(this.hold); this.drag = undefined; refreshText(); this.last = undefined; this.sync(); }, { signal });
   }
   dispose(): void { this.events.abort(); this.cards.abort(); this.markdown.unload(); this.menu?.hide(); clearTimeout(this.hold); this.layer.remove(); }
   private position(el: HTMLElement, note: StickyNote): void {
@@ -104,6 +135,7 @@ export class StickyNoteLayer {
     el.style.width = note.collapsed ? `${Math.min(note.width * this.host.clientWidth, 180 * scale)}px` : `${note.width * 100}%`;
     el.style.height = note.collapsed ? `${(note.preview ? 100 : STICKY_HEADER) * scale}px` : `${note.height * 100}%`;
     el.style.backgroundColor = note.color;
+    el.style.setProperty("--sticky-header-height", `${STICKY_HEADER * scale}px`);
   }
   private card(id: string): HTMLElement | undefined {
     return Array.from(this.layer.children).find((el) => (el as HTMLElement).dataset.stickyId === id) as HTMLElement | undefined;
@@ -160,7 +192,20 @@ export class StickyNoteLayer {
     input.focus(); input.select();
   }
   private showMenu(note: StickyNote, x: number, y: number): void {
-    clearTimeout(this.hold); this.menu?.hide(); const menu = new Menu(); this.menu = menu;
+    clearTimeout(this.hold); this.menu?.hide(); const menu = new Menu(); this.menu = menu; this.menuNote = note.id;
+    menu.onHide(() => { if (this.menu === menu) { this.menu = undefined; this.menuNote = undefined; } });
+    if (this.context.editable()) {
+      menu.addItem((item) => item.setTitle("Type on sticky note").setIcon("type").onClick(() => {
+        this.open(note.id); const card = this.card(note.id); if (card) this.edit(note, "text", card);
+      }));
+      menu.addItem((item) => item.setTitle("Rename sticky note").setIcon("pencil").onClick(() => {
+        this.open(note.id); const header = this.card(note.id)?.querySelector<HTMLElement>(".ink-sticky-header");
+        if (header) this.edit(note, "title", header);
+      }));
+    }
+    menu.addItem((item) => item.setTitle(note.collapsed ? "Expand" : "Fold").setIcon(note.collapsed ? "maximize-2" : "minimize-2")
+      .onClick(() => this.update(note, { collapsed: !note.collapsed })));
+    menu.addSeparator();
     menu.addItem((item) => item.setTitle("Copy link to sticky note").setIcon("link").onClick(() => {
       void navigator.clipboard.writeText(this.context.link(note)).catch(() => new Notice("Could not copy the sticky note link"));
     }));
@@ -175,6 +220,7 @@ export class StickyNoteLayer {
         if (card) this.edit(note, "keywords", card);
       }));
       menu.addItem((item) => item.setTitle("Preview when folded").setChecked(note.preview).onClick(() => this.update(note, { preview: !note.preview })));
+      menu.addSeparator();
       for (const [name, color] of [["Yellow", "#fff1a8"], ["Rose", "#ffd5df"], ["Blue", "#cfe9ff"], ["Mint", "#d7f0d4"], ["Lilac", "#e6dcff"]])
         menu.addItem((item) => item.setTitle(name).setChecked(note.color === color).onClick(() => this.update(note, { color })));
       menu.addSeparator(); menu.addItem((item) => item.setTitle("Delete sticky note").setIcon("trash-2").onClick(() => {
@@ -213,10 +259,15 @@ export class StickyNoteLayer {
       const header = card.createDiv({ cls: "ink-sticky-header" });
       header.style.height = `${STICKY_HEADER * width / note.boardPageWidth}px`;
       const grip = button(header, "Move sticky note", "grip-vertical", () => undefined);
-      const title = header.createSpan({ cls: "ink-sticky-title", text: note.title || "Sticky note" });
-      title.ondblclick = () => { if (!note.collapsed) this.edit(note, "title", header); };
-      title.onclick = () => { if (this.suppressTap) { this.suppressTap = false; return; } if (note.collapsed) this.open(note.id); };
+      grip.classList.add("ink-sticky-move");
+      const title = grip.createSpan({ cls: "ink-sticky-title", text: note.title || "Sticky note" });
+      let titleContact = "mouse";
+      title.addEventListener("pointerdown", (e) => { titleContact = e.pointerType; }, { signal: this.cards.signal });
+      title.addEventListener("touchstart", (e) => { titleContact = (e.touches[0] as Touch & { touchType?: string })?.touchType === "stylus" ? "pen" : "touch"; }, { signal: this.cards.signal });
+      title.ondblclick = () => { if (!note.collapsed && (titleContact !== "pen" || this.context.pointer())) this.edit(note, "title", header); };
+      grip.onclick = () => { if (this.suppressTap) { this.suppressTap = false; return; } if (note.collapsed) this.open(note.id); };
       let titleTap = 0;
+      title.addEventListener("touchmove", () => { titleTap = 0; }, { signal: this.cards.signal });
       title.addEventListener("touchend", (e) => {
         if (note.collapsed || (e.changedTouches[0] as Touch & { touchType?: string })?.touchType === "stylus") return;
         const now = Date.now(); if (now - titleTap < 300) { titleTap = 0; this.edit(note, "title", header); } else titleTap = now;
@@ -238,10 +289,18 @@ export class StickyNoteLayer {
           this.drag = { pointer: t.identifier, touch: true, page: page.id, note: cloneSticky(current), rect, x: t.clientX, y: t.clientY, resize, element: card, pan: pan ? rect.height / rect.width : 0 };
         }, { signal: this.cards.signal, passive: false });
       };
+      // The whole title is a move handle, rather than a tiny grip icon.
       bindDrag(grip, false);
       button(header, note.collapsed ? "Expand" : "Fold", note.collapsed ? "maximize-2" : "minimize-2", () => this.update(note, { collapsed: !note.collapsed }));
-      if (!note.collapsed && editable) button(header, "Type on sticky note", "type", () => this.edit(note, "text", card));
-      button(header, "Sticky note options", "ellipsis", () => { const r = header.getBoundingClientRect(); this.showMenu(note, r.right, r.bottom); });
+      if (!note.collapsed && editable) button(header, "Type on sticky note", "type", () => this.edit(note, "text", card)).classList.add("ink-sticky-type");
+      const options = button(header, "Sticky note options", "ellipsis", () => {
+        if (this.closeMenuTarget === options) { this.closeMenuTarget = undefined; return; }
+        if (this.menuNote === note.id) { this.menu?.hide(); return; }
+        const r = header.getBoundingClientRect(); this.showMenu(note, r.right, r.bottom);
+      });
+      header.addEventListener("pointerdown", () => {
+        this.layer.querySelector(".is-active")?.classList.remove("is-active"); card.classList.add("is-active");
+      }, { signal: this.cards.signal, capture: true });
       // Isolate the whole control contact: a bubbling touchend otherwise
       // reaches the page recognizer, which cancels the button's native click.
       // Active drags run in document capture before these chrome shields.
@@ -254,7 +313,7 @@ export class StickyNoteLayer {
         const w = card.clientWidth, h = Math.max(1, card.clientHeight - header.offsetHeight);
         const ratio = Math.min(2, window.devicePixelRatio || 1, 2048 / Math.max(w, h));
         canvas.width = Math.max(1, Math.ceil(w * ratio)); canvas.height = Math.max(1, Math.ceil(h * ratio));
-        const ctx = canvas.getContext("2d"); if (ctx) paintStickyBoard(ctx, { ...note, text: "" }, canvas.width, canvas.height, scale * ratio);
+        const ctx = canvas.getContext("2d"); if (ctx) paintStickyBoard(ctx, { ...note, text: "" }, canvas.width, canvas.height, scale * ratio, false);
         const text = board.createDiv({ cls: "ink-sticky-markdown markdown-rendered" });
         text.style.transformOrigin = "top left"; text.style.transform = `scale(${scale})`;
         text.style.left = `${(16 - note.scrollX) * scale}px`; text.style.top = `${(16 - note.scrollY) * scale}px`;
@@ -272,14 +331,22 @@ export class StickyNoteLayer {
         }).catch((error: unknown) => {
           text.textContent = note.text; console.error("Ink Notes: sticky Markdown rendering failed", error);
         });
-        let contact = "mouse", tap = 0, tapX = 0, tapY = 0;
+        if (editable && !note.collapsed && !note.text && !note.strokes.length) board.createDiv({ cls: "ink-sticky-hint", text: "Write here, or double-tap to type" });
+        let contact = "mouse", tap = 0, tapX = 0, tapY = 0, startX = 0, startY = 0, moved = false;
         board.addEventListener("pointerdown", (e) => { contact = e.pointerType; }, { signal: this.cards.signal });
         board.addEventListener("touchstart", (e) => {
           contact = (e.touches[0] as Touch & { touchType?: string })?.touchType === "stylus" ? "pen" : "touch";
+          const t = e.touches[0]; if (t) { startX = t.clientX; startY = t.clientY; }
+          moved = e.touches.length !== 1;
         }, { signal: this.cards.signal });
-        text.ondblclick = () => { if (contact !== "pen" || this.context.pointer()) this.edit(note, "text", card); };
-        text.addEventListener("touchend", (e) => {
-          if (contact !== "touch" || e.changedTouches.length !== 1) return;
+        board.addEventListener("touchmove", (e) => {
+          const t = e.touches[0];
+          if (e.touches.length !== 1 || t && Math.hypot(t.clientX - startX, t.clientY - startY) > 10) { moved = true; tap = 0; }
+        }, { signal: this.cards.signal });
+        board.addEventListener("touchcancel", () => { moved = true; tap = 0; }, { signal: this.cards.signal });
+        board.ondblclick = (e) => { if (!note.collapsed && !(e.target as HTMLElement).closest("a") && (contact !== "pen" || this.context.pointer())) this.edit(note, "text", card); };
+        board.addEventListener("touchend", (e) => {
+          if (note.collapsed || moved || this.context.fingerAsPen() || contact !== "touch" || e.changedTouches.length !== 1 || (e.target as HTMLElement).closest("a")) return;
           const t = e.changedTouches[0], now = Date.now();
           if (now - tap < 300 && Math.hypot(t.clientX - tapX, t.clientY - tapY) < 16) { tap = 0; this.edit(note, "text", card); }
           else { tap = now; tapX = t.clientX; tapY = t.clientY; }
@@ -301,9 +368,10 @@ export class StickyNoteLayer {
       card.lastElementChild?.classList.toggle("ink-sticky-resize", editable && !note.collapsed);
       card.addEventListener("contextmenu", (e) => { e.preventDefault(); this.showMenu(note, e.clientX, e.clientY); }, { signal: this.cards.signal });
       card.addEventListener("touchstart", (e) => {
-        if (!note.collapsed || e.touches.length !== 1 || (e.target as HTMLElement).closest("button")) return;
+        if ((!note.collapsed && !(e.target as HTMLElement).closest(".ink-sticky-move")) || e.touches.length !== 1
+          || (e.target as HTMLElement).closest("button:not(.ink-sticky-move)")) return;
         const t = e.touches[0]; if ((t as Touch & { touchType?: string }).touchType === "stylus") return;
-        this.hold = setTimeout(() => { this.suppressTap = true; this.showMenu(note, t.clientX, t.clientY); }, 550);
+        this.hold = setTimeout(() => { this.drag = undefined; this.suppressTap = true; this.showMenu(note, t.clientX, t.clientY); }, 550);
       }, { signal: this.cards.signal, capture: true });
       for (const type of ["touchmove", "touchend", "touchcancel"] as const) card.addEventListener(type, () => clearTimeout(this.hold), { signal: this.cards.signal, capture: true });
     }
@@ -317,7 +385,8 @@ export class StickyNoteLayer {
       const ratio = Math.min(2, window.devicePixelRatio || 1, 2048 / Math.max(1, board.clientWidth, board.clientHeight));
       const w = Math.max(1, Math.ceil(board.clientWidth * ratio)), h = Math.max(1, Math.ceil(board.clientHeight * ratio));
       if (canvas.width !== w) canvas.width = w; if (canvas.height !== h) canvas.height = h;
-      const ctx = canvas.getContext("2d"); if (ctx) paintStickyBoard(ctx, { ...note, text: "" }, canvas.width, canvas.height, scale * ratio);
+      const ctx = canvas.getContext("2d"); if (ctx) paintStickyBoard(ctx, { ...note, text: "" }, canvas.width, canvas.height, scale * ratio, false);
+      card?.querySelector<HTMLElement>(".ink-sticky-hint")?.toggleAttribute("hidden", !!note.strokes.length || !!note.text);
       const text = card?.querySelector<HTMLElement>(".ink-sticky-markdown");
       if (text) { text.style.left = `${(16 - note.scrollX) * scale}px`; text.style.top = `${(16 - note.scrollY) * scale}px`; }
     }
