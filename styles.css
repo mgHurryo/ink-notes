@@ -1546,3 +1546,5 @@
 .ink-sticky-text-format .ink-sticky-format-toggle { justify-content: flex-start; cursor: pointer; }
 .ink-sticky-format-toggle input { width: 24px; height: 24px; margin: 0 8px 0 0; }
 .ink-sticky-text-format :focus-visible { outline: 2px solid var(--interactive-accent, #478bce); outline-offset: 2px; }
+.ink-sticky-pan-done { position: absolute; z-index: 11; bottom: 8px; left: 8px; display: flex; align-items: center; gap: 8px; max-width: calc(100% - 60px); min-height: 44px; white-space: normal; font-size: 13px; border-radius: 8px; background: var(--background-primary, #fff); color: var(--text-normal, #25221d); }
+.ink-sticky-pan-done svg { width: 20px; height: 20px; flex-shrink: 0; pointer-events: none; }

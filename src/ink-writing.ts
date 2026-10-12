@@ -502,6 +502,7 @@ export abstract class InkWritingView extends FileView {
       this.stickies = new StickyNoteLayer(host, this.app, {
         page: () => this.currentPage(),
         editable: () => !this.inputLocked(), pointer: () => this.state.tool === "pointer",
+        lasso: () => this.state.tool === "lasso",
         fingerAsPen: () => this.state.fingerAsPen,
         source: () => this.file?.path ?? "", busy: () => this.activePointerId !== null,
         link: (note, block) => markdownStickyLink(this.file?.path ?? "", note, this.app.vault?.getName?.() ?? "", block),
@@ -1429,7 +1430,7 @@ export abstract class InkWritingView extends FileView {
     scroller.tabIndex = 0;
     this.registerDomEvent(scroller, "pointerdown", (event) => {
       if (event.pointerType !== "mouse" || this.nativeMenuOpen()) return;
-      if ((event.target as HTMLElement)?.closest?.(".ink-sticky-note")) return;
+      if ((event.target as HTMLElement)?.closest?.(".ink-sticky-note") && !this.desktopSpaceDown && event.button !== 1) return;
       scroller.focus({ preventScroll: true });
       if (this.beginDesktopPan(event)) event.stopPropagation();
     }, true);
@@ -1649,7 +1650,9 @@ export abstract class InkWritingView extends FileView {
     }
     if (tool === "lasso") {
       this.hideSelectionActions();
-      if (this.isPointInSelection(point)) {
+      const hit = this.strokeAtLassoPoint(point, page, rect);
+      if (hit && !this.selectedStrokeIds.has(hit.id)) this.selectedStrokeIds = new Set([hit.id]);
+      if (hit || this.isPointInSelection(point)) {
         const strokes = this.selectedStrokes();
         const before = new Map(strokes.map((stroke) => [stroke.id, clonePoints(stroke.points)]));
         this.lassoDrag = {
@@ -1822,6 +1825,9 @@ export abstract class InkWritingView extends FileView {
     }
     if (this.activePointerId !== event.pointerId || (this.interaction?.source ?? "pointer") !== source) return;
     this.eraserPointerInside = false;
+    if (this.interaction?.tool === "lasso") {
+      this.pendingLassoPoint = null; this.lassoPath = []; this.lassoDrag = null; this.hideLassoPreview();
+    }
     this.finishPointerInput(false);
   }
 
@@ -2599,6 +2605,8 @@ export abstract class InkWritingView extends FileView {
       const bounds = this.lassoDrag.bounds;
       const dx = constrainDelta(point.x - this.lassoDrag.start.x, bounds?.minX ?? 0, bounds?.maxX ?? 1);
       const dy = constrainDelta(point.y - this.lassoDrag.start.y, bounds?.minY ?? 0, bounds?.maxY ?? 1);
+      const rect = this.inputRect();
+      if (!this.lassoDrag.dx && !this.lassoDrag.dy && Math.hypot(dx * rect.width, dy * rect.height) < 6) return false;
       if (dx === this.lassoDrag.dx && dy === this.lassoDrag.dy) return false;
       this.lassoDrag.dx = dx;
       this.lassoDrag.dy = dy;
@@ -2625,6 +2633,24 @@ export abstract class InkWritingView extends FileView {
     return strokes.filter((stroke) => this.selectedStrokeIds.has(stroke.id));
   }
 
+  /** Hit visible ink segments, including sparse lines, using the eraser's
+   * proven geometry. A tap selects the topmost stroke; empty paper still
+   * begins the configured freehand/rectangle selection. */
+  private strokeAtLassoPoint(point: InkPoint, page: InkPage, rect: DOMRect): InkStroke | undefined {
+    const radius = 8 * this.canvasLogicalWidth / Math.max(1, rect.width);
+    const indexed = this.tiles?.queryNear ? this.tiles.queryNear(point, radius) : page.strokes;
+    const candidates = new Set([...indexed, ...(this.stickyInput?.proxies.values() ?? [])].map((stroke) => stroke.id));
+    const top = [...(this.stickyInput?.notes ?? [])].reverse().find((note) => {
+      if (note.collapsed) return false;
+      const bounds = stickyBounds(note, this.stickyGeometry());
+      return point.x >= bounds.left && point.x <= bounds.right && point.y >= bounds.top && point.y <= bounds.bottom;
+    });
+    return [...page.strokes].reverse().find((stroke) => {
+      if (!candidates.has(stroke.id) || this.stickyInput?.owners.get(stroke.id)?.id !== top?.id) return false;
+      return strokeIntersectsEraser(stroke, point, radius + stroke.width / 2, "circle", this.canvasLogicalWidth, this.canvasLogicalHeight);
+    });
+  }
+
   protected isPointInSelection(point: InkPoint): boolean {
     const bounds = selectionBounds(this.selectedStrokes());
     const padding = 0.008;
@@ -2635,6 +2661,7 @@ export abstract class InkWritingView extends FileView {
   protected clearSelection(): void {
     this.cancelPasteHold();
     this.pageImages?.clear();
+    this.stickies?.clear();
     this.selectedStrokeIds.clear();
     this.lassoPath = [];
     this.lassoDrag = null;
@@ -3809,6 +3836,7 @@ export abstract class InkWritingView extends FileView {
     this.finishPointerInput(false);
     this.onToolSelected(tool);
     this.pageImages?.clear();
+    this.stickies?.clear();
     this.state.tool = tool;
     if (tool !== "lasso") this.clearSelection();
     if (!isBrushTool(tool)) this.brushPopover?.close();

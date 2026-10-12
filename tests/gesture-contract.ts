@@ -64,6 +64,39 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(editor.toolbarRoot().querySelector(".ink-selection-actions")).toBeNull();
     });
 
+    it.each(["freehand", "rectangle"])("directly selects the topmost sparse stroke in %s mode, moves only it and undoes", async (mode) => {
+      const { editor, page, finger, send, draw } = await setup();
+      editor.state.fingerAsPen = true; draw("pen"); draw("pen"); editor.state.fingerAsPen = false;
+      const originals = page.strokes.map((stroke) => ({ ...stroke, points: [
+        { x: .2, y: .2, pressure: .5, t: 1 }, { x: .4, y: .2, pressure: .5, t: 2 },
+      ] }));
+      page.strokes = originals.map((s) => ({ ...s, points: s.points.map((p) => ({ ...p })) }));
+      editor.queueStrokePatch(page, page.strokes, []); editor.drawStrokes(page.strokes);
+      editor.state.tool = "lasso"; editor.state.lasso.mode = mode;
+      send("touchstart", [finger(1, 300, 200)]); send("touchend", [], [finger(1, 301, 200)]);
+      expect([...editor.selectedStrokeIds]).toEqual([page.strokes[1].id]);
+      expect(page.strokes.map((s) => s.points)).toEqual(originals.map((s) => s.points));
+      send("touchstart", [finger(1, 300, 200)]); send("touchmove", [finger(1, 350, 250)]); send("touchend", [], [finger(1, 350, 250)]);
+      expect(page.strokes[0].points).toEqual(originals[0].points); expect(page.strokes[1].points[0].x).toBeCloseTo(.25);
+      editor.undo(); expect(page.strokes.map((s) => s.points)).toEqual(originals.map((s) => s.points));
+      editor.redo(); expect(page.strokes[1].points[0].x).toBeCloseTo(.25);
+      send("touchstart", [finger(1, 800, 800)]); send("touchend", [], [finger(1, 800, 800)]);
+      expect(editor.selectedStrokeIds.size).toBe(0);
+    });
+
+    it("keeps an existing multi-stroke selection when its ink is grabbed and cancels pointer drag on interruption", async () => {
+      const { editor, page, draw } = await setup();
+      editor.state.fingerAsPen = true; draw("pen"); draw("pen", 500, 500); editor.state.fingerAsPen = false;
+      editor.state.tool = "lasso"; editor.selectedStrokeIds = new Set(page.strokes.map((s) => s.id));
+      const original = page.strokes.map((s) => s.points.map((p) => ({ ...p })));
+      editor.capturePointer = vi.fn(); editor.releasePointer = vi.fn();
+      const contact = { pointerType: "mouse", pointerId: 10, clientX: 200, clientY: 200, pressure: .5 };
+      editor.onPointerDown(contact); expect(editor.lassoDrag.strokes).toHaveLength(2);
+      editor.onPointerMove({ ...contact, clientX: 230, clientY: 220 }); editor.flushPendingLassoPoint();
+      editor.onPointerCancel(contact); expect(page.strokes.map((s) => s.points)).toEqual(original);
+      expect(editor.lassoDrag).toBeNull(); expect(editor.activePointerId).toBeNull();
+    });
+
     it.each(["pen", "highlighter", "eraser"])("rolls back provisional %s on a second finger without losing redo history", async (tool) => {
       const { editor, page, finger, send, draw } = await setup();
       editor.state.fingerAsPen = true; draw("pen"); draw("pen", 600, 600); editor.undo();

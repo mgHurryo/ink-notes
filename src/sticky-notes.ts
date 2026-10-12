@@ -7,6 +7,7 @@ import { STICKY_HEADER } from "./sticky-ink";
 interface StickyContext {
   page: () => InkPage;
   editable: () => boolean; pointer: () => boolean;
+  lasso: () => boolean;
   fingerAsPen: () => boolean;
   change: (before: StickyNote | undefined, after: StickyNote | undefined) => void;
   link: (note: StickyNote, block?: string) => string; source: () => string;
@@ -48,6 +49,7 @@ export class StickyNoteLayer {
   private readFrames = new Map<string, boolean>();
   private target?: { id: string; block: string };
   private selectedBox?: { note: string; box: string };
+  private panningNote?: string;
   private boxTap?: { note: string; box: string; time: number; x: number; y: number };
   private formatting?: { element: HTMLElement; note: string; box: string; page: string };
   private editing?: { id: string; field: "title" | "text" | "keywords"; boxId?: string; base: StickyNote; input: HTMLInputElement | HTMLTextAreaElement };
@@ -84,7 +86,7 @@ export class StickyNoteLayer {
       const writingContact = !this.context.pointer() && target.closest?.(".ink-sticky-board") && !target.closest("button, .ink-sticky-inline-input")
         && (event.type === "pointerdown" && ["pen", "mouse"].includes((event as PointerEvent).pointerType)
           || event.type === "touchstart" && ((event as TouchEvent).touches[0] as Touch & { touchType?: string })?.touchType === "stylus"
-          || event.type === "touchstart" && this.context.fingerAsPen());
+          || event.type === "touchstart" && (this.context.fingerAsPen() || this.context.lasso()));
       if (writingContact || !target.closest?.('.ink-sticky-text-box, .ink-sticky-inline-input, button[aria-label="Type on sticky note"]')) { this.selectBox(); this.boxTap = undefined; }
       if (!this.layer.contains(event.target as Node)) {
         this.layer.querySelector(".is-active")?.classList.remove("is-active");
@@ -135,7 +137,9 @@ export class StickyNoteLayer {
       }
       if (event.type !== "pointerup") { this.last = undefined; this.sync(); }
       if (event.type === "pointerup" && !moved && drag.note.collapsed && !this.suppressTap) this.activateIcon(drag.note.id, event.clientX, event.clientY);
-      refreshText(); this.sync(); if (moved || event.type === "pointercancel") event.stopPropagation();
+      refreshText(); this.sync();
+      if (drag.boxId && event.type === "pointerup") this.focusBox(drag.note.id, drag.boxId);
+      if (moved || event.type === "pointercancel") event.stopPropagation();
     };
     doc.addEventListener("pointerup", finish, { signal, capture: true }); doc.addEventListener("pointercancel", finish, { signal, capture: true });
     doc.addEventListener("touchmove", (event) => {
@@ -176,8 +180,16 @@ export class StickyNoteLayer {
     doc.defaultView?.addEventListener("resize", () => this.positionFormat(), { signal });
     doc.defaultView?.visualViewport?.addEventListener("resize", () => this.positionFormat(), { signal });
     doc.defaultView?.visualViewport?.addEventListener("scroll", () => this.positionFormat(), { signal });
+    doc.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape" || !this.selectedBox || this.editing) return;
+      const target = event.target as HTMLElement;
+      if (target.closest?.("input,textarea,select") || target !== doc.body && !this.host.contains(target)) return;
+      this.clear(); event.preventDefault(); event.stopPropagation();
+    }, { signal });
   }
   dispose(): void { this.closeFormat(); this.events.abort(); this.cards.abort(); this.markdown.unload(); this.menu?.hide(); clearTimeout(this.hold); this.layer.remove(); }
+  clear(): void { this.closeFormat(); this.selectBox(); this.boxTap = undefined;
+    if (this.panningNote) { this.panningNote = undefined; this.last = undefined; this.sync(); } }
   private activateIcon(id: string, x: number, y: number): void {
     this.iconTap = { id, x, y, time: Date.now() }; this.open(id);
   }
@@ -219,7 +231,12 @@ export class StickyNoteLayer {
       element.classList.toggle("is-selected", element.dataset.textBoxId === box && element.closest<HTMLElement>(".ink-sticky-note")?.dataset.stickyId === note);
     }
   }
+  private focusBox(note: string, box: string): void {
+    Array.from(this.card(note)?.querySelectorAll<HTMLElement>(".ink-sticky-text-box") ?? [])
+      .find((element) => element.dataset.textBoxId === box)?.focus({ preventScroll: true });
+  }
   private tapBox(id: string, box: string, x: number, y: number): void {
+    if (this.context.lasso()) return;
     const previous = this.boxTap;
     this.selectBox(id, box);
     if (previous?.note === id && previous.box === box && Date.now() - previous.time < 300 && Math.hypot(x - previous.x, y - previous.y) < 16) {
@@ -247,7 +264,11 @@ export class StickyNoteLayer {
   }
   private closeFormat(focus = false): void {
     const format = this.formatting; if (!format) return;
-    format.element.remove(); this.formatting = undefined;
+    this.formatting = undefined;
+    // Blur before removal so a pending native number change is committed.
+    const active = this.host.ownerDocument.activeElement;
+    if (active instanceof HTMLElement && format.element.contains(active)) active.blur();
+    format.element.remove();
     if (focus) this.formatAnchor(format.note, format.box)?.focus({ preventScroll: true });
   }
   private formatAnchor(note: string, box: string): HTMLElement | undefined {
@@ -385,6 +406,10 @@ export class StickyNoteLayer {
     menu.onHide(() => { if (this.menu === menu) { this.menu = undefined; this.menuNote = undefined; } });
     if (this.context.editable()) {
       menu.addItem((item) => item.setTitle("Add text box").setIcon("plus").onClick(() => this.addTextBox(note)));
+      if (this.context.pointer() && !note.collapsed) menu.addItem((item) => item.setTitle("Scroll sticky content").setIcon("hand")
+        .setChecked(this.panningNote === note.id).onClick(() => {
+          this.panningNote = this.panningNote === note.id ? undefined : note.id; this.last = undefined; this.sync();
+        }));
       menu.addItem((item) => item.setTitle("Type on sticky note").setIcon("type").onClick(() => {
         this.open(note.id); const card = this.card(note.id); if (card) this.edit(note, "text", card);
       }));
@@ -422,6 +447,7 @@ export class StickyNoteLayer {
   }
   sync(): void {
     const page = this.context.page(), editable = this.context.editable(), width = this.host.clientWidth;
+    if (this.panningNote && (!editable || !this.context.pointer() || !page.stickyNotes?.some((note) => note.id === this.panningNote && !note.collapsed))) this.panningNote = undefined;
     const format = this.formatting;
     if (format && (!editable || format.page !== page.id || !page.stickyNotes?.some((note) => note.id === format.note && !note.collapsed && stickyTextBoxes(note).some((box) => box.id === format.box)))) this.closeFormat();
     if (!editable) { this.editing = undefined; this.selectBox(); }
@@ -450,6 +476,7 @@ export class StickyNoteLayer {
       const card = this.layer.createDiv({ cls: `ink-sticky-note${note.collapsed ? " is-collapsed" : ""}`, attr: { "data-sticky-id": note.id, tabindex: "-1", "aria-label": note.title || "Sticky note" } }); this.position(card, note);
       const bindDrag = (element: HTMLElement, resize: boolean, pan = false, boxId?: string) => {
         element.addEventListener("pointerdown", (e) => {
+          if (boxId && this.panningNote === note.id) return;
           if (e.pointerType === "touch" || !editable || this.context.busy() || pan && !this.context.pointer() || e.pointerType === "pen" && !this.context.pointer() || e.button !== 0 || (pan || boxId) && (e.target as HTMLElement).closest("a") || boxId && (e.target as HTMLElement).closest("button") && e.target !== element) return;
           // A mouse remains a writing input in drawing tools. The Pointer
           // tool or an explicit move/resize handle owns object manipulation.
@@ -457,16 +484,25 @@ export class StickyNoteLayer {
           e.preventDefault(); e.stopPropagation();
           const rect = this.host.getBoundingClientRect();
           const current = this.context.page().stickyNotes?.find((n) => n.id === note.id); if (!current) return;
-          this.drag = { pointer: e.pointerId, touch: false, page: page.id, note: cloneSticky(current), rect, x: e.clientX, y: e.clientY, resize, element: card, pan: pan ? rect.height / rect.width : 0, boxId };
+          this.drag = { pointer: e.pointerId, touch: false, page: page.id, note: cloneSticky(current), rect, x: e.clientX, y: e.clientY, resize, element: card, pan: pan && (e.altKey || this.panningNote === note.id) ? rect.height / rect.width : 0, boxId };
           if (boxId) { this.selectBox(note.id, boxId); element.closest<HTMLElement>(".ink-sticky-text-box")?.focus({ preventScroll: true }); }
         }, { signal: this.cards.signal });
         element.addEventListener("touchstart", (e) => {
-          if (this.drag || !editable || this.context.busy() || pan && !this.context.pointer() || e.touches.length !== 1 || (pan || boxId) && (e.target as HTMLElement).closest("a") || boxId && this.context.fingerAsPen() && !this.context.pointer() || boxId && (e.target as HTMLElement).closest("button") && e.target !== element) return;
-          const t = e.touches[0]; if ((t as Touch & { touchType?: string }).touchType === "stylus") return;
+          if (boxId && this.panningNote === note.id) return;
+          if (!editable || this.context.busy() || pan && !this.context.pointer() || e.touches.length !== 1 || (pan || boxId) && (e.target as HTMLElement).closest("a") || boxId && (this.context.fingerAsPen() || this.context.lasso()) && !this.context.pointer() || boxId && (e.target as HTMLElement).closest("button") && e.target !== element) return;
+          const t = e.touches[0], stylus = (t as Touch & { touchType?: string }).touchType === "stylus";
+          if (stylus && !this.context.pointer()) return;
+          // iPad may hand a Pencil contact from Pointer to native Touch.
+          if (this.drag) {
+            if (stylus && !this.drag.touch && this.drag.note.id === note.id && this.drag.boxId === boxId) {
+              this.drag.touch = true; this.drag.pointer = t.identifier; e.preventDefault(); e.stopPropagation();
+            }
+            return;
+          }
           e.preventDefault(); e.stopPropagation();
           const rect = this.host.getBoundingClientRect();
           const current = this.context.page().stickyNotes?.find((n) => n.id === note.id); if (!current) return;
-          this.drag = { pointer: t.identifier, touch: true, page: page.id, note: cloneSticky(current), rect, x: t.clientX, y: t.clientY, resize, element: card, pan: pan ? rect.height / rect.width : 0, boxId };
+          this.drag = { pointer: t.identifier, touch: true, page: page.id, note: cloneSticky(current), rect, x: t.clientX, y: t.clientY, resize, element: card, pan: pan && this.panningNote === note.id ? rect.height / rect.width : 0, boxId };
           if (boxId) { this.selectBox(note.id, boxId); element.closest<HTMLElement>(".ink-sticky-text-box")?.focus({ preventScroll: true }); }
         }, { signal: this.cards.signal, passive: false });
       };
@@ -583,7 +619,7 @@ export class StickyNoteLayer {
             }
             frame.addEventListener("dblclick", (event) => {
               if ((event.target as HTMLElement).closest("button,a")) { event.stopPropagation(); return; }
-              if (contact === "pen" && !this.context.pointer()) return;
+              if (this.panningNote === note.id || this.context.lasso() || contact === "pen" && !this.context.pointer()) return;
               event.preventDefault(); event.stopPropagation(); this.edit(note, "text", card, box.id);
             }, { signal: this.cards.signal });
             frame.addEventListener("keydown", (event) => {
@@ -615,9 +651,9 @@ export class StickyNoteLayer {
           if (e.touches.length !== 1 || t && Math.hypot(t.clientX - startX, t.clientY - startY) > 10) { moved = true; tap = 0; }
         }, { signal: this.cards.signal });
         board.addEventListener("touchcancel", () => { moved = true; tap = 0; }, { signal: this.cards.signal });
-        board.ondblclick = (e) => { if (!note.collapsed && !(e.target as HTMLElement).closest("a") && (contact !== "pen" || this.context.pointer()) && !(contact === "touch" && this.context.fingerAsPen() && !this.context.pointer())) this.edit(note, "text", card); };
+        board.ondblclick = (e) => { if (this.panningNote !== note.id && !this.context.lasso() && !note.collapsed && !(e.target as HTMLElement).closest("a") && (contact !== "pen" || this.context.pointer()) && !(contact === "touch" && this.context.fingerAsPen() && !this.context.pointer())) this.edit(note, "text", card); };
         board.addEventListener("touchend", (e) => {
-          if (note.collapsed || moved || this.context.fingerAsPen() || contact !== "touch" || e.changedTouches.length !== 1 || (e.target as HTMLElement).closest("a")) return;
+          if (this.panningNote === note.id || this.context.lasso() || note.collapsed || moved || this.context.fingerAsPen() || contact !== "touch" || e.changedTouches.length !== 1 || (e.target as HTMLElement).closest("a")) return;
           const t = e.changedTouches[0], now = Date.now();
           if (now - tap < 300 && Math.hypot(t.clientX - tapX, t.clientY - tapY) < 16) { tap = 0; this.edit(note, "text", card); }
           else { tap = now; tapX = t.clientX; tapY = t.clientY; }
@@ -630,6 +666,12 @@ export class StickyNoteLayer {
       }
       if (editable && !note.collapsed) bindDrag(button(card, "Resize note", "move-diagonal-2", () => undefined), true);
       card.lastElementChild?.classList.toggle("ink-sticky-resize", editable && !note.collapsed);
+      if (editable && this.context.pointer() && this.panningNote === note.id) {
+        const done = button(card, "Finish scrolling sticky content", "check", () => { this.panningNote = undefined; this.last = undefined; this.sync(); });
+        done.classList.add("ink-sticky-pan-done"); done.createSpan({ text: "Scroll content · Done" });
+        for (const type of ["pointerdown", "pointermove", "pointerup", "touchstart", "touchmove", "touchend"] as const)
+          done.addEventListener(type, (event) => event.stopPropagation(), { signal: this.cards.signal });
+      }
 
     }
   }
