@@ -96,6 +96,53 @@ const thumbs = () => document.querySelectorAll<HTMLButtonElement>(".ink-pdf-view
 gestureContract(async () => { const { view, internal } = await setup(); internal.renderAll(); return view; });
 const thumbAt = (index: number) => thumbs()[index]!;
 
+it("keeps mounted PDF tiles, preview buttons and background caches through ink-only peer merges", async () => {
+  vi.stubGlobal("Path2D", class { moveTo() {} lineTo() {} closePath() {} });
+  const { view, internal, sidecar, fakeDoc } = await setupExpanded(2);
+  internal.renderAll();
+  const editor = view as any, page = sidecar.notebook.pages[0];
+  const local: InkStroke = { id:"local", pageId:page.id, tool:"pen", color:"#000", width:3, opacity:1,
+    points:[{x:.1,y:.1,pressure:.5,t:1}], createdAt:1, updatedAt:1 };
+  page.strokes.push(local); editor.drawStrokes(page.strokes); editor.tiles.flushVisible();
+  await vi.waitFor(() => expect(editor.thumbCache.size).toBeGreaterThan(0));
+  const mounted = Array.from(document.querySelectorAll(".ink-tile-layer > div"));
+  expect(mounted.length).toBeGreaterThan(0);
+  const buttons = Array.from(thumbs());
+  const cache = editor.thumbCache, raster = vi.spyOn(editor, "renderPdfPage"), draw = vi.spyOn(editor, "drawStrokes");
+  const setPage = vi.spyOn(editor.tiles, "setPage"), rebuild = vi.spyOn(editor, "rebuildRailButtons");
+  const backgrounds = [...cache]; fakeDoc.getPage.mockClear();
+  for (let i = 0; i < 3; i++) {
+    const remote = JSON.parse(serializeSidecar(editor.sidecar)) as PdfSidecar;
+    remote.notebook.pages[0].strokes.push({...local, id:`peer-${i}`, points:[{x:.6,y:.6,pressure:.5,t:1}]});
+    editor.receiveMergedSidecar(remote);
+    expect(editor.currentPage()).toBe(page); expect(page.strokes[0]).toBe(local);
+    expect(mounted.every(node => node.isConnected)).toBe(true);
+    expect(Array.from(thumbs())).toEqual(buttons);
+    expect([...cache]).toEqual(backgrounds);
+  }
+  expect(draw).toHaveBeenCalledTimes(3);
+  expect(setPage).not.toHaveBeenCalled(); expect(rebuild).not.toHaveBeenCalled(); expect(raster).not.toHaveBeenCalled();
+  // Source rasters prepared before this merge may finish asynchronously;
+  // ink-only changes must not request new source thumbnail decoding.
+  expect(fakeDoc.getPage).not.toHaveBeenCalled();
+});
+
+it("updates a remote PDF page's preview without touching the selected canvas or zoom", async () => {
+  const { view, internal } = await setupExpanded(2); internal.renderAll();
+  const editor = view as any, selected = editor.currentPage();
+  const remote = JSON.parse(serializeSidecar(editor.sidecar)) as PdfSidecar;
+  const other = remote.notebook.pages[1];
+  other.strokes.push({id:"peer-other",pageId:other.id,tool:"pen",color:"#000",width:3,opacity:1,
+    points:[{x:.1,y:.1,pressure:.5,t:1}],createdAt:1,updatedAt:1});
+  editor.zoom = 2; const raster = vi.spyOn(editor,"renderPdfPage"), draw = vi.spyOn(editor,"drawStrokes");
+  const setPage = vi.spyOn(editor.tiles,"setPage"), layout = vi.spyOn(editor,"layoutPage");
+  editor.receiveMergedSidecar(remote);
+  expect(editor.currentPage()).toBe(selected); expect(editor.zoom).toBe(2);
+  expect(draw).not.toHaveBeenCalled(); expect(setPage).not.toHaveBeenCalled();
+  expect(layout).not.toHaveBeenCalled(); expect(raster).not.toHaveBeenCalled();
+  expect(editor.sidecar.notebook.pages[1].strokes[0].id).toBe("peer-other");
+});
+
 it("routes image-target finger movement before PDF navigation and keeps native touch targets attached", async () => {
   const { view, internal, sidecar } = await setup(2, { url: () => "data:image/png;base64,", image: async () => document.createElement("img") } as unknown as ImageLibraryStore);
   internal.renderAll();

@@ -3,6 +3,8 @@ import { InkNotebook, InkPage, InkTool, createNotebook } from "./model";
 import { canvasResolution, drawInkStroke, scaledStroke } from "./rendering";
 import { registerDocumentPointerEndEvents } from "./ink-input";
 import { InkWritingView } from "./ink-writing";
+import { reconcileNotebook } from "./notebook-reconciliation";
+import { clonePageValue } from "./worker-protocol";
 import type { SharedToolState } from "./tool-state";
 import { TileRenderer, cellKeys } from "./tiles";
 import { InkWorkerService } from "./worker-service";
@@ -368,30 +370,48 @@ export class PdfInkView extends InkWritingView {
     if (!this.sidecar || !this.pendingMergedSidecar || this.activePointerId !== null
       || this.pendingInkStrokes.length > 0) return;
     const previous = this.sidecar;
-    const selectedId = previous.notePages[this.noteIndex]?.id;
+    const selectedPage = previous.notePages[this.noteIndex];
+    const selectedId = selectedPage.id;
     const merged = mergeSidecars(this.pendingMergedSidecar, previous);
     this.pendingMergedSidecar = null;
     const geometryChanged = JSON.stringify(previous.notePages) !== JSON.stringify(merged.notePages);
-    const inkChanged = JSON.stringify(previous.notebook) !== JSON.stringify(merged.notebook);
+    // Tile caches belong to page objects. Preserve those objects and unchanged
+    // strokes across peer merges, just as the native Ink editor already does.
+    const changes = reconcileNotebook(previous.notebook, merged.notebook, selectedId, this.noteIndex);
+    for (const { stroke, previousUpdatedAt } of changes.metadataOnlyChanges) this.tiles?.acknowledgeStrokeMetadata(stroke, previousUpdatedAt);
+    merged.notebook = previous.notebook;
     this.sidecar = merged;
-    if (!geometryChanged && !inkChanged) return;
+    this.noteIndex = changes.pageIndex;
+    if (!geometryChanged && !changes.pageRailChanged && changes.changedPageIds.length === 0 && !changes.dimensionsChanged) return;
     this.editRevision += 1; // An older in-flight save cannot mark this model clean.
-    const selected = merged.notePages.findIndex((page) => page.id === selectedId);
-    this.noteIndex = selected >= 0 ? selected : Math.min(this.noteIndex, merged.notePages.length - 1);
     // Snapshot page commands may include the other pane's ink. Retain the
     // existing external-refresh policy: history restarts at the merged model.
     this.undoStack = [];
     this.redoStack = [];
     this.syncNotebookToWorker();
-    this.invalidateThumbnails();
     if (geometryChanged) {
+      this.invalidateThumbnails();
       this.destroySwipeStage();
       this.prewarmToken += 1;
       this.neighbourCache.clear();
+    }
+    const currentGeometryChanged = JSON.stringify(selectedPage) !== JSON.stringify(merged.notePages[this.noteIndex]);
+    if (currentGeometryChanged || changes.dimensionsChanged) {
       this.layoutPage();
       void this.renderPdfPage();
+      this.renderAll();
+    } else {
+      if (geometryChanged || changes.pageRailChanged) {
+        this.updatePageIndicator();
+        this.refreshPageRail();
+      } else if (changes.changedPageIds.length > 0) {
+        // Thumbnail backgrounds contain only the source PDF. Reuse them when
+        // handwriting changes instead of rebuilding every preview button.
+        this.paintVisibleThumbnails();
+      }
+      if (changes.currentInkChanged) this.drawStrokes(this.currentPage().strokes);
+      this.updateHistoryButtons();
     }
-    this.renderAll();
   }
 
   // ------------------------------------------------------------------ locks
@@ -609,8 +629,13 @@ export class PdfInkView extends InkWritingView {
 
   private syncNotebookToWorker(): void {
     if (!this.sidecar) return;
+    // apply() queues behind earlier operations. Later input/peer merges must
+    // not mutate this replacement before the Worker actually receives it.
+    const current = this.sidecar.notebook;
+    const notebook = { ...current, pages: current.pages.map(clonePageValue),
+      pageOrder: [...current.pageOrder], deletedPages: { ...current.deletedPages } };
     this.workerRevision += 1;
-    void this.workerSession?.apply(this.workerRevision, { type: "replace-notebook", notebook: this.sidecar.notebook }).catch((error) => this.disableWorkerSession(error));
+    void this.workerSession?.apply(this.workerRevision, { type: "replace-notebook", notebook }).catch((error) => this.disableWorkerSession(error));
   }
 
   // -------------------------------------------------------------- toolbar
