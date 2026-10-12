@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.3-beta.7 - 2026-10-12
 
 - Keep each sticky note in a separate stacking context so overlapping titles, paper, Markdown and ink paint as complete cards. Use a transparent DOM ink canvas so it no longer hides typed content; PDF snapshots retain opaque paper.
 - Stabilize stacking by creation order across editing, worker updates, reloads and split-pane merges. Stagger new notes and give new notes wider frames on narrow pages.
