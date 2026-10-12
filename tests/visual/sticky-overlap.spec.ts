@@ -87,12 +87,12 @@ for (const mode of ["ink", "pdf"] as const) {
     await card.getByRole("textbox", { name: "Sticky title" }).press("Enter");
     await expect(title).toHaveText("My reminder");
     await card.getByRole("button", { name: "Fold", exact: true }).tap();
-    const folded = (await notes(page))[0], label = (await title.boundingBox())!;
+    const folded = (await notes(page))[0], label = (await card.getByRole("button", { name: "Expand", exact: true }).boundingBox())!;
     await session.send("Input.dispatchTouchEvent", { type: "touchStart", touchPoints: [{ x: label.x + 10, y: label.y + 5, id: 1 }] });
     await session.send("Input.dispatchTouchEvent", { type: "touchMove", touchPoints: [{ x: label.x + 45, y: label.y + 30, id: 1 }] });
     await session.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
     expect((await notes(page))[0].x).toBeGreaterThan(folded.x); await expect(card).toHaveClass(/is-collapsed/);
-    await title.tap(); await expect(card).not.toHaveClass(/is-collapsed/); await session.detach();
+    await card.getByRole("button", { name: "Expand", exact: true }).tap(); await expect(card).not.toHaveClass(/is-collapsed/); await session.detach();
   });
 }
 
@@ -126,7 +126,7 @@ test("narrow frames retain readable actions in the native menu; outside and repe
   await card.getByRole("textbox", { name: "Sticky Markdown" }).fill("**Small frame**");
   await card.getByRole("textbox", { name: "Sticky Markdown" }).press("Control+Enter");
   await options.tap(); await page.locator(".menu").getByRole("button", { name: "Fold", exact: true }).tap();
-  await expect(card).toHaveClass(/is-collapsed/); await card.locator(".ink-sticky-title").tap();
+  await expect(card).toHaveClass(/is-collapsed/); await card.getByRole("button", { name: "Expand", exact: true }).tap();
   await expect(card).not.toHaveClass(/is-collapsed/); await expect(card.locator("strong")).toHaveText("Small frame");
   await options.tap(); await page.mouse.click(340, 500); await expect(page.locator(".menu")).toHaveCount(0);
 });

@@ -112,7 +112,7 @@ test("inline paragraph references and touch long press resolve without expanding
   await card.getByRole("textbox", { name: "Sticky Markdown" }).press("Control+Enter");
   await expect(card.locator('[data-sticky-block="definition-1"]')).toHaveCount(1);
   await card.getByRole("button", { name: "Fold", exact: true }).click();
-  await card.locator(".ink-sticky-title").evaluate((el) => {
+  await card.getByRole("button", { name: "Expand", exact: true }).evaluate((el) => {
     const r = el.getBoundingClientRect(), t = new Touch({ target: el, identifier: 23, clientX: r.x + 10, clientY: r.y + 10 });
     el.dispatchEvent(new TouchEvent("touchstart", { bubbles: true, touches: [t], changedTouches: [t] }));
   });

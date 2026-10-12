@@ -1,29 +1,32 @@
 import { InkPoint, InkStroke, newId } from "./model";
-import { StickyNote, STICKY_UNIT } from "./sticky-model";
+import { StickyNote, STICKY_UNIT, stickyPosition } from "./sticky-model";
 
 // Reserve the same roomy title strip in DOM, ink routing and PDF exports.
 export const STICKY_HEADER = 64;
 export interface PageGeometry { width: number; height: number }
 
 export function stickyBounds(note: StickyNote, g: PageGeometry) {
-  return { left: note.x, right: note.x + note.width,
-    top: note.y + STICKY_HEADER * g.width / note.boardPageWidth / g.height, bottom: note.y + note.height };
+  const { x, y } = stickyPosition(note);
+  return { left: x, right: x + note.width,
+    top: y + STICKY_HEADER * g.width / note.boardPageWidth / g.height, bottom: y + note.height };
 }
 
 export function stickyStrokeOnPage(stroke: InkStroke, note: StickyNote, g: PageGeometry): InkStroke {
   const scale = g.width / note.boardPageWidth;
+  const { x, y } = stickyPosition(note);
   return { ...stroke, pageId: note.pageId, width: stroke.width * scale,
     points: stroke.points.map((p) => ({ ...p,
-      x: note.x + (p.x * STICKY_UNIT - note.scrollX) / note.boardPageWidth,
-      y: note.y + (STICKY_HEADER + p.y * STICKY_UNIT - note.scrollY) * scale / g.height })) };
+      x: x + (p.x * STICKY_UNIT - note.scrollX) / note.boardPageWidth,
+      y: y + (STICKY_HEADER + p.y * STICKY_UNIT - note.scrollY) * scale / g.height })) };
 }
 
 export function stickyStrokeFromPage(stroke: InkStroke, note: StickyNote, g: PageGeometry): InkStroke {
   const scale = g.width / note.boardPageWidth;
+  const { x, y } = stickyPosition(note);
   return { ...stroke, pageId: note.id, width: stroke.width / scale,
     points: stroke.points.map((p) => ({ ...p,
-      x: ((p.x - note.x) * note.boardPageWidth + note.scrollX) / STICKY_UNIT,
-      y: ((p.y - note.y) * g.height / scale - STICKY_HEADER + note.scrollY) / STICKY_UNIT })) };
+      x: ((p.x - x) * note.boardPageWidth + note.scrollX) / STICKY_UNIT,
+      y: ((p.y - y) * g.height / scale - STICKY_HEADER + note.scrollY) / STICKY_UNIT })) };
 }
 
 /** Split at exact frame intersections, including sparsely sampled fast strokes.
