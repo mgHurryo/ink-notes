@@ -58,6 +58,15 @@ describe("tile spatial index", () => {
     index.sync([a]);
     expect(index.query({ x: 0, y: 0, width: 1000, height: 1000 })).toEqual([a]);
   });
+  it("acknowledges verified metadata without repainting but still detects unindexed local edits", () => {
+    const index = new StrokeIndex(1000,1000), a = stroke("a",.1,.1);
+    index.sync([a]); const revisions = [...index.revisions];
+    a.updatedAt = 2; index.acknowledgeMetadata(a,1); index.sync([a]);
+    expect([...index.revisions]).toEqual(revisions);
+    a.points[0].pressure = .9; a.updatedAt = 3;
+    a.updatedAt = 4; index.acknowledgeMetadata(a,3); index.sync([a]);
+    expect([...index.revisions]).not.toEqual(revisions);
+  });
   it("does not invalidate unrelated later tiles after deleting an early stroke", () => {
     const index = new StrokeIndex(1000, 1000);
     const early = stroke("early", 0.1, 0.1), later = stroke("later", 0.8, 0.8);

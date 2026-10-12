@@ -22678,9 +22678,6 @@ function isPaperStyle(value) {
   return value === "blank" || value === "ruled" || value === "grid" || value === "dot";
 }
 
-// src/pdf-export.ts
-var import_pdf_lib = __toESM(require_cjs());
-
 // src/rendering.ts
 var scaledStrokes = /* @__PURE__ */ new WeakMap();
 function scaledStroke(stroke, scale) {
@@ -22944,6 +22941,105 @@ function drawSmoothPath(ctx, points, width, height) {
   const last = points[points.length - 1];
   ctx.lineTo(last.x * width, last.y * height);
 }
+
+// src/notebook-reconciliation.ts
+function reconcileNotebook(target, incoming, selectedPageId, previousPageIndex) {
+  const dimensionsChanged = target.pageWidth !== incoming.pageWidth || target.pageHeight !== incoming.pageHeight;
+  const previousPages = target.pages;
+  const metadataOnlyChanges = [];
+  const previousById = new Map(previousPages.map((page) => [page.id, page]));
+  const pageChanges = /* @__PURE__ */ new Map();
+  const pages = incoming.pages.map((incomingPage) => {
+    const page = previousById.get(incomingPage.id);
+    if (!page) {
+      pageChanges.set(incomingPage.id, { ink: true, paper: true, rail: true });
+      return incomingPage;
+    }
+    const paperChanged = page.paper !== incomingPage.paper;
+    const railChanged = page.title !== incomingPage.title || paperChanged;
+    const inkChanged = reconcilePage(page, incomingPage, metadataOnlyChanges);
+    pageChanges.set(page.id, { ink: inkChanged, paper: paperChanged, rail: railChanged });
+    return page;
+  });
+  const pageListChanged = previousPages.length !== pages.length || previousPages.some((page, index) => {
+    var _a;
+    return page.id !== ((_a = pages[index]) == null ? void 0 : _a.id);
+  });
+  const selectedIndex = pages.findIndex((page) => page.id === selectedPageId);
+  const pageIndex = selectedIndex >= 0 ? selectedIndex : Math.min(previousPageIndex, pages.length - 1);
+  const currentPage = pages[pageIndex];
+  const currentPageChanged = currentPage.id !== selectedPageId;
+  const currentChanges = pageChanges.get(currentPage.id);
+  target.schema = incoming.schema;
+  target.title = incoming.title;
+  target.pageWidth = incoming.pageWidth;
+  target.pageHeight = incoming.pageHeight;
+  target.pages = pageListChanged ? pages : previousPages;
+  target.pageOrder = arraysEqual(target.pageOrder, incoming.pageOrder) ? target.pageOrder : [...incoming.pageOrder];
+  target.deletedPages = recordsEqual(target.deletedPages, incoming.deletedPages) ? target.deletedPages : { ...incoming.deletedPages };
+  target.pageOrderUpdatedAt = incoming.pageOrderUpdatedAt;
+  target.updatedAt = incoming.updatedAt;
+  return {
+    pageIndex,
+    pageRailChanged: pageListChanged || [...pageChanges.values()].some((change) => change.rail),
+    currentPageChanged,
+    currentInkChanged: currentPageChanged || (currentChanges == null ? void 0 : currentChanges.ink) === true,
+    currentPaperChanged: !currentPageChanged && (currentChanges == null ? void 0 : currentChanges.paper) === true,
+    dimensionsChanged,
+    changedPageIds: [...pageChanges].filter(([, change]) => change.ink || change.paper).map(([id]) => id),
+    metadataOnlyChanges
+  };
+}
+function reconcilePage(target, incoming, metadataOnlyChanges) {
+  var _a, _b, _c, _d, _e, _f, _g;
+  const stickyChanged = JSON.stringify((_a = target.stickyNotes) != null ? _a : []) !== JSON.stringify((_b = incoming.stickyNotes) != null ? _b : []);
+  if (stickyChanged) target.stickyNotes = (_c = incoming.stickyNotes) == null ? void 0 : _c.map(cloneSticky);
+  target.deletedStickyNotes = { ...incoming.deletedStickyNotes };
+  const imagesChanged = JSON.stringify((_d = target.images) != null ? _d : []) !== JSON.stringify((_e = incoming.images) != null ? _e : []);
+  if (imagesChanged) target.images = (_f = incoming.images) == null ? void 0 : _f.map((image) => ({ ...image }));
+  target.deletedImageIds = [...(_g = incoming.deletedImageIds) != null ? _g : []];
+  const previousStrokes = target.strokes;
+  const previousById = new Map(previousStrokes.map((stroke) => [stroke.id, stroke]));
+  const strokes = incoming.strokes.map((incomingStroke) => {
+    const stroke = previousById.get(incomingStroke.id);
+    if (!stroke || !strokeAppearanceEqual(stroke, incomingStroke)) return incomingStroke;
+    if (stroke.updatedAt !== incomingStroke.updatedAt) metadataOnlyChanges.push({ stroke, previousUpdatedAt: stroke.updatedAt });
+    stroke.updatedAt = incomingStroke.updatedAt;
+    return stroke;
+  });
+  const inkChanged = previousStrokes.length !== strokes.length || previousStrokes.some((stroke, index) => stroke !== strokes[index]);
+  target.title = incoming.title;
+  target.paper = incoming.paper;
+  if (inkChanged) target.strokes = strokes;
+  target.deletedStrokeIds = arraysEqual(target.deletedStrokeIds, incoming.deletedStrokeIds) ? target.deletedStrokeIds : [...incoming.deletedStrokeIds];
+  target.createdAt = incoming.createdAt;
+  target.updatedAt = incoming.updatedAt;
+  return inkChanged || imagesChanged || stickyChanged;
+}
+function strokeAppearanceEqual(left, right) {
+  if (left.id !== right.id || left.pageId !== right.pageId || left.tool !== right.tool || left.color !== right.color || left.width !== right.width || left.opacity !== right.opacity || left.createdAt !== right.createdAt || left.points.length !== right.points.length || !strokeDynamicsEqual(left, right)) return false;
+  for (let index = 0; index < left.points.length; index++) {
+    const a = left.points[index];
+    const b = right.points[index];
+    if (a.x !== b.x || a.y !== b.y || a.pressure !== b.pressure || a.t !== b.t || a.tiltX !== b.tiltX || a.tiltY !== b.tiltY) return false;
+  }
+  return true;
+}
+function strokeDynamicsEqual(left, right) {
+  const a = left.dynamics, b = right.dynamics;
+  return clampPercent(a == null ? void 0 : a.taper, 0) === clampPercent(b == null ? void 0 : b.taper, 0) && clampPercent(a == null ? void 0 : a.pressure, 100) === clampPercent(b == null ? void 0 : b.pressure, 100) && clampPercent(a == null ? void 0 : a.speed, 0) === clampPercent(b == null ? void 0 : b.speed, 0) && JSON.stringify(normalizePressureCurve(a == null ? void 0 : a.pressureCurve)) === JSON.stringify(normalizePressureCurve(b == null ? void 0 : b.pressureCurve));
+}
+function arraysEqual(left, right) {
+  return left.length === right.length && left.every((value, index) => value === right[index]);
+}
+function recordsEqual(left, right) {
+  const leftKeys = Object.keys(left);
+  const rightKeys = Object.keys(right);
+  return leftKeys.length === rightKeys.length && leftKeys.every((key) => left[key] === right[key]);
+}
+
+// src/pdf-export.ts
+var import_pdf_lib = __toESM(require_cjs());
 
 // src/sticky-ink.ts
 var STICKY_HEADER = 64;
@@ -30606,6 +30702,12 @@ var StrokeIndex = class {
     }
     return keys;
   }
+  // Reconciliation has compared every rendering field. Advance only an index
+  // that represented that exact pre-merge revision; never hide unindexed edits.
+  acknowledgeMetadata(stroke, previousUpdatedAt) {
+    const entry = this.entries.get(stroke.id);
+    if ((entry == null ? void 0 : entry.stroke) === stroke && entry.revision === previousUpdatedAt) entry.revision = stroke.updatedAt;
+  }
   patch(upsert, remove, order) {
     var _a, _b;
     const changed = /* @__PURE__ */ new Set();
@@ -30736,6 +30838,9 @@ var TileRenderer = class {
   sync(strokes, exclude) {
     var _a;
     (_a = this.active) == null ? void 0 : _a.index.sync(strokes, exclude);
+  }
+  acknowledgeStrokeMetadata(stroke, previousUpdatedAt) {
+    for (const state of this.states.values()) state.index.acknowledgeMetadata(stroke, previousUpdatedAt);
   }
   patchStrokes(upsert, remove, order) {
     var _a, _b;
@@ -32399,6 +32504,7 @@ var InkView = class extends InkWritingView {
     if (this.activePointerId === null && this.pendingInkStrokes.length === 0) this.applyPendingMergedNotebook();
   }
   applyPendingMergedNotebook() {
+    var _a;
     if (!this.pendingMergedNotebook || this.activePointerId !== null || this.pendingInkStrokes.length > 0) return;
     const pageId = this.currentPage().id;
     const previousPageIndex = this.pageIndex;
@@ -32406,6 +32512,7 @@ var InkView = class extends InkWritingView {
     this.pendingMergedNotebook = null;
     this.pendingMergedNotebookIsFinal = false;
     const changes = reconcileNotebook(this.notebook, merged, pageId, previousPageIndex);
+    for (const { stroke, previousUpdatedAt } of changes.metadataOnlyChanges) (_a = this.tiles) == null ? void 0 : _a.acknowledgeStrokeMetadata(stroke, previousUpdatedAt);
     this.pageIndex = changes.pageIndex;
     if (changes.pageRailChanged) this.renderPageRail();
     if (changes.currentPageChanged || changes.currentPaperChanged || changes.dimensionsChanged) {
@@ -33099,92 +33206,6 @@ function clonePageAsNew(page, title, now = Date.now()) {
 function notebooksEqual(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
-function reconcileNotebook(target, incoming, selectedPageId, previousPageIndex) {
-  const dimensionsChanged = target.pageWidth !== incoming.pageWidth || target.pageHeight !== incoming.pageHeight;
-  const previousPages = target.pages;
-  const previousById = new Map(previousPages.map((page) => [page.id, page]));
-  const pageChanges = /* @__PURE__ */ new Map();
-  const pages = incoming.pages.map((incomingPage) => {
-    const page = previousById.get(incomingPage.id);
-    if (!page) {
-      pageChanges.set(incomingPage.id, { ink: true, paper: true, rail: true });
-      return incomingPage;
-    }
-    const paperChanged = page.paper !== incomingPage.paper;
-    const railChanged = page.title !== incomingPage.title || paperChanged;
-    const inkChanged = reconcilePage(page, incomingPage);
-    pageChanges.set(page.id, { ink: inkChanged, paper: paperChanged, rail: railChanged });
-    return page;
-  });
-  const pageListChanged = previousPages.length !== pages.length || previousPages.some((page, index) => {
-    var _a;
-    return page.id !== ((_a = pages[index]) == null ? void 0 : _a.id);
-  });
-  const selectedIndex = pages.findIndex((page) => page.id === selectedPageId);
-  const pageIndex = selectedIndex >= 0 ? selectedIndex : Math.min(previousPageIndex, pages.length - 1);
-  const currentPage = pages[pageIndex];
-  const currentPageChanged = currentPage.id !== selectedPageId;
-  const currentChanges = pageChanges.get(currentPage.id);
-  target.schema = incoming.schema;
-  target.title = incoming.title;
-  target.pageWidth = incoming.pageWidth;
-  target.pageHeight = incoming.pageHeight;
-  target.pages = pageListChanged ? pages : previousPages;
-  target.pageOrder = arraysEqual(target.pageOrder, incoming.pageOrder) ? target.pageOrder : [...incoming.pageOrder];
-  target.deletedPages = recordsEqual(target.deletedPages, incoming.deletedPages) ? target.deletedPages : { ...incoming.deletedPages };
-  target.pageOrderUpdatedAt = incoming.pageOrderUpdatedAt;
-  target.updatedAt = incoming.updatedAt;
-  return {
-    pageIndex,
-    pageRailChanged: pageListChanged || [...pageChanges.values()].some((change) => change.rail),
-    currentPageChanged,
-    currentInkChanged: currentPageChanged || (currentChanges == null ? void 0 : currentChanges.ink) === true,
-    currentPaperChanged: !currentPageChanged && (currentChanges == null ? void 0 : currentChanges.paper) === true,
-    dimensionsChanged
-  };
-}
-function reconcilePage(target, incoming) {
-  var _a, _b, _c, _d, _e, _f, _g;
-  const stickyChanged = JSON.stringify((_a = target.stickyNotes) != null ? _a : []) !== JSON.stringify((_b = incoming.stickyNotes) != null ? _b : []);
-  if (stickyChanged) target.stickyNotes = (_c = incoming.stickyNotes) == null ? void 0 : _c.map(cloneSticky);
-  target.deletedStickyNotes = { ...incoming.deletedStickyNotes };
-  const imagesChanged = JSON.stringify((_d = target.images) != null ? _d : []) !== JSON.stringify((_e = incoming.images) != null ? _e : []);
-  if (imagesChanged) target.images = (_f = incoming.images) == null ? void 0 : _f.map((image) => ({ ...image }));
-  target.deletedImageIds = [...(_g = incoming.deletedImageIds) != null ? _g : []];
-  const previousStrokes = target.strokes;
-  const previousById = new Map(previousStrokes.map((stroke) => [stroke.id, stroke]));
-  const strokes = incoming.strokes.map((incomingStroke) => {
-    const stroke = previousById.get(incomingStroke.id);
-    if (!stroke || !strokeAppearanceEqual(stroke, incomingStroke)) return incomingStroke;
-    stroke.updatedAt = incomingStroke.updatedAt;
-    return stroke;
-  });
-  const inkChanged = previousStrokes.length !== strokes.length || previousStrokes.some((stroke, index) => stroke !== strokes[index]);
-  target.title = incoming.title;
-  target.paper = incoming.paper;
-  if (inkChanged) target.strokes = strokes;
-  target.deletedStrokeIds = arraysEqual(target.deletedStrokeIds, incoming.deletedStrokeIds) ? target.deletedStrokeIds : [...incoming.deletedStrokeIds];
-  target.createdAt = incoming.createdAt;
-  target.updatedAt = incoming.updatedAt;
-  return inkChanged || imagesChanged || stickyChanged;
-}
-function strokeAppearanceEqual(left, right) {
-  if (left.id !== right.id || left.pageId !== right.pageId || left.tool !== right.tool || left.color !== right.color || left.width !== right.width || left.opacity !== right.opacity || left.createdAt !== right.createdAt || left.points.length !== right.points.length) return false;
-  for (let index = 0; index < left.points.length; index++) {
-    const a = left.points[index];
-    const b = right.points[index];
-    if (a.x !== b.x || a.y !== b.y || a.pressure !== b.pressure || a.t !== b.t || a.tiltX !== b.tiltX || a.tiltY !== b.tiltY) return false;
-  }
-  return true;
-}
-function arraysEqual(left, right) {
-  return left.length === right.length && left.every((value, index) => value === right[index]);
-}
-function recordsEqual(left, right) {
-  const leftKeys = Object.keys(left);
-  const rightKeys = Object.keys(right);
-  return leftKeys.length === rightKeys.length && leftKeys.every((key) => left[key] === right[key]);
-}
 
 // src/storage.ts
 var import_obsidian8 = require("obsidian");
@@ -33436,6 +33457,15 @@ function renderError(el, error) {
 
 // src/pdf-view.ts
 var import_obsidian12 = require("obsidian");
+
+// src/worker-protocol.ts
+function cloneStrokeValue(stroke) {
+  return { ...stroke, points: stroke.points.map((point) => ({ ...point })) };
+}
+function clonePageValue(page) {
+  var _a, _b, _c;
+  return { ...page, stickyNotes: (_a = page.stickyNotes) == null ? void 0 : _a.map(cloneSticky), deletedStickyNotes: { ...page.deletedStickyNotes }, images: (_b = page.images) == null ? void 0 : _b.map((image) => ({ ...image })), deletedImageIds: [...(_c = page.deletedImageIds) != null ? _c : []], strokes: page.strokes.map(cloneStrokeValue), deletedStrokeIds: [...page.deletedStrokeIds] };
+}
 
 // src/pdf-sidecar.ts
 var PDF_SIDECAR_FORMAT = 1;
@@ -34312,28 +34342,42 @@ var PdfInkView = class extends InkWritingView {
     var _a;
     if (!this.sidecar || !this.pendingMergedSidecar || this.activePointerId !== null || this.pendingInkStrokes.length > 0) return;
     const previous = this.sidecar;
-    const selectedId = (_a = previous.notePages[this.noteIndex]) == null ? void 0 : _a.id;
+    const selectedPage = previous.notePages[this.noteIndex];
+    const selectedId = selectedPage.id;
     const merged = mergeSidecars(this.pendingMergedSidecar, previous);
     this.pendingMergedSidecar = null;
     const geometryChanged = JSON.stringify(previous.notePages) !== JSON.stringify(merged.notePages);
-    const inkChanged = JSON.stringify(previous.notebook) !== JSON.stringify(merged.notebook);
+    const changes = reconcileNotebook(previous.notebook, merged.notebook, selectedId, this.noteIndex);
+    for (const { stroke, previousUpdatedAt } of changes.metadataOnlyChanges) (_a = this.tiles) == null ? void 0 : _a.acknowledgeStrokeMetadata(stroke, previousUpdatedAt);
+    merged.notebook = previous.notebook;
     this.sidecar = merged;
-    if (!geometryChanged && !inkChanged) return;
+    this.noteIndex = changes.pageIndex;
+    if (!geometryChanged && !changes.pageRailChanged && changes.changedPageIds.length === 0 && !changes.dimensionsChanged) return;
     this.editRevision += 1;
-    const selected = merged.notePages.findIndex((page) => page.id === selectedId);
-    this.noteIndex = selected >= 0 ? selected : Math.min(this.noteIndex, merged.notePages.length - 1);
     this.undoStack = [];
     this.redoStack = [];
     this.syncNotebookToWorker();
-    this.invalidateThumbnails();
     if (geometryChanged) {
+      this.invalidateThumbnails();
       this.destroySwipeStage();
       this.prewarmToken += 1;
       this.neighbourCache.clear();
+    }
+    const currentGeometryChanged = JSON.stringify(selectedPage) !== JSON.stringify(merged.notePages[this.noteIndex]);
+    if (currentGeometryChanged || changes.dimensionsChanged) {
       this.layoutPage();
       void this.renderPdfPage();
+      this.renderAll();
+    } else {
+      if (geometryChanged || changes.pageRailChanged) {
+        this.updatePageIndicator();
+        this.refreshPageRail();
+      } else if (changes.changedPageIds.length > 0) {
+        this.paintVisibleThumbnails();
+      }
+      if (changes.currentInkChanged) this.drawStrokes(this.currentPage().strokes);
+      this.updateHistoryButtons();
     }
-    this.renderAll();
   }
   // ------------------------------------------------------------------ locks
   /** Exposed for tests and diagnostics: why handwriting is read-only, if so. */
@@ -34539,8 +34583,15 @@ var PdfInkView = class extends InkWritingView {
   syncNotebookToWorker() {
     var _a;
     if (!this.sidecar) return;
+    const current = this.sidecar.notebook;
+    const notebook = {
+      ...current,
+      pages: current.pages.map(clonePageValue),
+      pageOrder: [...current.pageOrder],
+      deletedPages: { ...current.deletedPages }
+    };
     this.workerRevision += 1;
-    void ((_a = this.workerSession) == null ? void 0 : _a.apply(this.workerRevision, { type: "replace-notebook", notebook: this.sidecar.notebook }).catch((error) => this.disableWorkerSession(error)));
+    void ((_a = this.workerSession) == null ? void 0 : _a.apply(this.workerRevision, { type: "replace-notebook", notebook }).catch((error) => this.disableWorkerSession(error)));
   }
   // -------------------------------------------------------------- toolbar
   renderToolbar(root) {
