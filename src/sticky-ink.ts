@@ -1,7 +1,8 @@
 import { InkPoint, InkStroke, newId } from "./model";
 import { StickyNote, STICKY_UNIT } from "./sticky-model";
 
-export const STICKY_HEADER = 44;
+// Reserve the same roomy title strip in DOM, ink routing and PDF exports.
+export const STICKY_HEADER = 64;
 export interface PageGeometry { width: number; height: number }
 
 export function stickyBounds(note: StickyNote, g: PageGeometry) {

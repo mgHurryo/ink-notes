@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.3-beta.8 - 2026-10-12
+
+- Keep the current PDF fit while editing sticky titles, Markdown or keywords through keyboard-driven viewport height changes. Reveal the focused editor after pane resizing, preserve drafts and zoom lock, and use a 16px title input to avoid iOS small-input zoom.
+- Move folded labels within their actual visible bounds and preserve edge positions through saving and reloading. Unfold inward at the right/bottom page boundaries, including temporary reading-mode expansion, without changing saved frame size or content.
+- Give the sticky header more vertical space and control padding, using the same fixed inset in DOM, ink routing and PDF export. Existing content displays 20 board units lower within the same frame; stored text, handwriting coordinates and sizes are unchanged, and cropped content remains stored.
+- Add keyboard-cropped viewport, locked/unlocked zoom, four-corner folding, edge-position persistence and fitted-header regressions. Physical iPad keyboard and full Obsidian/plugin validation remain pending; browser PDF tests use blank sidecar fixtures.
+
 ## 0.1.3-beta.7 - 2026-10-12
 
 - Keep each sticky note in a separate stacking context so overlapping titles, paper, Markdown and ink paint as complete cards. Use a transparent DOM ink canvas so it no longer hides typed content; PDF snapshots retain opaque paper.

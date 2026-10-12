@@ -20,6 +20,18 @@ export function note(pageId: string): StickyNote {
 }
 
 describe("sticky note persistence and search", () => {
+  it("preserves folded edge positions through loading and worker saves", () => {
+    const book = createNotebook(), page = book.pages[0];
+    const folded = { ...note(page.id), x: .78, y: .88, collapsed: true };
+    page.stickyNotes = [folded];
+    let loaded = normalizeNotebook(JSON.parse(JSON.stringify(book)));
+    expect(loaded.pages[0].stickyNotes![0]).toMatchObject({ x: .78, y: .88, width: .5, height: .3 });
+    applyNotebookOperation(loaded, { type: "patch-sticky-notes", pageId: page.id, remove: [folded.id],
+      upsert: [{ ...folded, title: "At the edge", updatedAt: 2 }], deletedStickyNotes: {}, pageUpdatedAt: 2, notebookUpdatedAt: 2 });
+    loaded = normalizeNotebook(JSON.parse(JSON.stringify(loaded)));
+    expect(loaded.pages[0].stickyNotes![0]).toMatchObject({ x: .78, y: .88, title: "At the edge", strokes: folded.strokes });
+    expect(normalizeSticky({ ...folded, collapsed: false }, page.id)).toMatchObject({ x: .5, y: .7 });
+  });
   it("keeps overlapping notes in creation order through edits, worker saves and merges", () => {
     const book = createNotebook(), page = book.pages[0];
     const back = { ...note(page.id), id: "back", createdAt: 1 }, front = { ...note(page.id), id: "front", createdAt: 2 };
