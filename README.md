@@ -103,6 +103,12 @@ Sticky notes appear in previews, Ink embeds and exported PDFs. PDF export render
 
 Handwriting recognition is not bundled. An optional [handwriting index interface](docs/sticky-handwriting-index.md) allows another integration to provide recognized search terms. Without an integration, Ink Notes does not send handwriting anywhere or run recognition.
 
+## Shapes and hold to straighten
+
+In editing mode, choose **Shapes** in either an Ink notebook or PDF, select **Line, Arrow, Rectangle, Square, Ellipse, Circle or Triangle**, then drag to draw. Shapes use the current pen color, width and opacity with uniform thickness. They are ordinary handwriting strokes: lasso selection, erasing, copy/paste, undo/redo, saving and PDF export use the existing workflow. Press **S** on desktop to reuse the last selected shape; tap Shapes again to change it. Fingers navigate unless **Use finger as pen** is enabled.
+
+With **Pen**, draw a fairly straight stroke of at least 40 page pixels, keep the nib touching the page, and stop moving for **2 seconds**. The stroke becomes a straight line between its endpoints; keep dragging to adjust the endpoint and lift to finish. Small resting jitter is tolerated. Curves, short marks and backtracking strokes are excluded. Lifting, cancelling, changing tools/modes or losing window focus cancels a pending hold.
+
 ## Desktop navigation
 
 New Ink/PDF tabs start in **Reading mode** on phones, small mobile screens, desktop computers and unknown devices. Large mobile tablets start in editing mode. iPad split windows keep the tablet default even when their pane is narrow. The default uses device facts once, never the live pane width. Your mode selection belongs to each tab, survives workspace restoration and stays unchanged when resizing, rotating or splitting the window. Tabs may use different modes.

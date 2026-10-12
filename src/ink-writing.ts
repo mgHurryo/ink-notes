@@ -16,6 +16,7 @@
 
 import { FileView, Menu, Notice, Platform, setIcon, type ViewStateResult } from "obsidian";
 import { defaultReadingMode } from "./device-mode";
+import { canStraighten, shapePoints, SHAPES, type ShapeKind } from "./shapes";
 import { ImageLibraryModal, ImageLibraryStore, placedImage } from "./image-library";
 import { PageImageLayer } from "./page-images";
 import { StickyNoteLayer, markdownStickyLink } from "./sticky-notes";
@@ -816,6 +817,10 @@ export abstract class InkWritingView extends FileView {
   /** Raw, session-only pen path for gesture recognition; rendered stroke
    *  points are smoothed and may no longer retain small rapid reversals. */
   private scribbleGesturePoints: InkPoint[] = [];
+  private shapeKind: ShapeKind = "rectangle";
+  private geometricStroke: { start: InkPoint; kind: ShapeKind } | null = null;
+  private lineHoldTimer: number | undefined;
+  private lineHoldAnchor: InkPoint | null = null;
   protected workerStrokePointIndex = 0;
   protected lastPoint: InkPoint | null = null;
   protected touchGesture: {
@@ -1350,6 +1355,7 @@ export abstract class InkWritingView extends FileView {
     this.addToolButton(draw, "eraser", "Erase", "eraser");
     this.addToolButton(draw, "lasso-select", "Select", "lasso");
     this.addToolButton(draw, "mouse-pointer-2", "Pointer", "pointer");
+    this.addToolButton(draw, "shapes", "Shapes", "shape");
     if (this.imageLibrary) this.addIconButton(draw, "image-plus", "Image library", () => this.openImageLibrary());
     this.addIconButton(draw, "sticky-note", "Add sticky note", () => this.addSticky());
   }
@@ -1413,7 +1419,7 @@ export abstract class InkWritingView extends FileView {
   private desktopWheelLastDelta = 0;
 
   /** Snapshot the trigger press before the host dismisses its menu on pointerdown. */
-  protected beginPageOptionsMenu(event: MouseEvent): Menu | null {
+  protected beginPageOptionsMenu(event: Pick<MouseEvent, "currentTarget">): Menu | null {
     if (!this.pageOptionsDismissRegistered) {
       this.pageOptionsDismissRegistered = true;
       const doc = this.containerEl.ownerDocument;
@@ -1535,6 +1541,7 @@ export abstract class InkWritingView extends FileView {
       }, true);
     }
     const reset = () => {
+      this.cancelLineHold();
       this.cancelPasteHold(); this.hideSelectionActions(); this.pasteTarget = null;
       this.finishFingerInput(); this.touchGesture = null;
       this.desktopSpaceDown = false;
@@ -1582,7 +1589,7 @@ export abstract class InkWritingView extends FileView {
     if (key === "-") { this.desktopZoom(1 / 1.1); return true; }
     if (key === "0") { this.desktopResetZoom(); return true; }
     if (event.shiftKey || this.inputLocked()) return false;
-    const tools: Record<string, InkTool> = { b: "pen", h: "highlighter", e: "eraser", v: "lasso", a: "pointer" };
+    const tools: Record<string, InkTool> = { b: "pen", h: "highlighter", e: "eraser", v: "lasso", a: "pointer", s: "shape" };
     const tool = tools[key];
     if (tool) { this.selectWritingTool(tool); return true; }
     if (key === "escape") { this.clearSelection(); return true; }
@@ -1712,11 +1719,11 @@ export abstract class InkWritingView extends FileView {
     const tool = this.state.tool;
     this.activePointerId = event.pointerId;
     this.beginStickyInput(page);
-    const brush = isBrushTool(tool) ? this.brushSettings(tool) : null;
+    const brush = tool === "shape" ? this.brushSettings("pen") : isBrushTool(tool) ? this.brushSettings(tool) : null;
     const rect = this.inputRect();
     this.tiles?.beginInput?.();
     this.cancelPendingInkCommitTimer();
-    if (tool === "pen" || tool === "highlighter") this.tiles?.pauseInkCommit();
+    if (tool === "pen" || tool === "highlighter" || tool === "shape") this.tiles?.pauseInkCommit();
     else if (this.pendingInkStrokes.length > 0 || this.committingInkStrokes) this.materializePendingInkPreview(page);
     if (this.saveTimer !== undefined) {
       window.clearTimeout(this.saveTimer);
@@ -1736,6 +1743,7 @@ export abstract class InkWritingView extends FileView {
       lassoMode: tool === "lasso" ? this.state.lasso.mode : undefined,
     };
     const point = this.toPoint(event, rect);
+    this.geometricStroke = tool === "shape" ? { start: { ...point }, kind: this.shapeKind } : null;
     this.scribbleGesturePoints = tool === "pen" ? [{ ...point }] : [];
     this.erasedStrokeIds.clear();
     this.erasedCandidateIds.clear();
@@ -1775,7 +1783,7 @@ export abstract class InkWritingView extends FileView {
     this.activeStroke = {
       id: newId("stroke"),
       pageId: page.id,
-      tool,
+      tool: tool === "shape" ? "pen" : tool,
       color: brush!.color,
       width: brush!.width,
       opacity: brush!.opacity,
@@ -1785,7 +1793,7 @@ export abstract class InkWritingView extends FileView {
         pressure: this.state.pen.pressureGain ?? 100,
         speed: this.state.pen.speedGain ?? 0,
         pressureCurve: this.state.pen.pressureCurve ? this.state.pen.pressureCurve.map((point) => [...point]) : undefined,
-      } : undefined,
+      } : tool === "shape" ? { taper: 0, pressure: 0, speed: 0 } : undefined,
       createdAt: Date.now(),
       updatedAt: Date.now(),
     };
@@ -1960,6 +1968,13 @@ export abstract class InkWritingView extends FileView {
       if (feed.length === 0) return;
     }
     this.recordPenSampleIntervals(feed);
+    if (this.geometricStroke && this.activeStroke) {
+      const end = this.toPoint(feed[feed.length - 1], rect);
+      this.replaceGeometricPoints(end);
+      this.lastPointerActivityAt = Date.now();
+      this.requestRender();
+      return;
+    }
     if (interaction.tool === "pen") {
       for (const sample of feed) {
         const point = this.toPoint(sample, rect);
@@ -2003,6 +2018,7 @@ export abstract class InkWritingView extends FileView {
       }
     }
     this.updatePredictedTip(event, rect, phase);
+    if (interaction.tool === "pen" && phase === "move") this.updateLineHold(this.toPoint(feed[feed.length - 1], rect));
     this.lastPointerActivityAt = Date.now();
     if (changed) {
       if (this.activeStroke) this.activeStroke.updatedAt = Date.now();
@@ -3301,7 +3317,9 @@ export abstract class InkWritingView extends FileView {
     const stroke = this.activeStroke;
     const interaction = this.interaction;
     if (!stroke || !interaction || (interaction.tool !== "pen" && interaction.tool !== "highlighter")) return;
+    if (this.geometricStroke) return;
     if (this.workerStrokePointIndex >= stroke.points.length) return;
+    const submittedPoints = stroke.points;
     const points = packStrokePoints(stroke.points, this.workerStrokePointIndex);
     this.workerStrokePointIndex = stroke.points.length;
     this.queueWorkerOperation({
@@ -3309,7 +3327,7 @@ export abstract class InkWritingView extends FileView {
       previewWidth: this.canvasLogicalWidth, previewHeight: this.canvasLogicalHeight,
       pageUpdatedAt: stroke.updatedAt, notebookUpdatedAt: this.currentNotebook().updatedAt,
     }, [points.buffer], (response) => {
-      if (response.type !== "operation-applied" || !response.outline || response.strokeId !== stroke.id
+      if (stroke.points !== submittedPoints || response.type !== "operation-applied" || !response.outline || response.strokeId !== stroke.id
         || (this.activeStroke?.id !== stroke.id && !this.pendingInkStrokes.some((candidate) => candidate.id === stroke.id))) return;
       const outlines = this.confirmedStrokeOutlines ?? (this.confirmedStrokeOutlines = new Map());
       const previous = outlines.get(stroke.id);
@@ -3326,6 +3344,47 @@ export abstract class InkWritingView extends FileView {
 
   // -------------------------------------------------------- input finalize
 
+  private cancelLineHold(): void {
+    if (this.lineHoldTimer !== undefined) window.clearTimeout(this.lineHoldTimer);
+    this.lineHoldTimer = undefined;
+    this.lineHoldAnchor = null;
+  }
+
+  private updateLineHold(point: InkPoint): void {
+    if (!this.activeStroke || this.geometricStroke) return;
+    const anchor = this.lineHoldAnchor;
+    // Hardware jitter while the nib rests must not keep postponing the hold.
+    if (anchor && Math.hypot((point.x - anchor.x) * this.canvasLogicalWidth,
+      (point.y - anchor.y) * this.canvasLogicalHeight) <= 3) return;
+    this.cancelLineHold();
+    this.lineHoldAnchor = { ...point };
+    const start = this.scribbleGesturePoints[0];
+    // Keep device-rate input constant-time; inspect the whole path only on hold.
+    if (!start || Math.hypot((point.x - start.x) * this.canvasLogicalWidth,
+      (point.y - start.y) * this.canvasLogicalHeight) < 40) return;
+    const generation = this.interaction?.generation;
+    this.lineHoldTimer = window.setTimeout(() => {
+      this.lineHoldTimer = undefined;
+      if (!this.activeStroke || this.interaction?.generation !== generation || this.inputLocked()
+        || !canStraighten(this.scribbleGesturePoints, this.canvasLogicalWidth, this.canvasLogicalHeight)) return;
+      this.geometricStroke = { start: { ...this.scribbleGesturePoints[0] }, kind: "line" };
+      this.penModeler = null;
+      this.activeStroke.dynamics = { taper: 0, pressure: 0, speed: 0 };
+      this.replaceGeometricPoints(point);
+      this.requestRender();
+    }, 2_000);
+  }
+
+  private replaceGeometricPoints(end: InkPoint): void {
+    if (!this.activeStroke || !this.geometricStroke) return;
+    this.activeStroke.points = shapePoints(this.geometricStroke.kind, this.geometricStroke.start, end,
+      this.canvasLogicalWidth, this.canvasLogicalHeight);
+    this.activeStroke.updatedAt = Date.now();
+    this.confirmedStrokeOutlines.delete(this.activeStroke.id);
+    this.predictedTip = null;
+    this.lastPoint = end;
+  }
+
   protected requestRender(resize = false): void {
     this.resizeRequested ||= resize;
     if (this.renderFrame !== null) return;
@@ -3341,6 +3400,7 @@ export abstract class InkWritingView extends FileView {
   }
 
   protected finishPointerInput(completed = false): void {
+    this.cancelLineHold();
     this.flushPenModeler();
     this.finalizeStrokeRecord();
     const interaction = this.interaction;
@@ -3390,19 +3450,25 @@ export abstract class InkWritingView extends FileView {
       });
       this.pushCommand(this.erasedStrokesCommand(page.id, this.erasedStrokes, this.eraserReplacements));
       this.drawInteractiveStrokes(page.strokes, true);
-    } else if (this.activeStroke && !(completed && interaction.tool === "pen" && this.state.scribbleErase
+    } else if (this.activeStroke && !(completed && !this.geometricStroke && interaction.tool === "pen" && this.state.scribbleErase
       && this.finishScribbleErase(page, this.activeStroke, this.scribbleGesturePoints))) {
       this.markChanged(page);
       // Retain a complete vector preview without copying the full high-density
       // overlay. Late Worker responses update only the live stroke layer.
       this.retainActivePreview();
-      this.queueWorkerOperation({ type: "complete-stroke", pageId: page.id, strokeId: this.activeStroke.id,
-        pageUpdatedAt: page.updatedAt, notebookUpdatedAt: this.currentNotebook().updatedAt });
+      if (this.geometricStroke) {
+        this.queueWorkerOperation({ type: "finalize-stroke", pageId: page.id, stroke: cloneStroke(this.activeStroke),
+          pageUpdatedAt: page.updatedAt, notebookUpdatedAt: this.currentNotebook().updatedAt });
+      } else {
+        this.queueWorkerOperation({ type: "complete-stroke", pageId: page.id, strokeId: this.activeStroke.id,
+          pageUpdatedAt: page.updatedAt, notebookUpdatedAt: this.currentNotebook().updatedAt });
+      }
       this.pushCommand(this.addedStrokeCommand(page.id, this.activeStroke));
     }
     this.finishStickyInput();
     this.activePointerId = null;
     this.activeStroke = null;
+    this.geometricStroke = null;
     this.scribbleGesturePoints = [];
     this.workerStrokePointIndex = 0;
     this.lastPoint = null;
@@ -3411,7 +3477,7 @@ export abstract class InkWritingView extends FileView {
     this.predictedTip = null;
     this.pendingLassoPoint = null;
     this.eraserPreviewCells.clear();
-    if (interaction.tool === "pen" || interaction.tool === "highlighter") {
+    if (interaction.tool === "pen" || interaction.tool === "highlighter" || interaction.tool === "shape") {
       this.resizePreview();
       this.drawPreview();
       this.schedulePendingInkCommit(page);
@@ -3912,6 +3978,20 @@ export abstract class InkWritingView extends FileView {
 
   // -------------------------------------------------------------- toolbar
 
+  protected showShapeMenu(anchor: HTMLElement): void {
+    const menu = this.beginPageOptionsMenu({ currentTarget: anchor });
+    if (!menu) return;
+    for (const [kind, label, icon] of SHAPES) {
+      menu.addItem(item => item.setTitle(label).setIcon(icon).setChecked(this.shapeKind === kind).onClick(() => {
+        this.finishPointerInput(false);
+        this.shapeKind = kind;
+        anchor.title = `Shapes: ${label} (S)`;
+      }));
+    }
+    const rect = anchor.getBoundingClientRect();
+    menu.showAtPosition({ x: rect.left, y: rect.bottom });
+  }
+
   protected addToolbarSection(parent: HTMLElement, label: string): HTMLElement {
     const section = parent.createDiv({ cls: "ink-toolbar-section" });
     section.addClass(`ink-toolbar-section-${label.toLowerCase()}`);
@@ -3937,15 +4017,16 @@ export abstract class InkWritingView extends FileView {
   protected addToolButton(parent: HTMLElement, icon: string, label: string, tool: InkTool): void {
     const button = parent.createEl("button", { cls: "ink-tool-button", attr: {
       type: "button", title: label, "aria-label": label, "aria-pressed": String(this.state.tool === tool), "data-tool": tool,
-      ...(tool === "pointer" ? {} : { "aria-haspopup": "dialog", "aria-expanded": "false" }),
+      ...(tool === "pointer" ? {} : { "aria-haspopup": tool === "shape" ? "menu" : "dialog", "aria-expanded": "false" }),
     } });
-    const shortcut: Record<InkTool, string> = { pen: "B", highlighter: "H", eraser: "E", lasso: "V", pointer: "A" };
+    const shortcut: Record<InkTool, string> = { pen: "B", highlighter: "H", eraser: "E", lasso: "V", pointer: "A", shape: "S" };
     button.title = `${label} (${shortcut[tool]})`;
     const iconHolder = button.createSpan({ cls: "ink-button-icon" });
     setIcon(iconHolder, icon);
     button.addEventListener("click", () => {
       if (this.readingMode) return;
       this.finishPointerInput(false);
+      if (tool === "shape") { this.selectWritingTool(tool); this.showShapeMenu(button); return; }
       if (this.state.tool === tool) {
         if (tool !== "pointer") this.toggleToolSettings(button);
         return;
@@ -3956,6 +4037,7 @@ export abstract class InkWritingView extends FileView {
 
   private selectWritingTool(tool: InkTool): void {
     this.finishPointerInput(false);
+    if (tool !== "shape") this.closePageOptionsMenu();
     this.onToolSelected(tool);
     this.pageImages?.clear();
     this.stickies?.clear();

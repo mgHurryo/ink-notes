@@ -1594,11 +1594,12 @@ export class PdfInkView extends InkWritingView {
     this.flipSettling = false;
   }
   protected settingsOpen(): boolean {
-    if (this.state.tool === "pointer") return false;
+    if (this.state.tool === "pointer" || this.state.tool === "shape") return false;
     if (this.state.tool === "lasso") return this.lassoSettingsPopover !== null;
     return this.state.tool === "eraser" ? this.eraserPopover !== null : this.brushPopover?.isOpen ?? false;
   }
   protected toggleToolSettings(anchor: HTMLElement): void {
+    if (this.state.tool === "shape") { this.showShapeMenu(anchor); return; }
     if (this.state.tool === "lasso") { this.toggleLassoSettings(anchor); return; }
     if (this.state.tool === "eraser") { this.toggleEraserPopover(anchor); return; }
     this.ensureBrushSettingsPopover();

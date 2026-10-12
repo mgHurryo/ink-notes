@@ -421,7 +421,7 @@ describe("reference-style editor", () => {
     const labels = (selector: string) => Array.from(toolbar.querySelectorAll(selector))
       .map((el) => el.getAttribute("aria-label"));
     expect(labels(".ink-toolbar-start button")).toEqual(["Pages", "Undo", "Redo"]);
-    expect(labels(".ink-toolbar-section-draw button")).toEqual(["Pen", "Highlight", "Erase", "Select", "Pointer", "Add sticky note"]);
+    expect(labels(".ink-toolbar-section-draw button")).toEqual(["Pen", "Highlight", "Erase", "Select", "Pointer", "Shapes", "Add sticky note"]);
     expect(labels(".ink-toolbar-section-document button")).toEqual(["Reading mode", "Add page", "Export as PDF", "Page options"]);
   });
 

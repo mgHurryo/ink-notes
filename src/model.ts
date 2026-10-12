@@ -1,7 +1,7 @@
 import { compareStickyOrder, mergeSticky, normalizeSticky } from "./sticky-model";
 import type { StickyNote } from "./sticky-model";
 
-export type InkTool = "pen" | "highlighter" | "eraser" | "lasso" | "pointer";
+export type InkTool = "pen" | "highlighter" | "eraser" | "lasso" | "pointer" | "shape";
 export type PaperStyle = "blank" | "ruled" | "grid" | "dot";
 
 export interface InkPoint {
