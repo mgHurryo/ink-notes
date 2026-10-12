@@ -7,6 +7,8 @@ export interface StickyNote {
   id: string; pageId: string;
   x: number; y: number; width: number; height: number;
   title: string; keywords: string; text: string; textUpdatedAt: number;
+  /** Fixed text layout width; changing the frame only crops its viewport. */
+  textWidth?: number;
   color: string; collapsed: boolean; preview: boolean;
   scrollX: number; scrollY: number;
   boardPageWidth: number;
@@ -54,6 +56,7 @@ export function normalizeSticky(value: unknown, pageId: string): StickyNote | nu
     .filter((stroke) => !removed.includes(stroke.id));
   return { id: raw.id, pageId, x: Math.max(0, Math.min(1 - width, raw.x!)), y: Math.max(0, Math.min(1 - height, raw.y!)), width, height,
     title: string(raw.title), keywords: string(raw.keywords), text: string(raw.text), textUpdatedAt: positive(raw.textUpdatedAt, 1),
+    textWidth: Math.max(60, positive(raw.textWidth, width * positive(raw.boardPageWidth, STICKY_UNIT) - 32)),
     color: typeof raw.color === "string" && /^#[0-9a-f]{6}$/i.test(raw.color) ? raw.color : "#fff1a8",
     collapsed: raw.collapsed === true, preview: raw.preview !== false,
     scrollX: Math.max(0, positive(raw.scrollX, 0)), scrollY: Math.max(0, positive(raw.scrollY, 0)),
@@ -61,7 +64,8 @@ export function normalizeSticky(value: unknown, pageId: string): StickyNote | nu
     strokes, deletedStrokeIds: removed, createdAt: positive(raw.createdAt, 1), updatedAt: positive(raw.updatedAt, 1) };
 }
 
-export function stickyLink(file: string, page: string, note: string, vault: string): string {
+export function stickyLink(file: string, page: string, note: string, vault: string, block?: string): string {
   const params = new URLSearchParams({ vault, file, page, sticky: note });
+  if (block) params.set("block", block);
   return `obsidian://ink-notes-sticky?${params.toString()}`;
 }

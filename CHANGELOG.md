@@ -1,6 +1,10 @@
 # Changelog
 
-## Unreleased
+## 0.1.3-beta.5 - 2026-10-12
+
+- Redesign sticky notes as inline page boards, replacing the separate editor and numeric placement fields. Shared pen/highlighter/eraser/lasso tools work across sticky/document boundaries with atomic undo/redo.
+- Add direct Markdown/title editing, fixed text layout through frame resizing, finger/mouse grip and resize gestures, Pointer board panning, compact folded labels, reliable fold controls and long-press/right-click index links.
+- Support Markdown paragraph ids in sticky links, retain existing data/search/split-pane merging, and render Markdown text in bounded PDF snapshots. Hardware iPad/WebKit validation remains pending; previews retain plain-text overviews.
 
 ## 0.1.3-beta.4
 

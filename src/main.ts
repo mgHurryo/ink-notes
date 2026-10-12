@@ -38,7 +38,7 @@ export default class InkNotesPlugin extends Plugin {
     }
     return { files, entries: [...byId.values()] };
   }
-  private async locateSticky(filePath: string, page: string, sticky: string): Promise<void> {
+  private async locateSticky(filePath: string, page: string, sticky: string, block?: string): Promise<void> {
     const file = this.app.vault.getAbstractFileByPath(filePath);
     if (!(file instanceof TFile) || !["pdf", INK_EXTENSION].includes(file.extension.toLowerCase())) throw new Error("Notebook or PDF not found");
     let leaf = [...this.app.workspace.getLeavesOfType(VIEW_TYPE_INK), ...this.app.workspace.getLeavesOfType(VIEW_TYPE_PDF_INK)]
@@ -49,7 +49,10 @@ export default class InkNotesPlugin extends Plugin {
       else await leaf.openFile(file);
     }
     await this.app.workspace.revealLeaf(leaf);
-    if (leaf.view instanceof InkView || leaf.view instanceof PdfInkView) await leaf.view.revealSticky(page, sticky);
+    if (leaf.view instanceof InkView || leaf.view instanceof PdfInkView) {
+      if (block) await leaf.view.revealSticky(page, sticky, block);
+      else await leaf.view.revealSticky(page, sticky);
+    }
     else throw new Error("The handwriting view could not be opened");
   }
   private imageLibrary?: ImageLibraryStore;
@@ -97,7 +100,7 @@ export default class InkNotesPlugin extends Plugin {
     this.registerObsidianProtocolHandler("ink-notes-sticky", (params) => {
       if (params.vault && params.vault !== this.app.vault.getName()) return;
       if (!params.file || !params.page || !params.sticky) { new Notice("Sticky note link is incomplete"); return; }
-      this.runAsync(this.locateSticky(params.file, params.page, params.sticky), "locate sticky note");
+      this.runAsync(this.locateSticky(params.file, params.page, params.sticky, params.block), "locate sticky note");
     });
     this.addRibbonIcon("pen-line", "Open Ink Notes", () => this.runAsync(this.openNotebook(), "open a notebook"));
     this.addCommand({ id: "open-ink-notebook", name: "Open Ink Notebook",
