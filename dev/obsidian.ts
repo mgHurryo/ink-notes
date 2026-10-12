@@ -19,6 +19,7 @@ Object.assign(HTMLElement.prototype, {
   removeClass(this: HTMLElement, ...names: string[]) { this.classList.remove(...names); },
   hasClass(this: HTMLElement, name: string) { return this.classList.contains(name); },
   toggleClass(this: HTMLElement, name: string, value: boolean) { this.classList.toggle(name, value); },
+  toggle(this: HTMLElement, value: boolean) { this.style.display = value ? "" : "none"; },
   setText(this: HTMLElement, text: string) { this.textContent = text; return this; },
   setCssStyles(this: HTMLElement, styles: Record<string, string>) { Object.assign(this.style, styles); },
 });

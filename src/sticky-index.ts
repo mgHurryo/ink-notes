@@ -1,7 +1,7 @@
 import { App, Modal, Notice, TFile } from "obsidian";
 import { normalizeNotebook } from "./model";
 import { normalizeSidecar, PDF_INK_FOLDER, PDF_SIDECAR_EXTENSION } from "./pdf-sidecar";
-import { cloneSticky, StickyNote } from "./sticky-model";
+import { cloneSticky, StickyNote, stickyText } from "./sticky-model";
 
 export interface StickySearchEntry { file: string; pageId: string; pageTitle: string; note: StickyNote; handwritingTerms?: string[]; }
 /** Optional local/remote recognition adapter. Nothing is transmitted by default.
@@ -11,7 +11,7 @@ export type StickyHandwritingIndexer = (note: Readonly<StickyNote>, signal: Abor
 export function filterStickyEntries(entries: StickySearchEntry[], query: string): StickySearchEntry[] {
   const words = query.toLocaleLowerCase().trim().split(/\s+/).filter(Boolean);
   return entries.filter((entry) => {
-    const text = [entry.file, entry.pageTitle, entry.note.title, entry.note.text, entry.note.keywords, ...(entry.handwritingTerms ?? [])].join("\n").toLocaleLowerCase();
+    const text = [entry.file, entry.pageTitle, entry.note.title, stickyText(entry.note), entry.note.keywords, ...(entry.handwritingTerms ?? [])].join("\n").toLocaleLowerCase();
     return words.every((word) => text.includes(word));
   });
 }
@@ -51,7 +51,7 @@ export class StickySearchModal extends Modal {
       for (const entry of matches) {
         const button = list.createEl("button", { text: `${entry.note.title || "Sticky note"} — ${entry.file} / ${entry.pageTitle}`, attr: { type: "button" } });
         button.onclick = () => { void this.openNote(entry).then(() => this.close()).catch((error) => new Notice(`Could not locate sticky note: ${String(error)}`)); };
-        list.createEl("p", { text: (entry.note.text || entry.note.keywords || "Handwriting (add keywords to find it)").slice(0, 180) });
+        list.createEl("p", { text: (stickyText(entry.note) || entry.note.keywords || "Handwriting (add keywords to find it)").slice(0, 180) });
       }
     };
     search.oninput = render; search.focus();

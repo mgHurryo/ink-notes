@@ -3,12 +3,20 @@ import { normalizeDynamics } from "./model";
 
 /** Fixed board units, independent of the note's frame size or page zoom. */
 export const STICKY_UNIT = 1000;
+export const PRIMARY_TEXT_BOX = "primary";
+export interface StickyTextBox {
+  id: string; text: string; x: number; y: number; width: number; height?: number;
+  createdAt: number; updatedAt: number;
+}
 export interface StickyNote {
   id: string; pageId: string;
   x: number; y: number; width: number; height: number;
   title: string; keywords: string; text: string; textUpdatedAt: number;
   /** Fixed text layout width; changing the frame only crops its viewport. */
   textWidth?: number;
+  textX?: number; textY?: number; textHeight?: number;
+  textBoxes?: StickyTextBox[];
+  deletedTextBoxes?: Record<string, number>;
   color: string; collapsed: boolean; preview: boolean;
   scrollX: number; scrollY: number;
   boardPageWidth: number;
@@ -21,6 +29,22 @@ export function compareStickyOrder(a: StickyNote, b: StickyNote): number {
   return a.createdAt - b.createdAt || a.id.localeCompare(b.id);
 }
 
+/** Keep legacy text as the first box without storing a duplicate copy. */
+export function stickyTextBoxes(note: StickyNote): StickyTextBox[] {
+  return [{ id: PRIMARY_TEXT_BOX, text: note.text, x: note.textX ?? 16, y: note.textY ?? 16,
+    width: note.textWidth ?? Math.max(60, note.width * note.boardPageWidth - 32), height: note.textHeight,
+    createdAt: note.createdAt, updatedAt: note.textUpdatedAt }, ...(note.textBoxes ?? [])];
+}
+export function stickyText(note: StickyNote): string { return stickyTextBoxes(note).map((box) => box.text).filter(Boolean).join("\n\n"); }
+
+export function patchStickyTextBox(note: StickyNote, id: string, patch: Partial<StickyTextBox>): StickyNote {
+  if (id === PRIMARY_TEXT_BOX) {
+    const box = { ...stickyTextBoxes(note)[0], ...patch };
+    return { ...note, text: box.text, textX: box.x, textY: box.y, textWidth: box.width, textHeight: box.height };
+  }
+  return { ...note, textBoxes: note.textBoxes?.map((box) => box.id === id ? { ...box, ...patch, id } : box) };
+}
+
 /** x/y remain the folded anchor. Expanded frames fit inward without saving a new anchor. */
 export function stickyPosition(note: StickyNote): { x: number; y: number } {
   return note.collapsed ? { x: note.x, y: note.y }
@@ -28,14 +52,23 @@ export function stickyPosition(note: StickyNote): { x: number; y: number } {
 }
 
 export function cloneSticky(note: StickyNote): StickyNote {
-  return { ...note, deletedStrokeIds: [...note.deletedStrokeIds], strokes: note.strokes.map((stroke) => ({ ...stroke,
+  return { ...note, textBoxes: note.textBoxes?.map((box) => ({ ...box })), deletedTextBoxes: { ...note.deletedTextBoxes },
+    deletedStrokeIds: [...note.deletedStrokeIds], strokes: note.strokes.map((stroke) => ({ ...stroke,
     points: stroke.points.map((point) => ({ ...point })), dynamics: stroke.dynamics ? { ...stroke.dynamics,
       pressureCurve: stroke.dynamics.pressureCurve?.map((point) => [...point]) } : undefined })) };
 }
 
 export function mergeSticky(a: StickyNote, b: StickyNote): StickyNote {
   const latest = b.updatedAt > a.updatedAt || b.updatedAt === a.updatedAt && JSON.stringify(b) > JSON.stringify(a) ? b : a;
-  const text = b.textUpdatedAt > a.textUpdatedAt || b.textUpdatedAt === a.textUpdatedAt && b.text > a.text ? b : a;
+  const text = b.textUpdatedAt > a.textUpdatedAt || b.textUpdatedAt === a.textUpdatedAt && JSON.stringify(stickyTextBoxes(b)[0]) > JSON.stringify(stickyTextBoxes(a)[0]) ? b : a;
+  const deletedTextBoxes = { ...a.deletedTextBoxes };
+  for (const [id, time] of Object.entries(b.deletedTextBoxes ?? {})) deletedTextBoxes[id] = Math.max(deletedTextBoxes[id] ?? 0, time);
+  const boxes = new Map<string, StickyTextBox>();
+  for (const box of [...(a.textBoxes ?? []), ...(b.textBoxes ?? [])]) {
+    const previous = boxes.get(box.id);
+    if (!deletedTextBoxes[box.id] && (!previous || box.updatedAt > previous.updatedAt
+      || box.updatedAt === previous.updatedAt && JSON.stringify(box) > JSON.stringify(previous))) boxes.set(box.id, { ...box });
+  }
   const removed = new Set([...a.deletedStrokeIds, ...b.deletedStrokeIds]);
   const strokes = new Map<string, InkStroke>();
   for (const stroke of [...a.strokes, ...b.strokes]) {
@@ -44,6 +77,8 @@ export function mergeSticky(a: StickyNote, b: StickyNote): StickyNote {
       || stroke.updatedAt === previous.updatedAt && JSON.stringify(stroke) > JSON.stringify(previous))) strokes.set(stroke.id, stroke);
   }
   return { ...latest, text: text.text, textUpdatedAt: text.textUpdatedAt,
+    textX: text.textX, textY: text.textY, textWidth: text.textWidth, textHeight: text.textHeight,
+    textBoxes: [...boxes.values()].sort((x, y) => x.createdAt - y.createdAt || x.id.localeCompare(y.id)), deletedTextBoxes,
     strokes: [...strokes.values()].sort((x, y) => x.createdAt - y.createdAt || x.id.localeCompare(y.id)), deletedStrokeIds: [...removed] };
 }
 
@@ -53,6 +88,17 @@ export function normalizeSticky(value: unknown, pageId: string): StickyNote | nu
   if (typeof raw.id !== "string" || ![raw.x, raw.y, raw.width, raw.height].every((n) => typeof n === "number" && Number.isFinite(n))) return null;
   const positive = (n: unknown, fallback: number) => typeof n === "number" && Number.isFinite(n) && n > 0 ? n : fallback;
   const string = (n: unknown) => typeof n === "string" ? n : "";
+  const position = (n: unknown, fallback: number) => typeof n === "number" && Number.isFinite(n) ? Math.max(0, n) : fallback;
+  const deletedTextBoxes = Object.fromEntries(Object.entries(raw.deletedTextBoxes ?? {}).filter(([id, time]) => id !== PRIMARY_TEXT_BOX && typeof time === "number" && Number.isFinite(time) && time > 0));
+  const boxes = new Map<string, StickyTextBox>();
+  for (const box of Array.isArray(raw.textBoxes) ? raw.textBoxes : []) {
+    if (!box || typeof box.id !== "string" || box.id === PRIMARY_TEXT_BOX || typeof box.text !== "string") continue;
+    const normalized = { id: box.id, text: box.text, x: position(box.x, 16), y: position(box.y, 16), width: Math.max(60, positive(box.width, 240)),
+      height: box.height === undefined ? undefined : Math.max(60, positive(box.height, 120)), createdAt: positive(box.createdAt, 1), updatedAt: positive(box.updatedAt, 1) };
+    const previous = boxes.get(box.id);
+    if (!deletedTextBoxes[box.id] && (!previous || normalized.updatedAt > previous.updatedAt
+      || normalized.updatedAt === previous.updatedAt && JSON.stringify(normalized) > JSON.stringify(previous))) boxes.set(box.id, normalized);
+  }
   const width = Math.min(1, Math.max(.05, raw.width!)), height = Math.min(1, Math.max(.05, raw.height!));
   const removed = Array.isArray(raw.deletedStrokeIds) ? raw.deletedStrokeIds.filter((id): id is string => typeof id === "string") : [];
   const strokes = (Array.isArray(raw.strokes) ? raw.strokes : []).filter((stroke) => stroke && typeof stroke.id === "string" && Array.isArray(stroke.points))
@@ -70,6 +116,9 @@ export function normalizeSticky(value: unknown, pageId: string): StickyNote | nu
     y: Math.max(0, Math.min(1, raw.y!)), width, height,
     title: string(raw.title), keywords: string(raw.keywords), text: string(raw.text), textUpdatedAt: positive(raw.textUpdatedAt, 1),
     textWidth: Math.max(60, positive(raw.textWidth, width * positive(raw.boardPageWidth, STICKY_UNIT) - 32)),
+    textX: position(raw.textX, 16), textY: position(raw.textY, 16),
+    textHeight: raw.textHeight === undefined ? undefined : Math.max(60, positive(raw.textHeight, 120)),
+    textBoxes: [...boxes.values()].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)), deletedTextBoxes,
     color: typeof raw.color === "string" && /^#[0-9a-f]{6}$/i.test(raw.color) ? raw.color : "#fff1a8",
     collapsed: raw.collapsed === true, preview: raw.preview !== false,
     scrollX: Math.max(0, positive(raw.scrollX, 0)), scrollY: Math.max(0, positive(raw.scrollY, 0)),

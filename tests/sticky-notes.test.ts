@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("obsidian", async () => import("../dev/obsidian"));
 import { createNotebook, mergeNotebooks, normalizeNotebook } from "../src/model";
-import { cloneSticky, normalizeSticky, StickyNote, stickyLink, stickyPosition } from "../src/sticky-model";
+import { cloneSticky, normalizeSticky, StickyNote, stickyLink, stickyPosition, stickyTextBoxes, stickyText, patchStickyTextBox, mergeSticky } from "../src/sticky-model";
 import { applyNotebookOperation } from "../src/worker-core";
 import { clonePageValue } from "../src/worker-protocol";
 import { collectStickyEntries, filterStickyEntries, StickySearchModal } from "../src/sticky-index";
@@ -20,6 +20,68 @@ export function note(pageId: string): StickyNote {
 }
 
 describe("sticky note persistence and search", () => {
+  it("loads legacy text as one box and keeps multiple boxes through worker serialization", () => {
+    const book = createNotebook(), page = book.pages[0], legacy = note(page.id);
+    expect(stickyTextBoxes(legacy)).toEqual([{ id: "primary", text: legacy.text, x: 16, y: 16, width: 268, height: undefined, createdAt: 1, updatedAt: 1 }]);
+    const extra = { id: "box", text: "Additional searchable text", x: 200, y: 100, width: 180, height: 120, createdAt: 2, updatedAt: 2 };
+    const sticky = { ...legacy, textBoxes: [extra], deletedTextBoxes: { gone: 3 } };
+    applyNotebookOperation(book, { type: "patch-sticky-notes", pageId: page.id, upsert: [sticky], remove: [], deletedStickyNotes: {}, pageUpdatedAt: 3, notebookUpdatedAt: 3 });
+    extra.text = "mutated input";
+    const loaded = normalizeNotebook(JSON.parse(JSON.stringify(book))).pages[0].stickyNotes![0];
+    expect(stickyText(loaded)).toBe(`${legacy.text}\n\nAdditional searchable text`);
+    const copy = clonePageValue(page); copy.stickyNotes![0].textBoxes![0].x = 900;
+    copy.stickyNotes![0].deletedTextBoxes!.gone = 10;
+    expect(page.stickyNotes![0].textBoxes![0].x).toBe(200);
+    expect(page.stickyNotes![0].deletedTextBoxes!.gone).toBe(3);
+    expect(filterStickyEntries([{ file: "Notes.ink", pageId: page.id, pageTitle: "Page", note: loaded }], "additional searchable")).toHaveLength(1);
+  });
+  it("merges edits to independent boxes and suppresses deleted boxes from stale peers", () => {
+    const base = { ...note("p"), textBoxes: [
+      { id: "a", text: "A", x: 16, y: 16, width: 100, createdAt: 1, updatedAt: 1 },
+      { id: "b", text: "B", x: 160, y: 16, width: 100, createdAt: 1, updatedAt: 1 },
+    ] };
+    const a = patchStickyTextBox(base, "a", { text: "Edited A", updatedAt: 3 }); a.updatedAt = 3;
+    const b = patchStickyTextBox(base, "b", { x: 300, updatedAt: 4 }); b.updatedAt = 4;
+    const merged = mergeSticky(a, b);
+    expect(merged.textBoxes).toMatchObject([{ id: "a", text: "Edited A" }, { id: "b", x: 300 }]);
+    expect(mergeSticky(b, a)).toEqual(merged);
+    const removed = { ...merged, textBoxes: merged.textBoxes!.filter((box) => box.id !== "a"), deletedTextBoxes: { a: 5 }, updatedAt: 5 };
+    expect(mergeSticky(removed, a).textBoxes!.map((box) => box.id)).toEqual(["b"]);
+    expect(mergeSticky(a, removed)).toEqual(mergeSticky(removed, a));
+    // A delayed peer save cannot reuse an erased identity, even if its clock
+    // advances past deletion. Explicit undo restores content with a new id.
+    const delayed = patchStickyTextBox(a, "a", { text: "Late peer edit", updatedAt: 10 }); delayed.updatedAt = 10;
+    expect(mergeSticky(removed, delayed).textBoxes!.map((box) => box.id)).toEqual(["b"]);
+    expect(normalizeSticky({ ...delayed, deletedTextBoxes: { a: 5 } }, "p")!.textBoxes!.map((box) => box.id)).toEqual(["b"]);
+    const primary = patchStickyTextBox(base, "primary", { x: 400, y: 200, width: 160 }); primary.textUpdatedAt = 6;
+    expect(mergeSticky(primary, b)).toMatchObject({ text: base.text, textX: 400, textY: 200, textWidth: 160 });
+  });
+  it("normalizes box geometry without losing offscreen text or sharing mutable box objects", () => {
+    const base = { ...note("p"), textBoxes: [
+      { id: "a", text: "Beyond the frame", x: 4000, y: 8000, width: 200, height: 100, createdAt: 1, updatedAt: 2 },
+      { id: "bad", text: "Repair bounds", x: NaN, y: -1, width: Infinity, height: 0, createdAt: 1, updatedAt: 1 },
+      { id: "gone", text: "Deleted", x: 0, y: 0, width: 100, createdAt: 1, updatedAt: 1 },
+    ], deletedTextBoxes: { gone: 2 } };
+    const loaded = normalizeSticky(base, "p")!;
+    expect(loaded.textBoxes).toHaveLength(2);
+    expect(loaded.textBoxes![0]).toMatchObject({ x: 4000, y: 8000, text: "Beyond the frame" });
+    expect(loaded.textBoxes![1]).toMatchObject({ x: 16, y: 0, width: 240, height: 120 });
+    const copy = cloneSticky(loaded); copy.textBoxes![0].text = "Different";
+    expect(loaded.textBoxes![0].text).toBe("Beyond the frame");
+    const moved = patchStickyTextBox(loaded, "a", { x: 9000, width: 60 });
+    expect(moved.strokes).toEqual(base.strokes); expect(moved.text).toBe(base.text);
+    expect(loaded.textBoxes![0].x).toBe(4000);
+  });
+  it("renders each box at its board origin and clips only its viewport", () => {
+    const sticky = { ...note("p"), text: "", strokes: [], scrollX: 100, scrollY: 50,
+      textBoxes: [{ id: "box", text: "ABCD", x: 120, y: 70, width: 60, height: 60, createdAt: 1, updatedAt: 1 }] };
+    const ctx = { save: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(), fillRect: vi.fn(), scale: vi.fn(), translate: vi.fn(), fillText: vi.fn(), measureText: vi.fn((text: string) => ({ width: text.length * 25 })), restore: vi.fn() };
+    paintStickyBoard(ctx as unknown as CanvasRenderingContext2D, sticky, 400, 300, 2);
+    expect(ctx.rect.mock.calls).toContainEqual([120, 70, 60, 60]);
+    expect(ctx.fillText.mock.calls).toEqual([["AB", 120, 70], ["CD", 120, 98]]);
+    expect(ctx.translate).toHaveBeenCalledWith(-100, -50);
+    expect(sticky.textBoxes[0].text).toBe("ABCD");
+  });
   it("preserves folded edge positions through loading and worker saves", () => {
     const book = createNotebook(), page = book.pages[0];
     const folded = { ...note(page.id), x: .78, y: .88, collapsed: true };
@@ -52,7 +114,7 @@ describe("sticky note persistence and search", () => {
   });
   it("renders a fixed content coordinate space when the visible frame changes", () => {
     const sticky = note("p"); sticky.strokes[0].points = [sticky.strokes[0].points[0]];
-    const ctx = { save: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(), fillRect: vi.fn(), scale: vi.fn(), translate: vi.fn(), fillText: vi.fn(), arc: vi.fn(), fill: vi.fn(), restore: vi.fn() };
+    const ctx = { save: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(), fillRect: vi.fn(), scale: vi.fn(), translate: vi.fn(), fillText: vi.fn(), measureText: vi.fn((text: string) => ({ width: text.length * 10 })), arc: vi.fn(), fill: vi.fn(), restore: vi.fn() };
     paintStickyBoard(ctx as unknown as CanvasRenderingContext2D, sticky, 400, 300);
     paintStickyBoard(ctx as unknown as CanvasRenderingContext2D, { ...sticky, width: .1, height: .1 }, 100, 80);
     expect(ctx.arc.mock.calls[0]).toEqual(ctx.arc.mock.calls[1]);

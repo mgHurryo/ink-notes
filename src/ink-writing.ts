@@ -534,12 +534,25 @@ export abstract class InkWritingView extends FileView {
       new Notice("This sticky note changed in another pane. Reopen it before editing."); return;
     }
     const restoredIds = new Map<string, string>();
+    const restoredTextIds = new Map<string, string>();
     const apply = (template: StickyNote | undefined) => {
       const page = this.pageById(pageId); if (!page) return;
       const existing = page.stickyNotes?.find((note) => note.id === id);
       const now = Math.max(Date.now(), page.updatedAt + 1, existing?.updatedAt ?? 0, (page.deletedStickyNotes?.[id] ?? 0) + 1);
       const note = template ? { ...cloneSticky(template), textWidth: Math.max(60, template.textWidth ?? (before ?? template).width * template.boardPageWidth - 32),
-        updatedAt: now, textUpdatedAt: template.text === existing?.text ? existing.textUpdatedAt : now } : undefined;
+        updatedAt: now, textUpdatedAt: existing && ["text", "textX", "textY", "textWidth", "textHeight"].every((key) =>
+          template[key as keyof StickyNote] === existing[key as keyof StickyNote]) ? existing.textUpdatedAt : now } : undefined;
+      if (note) {
+        note.deletedTextBoxes = { ...note.deletedTextBoxes, ...existing?.deletedTextBoxes };
+        note.textBoxes = (note.textBoxes ?? []).map((box) => {
+          let boxId = restoredTextIds.get(box.id) ?? box.id;
+          if (note.deletedTextBoxes![boxId]) boxId = newId("sticky-text");
+          restoredTextIds.set(box.id, boxId);
+          const previous = existing?.textBoxes?.find((item) => item.id === boxId);
+          return previous && JSON.stringify({ ...box, id: boxId }) === JSON.stringify(previous) ? { ...previous } : { ...box, id: boxId, updatedAt: now };
+        });
+        for (const box of existing?.textBoxes ?? []) if (!note.textBoxes.some((item) => item.id === box.id)) note.deletedTextBoxes[box.id] = now;
+      }
       if (note && existing) {
         const removed = new Set(existing.deletedStrokeIds);
         note.strokes = note.strokes.map((stroke) => {
@@ -1268,7 +1281,7 @@ export abstract class InkWritingView extends FileView {
     this.addToolButton(draw, "highlighter", "Highlight", "highlighter");
     this.addToolButton(draw, "eraser", "Erase", "eraser");
     this.addToolButton(draw, "lasso-select", "Select", "lasso");
-    if (this.imageLibrary) this.addToolButton(draw, "mouse-pointer-2", "Pointer", "pointer");
+    this.addToolButton(draw, "mouse-pointer-2", "Pointer", "pointer");
     if (this.imageLibrary) this.addIconButton(draw, "image-plus", "Image library", () => this.openImageLibrary());
     this.addIconButton(draw, "sticky-note", "Add sticky note", () => this.addSticky());
   }

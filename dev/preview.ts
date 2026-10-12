@@ -165,14 +165,15 @@ void (async () => {
     .__inkNotesPreview = { view, compareRenderer, findStickies: () => new StickySearchModal((view as any).imageLibrary.app,
       (entry) => view.revealSticky(entry.pageId, entry.note.id), () => ({ files: ["Ink Notes/Preview.ink"], entries: view.stickyIndexEntries() })).open(),
       exportStickies: async (rotation) => {
-        const book = (view as any).notebook;
+        const active = (window as any).__inkNotesPreview.view;
+        const book = active.currentNotebook();
         let bytes: Uint8Array;
         if (rotation !== undefined) {
           const source = await PDFDocument.create(); source.addPage([600, 800]).setRotation(degrees(rotation));
           const sidecar = createSidecar("Sample.pdf", { sha256: "a".repeat(64), byteLength: 2 }, [{ width: 600, height: 800, rotation }]);
           sidecar.notebook.pages[0].stickyNotes = structuredClone(book.pages[0].stickyNotes);
-          bytes = await exportHandwrittenPdf((await source.save()).buffer as ArrayBuffer, sidecar, "Sample", undefined, undefined, { app: view.app, source: "Preview.ink" });
-        } else bytes = await exportNotebookPdf(book, "Sticky export", undefined, undefined, { app: view.app, source: "Preview.ink" });
+          bytes = await exportHandwrittenPdf((await source.save()).buffer as ArrayBuffer, sidecar, "Sample", undefined, undefined, { app: active.app, source: "Preview.ink" });
+        } else bytes = await exportNotebookPdf(book, "Sticky export", undefined, undefined, { app: active.app, source: "Preview.ink" });
         const pdf = await PDFDocument.load(bytes), resources = pdf.getPage(0).node.Resources();
         const images = resources?.lookupMaybe((await import("pdf-lib")).PDFName.of("XObject"), (await import("pdf-lib")).PDFDict)?.keys().length ?? 0;
         return { bytes: bytes.length, images };
