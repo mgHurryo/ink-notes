@@ -45,6 +45,8 @@ export interface StickyTextBox extends StickyTextStyle {
 }
 export interface StickyNote {
   id: string; pageId: string;
+  /** A frameless page text object reuses text editing, history and sync. */
+  kind?: "text";
   x: number; y: number; width: number; height: number;
   title: string; keywords: string; text: string; textUpdatedAt: number;
   /** Fixed text layout width; changing the frame only crops its viewport. */
@@ -139,7 +141,8 @@ export function normalizeSticky(value: unknown, pageId: string): StickyNote | nu
     if (!deletedTextBoxes[box.id] && (!previous || normalized.updatedAt > previous.updatedAt
       || normalized.updatedAt === previous.updatedAt && JSON.stringify(normalized) > JSON.stringify(previous))) boxes.set(box.id, normalized);
   }
-  const width = Math.min(1, Math.max(.05, raw.width!)), height = Math.min(1, Math.max(.05, raw.height!));
+  const textOnly = raw.kind === "text";
+  const width = Math.min(1, Math.max(textOnly ? .01 : .05, raw.width!)), height = Math.min(1, Math.max(textOnly ? .01 : .05, raw.height!));
   const textStyle = normalizeTextStyle({ fontSize: raw.textFontSize, fontFamily: raw.textFontFamily, bold: raw.textBold, italic: raw.textItalic, scaleText: raw.textScaleText });
   const removed = Array.isArray(raw.deletedStrokeIds) ? raw.deletedStrokeIds.filter((id): id is string => typeof id === "string") : [];
   const strokes = (Array.isArray(raw.strokes) ? raw.strokes : []).filter((stroke) => stroke && typeof stroke.id === "string" && Array.isArray(stroke.points))
@@ -153,17 +156,17 @@ export function normalizeSticky(value: unknown, pageId: string): StickyNote | nu
       })), createdAt: positive(stroke.createdAt, 1), updatedAt: positive(stroke.updatedAt, 1) }))
     .filter((stroke) => !removed.includes(stroke.id));
   // The anchor survives unfolding and reloads; visible bounds belong to layout.
-  return { id: raw.id, pageId, x: Math.max(0, Math.min(1, raw.x!)),
+  return { id: raw.id, pageId, ...(textOnly ? { kind: "text" as const } : {}), x: Math.max(0, Math.min(1, raw.x!)),
     y: Math.max(0, Math.min(1, raw.y!)), width, height,
     title: string(raw.title), keywords: string(raw.keywords), text: string(raw.text), textUpdatedAt: positive(raw.textUpdatedAt, 1),
     textWidth: Math.max(60, positive(raw.textWidth, width * positive(raw.boardPageWidth, STICKY_UNIT) - 32)),
-    textX: position(raw.textX, 16), textY: position(raw.textY, 16),
+    textX: textOnly ? 0 : position(raw.textX, 16), textY: textOnly ? 0 : position(raw.textY, 16),
     textHeight: raw.textHeight === undefined ? undefined : Math.max(60, positive(raw.textHeight, 120)),
     textFontSize: textStyle.fontSize, textFontFamily: textStyle.fontFamily, textBold: textStyle.bold, textItalic: textStyle.italic, textScaleText: textStyle.scaleText,
     textBoxes: [...boxes.values()].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)), deletedTextBoxes,
     color: typeof raw.color === "string" && /^#[0-9a-f]{6}$/i.test(raw.color) ? raw.color : "#fff1a8",
-    collapsed: raw.collapsed === true, preview: raw.preview !== false,
-    scrollX: Math.max(0, positive(raw.scrollX, 0)), scrollY: Math.max(0, positive(raw.scrollY, 0)),
+    collapsed: !textOnly && raw.collapsed === true, preview: raw.preview !== false,
+    scrollX: textOnly ? 0 : Math.max(0, positive(raw.scrollX, 0)), scrollY: textOnly ? 0 : Math.max(0, positive(raw.scrollY, 0)),
     boardPageWidth: positive(raw.boardPageWidth, STICKY_UNIT),
     strokes, deletedStrokeIds: removed, createdAt: positive(raw.createdAt, 1), updatedAt: positive(raw.updatedAt, 1) };
 }

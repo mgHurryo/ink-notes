@@ -52,12 +52,12 @@ async function markdownImage(note: StickyNote, context: StickyMarkdownContext, v
 export function stickyTextLines(text: string): string[] { return text.replace(/\r/g, "").split("\n"); }
 
 /** Paint only the viewport. Changing its dimensions never changes stored content. */
-export function paintStickyBoard(ctx: CanvasRenderingContext2D, note: StickyNote, width: number, height: number, scale = 1, background = true): void {
+export function paintStickyBoard(ctx: CanvasRenderingContext2D, note: StickyNote, width: number, height: number, scale = 1, background: boolean | "transparent" = true): void {
   ctx.save(); ctx.beginPath(); ctx.rect(0, 0, width, height); ctx.clip();
   // The DOM already owns the paper and Markdown below this ink canvas.
   // Snapshots still paint their own opaque paper by default.
-  if (background) { ctx.fillStyle = note.color; ctx.fillRect(0, 0, width, height); }
-  else ctx.clearRect(0, 0, width, height);
+  if (background === true) { ctx.fillStyle = note.color; ctx.fillRect(0, 0, width, height); }
+  else if (background === false) ctx.clearRect(0, 0, width, height);
   ctx.scale(scale, scale); ctx.translate(-note.scrollX, -note.scrollY);
   ctx.fillStyle = "#202020"; ctx.font = "20px sans-serif"; ctx.textBaseline = "top";
   for (const box of stickyTextBoxes(note)) {
@@ -112,6 +112,9 @@ export function paintStickyFrame(ctx: CanvasRenderingContext2D, note: StickyNote
   const width = stickyFrameWidth(note, pageWidth), height = stickyFrameHeight(note, pageWidth, pageHeight), scale = pageWidth / note.boardPageWidth;
   const { x, y } = stickyPosition(note);
   ctx.save(); ctx.translate(x * pageWidth, y * pageHeight);
+  if (note.kind === "text") {
+    paintStickyBoard(ctx, note, width, height, scale, "transparent"); ctx.restore(); return;
+  }
   if (note.collapsed) { paintStickyIcon(ctx, note, width, height, pageHeight / pageWidth); ctx.restore(); return; }
   ctx.fillStyle = note.color; ctx.fillRect(0, 0, width, height);
   ctx.fillStyle = "#202020"; ctx.font = `bold ${16 * scale}px sans-serif`; ctx.textBaseline = "top";
@@ -136,10 +139,11 @@ export async function stickyPng(note: StickyNote, pageWidth: number, pageHeight:
     strokes: markdown && stickyText(note) && !note.collapsed ? [] : note.strokes }, pageWidth, pageHeight);
   if (markdown && stickyText(note) && !note.collapsed) {
     const boardScale = pageWidth / note.boardPageWidth;
-    const img = await markdownImage(note, markdown, width / boardScale, Math.max(1, height / boardScale - STICKY_HEADER));
-    ctx.save(); ctx.beginPath(); ctx.rect(0, STICKY_HEADER * boardScale, width, height - STICKY_HEADER * boardScale); ctx.clip();
-    ctx.drawImage(img, 0, STICKY_HEADER * boardScale, img.width * boardScale, img.height * boardScale);
-    ctx.scale(boardScale, boardScale); ctx.translate(0, STICKY_HEADER); ctx.translate(-note.scrollX, -note.scrollY);
+    const header = note.kind === "text" ? 0 : STICKY_HEADER;
+    const img = await markdownImage(note, markdown, width / boardScale, Math.max(1, height / boardScale - header));
+    ctx.save(); ctx.beginPath(); ctx.rect(0, header * boardScale, width, height - header * boardScale); ctx.clip();
+    ctx.drawImage(img, 0, header * boardScale, img.width * boardScale, img.height * boardScale);
+    ctx.scale(boardScale, boardScale); ctx.translate(0, header); ctx.translate(-note.scrollX, -note.scrollY);
     for (const stroke of note.strokes) drawInkStroke(ctx, stroke, STICKY_UNIT, STICKY_UNIT);
     ctx.restore();
   }

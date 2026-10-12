@@ -9,6 +9,13 @@ const g = { width: 600, height: 800 };
 const stroke = (x1: number, x2: number): InkStroke => ({ id: "ink", pageId: "page", tool: "pen", color: "#000000", width: 3, opacity: 1,
   createdAt: 1, updatedAt: 1, points: [{ x: x1, y: .4, pressure: .3, t: 1 }, { x: x2, y: .4, pressure: .7, t: 11 }] });
 describe("inline sticky layer geometry", () => {
+  it("keeps ink on the page when it crosses a page text object", () => {
+    const result = splitStickyStroke(stroke(.1,.8), [{...note,kind:"text"}], g);
+    expect(result.notes.size).toBe(0); expect(result.page).toHaveLength(1);
+    expect(result.page[0].points).toEqual(stroke(.1,.8).points);
+    const withBoard = splitStickyStroke(stroke(.1,.8), [note,{...note,id:"text",kind:"text"}], g);
+    expect(withBoard.notes.has(note.id)).toBe(true); expect(withBoard.notes.has("text")).toBe(false);
+  });
   it("splits a sparse crossing at both exact edges without losing the outside ink", () => {
     const result = splitStickyStroke(stroke(.1, .8), [note], g);
     expect(result.page).toHaveLength(2); expect(result.notes.get(note.id)).toHaveLength(1);
