@@ -24019,6 +24019,16 @@ function registerDocumentPointerEndEvents(element, register, onEnd) {
 // src/ink-writing.ts
 var import_obsidian6 = require("obsidian");
 
+// src/device-mode.ts
+function defaultReadingMode(platform, device) {
+  if (platform.isDesktopApp || !platform.isMobileApp) return true;
+  const ipad = /iPad/i.test(device.userAgent) || /Macintosh/i.test(device.userAgent) && device.maxTouchPoints > 1;
+  const shortEdge = Math.min(device.width, device.height);
+  if (ipad) return false;
+  if (shortEdge > 0) return shortEdge < 600;
+  return platform.isPhone || !platform.isTablet;
+}
+
 // src/page-images.ts
 function constrainImage(image) {
   const factor = Math.min(1, 1 / Math.max(0.01, image.width), 1 / Math.max(0.01, image.height));
@@ -26918,6 +26928,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     this.devLastPointerType = null;
     // ------------------------------------------------------------------ seams
     this.readingMode = false;
+    this.readingModeInitialized = false;
     this.flipSettling = false;
     this.pageSwipeAnimations = [];
     this.pageSwipeRequest = null;
@@ -27293,6 +27304,29 @@ var InkWritingView = class extends import_obsidian6.FileView {
     };
     apply(templatesAfter);
     this.pushCommand({ undo: () => apply(templatesBefore), redo: () => apply(templatesAfter) });
+  }
+  getState() {
+    this.initializeReadingMode();
+    return { ...super.getState(), readingMode: this.readingMode };
+  }
+  async setState(state, result) {
+    if (typeof (state == null ? void 0 : state.readingMode) === "boolean") {
+      this.readingModeInitialized = true;
+      if (this.viewReady) this.setReadingMode(state.readingMode);
+      else this.readingMode = state.readingMode;
+    }
+    await super.setState(state, result);
+  }
+  initializeReadingMode() {
+    if (!this.readingModeInitialized) {
+      this.readingMode = defaultReadingMode(import_obsidian6.Platform, {
+        width: window.screen.width,
+        height: window.screen.height,
+        userAgent: navigator.userAgent,
+        maxTouchPoints: navigator.maxTouchPoints
+      });
+      this.readingModeInitialized = true;
+    }
   }
   /** True while gestures must not start new input (reading mode, locks). */
   inputLocked() {
@@ -27676,12 +27710,15 @@ var InkWritingView = class extends import_obsidian6.FileView {
     this.addIconButton(draw, "sticky-note", "Add sticky note", () => this.addSticky());
   }
   buildReadingModeButton(parent) {
+    this.initializeReadingMode();
+    this.toolbarRoot().toggleClass("ink-reading", this.readingMode);
     const button3 = this.addIconButton(parent, "book-open", "Reading mode", () => this.setReadingMode(!this.readingMode));
     button3.classList.add("ink-reading-toggle");
     this.updateReadingModeButton();
   }
   setReadingMode(reading) {
     var _a;
+    this.readingModeInitialized = true;
     if (reading === this.readingMode) return;
     this.finishPointerInput(false);
     this.endDesktopPan();
@@ -27697,6 +27734,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     this.updateHistoryButtons();
     this.refreshEraserCursor();
     this.syncStickyNotes();
+    this.app.workspace.requestSaveLayout();
   }
   onReadingModeChanged() {
   }
@@ -33936,6 +33974,7 @@ var PdfInkView = class extends InkWritingView {
     root.addClass("ink-pdf-view", "ink-pdf-editing", "ink-rail-hidden");
     this.root = root;
     this.renderToolbar(root);
+    root.toggleClass("ink-pdf-editing", !this.readingMode);
     this.statusEl = root.createDiv({ cls: "ink-pdf-status" });
     const body = root.createDiv({ cls: "ink-pdf-body" });
     this.buildPageRail(body);
