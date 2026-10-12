@@ -10,6 +10,8 @@ const build = await context({
   alias: { obsidian: "./dev/obsidian.ts" },
   plugins: [await inkWorkerPlugin()],
 });
+// Serve the current source on the first request, never yesterday's dist file.
+await build.rebuild();
 await build.watch();
 const routes = { "/": ["dev/index.html", "text/html"], "/styles.css": ["styles.css", "text/css"], "/preview.js": ["dist/preview.js", "text/javascript"] };
 const server = createServer(async (req, res) => {

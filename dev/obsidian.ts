@@ -108,6 +108,9 @@ export class Menu {
     };
     return this;
   }
+  showAtPosition(position: { x: number; y: number }) {
+    return this.showAtMouseEvent(new MouseEvent("click", { clientX: position.x, clientY: position.y }));
+  }
 }
 export class Notice { constructor(message: string) { console.warn(message); } }
 export class TFile {}
