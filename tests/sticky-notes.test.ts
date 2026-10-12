@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("obsidian", async () => import("../dev/obsidian"));
 import { createNotebook, mergeNotebooks, normalizeNotebook } from "../src/model";
-import { cloneSticky, normalizeSticky, StickyNote, stickyLink, stickyPosition, stickyTextBoxes, stickyText, patchStickyTextBox, mergeSticky } from "../src/sticky-model";
+import { cloneSticky, normalizeSticky, StickyNote, stickyLink, stickyPosition, stickyTextBoxes, stickyText, patchStickyTextBox, mergeSticky, stickyFont, resizeStickyTextBox } from "../src/sticky-model";
 import { applyNotebookOperation } from "../src/worker-core";
 import { clonePageValue } from "../src/worker-protocol";
 import { collectStickyEntries, filterStickyEntries, StickySearchModal } from "../src/sticky-index";
@@ -20,9 +20,40 @@ export function note(pageId: string): StickyNote {
 }
 
 describe("sticky note persistence and search", () => {
+  it("preserves styles through primary/extra merges and serialization while repairing unsafe fonts", () => {
+    const legacy = note("p"); expect(stickyFont(stickyTextBoxes(legacy)[0], true)).toBe("20px/1.4 sans-serif");
+    const a = patchStickyTextBox(legacy, "primary", { fontSize: 36, fontFamily: "kai", bold: true, italic: true, scaleText: true });
+    a.textUpdatedAt = 3; a.updatedAt = 3;
+    const b = { ...legacy, updatedAt: 4, textBoxes: [{ id: "extra", text: "Peer", x: 20, y: 20, width: 120, fontSize: 40, fontFamily: "serif" as const, createdAt: 1, updatedAt: 4 }] };
+    const loaded = normalizeSticky(JSON.parse(JSON.stringify(mergeSticky(a, b))), "p")!;
+    expect(stickyTextBoxes(loaded)[0]).toMatchObject({ fontSize: 36, fontFamily: "kai", bold: true, italic: true, scaleText: true });
+    expect(loaded.textBoxes![0]).toMatchObject({ fontSize: 40, fontFamily: "serif" });
+    expect(mergeSticky(b, a)).toEqual(mergeSticky(a, b));
+    const unsafe = normalizeSticky({ ...loaded, textFontSize: Infinity, textFontFamily: "constructor",
+      textBoxes: [{ ...b.textBoxes[0], fontSize: -200, fontFamily: "url(https://bad.test/font)" }] }, "p")!;
+    expect(stickyFont(stickyTextBoxes(unsafe)[0])).toBe("italic bold 20px sans-serif");
+    expect(stickyFont(unsafe.textBoxes![0])).toBe("8px sans-serif");
+  });
+  it("resizes text uniformly only when bound, including height-only drags and size limits", () => {
+    const box = { ...stickyTextBoxes(note("p"))[0], width: 200, height: 100, fontSize: 20 };
+    expect(resizeStickyTextBox(box, 400, 100)).toEqual({ width: 400, height: 100 });
+    expect(resizeStickyTextBox({ ...box, scaleText: true }, 400, 100)).toEqual({ width: 400, height: 100, fontSize: 40 });
+    expect(resizeStickyTextBox({ ...box, scaleText: true }, 200, 200).fontSize).toBe(40);
+    expect(resizeStickyTextBox({ ...box, scaleText: true }, 100, 60).fontSize).toBe(10);
+    expect(resizeStickyTextBox({ ...box, scaleText: true }, 10000, 100).fontSize).toBe(144);
+    expect(box.fontSize).toBe(20);
+  });
+  it("uses saved fonts and line height for canvas previews without changing the text", () => {
+    const sticky = { ...note("p"), text: "A\nB", textFontSize: 30, textFontFamily: "serif" as const, textBold: true, textItalic: true, scrollX: 0, scrollY: 0, strokes: [] };
+    const fonts: string[] = [];
+    const ctx = { save: vi.fn(), beginPath: vi.fn(), rect: vi.fn(), clip: vi.fn(), fillRect: vi.fn(), scale: vi.fn(), translate: vi.fn(), fillText: vi.fn(), measureText: vi.fn(() => ({ width: 10 })), restore: vi.fn(), set font(value: string) { fonts.push(value); } };
+    paintStickyBoard(ctx as unknown as CanvasRenderingContext2D, sticky, 400, 300);
+    expect(fonts).toContain("italic bold 30px serif"); expect(ctx.fillText.mock.calls).toEqual([["A", 16, 16], ["B", 16, 58]]);
+  });
   it("loads legacy text as one box and keeps multiple boxes through worker serialization", () => {
     const book = createNotebook(), page = book.pages[0], legacy = note(page.id);
-    expect(stickyTextBoxes(legacy)).toEqual([{ id: "primary", text: legacy.text, x: 16, y: 16, width: 268, height: undefined, createdAt: 1, updatedAt: 1 }]);
+    expect(stickyTextBoxes(legacy)).toEqual([{ id: "primary", text: legacy.text, x: 16, y: 16, width: 268, height: undefined,
+      fontSize: undefined, fontFamily: undefined, bold: undefined, italic: undefined, scaleText: undefined, createdAt: 1, updatedAt: 1 }]);
     const extra = { id: "box", text: "Additional searchable text", x: 200, y: 100, width: 180, height: 120, createdAt: 2, updatedAt: 2 };
     const sticky = { ...legacy, textBoxes: [extra], deletedTextBoxes: { gone: 3 } };
     applyNotebookOperation(book, { type: "patch-sticky-notes", pageId: page.id, upsert: [sticky], remove: [], deletedStickyNotes: {}, pageUpdatedAt: 3, notebookUpdatedAt: 3 });

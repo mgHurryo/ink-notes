@@ -1,6 +1,6 @@
 import type { StickyNote } from "./sticky-model";
 import { STICKY_HEADER } from "./sticky-ink";
-import { STICKY_UNIT, stickyPosition, stickyTextBoxes, stickyText } from "./sticky-model";
+import { STICKY_UNIT, stickyPosition, stickyTextBoxes, stickyText, stickyFont, stickyFontSize } from "./sticky-model";
 import { drawInkStroke } from "./rendering";
 import { App, Component, MarkdownRenderer } from "obsidian";
 
@@ -16,7 +16,7 @@ async function markdownImage(note: StickyNote, context: StickyMarkdownContext, v
     for (const box of stickyTextBoxes(note)) {
       if (!box.text) continue;
       const frame = document.createElement("div"), content = document.createElement("div");
-      frame.setAttribute("style", `position:absolute;left:${box.x - note.scrollX}px;top:${box.y - note.scrollY}px;width:${box.width}px;${box.height === undefined ? "" : `height:${box.height}px;overflow:hidden;`}`);
+      frame.setAttribute("style", `position:absolute;left:${box.x - note.scrollX}px;top:${box.y - note.scrollY}px;width:${box.width}px;font:${stickyFont(box, true)};${box.height === undefined ? "" : `height:${box.height}px;overflow:hidden;`}`);
       await MarkdownRenderer.render(context.app, box.text, content, context.source, component);
       frame.append(content); el.append(frame);
     }
@@ -62,6 +62,8 @@ export function paintStickyBoard(ctx: CanvasRenderingContext2D, note: StickyNote
   ctx.fillStyle = "#202020"; ctx.font = "20px sans-serif"; ctx.textBaseline = "top";
   for (const box of stickyTextBoxes(note)) {
     if (!box.text) continue;
+    ctx.font = stickyFont(box);
+    const lineHeight = stickyFontSize(box.fontSize) * 1.4;
     const lines: string[] = [];
     for (const paragraph of stickyTextLines(box.text)) {
       let line = "";
@@ -71,11 +73,11 @@ export function paintStickyBoard(ctx: CanvasRenderingContext2D, note: StickyNote
       }
       lines.push(line);
     }
-    const first = Math.max(0, Math.floor((note.scrollY - box.y) / 28));
+    const first = Math.max(0, Math.floor((note.scrollY - box.y) / lineHeight));
     if (first >= lines.length) continue;
     ctx.save();
     if (box.height !== undefined) { ctx.beginPath(); ctx.rect(box.x, box.y, box.width, box.height); ctx.clip(); }
-    for (let index = first; index < Math.min(lines.length, first + Math.ceil(height / scale / 28) + 2); index++) ctx.fillText(lines[index], box.x, box.y + index * 28);
+    for (let index = first; index < Math.min(lines.length, first + Math.ceil(height / scale / lineHeight) + 2); index++) ctx.fillText(lines[index], box.x, box.y + index * lineHeight);
     ctx.restore();
   }
   for (const stroke of note.strokes) drawInkStroke(ctx, stroke, STICKY_UNIT, STICKY_UNIT);

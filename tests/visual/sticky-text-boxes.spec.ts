@@ -31,6 +31,85 @@ async function fingerDrag(element: Locator, dx: number, dy: number, stylus = fal
 }
 
 for (const mode of ["ink", "pdf"] as const) {
+  test(`${mode}: text formatting persists, scales with touch resize, and exports`, async ({ page }) => {
+    await ready(page, mode); await add(page, "Styled 中文 text");
+    const frame = page.locator(".ink-sticky-text-box"), text = frame.locator(".ink-sticky-markdown");
+    await frame.getByRole("button", { name: "Format text box", exact: true }).tap();
+    const panel = page.getByRole("dialog", { name: "Text style", exact: true });
+    await panel.getByLabel("Text font", { exact: true }).selectOption("serif");
+    const size = panel.getByLabel("Text font size", { exact: true }); await size.fill("32"); await size.press("Tab");
+    await panel.getByLabel("Bold", { exact: true }).check(); await panel.getByLabel("Italic", { exact: true }).check();
+    await expect(text).toHaveCSS("font-size", "32px"); await expect(text).toHaveCSS("font-family", "serif");
+    await expect(text).toHaveCSS("font-weight", "700"); await expect(text).toHaveCSS("font-style", "italic");
+    await page.screenshot({ path: `.tmp/sticky-text-style/${mode}-format.png` });
+    await panel.getByRole("button", { name: "Close text style", exact: true }).tap();
+    await fingerDrag(frame.getByRole("button", { name: "Resize text box", exact: true }), 30, 20);
+    expect((await state(page)).textBoxes[0].fontSize).toBe(32);
+    await frame.getByRole("button", { name: "Format text box", exact: true }).tap();
+    await panel.getByLabel("Scale text with box", { exact: true }).check();
+    await panel.getByRole("button", { name: "Close text style", exact: true }).tap();
+    const before = (await state(page)).textBoxes[0];
+    await fingerDrag(frame.getByRole("button", { name: "Resize text box", exact: true }), 60, 40);
+    const scaled = (await state(page)).textBoxes[0]; expect(scaled.fontSize).toBeGreaterThan(32); expect(scaled.text).toBe(before.text);
+    await page.getByRole("button", { name: "Undo", exact: true }).tap(); expect((await state(page)).textBoxes[0].fontSize).toBe(32);
+    await page.getByRole("button", { name: "Redo", exact: true }).tap(); expect((await state(page)).textBoxes[0].fontSize).toBe(scaled.fontSize);
+    await frame.tap({ position: { x: 8, y: 8 } });
+    await frame.getByRole("button", { name: "Edit text box", exact: true }).tap();
+    await expect(page.getByRole("textbox", { name: "Sticky Markdown", exact: true })).toHaveCSS("font-family", "serif");
+    await page.keyboard.press("Escape");
+    const exported = await page.evaluate(async () => {
+      const urls: string[] = [], descriptor = Object.getOwnPropertyDescriptor(HTMLImageElement.prototype, "src")!;
+      Object.defineProperty(HTMLImageElement.prototype, "src", { ...descriptor, set(value: string) {
+        if (value.startsWith("data:image/svg+xml")) urls.push(value); descriptor.set!.call(this, value);
+      } });
+      try {
+        const result = await (window as any).__inkNotesPreview.exportStickies(90);
+        const svg = new DOMParser().parseFromString(decodeURIComponent(urls[0].split(",").slice(1).join(",")), "image/svg+xml");
+        const frame = Array.from(svg.querySelectorAll("div")).find((node) => node.getAttribute("style")?.includes("position:absolute"))!;
+        return { ...result, font: frame.getAttribute("style") };
+      } finally { Object.defineProperty(HTMLImageElement.prototype, "src", descriptor); }
+    });
+    expect(exported.images).toBe(1); expect(exported.bytes).toBeGreaterThan(1000);
+    expect(exported.font).toContain(`font:italic bold ${scaled.fontSize}px/1.4 serif`);
+    await frame.getByRole("button", { name: "Format text box", exact: true }).tap();
+    await frame.getByRole("button", { name: "Format text box", exact: true }).tap(); await expect(panel).toHaveCount(0);
+    await frame.getByRole("button", { name: "Format text box", exact: true }).tap();
+    await page.mouse.click(20, 950); await expect(panel).toHaveCount(0);
+    await page.evaluate(() => (window as any).__inkNotesPreview.view.setReadingMode(true));
+    await expect(page.getByRole("button", { name: "Format text box", exact: true })).toHaveCount(0);
+  });
+  test(`${mode}: primary fonts stay independent; style controls survive the keyboard viewport`, async ({ page }) => {
+    await ready(page, mode);
+    await page.locator(".ink-sticky-header").getByRole("button", { name: "Type on sticky note", exact: true }).tap();
+    const input = page.getByRole("textbox", { name: "Sticky Markdown", exact: true });
+    await input.fill("Primary text"); await input.press("Control+Enter");
+    await add(page, "Second box"); await fingerDrag(page.locator(".ink-sticky-text-box").nth(1), 200, 150);
+    const frame = page.locator('.ink-sticky-text-box[data-text-box-id="primary"]');
+    await frame.tap({ position: { x: 8, y: 8 } });
+    await frame.getByRole("button", { name: "Format text box", exact: true }).tap();
+    const panel = page.getByRole("dialog", { name: "Text style", exact: true });
+    const size = panel.getByLabel("Text font size", { exact: true }); await size.fill("28"); await size.press("Tab");
+    await panel.getByLabel("Text font", { exact: true }).selectOption("kai");
+    await panel.getByLabel("Scale text with box", { exact: true }).check();
+    const second = (await state(page)).textBoxes[0];
+    await size.focus(); await page.setViewportSize({ width: 1000, height: 420 });
+    await expect(size).toBeFocused(); await expect(panel).toBeVisible();
+    const bounds = (await panel.boundingBox())!; expect(bounds.y).toBeGreaterThanOrEqual(0); expect(bounds.y + bounds.height).toBeLessThanOrEqual(420);
+    await size.fill("30"); await size.press("Tab"); await page.keyboard.press("Escape");
+    await expect(panel).toHaveCount(0);
+    await expect(frame.getByRole("button", { name: "Format text box", exact: true })).toBeFocused();
+    await page.setViewportSize({ width: 1000, height: 1000 });
+    // Let the host's scheduled viewport/layout pass finish before restoring
+    // keyboard focus to a frame that it may replace at the new page scale.
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
+    await frame.focus(); await page.keyboard.press("Alt+Shift+ArrowDown");
+    const changed = await state(page); expect(changed.textFontSize).toBeGreaterThan(30); expect(changed.textFontFamily).toBe("kai");
+    expect(changed.textBoxes[0]).toEqual(second);
+    await frame.getByRole("button", { name: "Edit text box", exact: true }).tap();
+    await expect(input).toHaveCSS("font-size", `${changed.textFontSize}px`);
+    await input.fill("Updated primary"); await input.press("Control+Enter");
+    expect((await state(page)).textFontFamily).toBe("kai"); expect((await state(page)).textFontSize).toBe(changed.textFontSize);
+  });
   test(`${mode}: open drafts preserve peer box edits and reject edits to the same box`, async ({ page }) => {
     await ready(page, mode); await add(page, "First box"); await add(page, "Second box");
     const frames = page.locator(".ink-sticky-text-box"), first = frames.nth(0), second = frames.nth(1);
@@ -71,7 +150,7 @@ for (const mode of ["ink", "pdf"] as const) {
     });
     const frame = page.locator(".ink-sticky-text-box"); await frame.tap({ position: { x: 8, y: 8 } });
     const board = (await page.getByLabel("Sticky handwriting board").boundingBox())!;
-    for (const name of ["Move text box", "Edit text box", "Delete text box"]) {
+    for (const name of ["Move text box", "Edit text box", "Format text box", "Delete text box"]) {
       const bounds = (await frame.getByRole("button", { name, exact: true }).boundingBox())!;
       expect(bounds.width).toBeGreaterThanOrEqual(43.9); expect(bounds.height).toBeGreaterThanOrEqual(43.9);
       expect(bounds.x).toBeGreaterThanOrEqual(board.x - 1); expect(bounds.x + bounds.width).toBeLessThanOrEqual(board.x + board.width + 1);

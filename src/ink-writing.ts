@@ -540,7 +540,7 @@ export abstract class InkWritingView extends FileView {
       const existing = page.stickyNotes?.find((note) => note.id === id);
       const now = Math.max(Date.now(), page.updatedAt + 1, existing?.updatedAt ?? 0, (page.deletedStickyNotes?.[id] ?? 0) + 1);
       const note = template ? { ...cloneSticky(template), textWidth: Math.max(60, template.textWidth ?? (before ?? template).width * template.boardPageWidth - 32),
-        updatedAt: now, textUpdatedAt: existing && ["text", "textX", "textY", "textWidth", "textHeight"].every((key) =>
+        updatedAt: now, textUpdatedAt: existing && ["text", "textX", "textY", "textWidth", "textHeight", "textFontSize", "textFontFamily", "textBold", "textItalic", "textScaleText"].every((key) =>
           template[key as keyof StickyNote] === existing[key as keyof StickyNote]) ? existing.textUpdatedAt : now } : undefined;
       if (note) {
         note.deletedTextBoxes = { ...note.deletedTextBoxes, ...existing?.deletedTextBoxes };

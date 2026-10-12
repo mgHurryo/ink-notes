@@ -1,6 +1,6 @@
 import { App, Component, MarkdownRenderer, Menu, Notice, setIcon } from "obsidian";
 import { InkPage, newId } from "./model";
-import { cloneSticky, StickyNote, StickyTextBox, stickyLink, stickyPosition, stickyTextBoxes, stickyText, PRIMARY_TEXT_BOX, patchStickyTextBox } from "./sticky-model";
+import { cloneSticky, StickyNote, StickyTextBox, stickyLink, stickyPosition, stickyTextBoxes, stickyText, PRIMARY_TEXT_BOX, patchStickyTextBox, resizeStickyTextBox, stickyFont, stickyFontSize, STICKY_FONTS } from "./sticky-model";
 import { paintStickyBoard, paintStickyIcon, stickyFrameHeight, stickyFrameWidth } from "./sticky-rendering";
 import { STICKY_HEADER } from "./sticky-ink";
 
@@ -20,7 +20,7 @@ function movedNote(note: StickyNote, dx: number, dy: number, resize: boolean, re
   if (boxId) {
     const box = stickyTextBoxes(note).find((box) => box.id === boxId); if (!box) return note;
     const x = dx * note.boardPageWidth, y = dy * rect.height / rect.width * note.boardPageWidth;
-    return patchStickyTextBox(note, boxId, resize ? { width: Math.max(60, box.width + x), height: Math.max(60, (box.height ?? 120) + y) }
+    return patchStickyTextBox(note, boxId, resize ? resizeStickyTextBox(box, box.width + x, (box.height ?? 120) + y)
       : { x: Math.max(0, box.x + x), y: Math.max(0, box.y + y) });
   }
   if (pan) return { ...note, scrollX: Math.max(0, note.scrollX - dx * note.boardPageWidth), scrollY: Math.max(0, note.scrollY - dy * pan * note.boardPageWidth) };
@@ -49,6 +49,7 @@ export class StickyNoteLayer {
   private target?: { id: string; block: string };
   private selectedBox?: { note: string; box: string };
   private boxTap?: { note: string; box: string; time: number; x: number; y: number };
+  private formatting?: { element: HTMLElement; note: string; box: string; page: string };
   private editing?: { id: string; field: "title" | "text" | "keywords"; boxId?: string; base: StickyNote; input: HTMLInputElement | HTMLTextAreaElement };
   private last?: { page: string; notes: StickyNote[] | undefined; editable: boolean; width: number };
   private drag?: { pointer: number; touch: boolean; page: string; note: StickyNote; rect: DOMRect; x: number; y: number; resize: boolean; element: HTMLElement; pan?: number; moved?: boolean; boxId?: string };
@@ -58,6 +59,10 @@ export class StickyNoteLayer {
     const commitOutside = (event: Event) => {
       if (event.type === "touchstart") this.suppressTap = false;
       const target = event.target as HTMLElement;
+      if (this.formatting?.element.contains(target)) return;
+      const formatToggle = target.closest<HTMLElement>('button[aria-label="Format text box"]');
+      if (!formatToggle || formatToggle.closest<HTMLElement>(".ink-sticky-note")?.dataset.stickyId !== this.formatting?.note
+        || formatToggle.closest<HTMLElement>(".ink-sticky-text-box")?.dataset.textBoxId !== this.formatting?.box) this.closeFormat();
       const contact = event.type === "touchstart" ? (event as TouchEvent).touches.length === 1 ? (event as TouchEvent).touches[0] : undefined
         : event.type === "pointerdown" && (event as PointerEvent).pointerType !== "touch" && (event as PointerEvent).button === 0 && ((event as PointerEvent).pointerType !== "pen" || this.context.pointer()) ? event as PointerEvent : undefined;
       const tap = this.iconTap;
@@ -167,8 +172,12 @@ export class StickyNoteLayer {
     }, { signal, capture: true, passive: false });
     doc.addEventListener("touchcancel", () => { clearTimeout(this.hold); this.iconSecond = undefined; this.iconTap = undefined; this.drag = undefined; refreshText(); this.last = undefined; this.sync(); }, { signal, capture: true });
     doc.defaultView?.addEventListener("blur", () => { clearTimeout(this.hold); this.iconSecond = undefined; this.iconTap = undefined; this.drag = undefined; refreshText(); this.last = undefined; this.sync(); }, { signal });
+    doc.addEventListener("scroll", (event) => { if (!this.formatting?.element.contains(event.target as Node)) this.closeFormat(); }, { signal, capture: true });
+    doc.defaultView?.addEventListener("resize", () => this.positionFormat(), { signal });
+    doc.defaultView?.visualViewport?.addEventListener("resize", () => this.positionFormat(), { signal });
+    doc.defaultView?.visualViewport?.addEventListener("scroll", () => this.positionFormat(), { signal });
   }
-  dispose(): void { this.events.abort(); this.cards.abort(); this.markdown.unload(); this.menu?.hide(); clearTimeout(this.hold); this.layer.remove(); }
+  dispose(): void { this.closeFormat(); this.events.abort(); this.cards.abort(); this.markdown.unload(); this.menu?.hide(); clearTimeout(this.hold); this.layer.remove(); }
   private activateIcon(id: string, x: number, y: number): void {
     this.iconTap = { id, x, y, time: Date.now() }; this.open(id);
   }
@@ -195,8 +204,8 @@ export class StickyNoteLayer {
     // partially cropped boxes; their hit targets do not shrink with text.
     const boardWidth = note.width * this.host.clientWidth;
     const boardHeight = Math.max(1, note.height * this.host.clientHeight - STICKY_HEADER * scale);
-    const columns = Math.max(1, Math.min(3, Math.floor(boardWidth / 44)));
-    const controlsWidth = columns * 44, controlsHeight = Math.ceil(3 / columns) * 44;
+    const columns = Math.max(1, Math.min(4, Math.floor(boardWidth / 44)));
+    const controlsWidth = columns * 44, controlsHeight = Math.ceil(4 / columns) * 44;
     const x = (box.x - note.scrollX) * scale, y = (box.y - note.scrollY) * scale;
     const left = Math.max(0, Math.min(boardWidth - controlsWidth, x + box.width * scale - controlsWidth));
     const top = Math.max(0, Math.min(boardHeight - controlsHeight, y >= controlsHeight ? y - controlsHeight : y + (box.height ?? element.offsetHeight) * scale));
@@ -235,6 +244,67 @@ export class StickyNoteLayer {
     const current = this.context.page().stickyNotes?.find((item) => item.id === note.id); if (!current) return;
     this.selectBox();
     this.update(current, id === PRIMARY_TEXT_BOX ? { text: "" } : { textBoxes: current.textBoxes?.filter((box) => box.id !== id) });
+  }
+  private closeFormat(focus = false): void {
+    const format = this.formatting; if (!format) return;
+    format.element.remove(); this.formatting = undefined;
+    if (focus) this.formatAnchor(format.note, format.box)?.focus({ preventScroll: true });
+  }
+  private formatAnchor(note: string, box: string): HTMLElement | undefined {
+    return Array.from(this.card(note)?.querySelectorAll<HTMLElement>(".ink-sticky-text-box") ?? [])
+      .find((element) => element.dataset.textBoxId === box)?.querySelector<HTMLElement>('button[aria-label="Format text box"]') ?? undefined;
+  }
+  private positionFormat(): void {
+    const format = this.formatting; if (!format) return;
+    const anchor = this.formatAnchor(format.note, format.box); if (!anchor) { this.closeFormat(); return; }
+    const doc = this.host.ownerDocument, rect = anchor.getBoundingClientRect(), viewport = doc.defaultView!.visualViewport;
+    const left = viewport?.offsetLeft ?? 0, top = viewport?.offsetTop ?? 0;
+    const width = viewport?.width ?? doc.documentElement.clientWidth, height = viewport?.height ?? doc.documentElement.clientHeight;
+    const panel = format.element;
+    panel.style.width = `${Math.min(260, Math.max(44, width - 16))}px`;
+    panel.style.maxHeight = `${Math.max(44, height - 16)}px`;
+    panel.style.left = `${Math.max(left + 8, Math.min(rect.left, left + width - panel.offsetWidth - 8))}px`;
+    panel.style.top = `${Math.max(top + 8, Math.min(rect.bottom + 8, top + height - panel.offsetHeight - 8))}px`;
+  }
+  private formatText(note: StickyNote, boxId: string): void {
+    if (!this.context.editable() || this.context.busy() || this.editing) return;
+    if (this.formatting?.note === note.id && this.formatting.box === boxId) { this.closeFormat(true); return; }
+    this.closeFormat();
+    const current = this.context.page().stickyNotes?.find((item) => item.id === note.id);
+    const box = current && stickyTextBoxes(current).find((item) => item.id === boxId); if (!box) return;
+    this.selectBox(note.id, boxId);
+    const doc = this.host.ownerDocument;
+    const panel = doc.body.createDiv({ cls: "ink-sticky-text-format", attr: { role: "dialog", "aria-label": "Text style" } });
+    this.formatting = { element: panel, note: note.id, box: boxId, page: this.context.page().id };
+    const change = (patch: Partial<StickyTextBox>) => {
+      if (!this.context.editable() || this.context.busy()) return;
+      const latest = this.context.page().stickyNotes?.find((item) => item.id === note.id);
+      if (latest && stickyTextBoxes(latest).some((item) => item.id === boxId)) this.update(latest, patchStickyTextBox(latest, boxId, patch));
+      else this.closeFormat();
+    };
+    const header = panel.createDiv({ cls: "ink-sticky-format-heading" }); header.createSpan({ text: "Text style" });
+    const close = button(header, "Close text style", "x", () => this.closeFormat(true));
+    const fontLabel = panel.createEl("label", { text: "Font" });
+    const font = fontLabel.createEl("select", { attr: { "aria-label": "Text font" } });
+    for (const [key, value] of Object.entries(STICKY_FONTS)) font.createEl("option", { text: value.label, value: key });
+    font.value = box.fontFamily ?? "sans";
+    font.onchange = () => change({ fontFamily: font.value as StickyTextBox["fontFamily"] });
+    const sizeLabel = panel.createEl("label", { text: "Size" });
+    const size = sizeLabel.createEl("input", { attr: { type: "number", min: "8", max: "144", step: "0.1", "aria-label": "Text font size" } });
+    size.value = String(stickyFontSize(box.fontSize));
+    size.onchange = () => { if (!size.value || !Number.isFinite(size.valueAsNumber)) {
+      const latest = this.context.page().stickyNotes?.find((item) => item.id === note.id);
+      size.value = String(stickyFontSize(latest && stickyTextBoxes(latest).find((item) => item.id === boxId)?.fontSize)); return; }
+      const value = stickyFontSize(size.valueAsNumber); size.value = String(value); change({ fontSize: value }); };
+    for (const [key, label] of [["bold", "Bold"], ["italic", "Italic"], ["scaleText", "Scale text with box"]] as const) {
+      const row = panel.createEl("label", { cls: "ink-sticky-format-toggle" });
+      const toggle = row.createEl("input", { attr: { type: "checkbox", "aria-label": label } }); toggle.checked = box[key] === true;
+      row.createSpan({ text: label }); toggle.onchange = () => change({ [key]: toggle.checked });
+    }
+    for (const type of ["pointerdown", "pointermove", "pointerup", "pointercancel", "touchstart", "touchmove", "touchend", "touchcancel", "wheel", "keydown", "contextmenu"] as const)
+      panel.addEventListener(type, (event) => event.stopPropagation());
+    panel.addEventListener("keydown", (event) => { if (event.key === "Escape") { event.preventDefault(); this.closeFormat(true); } });
+    this.positionFormat(); close.focus({ preventScroll: true });
   }
   open(id: string, block?: string): void {
     const note = this.context.page().stickyNotes?.find((n) => n.id === id); if (!note) return;
@@ -299,6 +369,7 @@ export class StickyNoteLayer {
     if (box) {
       this.selectBox(current.id, boxId); input.classList.add("ink-sticky-box-input");
       this.positionBox(input, current, { ...box, height: box.height ?? 120 });
+      input.style.font = stickyFont(box, true);
     }
     input.value = box?.text ?? current[field]; this.editing = { id: current.id, field, boxId: box?.id, base: cloneSticky(current), input };
     for (const type of ["pointerdown", "pointermove", "pointerup", "pointercancel", "touchstart", "touchmove", "touchend", "touchcancel", "keydown"] as const) input.addEventListener(type, (e) => e.stopPropagation());
@@ -351,6 +422,8 @@ export class StickyNoteLayer {
   }
   sync(): void {
     const page = this.context.page(), editable = this.context.editable(), width = this.host.clientWidth;
+    const format = this.formatting;
+    if (format && (!editable || format.page !== page.id || !page.stickyNotes?.some((note) => note.id === format.note && !note.collapsed && stickyTextBoxes(note).some((box) => box.id === format.box)))) this.closeFormat();
     if (!editable) { this.editing = undefined; this.selectBox(); }
     // Invalidating the render cache (for example after a text commit) is not
     // a page change, and must not cancel the contact that committed the text.
@@ -468,6 +541,7 @@ export class StickyNoteLayer {
           this.positionBox(frame, note, box);
           frame.classList.toggle("is-selected", this.selectedBox?.note === note.id && this.selectedBox.box === box.id);
           const text = frame.createDiv({ cls: "ink-sticky-markdown markdown-rendered" });
+          text.style.font = stickyFont(box, true);
           text.style.width = `${box.width}px`;
           text.addEventListener("click", (event) => {
             if ((event.target as HTMLElement).closest("a") && contact !== "touch" && !this.context.pointer()) { event.preventDefault(); event.stopPropagation(); }
@@ -499,6 +573,7 @@ export class StickyNoteLayer {
             const controls = frame.createDiv({ cls: "ink-sticky-text-controls" });
             const move = button(controls, "Move text box", "grip-vertical", () => undefined); bindDrag(move, false, false, box.id);
             button(controls, "Edit text box", "pencil", () => this.edit(note, "text", card, box.id));
+            button(controls, "Format text box", "type", () => this.formatText(note, box.id));
             button(controls, "Delete text box", "trash-2", () => this.deleteTextBox(note, box.id));
             const resize = button(frame, "Resize text box", "move-diagonal-2", () => undefined);
             resize.classList.add("ink-sticky-text-resize"); bindDrag(resize, true, false, box.id);
@@ -507,7 +582,8 @@ export class StickyNoteLayer {
               resize.addEventListener(type, (e) => e.stopPropagation(), { signal: this.cards.signal });
             }
             frame.addEventListener("dblclick", (event) => {
-              if ((event.target as HTMLElement).closest("button,a") || contact === "pen" && !this.context.pointer()) return;
+              if ((event.target as HTMLElement).closest("button,a")) { event.stopPropagation(); return; }
+              if (contact === "pen" && !this.context.pointer()) return;
               event.preventDefault(); event.stopPropagation(); this.edit(note, "text", card, box.id);
             }, { signal: this.cards.signal });
             frame.addEventListener("keydown", (event) => {
@@ -572,7 +648,7 @@ export class StickyNoteLayer {
       for (const frame of Array.from(card?.querySelectorAll<HTMLElement>(".ink-sticky-text-box") ?? [])) {
         const box = stickyTextBoxes(note).find((box) => box.id === frame.dataset.textBoxId);
         if (box) { this.positionBox(frame, note, box); const text = frame.querySelector<HTMLElement>(".ink-sticky-markdown");
-          if (text) { text.style.width = `${box.width}px`; text.style.height = box.height === undefined ? "auto" : `${box.height}px`; text.style.overflow = box.height === undefined ? "visible" : "hidden"; } }
+          if (text) { text.style.font = stickyFont(box, true); text.style.width = `${box.width}px`; text.style.height = box.height === undefined ? "auto" : `${box.height}px`; text.style.overflow = box.height === undefined ? "visible" : "hidden"; } }
       }
     }
   }
