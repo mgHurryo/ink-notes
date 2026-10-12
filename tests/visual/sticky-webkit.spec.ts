@@ -24,7 +24,7 @@ for (const mode of ["ink", "pdf"]) test(`WebKit ${mode}: overlapping notes retai
   await expect(front.locator("strong")).toHaveText("Visible Markdown");
   expect(await front.locator("canvas").evaluate((el: HTMLCanvasElement) => el.getContext("2d")!.getImageData(2, 2, 1, 1).data[3])).toBe(0);
   await front.getByRole("button", { name: "Fold", exact: true }).tap();
-  await front.locator(".ink-sticky-title").tap(); await expect(front).not.toHaveClass(/is-collapsed/);
+  await front.getByRole("button", { name: "Expand", exact: true }).tap(); await expect(front).not.toHaveClass(/is-collapsed/);
   // Detached folded labels must not leave their long-press timer running.
   await page.waitForTimeout(650); await expect(page.locator(".menu")).toHaveCount(0);
   const options = front.getByRole("button", { name: "Sticky note options", exact: true });

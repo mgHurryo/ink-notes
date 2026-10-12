@@ -21,6 +21,12 @@ export function compareStickyOrder(a: StickyNote, b: StickyNote): number {
   return a.createdAt - b.createdAt || a.id.localeCompare(b.id);
 }
 
+/** x/y remain the folded anchor. Expanded frames fit inward without saving a new anchor. */
+export function stickyPosition(note: StickyNote): { x: number; y: number } {
+  return note.collapsed ? { x: note.x, y: note.y }
+    : { x: Math.min(note.x, 1 - note.width), y: Math.min(note.y, 1 - note.height) };
+}
+
 export function cloneSticky(note: StickyNote): StickyNote {
   return { ...note, deletedStrokeIds: [...note.deletedStrokeIds], strokes: note.strokes.map((stroke) => ({ ...stroke,
     points: stroke.points.map((point) => ({ ...point })), dynamics: stroke.dynamics ? { ...stroke.dynamics,
@@ -59,10 +65,9 @@ export function normalizeSticky(value: unknown, pageId: string): StickyNote | nu
         tiltY: typeof point.tiltY === "number" && Number.isFinite(point.tiltY) ? point.tiltY : undefined,
       })), createdAt: positive(stroke.createdAt, 1), updatedAt: positive(stroke.updatedAt, 1) }))
     .filter((stroke) => !removed.includes(stroke.id));
-  // Folded labels have their own visible bounds, enforced by the editor.
-  // Expanded dimensions must not pull a saved label away from the page edge.
-  return { id: raw.id, pageId, x: Math.max(0, Math.min(raw.collapsed === true ? 1 : 1 - width, raw.x!)),
-    y: Math.max(0, Math.min(raw.collapsed === true ? 1 : 1 - height, raw.y!)), width, height,
+  // The anchor survives unfolding and reloads; visible bounds belong to layout.
+  return { id: raw.id, pageId, x: Math.max(0, Math.min(1, raw.x!)),
+    y: Math.max(0, Math.min(1, raw.y!)), width, height,
     title: string(raw.title), keywords: string(raw.keywords), text: string(raw.text), textUpdatedAt: positive(raw.textUpdatedAt, 1),
     textWidth: Math.max(60, positive(raw.textWidth, width * positive(raw.boardPageWidth, STICKY_UNIT) - 32)),
     color: typeof raw.color === "string" && /^#[0-9a-f]{6}$/i.test(raw.color) ? raw.color : "#fff1a8",

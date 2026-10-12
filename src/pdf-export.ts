@@ -3,7 +3,7 @@ import { InkImage, InkNotebook, InkStroke } from "./model";
 import { PdfSidecar, PdfSidecarNotePage } from "./pdf-sidecar";
 import { penOutlineRings } from "./rendering";
 import { stickyFrameHeight, stickyFrameWidth, stickyPng, StickyMarkdownContext } from "./sticky-rendering";
-import type { StickyNote } from "./sticky-model";
+import { stickyPosition, type StickyNote } from "./sticky-model";
 
 /**
  * Vector ink export: re-renders the sidecar's note pages on top of the source
@@ -138,7 +138,8 @@ async function drawStickies(output: PDFDocument, page: PDFPage, notes: StickyNot
   for (const note of notes) {
     const image = await output.embedPng(await stickyPng(note, width, height, markdown));
     const frameHeight = stickyFrameHeight(note, width, height);
-    const origin = displayToPdfPoint(note.x, note.y + frameHeight / height, geometry);
+    const { x, y } = stickyPosition(note);
+    const origin = displayToPdfPoint(x, y + frameHeight / height, geometry);
     page.drawImage(image, { x: origin.x, y: origin.y, width: stickyFrameWidth(note, width), height: frameHeight, rotate: degrees(geometry.rotation) });
   }
 }

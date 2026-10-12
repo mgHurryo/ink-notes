@@ -34,6 +34,17 @@ describe("inline sticky layer geometry", () => {
     const moved = stickyStrokeOnPage(boardInk, { ...n, x: .3 }, enlarged);
     expect(moved.points[0].x - projection.points[0].x).toBeCloseTo(.1);
   });
+  it("routes and projects ink at the derived inward position without changing the folded anchor", () => {
+    const n = { ...note, x: .9, y: .9 };
+    const bounds = stickyBounds(n, g); expect(bounds.left).toBeCloseTo(.6); expect(bounds.top).toBeCloseTo(.68);
+    const ink = { ...stroke(.7, .8), points: stroke(.7, .8).points.map((p) => ({ ...p, y: .8 })) };
+    const result = splitStickyStroke(ink, [n], g);
+    expect(result.page).toHaveLength(0); expect(result.notes.get(n.id)).toHaveLength(1);
+    const local = result.notes.get(n.id)![0], projected = stickyStrokeOnPage(local, n, g);
+    expect(projected.points[0].x).toBeCloseTo(.7); expect(projected.points[0].y).toBeCloseTo(.8);
+    expect(stickyStrokeFromPage(projected, n, g).points).toEqual(local.points);
+    expect(n.x).toBe(.9); expect(n.y).toBe(.9);
+  });
   it("encodes stable paragraph references alongside note and page ids", () => {
     const url = new URL(stickyLink("Course.ink", "page", "note", "Vault", "definition-1"));
     expect(url.searchParams.get("block")).toBe("definition-1"); expect(url.searchParams.get("sticky")).toBe("note");

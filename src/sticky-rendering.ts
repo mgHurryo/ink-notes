@@ -1,6 +1,6 @@
 import type { StickyNote } from "./sticky-model";
 import { STICKY_HEADER } from "./sticky-ink";
-import { STICKY_UNIT } from "./sticky-model";
+import { STICKY_UNIT, stickyPosition } from "./sticky-model";
 import { drawInkStroke } from "./rendering";
 import { App, Component, MarkdownRenderer } from "obsidian";
 
@@ -62,15 +62,34 @@ export function paintStickyBoard(ctx: CanvasRenderingContext2D, note: StickyNote
 }
 
 export function stickyFrameHeight(note: StickyNote, pageWidth: number, pageHeight: number): number {
-  return note.collapsed ? (note.preview ? 100 : STICKY_HEADER) * pageWidth / note.boardPageWidth : note.height * pageHeight;
+  return note.collapsed ? 80 * pageWidth / note.boardPageWidth : note.height * pageHeight;
 }
 export function stickyFrameWidth(note: StickyNote, pageWidth: number): number {
-  return note.collapsed ? Math.min(note.width * pageWidth, 180 * pageWidth / note.boardPageWidth) : note.width * pageWidth;
+  return note.collapsed ? 80 * pageWidth / note.boardPageWidth : note.width * pageWidth;
+}
+
+/** The folded icon previews the same board viewport without mutating content. */
+export function paintStickyIcon(ctx: CanvasRenderingContext2D, note: StickyNote, width: number, height: number, pageAspect: number): void {
+  ctx.save(); ctx.fillStyle = note.color; ctx.fillRect(0, 0, width, height);
+  if (note.preview && (note.text || note.strokes.length)) {
+    const boardWidth = note.width * note.boardPageWidth;
+    const boardHeight = Math.max(1, note.height * note.boardPageWidth * pageAspect - STICKY_HEADER);
+    const scale = Math.min((width - width * .15) / boardWidth, (height - height * .15) / boardHeight);
+    ctx.translate((width - boardWidth * scale) / 2, (height - boardHeight * scale) / 2);
+    paintStickyBoard(ctx, note, boardWidth * scale, boardHeight * scale, scale);
+  } else {
+    ctx.strokeStyle = "#25221d"; ctx.lineWidth = width * .035;
+    ctx.strokeRect(width * .25, height * .2, width * .5, height * .6);
+    for (let i = 0; i < 3; i++) { ctx.beginPath(); ctx.moveTo(width * .35, height * (.35 + i * .13)); ctx.lineTo(width * .65, height * (.35 + i * .13)); ctx.stroke(); }
+  }
+  ctx.restore();
 }
 
 export function paintStickyFrame(ctx: CanvasRenderingContext2D, note: StickyNote, pageWidth: number, pageHeight: number): void {
   const width = stickyFrameWidth(note, pageWidth), height = stickyFrameHeight(note, pageWidth, pageHeight), scale = pageWidth / note.boardPageWidth;
-  ctx.save(); ctx.translate(note.x * pageWidth, note.y * pageHeight);
+  const { x, y } = stickyPosition(note);
+  ctx.save(); ctx.translate(x * pageWidth, y * pageHeight);
+  if (note.collapsed) { paintStickyIcon(ctx, note, width, height, pageHeight / pageWidth); ctx.restore(); return; }
   ctx.fillStyle = note.color; ctx.fillRect(0, 0, width, height);
   ctx.fillStyle = "#202020"; ctx.font = `bold ${16 * scale}px sans-serif`; ctx.textBaseline = "top";
   ctx.fillText(note.title || "Sticky note", 8 * scale, 8 * scale, Math.max(1, width - 16 * scale));
@@ -89,9 +108,9 @@ export async function stickyPng(note: StickyNote, pageWidth: number, pageHeight:
   const scale = Math.min(2, 4096 / Math.max(width, height), Math.sqrt(4_000_000 / (width * height)));
   const canvas = document.createElement("canvas"); canvas.width = Math.max(1, Math.ceil(width * scale)); canvas.height = Math.max(1, Math.ceil(height * scale));
   const ctx = canvas.getContext("2d"); if (!ctx) throw new Error("Sticky note rendering is unavailable");
-  ctx.scale(scale, scale); paintStickyFrame(ctx, { ...note, x: 0, y: 0, text: markdown ? "" : note.text,
-    strokes: markdown && note.text && (!note.collapsed || note.preview) ? [] : note.strokes }, pageWidth, pageHeight);
-  if (markdown && note.text && (!note.collapsed || note.preview)) {
+  ctx.scale(scale, scale); paintStickyFrame(ctx, { ...note, x: 0, y: 0, text: markdown && !note.collapsed ? "" : note.text,
+    strokes: markdown && note.text && !note.collapsed ? [] : note.strokes }, pageWidth, pageHeight);
+  if (markdown && note.text && !note.collapsed) {
     const boardScale = pageWidth / note.boardPageWidth;
     const img = await markdownImage(note, markdown, width / boardScale, Math.max(1, height / boardScale - STICKY_HEADER));
     ctx.save(); ctx.beginPath(); ctx.rect(0, STICKY_HEADER * boardScale, width, height - STICKY_HEADER * boardScale); ctx.clip();

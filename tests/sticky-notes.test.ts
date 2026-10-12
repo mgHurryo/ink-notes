@@ -2,7 +2,7 @@
 import { describe, expect, it, vi } from "vitest";
 vi.mock("obsidian", async () => import("../dev/obsidian"));
 import { createNotebook, mergeNotebooks, normalizeNotebook } from "../src/model";
-import { cloneSticky, normalizeSticky, StickyNote, stickyLink } from "../src/sticky-model";
+import { cloneSticky, normalizeSticky, StickyNote, stickyLink, stickyPosition } from "../src/sticky-model";
 import { applyNotebookOperation } from "../src/worker-core";
 import { clonePageValue } from "../src/worker-protocol";
 import { collectStickyEntries, filterStickyEntries, StickySearchModal } from "../src/sticky-index";
@@ -30,7 +30,10 @@ describe("sticky note persistence and search", () => {
       upsert: [{ ...folded, title: "At the edge", updatedAt: 2 }], deletedStickyNotes: {}, pageUpdatedAt: 2, notebookUpdatedAt: 2 });
     loaded = normalizeNotebook(JSON.parse(JSON.stringify(loaded)));
     expect(loaded.pages[0].stickyNotes![0]).toMatchObject({ x: .78, y: .88, title: "At the edge", strokes: folded.strokes });
-    expect(normalizeSticky({ ...folded, collapsed: false }, page.id)).toMatchObject({ x: .5, y: .7 });
+    const expanded = normalizeSticky({ ...folded, collapsed: false }, page.id)!;
+    expect(expanded).toMatchObject({ x: .78, y: .88 });
+    expect(stickyPosition(expanded)).toEqual({ x: .5, y: .7 });
+    expect(stickyPosition({ ...expanded, collapsed: true })).toEqual({ x: .78, y: .88 });
   });
   it("keeps overlapping notes in creation order through edits, worker saves and merges", () => {
     const book = createNotebook(), page = book.pages[0];
