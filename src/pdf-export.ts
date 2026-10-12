@@ -2,7 +2,7 @@ import { PDFDocument, PDFImage, PDFPage, degrees, rgb } from "pdf-lib";
 import { InkImage, InkNotebook, InkStroke } from "./model";
 import { PdfSidecar, PdfSidecarNotePage } from "./pdf-sidecar";
 import { penOutlineRings } from "./rendering";
-import { stickyFrameHeight, stickyPng } from "./sticky-rendering";
+import { stickyFrameHeight, stickyFrameWidth, stickyPng, StickyMarkdownContext } from "./sticky-rendering";
 import type { StickyNote } from "./sticky-model";
 
 /**
@@ -132,18 +132,18 @@ function imageDrawer(output: PDFDocument, read?: ImageBytes) {
   };
 }
 
-async function drawStickies(output: PDFDocument, page: PDFPage, notes: StickyNote[], geometry: PdfSidecarNotePage): Promise<void> {
+async function drawStickies(output: PDFDocument, page: PDFPage, notes: StickyNote[], geometry: PdfSidecarNotePage, markdown?: StickyMarkdownContext): Promise<void> {
   const rotated = geometry.rotation === 90 || geometry.rotation === 270;
   const width = rotated ? geometry.height : geometry.width, height = rotated ? geometry.width : geometry.height;
   for (const note of notes) {
-    const image = await output.embedPng(await stickyPng(note, width, height));
+    const image = await output.embedPng(await stickyPng(note, width, height, markdown));
     const frameHeight = stickyFrameHeight(note, width, height);
     const origin = displayToPdfPoint(note.x, note.y + frameHeight / height, geometry);
-    page.drawImage(image, { x: origin.x, y: origin.y, width: note.width * width, height: frameHeight, rotate: degrees(geometry.rotation) });
+    page.drawImage(image, { x: origin.x, y: origin.y, width: stickyFrameWidth(note, width), height: frameHeight, rotate: degrees(geometry.rotation) });
   }
 }
 
-export async function exportNotebookPdf(notebook: InkNotebook, sourceName: string, renderWidth?: number, readImages?: ImageBytes): Promise<Uint8Array> {
+export async function exportNotebookPdf(notebook: InkNotebook, sourceName: string, renderWidth?: number, readImages?: ImageBytes, markdown?: StickyMarkdownContext): Promise<Uint8Array> {
   const output = await PDFDocument.create();
   output.setTitle(`${sourceName} (handwritten)`);
   const drawImages = imageDrawer(output, readImages);
@@ -153,7 +153,7 @@ export async function exportNotebookPdf(notebook: InkNotebook, sourceName: strin
     await drawImages(pdfPage, page.images ?? [], geometry, false);
     for (const stroke of page.strokes) drawStroke(pdfPage, stroke, geometry, renderWidth);
     await drawImages(pdfPage, page.images ?? [], geometry, true);
-    await drawStickies(output, pdfPage, page.stickyNotes ?? [], geometry);
+    await drawStickies(output, pdfPage, page.stickyNotes ?? [], geometry, markdown);
   }
   return output.save();
 }
@@ -168,7 +168,7 @@ export function sidecarHasInk(sidecar: PdfSidecar): boolean {
   return notebookHasInk(sidecar.notebook);
 }
 
-export async function exportHandwrittenPdf(sourceBytes: ArrayBuffer, sidecar: PdfSidecar, sourceName: string, renderWidth?: number, readImages?: ImageBytes): Promise<Uint8Array> {
+export async function exportHandwrittenPdf(sourceBytes: ArrayBuffer, sidecar: PdfSidecar, sourceName: string, renderWidth?: number, readImages?: ImageBytes, markdown?: StickyMarkdownContext): Promise<Uint8Array> {
   if (looksDigitallySigned(sourceBytes)) {
     throw new PdfExportError("signed", "This PDF is digitally signed; exporting would invalidate the signature");
   }
@@ -205,7 +205,7 @@ export async function exportHandwrittenPdf(sourceBytes: ArrayBuffer, sidecar: Pd
       drawStroke(page, stroke, notePage, renderWidth);
     }
     await drawImages(page, note?.images ?? [], notePage, true);
-    await drawStickies(output, page, note?.stickyNotes ?? [], notePage);
+    await drawStickies(output, page, note?.stickyNotes ?? [], notePage, markdown);
   }
   return output.save();
 }

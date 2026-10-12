@@ -61,7 +61,7 @@ describe("reference-style editor", () => {
     const sticky = page.stickyNotes[0];
     sticky.strokes.push({ id: "source-ink", pageId: sticky.id, tool: "pen", width: 3, opacity: 1, color: "#000000",
       points: [{ x: 4, y: 8, pressure: .5, t: 1 }], createdAt: 1, updatedAt: 1 });
-    Array.from(document.querySelectorAll<HTMLButtonElement>('.ink-sticky-editor button')).find((button) => button.textContent === "Cancel")!.click();
+    expect(document.querySelector(".ink-sticky-editor")).toBeNull();
     host.duplicateCurrentPage();
     const duplicate = host.notebook.pages[1], copy = duplicate.stickyNotes[0];
     expect(copy.id).not.toBe(page.stickyNotes[0].id);

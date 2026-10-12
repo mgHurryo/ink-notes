@@ -266,7 +266,7 @@ export class InkView extends InkWritingView {
       return;
     }
     try {
-      const output = await exportNotebookPdf(this.notebook, this.file.basename, this.canvasLogicalWidth, this.imageLibrary?.bytes);
+      const output = await exportNotebookPdf(this.notebook, this.file.basename, this.canvasLogicalWidth, this.imageLibrary?.bytes, { app: this.app, source: this.file.path });
       const target = exportPathFor(this.file.path, (candidate) => this.app.vault.getAbstractFileByPath(candidate) !== null);
       await this.app.vault.createBinary(target, output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength) as ArrayBuffer);
       new Notice(`Exported ${target}`);

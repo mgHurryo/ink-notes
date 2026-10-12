@@ -19,6 +19,7 @@ import { ImageLibraryModal, ImageLibraryStore, placedImage } from "./image-libra
 import { PageImageLayer } from "./page-images";
 import { StickyNoteLayer, markdownStickyLink } from "./sticky-notes";
 import { cloneSticky, StickyNote } from "./sticky-model";
+import { splitStickyStroke, stickyStrokeOnPage, stickyStrokeFromPage, stickyBounds } from "./sticky-ink";
 import type { StickySearchEntry } from "./sticky-index";
 import type { InkImage } from "./model";
 import {
@@ -485,23 +486,24 @@ export abstract class InkWritingView extends FileView {
       file: this.file?.path ?? "", pageId: page.id, pageTitle: page.title, note: cloneSticky(note),
     })));
   }
-  async revealSticky(pageId: string, id: string): Promise<void> {
+  async revealSticky(pageId: string, id: string, block?: string): Promise<void> {
     const file = this.file;
     await this.revealStickyPage(pageId);
     if (file !== this.file || !this.viewReady) throw new Error("The notebook changed before the link opened");
     if (this.currentPage().id !== pageId || !this.currentPage().stickyNotes?.some((note) => note.id === id)) throw new Error("Sticky note no longer exists on this page");
-    this.syncStickyNotes(); this.stickies?.open(id);
+    this.syncStickyNotes(); this.stickies?.open(id, block);
   }
   private syncStickyNotes(): void {
+    if (this.stickyInput) return;
     if (!this.viewReady) return;
     const host = this.inputHost(); if (!host) return;
     if (this.stickies?.host !== host) {
       this.stickies?.dispose();
       this.stickies = new StickyNoteLayer(host, this.app, {
-        page: () => this.currentPage(), geometry: () => ({ width: this.canvasLogicalWidth, height: this.canvasLogicalHeight }),
+        page: () => this.currentPage(),
         editable: () => !this.inputLocked(), pointer: () => this.state.tool === "pointer",
-        brush: () => ({ color: this.state.pen.color, width: this.state.pen.width, opacity: this.state.pen.opacity }),
-        link: (note) => markdownStickyLink(this.file?.path ?? "", note, this.app.vault?.getName?.() ?? ""),
+        source: () => this.file?.path ?? "", busy: () => this.activePointerId !== null,
+        link: (note, block) => markdownStickyLink(this.file?.path ?? "", note, this.app.vault?.getName?.() ?? "", block),
         change: (before, after) => this.changeSticky(before, after),
       });
     }
@@ -513,9 +515,10 @@ export abstract class InkWritingView extends FileView {
     const note: StickyNote = { id: newId("sticky"), pageId: page.id, x: .2, y: .2, width: .5, height: .35,
       title: "Sticky note", keywords: "", text: "", textUpdatedAt: now, color: "#fff1a8", collapsed: false, preview: true,
       scrollX: 0, scrollY: 0, boardPageWidth: this.canvasLogicalWidth, strokes: [], deletedStrokeIds: [], createdAt: now, updatedAt: now };
-    this.selectWritingTool("pointer"); this.changeSticky(undefined, note); this.stickies?.open(note.id);
+    this.changeSticky(undefined, note);
+    if (this.state.tool === "pointer") this.selectWritingTool("pen");
   }
-  private changeSticky(before: StickyNote | undefined, after: StickyNote | undefined): void {
+  private changeSticky(before: StickyNote | undefined, after: StickyNote | undefined, history = true): void {
     if (this.inputLocked()) return;
     const pageId = (before ?? after)!.pageId, id = (before ?? after)!.id;
     if (before && this.pageById(pageId)?.stickyNotes?.find((note) => note.id === id)?.updatedAt !== before.updatedAt) {
@@ -526,7 +529,8 @@ export abstract class InkWritingView extends FileView {
       const page = this.pageById(pageId); if (!page) return;
       const existing = page.stickyNotes?.find((note) => note.id === id);
       const now = Math.max(Date.now(), page.updatedAt + 1, existing?.updatedAt ?? 0, (page.deletedStickyNotes?.[id] ?? 0) + 1);
-      const note = template ? { ...cloneSticky(template), updatedAt: now, textUpdatedAt: template.text === existing?.text ? existing.textUpdatedAt : now } : undefined;
+      const note = template ? { ...cloneSticky(template), textWidth: Math.max(60, template.textWidth ?? (before ?? template).width * template.boardPageWidth - 32),
+        updatedAt: now, textUpdatedAt: template.text === existing?.text ? existing.textUpdatedAt : now } : undefined;
       if (note && existing) {
         const removed = new Set(existing.deletedStrokeIds);
         note.strokes = note.strokes.map((stroke) => {
@@ -546,10 +550,100 @@ export abstract class InkWritingView extends FileView {
       this.markChanged(page); page.updatedAt = now; this.currentNotebook().updatedAt = now;
       this.queueWorkerOperation({ type: "patch-sticky-notes", pageId, upsert: note ? [note] : [], remove: [id],
         deletedStickyNotes: page.deletedStickyNotes ?? {}, pageUpdatedAt: now, notebookUpdatedAt: now });
-      this.syncStickyNotes(); this.scheduleSave(); this.afterInputFullySettled();
+      if (!this.stickyTransaction) {
+        this.syncStickyNotes(); this.scheduleSave();
+        if (this.activePointerId === null) this.afterInputFullySettled();
+      }
     };
     const original = before ? cloneSticky(before) : undefined, desired = after ? cloneSticky(after) : undefined;
-    apply(desired); this.pushCommand({ undo: () => apply(original), redo: () => apply(desired) });
+    apply(desired); if (history) this.pushCommand({ undo: () => apply(original), redo: () => apply(desired) });
+  }
+
+  private stickyInput?: {
+    page: InkPage; notes: StickyNote[]; original: InkStroke[];
+    proxies: Map<string, InkStroke>; owners: Map<string, StickyNote>;
+  };
+  private stickyCommands: EditCommand[] | null = null;
+  private stickyTransaction = false;
+  private stickyGeometry() { return { width: this.canvasLogicalWidth, height: this.canvasLogicalHeight }; }
+
+  /** Project expanded boards into the existing tool coordinate system only
+   * for the duration of input. These projections must never reach storage. */
+  private beginStickyInput(page: InkPage): void {
+    if (this.stickyInput || !page.stickyNotes?.some((note) => !note.collapsed)) return;
+    this.materializePendingInkPreview(page);
+    const notes = page.stickyNotes.map((note) => ({ ...note, strokes: note.strokes })), proxies = new Map<string, InkStroke>(), owners = new Map<string, StickyNote>();
+    const original = page.strokes.map((s) => ({ ...s, points: s.points }));
+    for (const note of notes.filter((n) => !n.collapsed)) for (const stroke of note.strokes) {
+      const projected = stickyStrokeOnPage(stroke, note, this.stickyGeometry());
+      proxies.set(stroke.id, { ...projected }); owners.set(stroke.id, note); page.strokes.push(projected);
+    }
+    this.stickyInput = { page, notes, original, proxies, owners }; this.stickyCommands = [];
+  }
+
+  private finishStickyInput(): void {
+    const input = this.stickyInput; if (!input) return;
+    this.stickyTransaction = true;
+    this.stickyInput = undefined;
+    const commands = this.stickyCommands ?? []; this.stickyCommands = null;
+    const page = input.page, original = new Map(input.original.map((s) => [s.id, s]));
+    const final = new Map(page.strokes.map((s) => [s.id, s]));
+    const unchanged = (a: InkStroke | undefined, b: InkStroke | undefined) => a && b && a.points === b.points;
+    const additions = new Map<string, InkStroke[]>(), pageParts: InkStroke[] = [], remap = new Map<string, string[]>();
+    for (const stroke of page.strokes) {
+      if (unchanged(stroke, input.proxies.get(stroke.id))) continue;
+      if (unchanged(stroke, original.get(stroke.id))) { pageParts.push(stroke); continue; }
+      const owner = input.owners.get(stroke.id);
+      if (owner) {
+        const parts = additions.get(owner.id) ?? [];
+        const part = { ...stickyStrokeFromPage(stroke, owner, this.stickyGeometry()), id: newId("sticky-ink") };
+        parts.push(part); remap.set(stroke.id, [part.id]); additions.set(owner.id, parts); continue;
+      }
+      const split = splitStickyStroke(stroke, input.notes, this.stickyGeometry());
+      // Every replacement gets a fresh id: a prior erase tombstone may refer
+      // to its page projection, but must not erase the board-owned fragment.
+      const mapped: string[] = [];
+      const mint = (part: InkStroke) => { const value = { ...part, id: newId("stroke") }; mapped.push(value.id); return value; };
+      pageParts.push(...split.page.map(mint));
+      for (const [id, parts] of split.notes) additions.set(id, [...(additions.get(id) ?? []), ...parts.map(mint)]);
+      remap.set(stroke.id, mapped);
+    }
+    page.strokes = pageParts;
+    const noteCommands: EditCommand[] = [];
+    for (const before of input.notes.filter((n) => !n.collapsed)) {
+      const removed = before.strokes.filter((s) => !unchanged(final.get(s.id), input.proxies.get(s.id)));
+      const added = additions.get(before.id) ?? [];
+      if (!removed.length && !added.length) continue;
+      let currentRemoved = removed, currentAdded = added;
+      const patch = (remove: InkStroke[], add: InkStroke[]) => {
+        const note = this.pageById(page.id)?.stickyNotes?.find((n) => n.id === before.id); if (!note) return;
+        const ids = new Set(remove.map((s) => s.id));
+        this.changeSticky(note, { ...note, strokes: [...note.strokes.filter((s) => !ids.has(s.id)), ...add],
+          deletedStrokeIds: [...new Set([...note.deletedStrokeIds, ...ids])] }, false);
+      };
+      patch(removed, added);
+      noteCommands.push({
+        undo: () => { currentRemoved = removed.map(restoredStroke); patch(currentAdded, currentRemoved); },
+        redo: () => { currentAdded = added.map(restoredStroke); patch(currentRemoved, currentAdded); },
+      });
+    }
+    const pageIds = new Set(pageParts.map((s) => s.id));
+    const removed = input.original.filter((s) => !pageIds.has(s.id));
+    const added = pageParts.filter((s) => !original.has(s.id));
+    const projectionIds = [...input.proxies.keys()];
+    const transientIds = [...final.keys()].filter((id) => !original.has(id));
+    this.queueStrokePatch(page, added, [...projectionIds, ...transientIds, ...removed.map((s) => s.id)]);
+    this.discardPendingInkPreview();
+    if (commands.length || noteCommands.length) {
+      const command = this.erasedStrokesCommand(page.id, removed, added);
+      this.pushCommand({
+        undo: () => { command.undo(); for (const c of [...noteCommands].reverse()) c.undo(); },
+        redo: () => { command.redo(); for (const c of noteCommands) c.redo(); },
+      });
+    }
+    this.selectedStrokeIds = new Set([...this.selectedStrokeIds].flatMap((id) => remap.get(id) ?? [id]));
+    this.stickyTransaction = false;
+    this.syncStickyNotes(); this.drawStrokes(page.strokes);
   }
 
   useImageLibrary(store: ImageLibraryStore): void { this.imageLibrary = store; }
@@ -1480,6 +1574,8 @@ export abstract class InkWritingView extends FileView {
     if (source === "pointer") this.capturePointer(event.pointerId);
     const page = this.currentPage();
     const tool = this.state.tool;
+    this.activePointerId = event.pointerId;
+    this.beginStickyInput(page);
     const brush = isBrushTool(tool) ? this.brushSettings(tool) : null;
     const rect = this.inputRect();
     this.tiles?.beginInput?.();
@@ -2379,8 +2475,18 @@ export abstract class InkWritingView extends FileView {
   protected eraseAt(point: InkPoint, page: InkPage, mode: EraserMode = this.state.eraserMode, size = this.state.eraserSize): boolean {
     const radius = mode === "stroke" ? STROKE_ERASER_HIT_RADIUS : size / 2;
     const indexed = this.tiles?.queryNear ? this.tiles.queryNear(point, radius) : page.strokes;
-    const candidates = [...new Map([...indexed, ...this.eraserReplacements].map((stroke) => [stroke.id, stroke])).values()]
-      .filter((stroke) => !this.erasedCandidateIds.has(stroke.id));
+    const top = [...(this.stickyInput?.notes ?? [])].reverse().find((n) => {
+      if (n.collapsed) return false;
+      const r = stickyBounds(n, this.stickyGeometry()); return point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom;
+    });
+    const candidates = [...new Map([...indexed, ...[...(this.stickyInput?.proxies.values() ?? [])], ...this.eraserReplacements].map((stroke) => [stroke.id, stroke])).values()]
+      .filter((stroke) => {
+        if (this.erasedCandidateIds.has(stroke.id)) return false;
+        const owner = this.stickyInput?.owners.get(stroke.id); if (!owner) return !top;
+        if (top?.id !== owner.id) return false;
+        const r = stickyBounds(owner, this.stickyGeometry());
+        return point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom;
+      });
     const removed = candidates.filter((stroke) => strokeIntersectsEraser(stroke, point, radius, mode, this.canvasLogicalWidth, this.canvasLogicalHeight));
     if (removed.length === 0) return false;
     for (const stroke of removed) {
@@ -2401,6 +2507,8 @@ export abstract class InkWritingView extends FileView {
           const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, createdAt: now, updatedAt: now };
           page.strokes.push(replacement);
           replacements.push(replacement);
+          const owner = this.stickyInput?.owners.get(stroke.id);
+          if (owner) this.stickyInput?.owners.set(replacement.id, owner);
           this.eraserReplacementIds.add(replacement.id);
           this.eraserReplacements.push(cloneStroke(replacement));
         }
@@ -2408,7 +2516,7 @@ export abstract class InkWritingView extends FileView {
       page.strokes.sort((left, right) => left.createdAt - right.createdAt);
     }
     if (page === this.currentPage()) {
-      for (const cell of this.tiles?.patchStrokes(replacements, removed.map((stroke) => stroke.id), page.strokes) ?? []) {
+      for (const cell of this.tiles?.patchStrokes(replacements.filter((s) => !this.stickyInput?.owners.has(s.id)), removed.map((stroke) => stroke.id), page.strokes.filter((s) => !this.stickyInput?.owners.has(s.id))) ?? []) {
         this.eraserPreviewCells.add(cell);
       }
     }
@@ -2476,7 +2584,10 @@ export abstract class InkWritingView extends FileView {
   }
 
   protected selectedStrokes(): InkStroke[] {
-    return this.currentPage().strokes.filter((stroke) => this.selectedStrokeIds.has(stroke.id));
+    const page = this.currentPage();
+    const strokes = this.stickyInput ? page.strokes : [...page.strokes,
+      ...(page.stickyNotes ?? []).filter((n) => !n.collapsed).flatMap((n) => n.strokes.map((s) => stickyStrokeOnPage(s, n, this.stickyGeometry())))];
+    return strokes.filter((stroke) => this.selectedStrokeIds.has(stroke.id));
   }
 
   protected isPointInSelection(point: InkPoint): boolean {
@@ -2571,12 +2682,14 @@ export abstract class InkWritingView extends FileView {
     const strokes = this.selectedStrokes().map(cloneStroke);
     if (strokes.length === 0) return;
     const page = this.currentPage();
+    this.beginStickyInput(page);
     this.materializePendingInkPreview(page);
     const ids = strokes.map((stroke) => stroke.id);
     this.deleteStrokes(page, ids);
     this.markChanged(page);
     this.queueStrokePatch(page, [], ids);
     this.pushCommand(this.erasedStrokesCommand(page.id, strokes, []));
+    this.finishStickyInput();
     this.clearSelection();
     this.drawInteractiveStrokes(page.strokes, true);
     this.scheduleSave();
@@ -2595,11 +2708,13 @@ export abstract class InkWritingView extends FileView {
         y: rect.height > 0 ? (scroller.top + scroller.height / 2 - rect.top) / rect.height : 0.5 };
     const strokes = pasteClipboardStrokes(content, page.id, this.canvasLogicalWidth, this.canvasLogicalHeight, target);
     if (strokes.length === 0) return;
+    this.beginStickyInput(page);
     this.materializePendingInkPreview(page);
     page.strokes.push(...strokes);
     this.markChanged(page);
     this.queueStrokePatch(page, strokes, []);
     this.pushCommand(this.erasedStrokesCommand(page.id, [], strokes));
+    this.finishStickyInput();
     this.selectedStrokeIds = this.state.tool === "lasso" ? new Set(strokes.map((stroke) => stroke.id)) : new Set();
     this.hideSelectionActions(); this.pasteTarget = null;
     this.drawInteractiveStrokes(page.strokes, true);
@@ -2686,7 +2801,7 @@ export abstract class InkWritingView extends FileView {
 
   protected tileExclusion(): ReadonlySet<string> | undefined {
     const committing = new Set(this.committingInkStrokes?.map(stroke => stroke.id) ?? []);
-    const excluded = new Set<string>();
+    const excluded = new Set<string>(this.stickyInput?.proxies.keys());
     if (this.activeStroke) excluded.add(this.activeStroke.id);
     for (const stroke of this.pendingInkStrokes) if (!committing.has(stroke.id)) excluded.add(stroke.id);
     return excluded.size > 0 ? excluded : undefined;
@@ -2901,7 +3016,7 @@ export abstract class InkWritingView extends FileView {
 
   protected drawStrokes(strokes: InkStroke[]): void {
     if (!this.ctx) return;
-    this.tiles?.sync(strokes, this.tileExclusion());
+    this.tiles?.sync(strokes.filter((s) => !this.stickyInput?.proxies.has(s.id)), this.tileExclusion());
     this.tiles?.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
     this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
     this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
@@ -2917,6 +3032,11 @@ export abstract class InkWritingView extends FileView {
 
   protected drawEraserInteraction(): void {
     if (!this.ctx) return;
+    if (this.stickyInput) {
+      const page = this.stickyInput.page;
+      this.stickies?.preview(this.stickyInput.notes.map((n) => ({ ...n,
+        strokes: page.strokes.filter((s) => this.stickyInput?.owners.get(s.id)?.id === n.id).map((s) => stickyStrokeFromPage(s, n, this.stickyGeometry())) })));
+    }
     const cells = [...this.eraserPreviewCells];
     this.eraserPreviewCells.clear();
     this.tiles?.previewInteractiveCells(cells, this.viewport, (window.devicePixelRatio || 1) * this.zoom);
@@ -2954,7 +3074,8 @@ export abstract class InkWritingView extends FileView {
     const drag = this.lassoDrag;
     if (!drag || !this.lassoCanvas || !this.lassoCtx) return;
     const selected = new Set(drag.strokes.map((stroke) => stroke.id));
-    this.tiles?.patchStrokes([], [...selected], page.strokes);
+    this.tiles?.patchStrokes([], [...selected], page.strokes.filter((s) => !this.stickyInput?.proxies.has(s.id)));
+    if (this.stickyInput) this.stickies?.preview(this.stickyInput.notes.map((n) => ({ ...n, strokes: n.strokes.filter((s) => !selected.has(s.id)) })));
     this.tiles?.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, false);
     const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight,
       window.devicePixelRatio || 1, this.zoom, 4_000_000);
@@ -3064,6 +3185,7 @@ export abstract class InkWritingView extends FileView {
     if (!interaction) return;
     const page = this.pageById(interaction.pageId);
     if (!page) {
+      this.stickyInput = undefined; this.stickyCommands = null;
       this.interaction = null;
       this.scribbleGesturePoints = [];
       this.refreshEraserCursor();
@@ -3085,9 +3207,11 @@ export abstract class InkWritingView extends FileView {
     }
     if (interaction.tool === "lasso") {
       this.finishLasso(page, interaction.lassoMode);
+      this.finishStickyInput();
       this.activePointerId = null;
       this.tiles?.resumeInkCommit();
       this.applyPendingMergedNotebook();
+      this.scheduleSave(); this.afterInputFullySettled();
       return;
     }
     if (interaction.tool === "eraser" && this.erasedStrokes.length > 0) {
@@ -3114,6 +3238,7 @@ export abstract class InkWritingView extends FileView {
         pageUpdatedAt: page.updatedAt, notebookUpdatedAt: this.currentNotebook().updatedAt });
       this.pushCommand(this.addedStrokeCommand(page.id, this.activeStroke));
     }
+    this.finishStickyInput();
     this.activePointerId = null;
     this.activeStroke = null;
     this.scribbleGesturePoints = [];
@@ -3214,6 +3339,7 @@ export abstract class InkWritingView extends FileView {
   }
 
   protected pushCommand(command: EditCommand): void {
+    if (this.stickyCommands) { this.stickyCommands.push(command); return; }
     this.undoStack.push(command);
     if (this.undoStack.length > UNDO_STACK_LIMIT) this.undoStack.shift();
     this.redoStack = [];

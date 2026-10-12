@@ -177,3 +177,22 @@ export class MarkdownRenderChild {
   constructor(public containerEl: HTMLElement) {}
   registerEvent(_event: unknown) {}
 }
+
+export class Component { load() {} unload() {} }
+// Preview adapter uses safe text nodes; production uses Obsidian's renderer.
+export class MarkdownRenderer {
+  static async render(_app: unknown, markdown: string, el: HTMLElement, _source: string, _component: Component) {
+    for (const line of markdown.split("\n")) {
+      const match = /^(#{1,6}) (.*)$/.exec(line);
+      const p = el.createEl((match ? `h${match[1].length}` : "p") as keyof HTMLElementTagNameMap);
+      const text = match ? match[2] : line;
+      const parts = text.split(/(\*\*[^*]+\*\*|\[[^\]]+\]\([^ )]+\))/g);
+      for (const part of parts) {
+        if (part.startsWith("**") && part.endsWith("**")) p.createEl("strong", { text: part.slice(2, -2) });
+        else { const link = /^\[([^\]]+)\]\(([^ )]+)\)$/.exec(part);
+          if (link && /^(https?:|obsidian:|#)/.test(link[2])) p.createEl("a", { text: link[1], attr: { href: link[2] } });
+          else p.append(document.createTextNode(part)); }
+      }
+    }
+  }
+}
