@@ -547,6 +547,25 @@ export abstract class InkWritingView extends FileView {
     }
     this.stickies.sync();
   }
+  private addPageText(): void {
+    if (this.inputLocked()) return;
+    this.selectWritingTool("pointer");
+    const page = this.currentPage(), rect = this.inputRect(), viewport = this.inputScroller().getBoundingClientRect();
+    const width = Math.min(320, this.canvasLogicalWidth * .6), height = Math.min(120, this.canvasLogicalHeight * .4);
+    const offset = (page.stickyNotes?.filter((note) => note.kind === "text").length ?? 0) % 4 * 24;
+    const x = (Math.max(0, viewport.left - rect.left) + Math.min(rect.width, viewport.width) * .25) / Math.max(1, rect.width);
+    const y = (Math.max(0, viewport.top - rect.top) + Math.min(rect.height, viewport.height) * .25) / Math.max(1, rect.height);
+    const now = (page.stickyNotes ?? []).reduce((time, note) => Math.max(time, note.createdAt + 1), Date.now());
+    const note: StickyNote = { id: newId("text"), pageId: page.id, kind: "text",
+      x: Math.max(0, Math.min(1 - width / this.canvasLogicalWidth, x + offset / this.canvasLogicalWidth)),
+      y: Math.max(0, Math.min(1 - height / this.canvasLogicalHeight, y + offset / this.canvasLogicalHeight)),
+      width: width / this.canvasLogicalWidth, height: height / this.canvasLogicalHeight,
+      title: "Text box", keywords: "", text: "", textUpdatedAt: now, textX: 0, textY: 0, textWidth: width, textHeight: height,
+      color: "#ffffff", collapsed: false, preview: true, scrollX: 0, scrollY: 0, boardPageWidth: this.canvasLogicalWidth,
+      strokes: [], deletedStrokeIds: [], createdAt: now, updatedAt: now };
+    this.changeSticky(undefined, note);
+    this.stickies?.editText(note.id);
+  }
   private addSticky(): void {
     if (this.inputLocked()) return;
     this.finishPointerInput(false); const page = this.currentPage();
@@ -629,9 +648,9 @@ export abstract class InkWritingView extends FileView {
   /** Project expanded boards into the existing tool coordinate system only
    * for the duration of input. These projections must never reach storage. */
   private beginStickyInput(page: InkPage): void {
-    if (this.stickyInput || !page.stickyNotes?.some((note) => !note.collapsed)) return;
+    if (this.stickyInput || !page.stickyNotes?.some((note) => note.kind !== "text" && !note.collapsed)) return;
     this.materializePendingInkPreview(page);
-    const notes = page.stickyNotes.map((note) => ({ ...note, strokes: note.strokes })), proxies = new Map<string, InkStroke>(), owners = new Map<string, StickyNote>();
+    const notes = page.stickyNotes.filter((note) => note.kind !== "text").map((note) => ({ ...note, strokes: note.strokes })), proxies = new Map<string, InkStroke>(), owners = new Map<string, StickyNote>();
     const original = page.strokes.map((s) => ({ ...s, points: s.points }));
     for (const note of notes.filter((n) => !n.collapsed)) for (const stroke of note.strokes) {
       const projected = stickyStrokeOnPage(stroke, note, this.stickyGeometry());
@@ -1356,6 +1375,7 @@ export abstract class InkWritingView extends FileView {
     this.addToolButton(draw, "lasso-select", "Select", "lasso");
     this.addToolButton(draw, "mouse-pointer-2", "Pointer", "pointer");
     this.addToolButton(draw, "shapes", "Shapes", "shape");
+    this.addIconButton(draw, "type", "Add text box", () => this.addPageText()).title = "Add text box (T)";
     if (this.imageLibrary) this.addIconButton(draw, "image-plus", "Image library", () => this.openImageLibrary());
     this.addIconButton(draw, "sticky-note", "Add sticky note", () => this.addSticky());
   }
@@ -1589,6 +1609,7 @@ export abstract class InkWritingView extends FileView {
     if (key === "-") { this.desktopZoom(1 / 1.1); return true; }
     if (key === "0") { this.desktopResetZoom(); return true; }
     if (event.shiftKey || this.inputLocked()) return false;
+    if (key === "t") { this.addPageText(); return true; }
     const tools: Record<string, InkTool> = { b: "pen", h: "highlighter", e: "eraser", v: "lasso", a: "pointer", s: "shape" };
     const tool = tools[key];
     if (tool) { this.selectWritingTool(tool); return true; }

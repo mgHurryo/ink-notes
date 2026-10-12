@@ -103,6 +103,14 @@ Sticky notes appear in previews, Ink embeds and exported PDFs. PDF export render
 
 Handwriting recognition is not bundled. An optional [handwriting index interface](docs/sticky-handwriting-index.md) allows another integration to provide recognized search terms. Without an integration, Ink Notes does not send handwriting anywhere or run recognition.
 
+## Page text boxes
+
+In an Ink notebook or PDF, choose the toolbar's **Add text box** (T on desktop) to insert text directly on the page and start typing. Add as many independent boxes as needed. These boxes have a transparent background, with no sticky-note title bar or folded state. They use the same inline Markdown editor and font controls as sticky text: local font presets, size, bold, italic and optional **Scale text with box**. Resizing changes wrapping and the visible window; font size stays fixed unless that option is enabled.
+
+Tap to select a box, drag with a finger to move it, and drag its selected bottom-right handle to resize. With a mouse or pen, **Pointer** selects and moves boxes; drawing tools continue handwriting on the page, including over text. Insertion selects Pointer automatically. Double-tap/double-click or **Edit text box** opens inline editing; click outside or Ctrl/Cmd+Enter to apply, Escape to cancel. Tap outside to hide the controls. Arrow keys move a focused box, Shift makes larger steps, Alt+arrows resize, Enter edits and Delete removes. Reading mode displays text without editing controls.
+
+Text objects support undo/redo, synchronization, page previews, Ink embeds and PDF export. They reuse the existing note-object storage in the `.ink` file or PDF sidecar; the source PDF is unchanged. Right-click or long-press a box for editing, formatting, deletion and Markdown links, including paragraph ids. Enlarge a box to reveal text clipped by its saved dimensions. Typed content is included in the existing note search. Older builds may display page text as sticky cards, so keep a backup before downgrading.
+
 ## Shapes and hold to straighten
 
 In editing mode, choose **Shapes** in either an Ink notebook or PDF, select **Line, Arrow, Rectangle, Square, Ellipse, Circle or Triangle**, then drag to draw. Shapes use the current pen color, width and opacity with uniform thickness. They are ordinary handwriting strokes: lasso selection, erasing, copy/paste, undo/redo, saving and PDF export use the existing workflow. Press **S** on desktop to reuse the last selected shape; tap Shapes again to change it. Fingers navigate unless **Use finger as pen** is enabled.

@@ -94,7 +94,8 @@ for (const mode of ["ink", "pdf"] as const) {
     const second = (await state(page)).textBoxes[0];
     await size.focus(); await page.setViewportSize({ width: 1000, height: 420 });
     await expect(size).toBeFocused(); await expect(panel).toBeVisible();
-    const bounds = (await panel.boundingBox())!; expect(bounds.y).toBeGreaterThanOrEqual(0); expect(bounds.y + bounds.height).toBeLessThanOrEqual(420);
+    // The browser delivers resize after setViewportSize; wait for its layout.
+    await expect.poll(async () => { const bounds = (await panel.boundingBox())!; return bounds.y >= 0 && bounds.y + bounds.height <= 420; }).toBe(true);
     await size.fill("30"); await size.press("Tab"); await page.keyboard.press("Escape");
     await expect(panel).toHaveCount(0);
     await expect(frame.getByRole("button", { name: "Format text box", exact: true })).toBeFocused();
