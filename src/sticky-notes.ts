@@ -1,7 +1,7 @@
 import { App, Component, MarkdownRenderer, Menu, Notice, setIcon } from "obsidian";
 import { InkPage } from "./model";
 import { cloneSticky, StickyNote, stickyLink } from "./sticky-model";
-import { paintStickyBoard } from "./sticky-rendering";
+import { paintStickyBoard, stickyFrameHeight, stickyFrameWidth } from "./sticky-rendering";
 import { STICKY_HEADER } from "./sticky-ink";
 
 interface StickyContext {
@@ -16,10 +16,11 @@ function button(parent: HTMLElement, label: string, icon: string, run: () => voi
   const el = parent.createEl("button", { attr: { type: "button", "aria-label": label, title: label } });
   setIcon(el, icon); el.onclick = run; return el;
 }
-function movedNote(note: StickyNote, dx: number, dy: number, resize: boolean, pan = 0): StickyNote {
+function movedNote(note: StickyNote, dx: number, dy: number, resize: boolean, rect: DOMRect, pan = 0): StickyNote {
   if (pan) return { ...note, scrollX: Math.max(0, note.scrollX - dx * note.boardPageWidth), scrollY: Math.max(0, note.scrollY - dy * pan * note.boardPageWidth) };
   return resize ? { ...note, width: Math.max(.12, Math.min(1 - note.x, note.width + dx)), height: Math.max(.10, Math.min(1 - note.y, note.height + dy)) }
-    : { ...note, x: Math.max(0, Math.min(1 - note.width, note.x + dx)), y: Math.max(0, Math.min(1 - note.height, note.y + dy)) };
+    : { ...note, x: Math.max(0, Math.min(1 - stickyFrameWidth(note, rect.width) / rect.width, note.x + dx)),
+      y: Math.max(0, Math.min(1 - stickyFrameHeight(note, rect.width, rect.height) / rect.height, note.y + dy)) };
 }
 
 /** Cards own only chrome and text editing. The board bubbles input to the
@@ -78,7 +79,7 @@ export class StickyNoteLayer {
       if (!drag.moved && Math.hypot(event.clientX - drag.x, event.clientY - drag.y) < 6) return;
       drag.moved = true;
       const dx = (event.clientX - drag.x) / drag.rect.width, dy = (event.clientY - drag.y) / drag.rect.height;
-      const note = movedNote(drag.note, dx, dy, drag.resize, drag.pan);
+      const note = movedNote(drag.note, dx, dy, drag.resize, drag.rect, drag.pan);
       if (drag.pan) this.preview([note]); else { this.position(drag.element, note); if (drag.resize) this.preview([note]); }
     }, { signal, passive: false, capture: true });
     const finish = (event: PointerEvent) => {
@@ -86,7 +87,7 @@ export class StickyNoteLayer {
       const moved = drag.moved || Math.hypot(event.clientX - drag.x, event.clientY - drag.y) >= 6;
       if (event.type === "pointerup" && this.context.editable() && this.context.page().id === drag.page) {
         const dx = (event.clientX - drag.x) / drag.rect.width, dy = (event.clientY - drag.y) / drag.rect.height;
-        const after = movedNote(drag.note, dx, dy, drag.resize, drag.pan);
+        const after = movedNote(drag.note, dx, dy, drag.resize, drag.rect, drag.pan);
         if (moved && (dx || dy)) this.context.change(drag.note, after);
         else { this.position(drag.element, drag.note); if (drag.pan || drag.resize) this.preview([drag.note]); }
       }
@@ -102,7 +103,7 @@ export class StickyNoteLayer {
       if (!drag.moved && Math.hypot(touch.clientX - drag.x, touch.clientY - drag.y) < 6) return;
       drag.moved = true; clearTimeout(this.hold);
       const dx = (touch.clientX - drag.x) / drag.rect.width, dy = (touch.clientY - drag.y) / drag.rect.height;
-      const note = movedNote(drag.note, dx, dy, drag.resize, drag.pan);
+      const note = movedNote(drag.note, dx, dy, drag.resize, drag.rect, drag.pan);
       if (drag.pan) this.preview([note]); else { this.position(drag.element, note); if (drag.resize) this.preview([note]); }
     }, { signal, passive: false, capture: true });
     doc.addEventListener("touchend", (event) => {
@@ -112,7 +113,7 @@ export class StickyNoteLayer {
       const moved = drag.moved || Math.hypot(touch.clientX - drag.x, touch.clientY - drag.y) >= 6;
       if (this.context.editable() && this.context.page().id === drag.page) {
         const dx = (touch.clientX - drag.x) / drag.rect.width, dy = (touch.clientY - drag.y) / drag.rect.height;
-        if (moved && (dx || dy)) this.context.change(drag.note, movedNote(drag.note, dx, dy, drag.resize, drag.pan));
+        if (moved && (dx || dy)) this.context.change(drag.note, movedNote(drag.note, dx, dy, drag.resize, drag.rect, drag.pan));
         else {
           this.position(drag.element, drag.note); if (drag.pan || drag.resize) this.preview([drag.note]);
           // A native touch drag prevents the synthetic click. Restore tap-to-open explicitly.
@@ -132,8 +133,8 @@ export class StickyNoteLayer {
   private position(el: HTMLElement, note: StickyNote): void {
     el.style.left = `${note.x * 100}%`; el.style.top = `${note.y * 100}%`;
     const scale = this.host.clientWidth / note.boardPageWidth;
-    el.style.width = note.collapsed ? `${Math.min(note.width * this.host.clientWidth, 180 * scale)}px` : `${note.width * 100}%`;
-    el.style.height = note.collapsed ? `${(note.preview ? 100 : STICKY_HEADER) * scale}px` : `${note.height * 100}%`;
+    el.style.width = `${stickyFrameWidth(note, this.host.clientWidth)}px`;
+    el.style.height = `${stickyFrameHeight(note, this.host.clientWidth, this.host.clientHeight)}px`;
     el.style.backgroundColor = note.color;
     el.style.setProperty("--sticky-header-height", `${STICKY_HEADER * scale}px`);
   }
@@ -162,6 +163,10 @@ export class StickyNoteLayer {
   }
   private update(note: StickyNote, patch: Partial<StickyNote>): void {
     if (this.context.busy()) return;
+    if (patch.collapsed === false) {
+      // At right/bottom edges unfold to the left/up, keeping the saved size.
+      patch = { ...patch, x: Math.min(note.x, 1 - note.width), y: Math.min(note.y, 1 - note.height) };
+    }
     if (!this.context.editable()) {
       if (patch.collapsed !== undefined) { this.readFrames.set(note.id, patch.collapsed); this.last = undefined; this.sync(); }
       return;
@@ -189,7 +194,7 @@ export class StickyNoteLayer {
       if (e.key === "Escape") { this.editing = undefined; this.last = undefined; this.sync(); }
       else if (e.key === "Enter" && (field !== "text" || e.ctrlKey || e.metaKey)) { e.preventDefault(); this.commitText(); }
     };
-    input.focus(); input.select();
+    input.focus({ preventScroll: true }); input.select();
   }
   private showMenu(note: StickyNote, x: number, y: number): void {
     clearTimeout(this.hold); this.menu?.hide(); const menu = new Menu(); this.menu = menu; this.menuNote = note.id;
@@ -254,7 +259,8 @@ export class StickyNoteLayer {
     this.last = { page: page.id, notes: page.stickyNotes, editable, width }; this.cards.abort(); this.cards = new AbortController();
     this.markdown.unload(); this.markdown = new Component(); this.markdown.load(); this.layer.empty();
     for (const stored of page.stickyNotes ?? []) {
-      const note = !editable && this.readFrames.has(stored.id) ? { ...stored, collapsed: this.readFrames.get(stored.id)! } : stored;
+      let note = !editable && this.readFrames.has(stored.id) ? { ...stored, collapsed: this.readFrames.get(stored.id)! } : stored;
+      if (!note.collapsed && stored.collapsed) note = { ...note, x: Math.min(note.x, 1 - note.width), y: Math.min(note.y, 1 - note.height) };
       const card = this.layer.createDiv({ cls: `ink-sticky-note${note.collapsed ? " is-collapsed" : ""}`, attr: { "data-sticky-id": note.id, tabindex: "-1", "aria-label": note.title || "Sticky note" } }); this.position(card, note);
       const header = card.createDiv({ cls: "ink-sticky-header" });
       header.style.height = `${STICKY_HEADER * width / note.boardPageWidth}px`;

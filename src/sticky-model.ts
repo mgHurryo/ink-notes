@@ -59,7 +59,10 @@ export function normalizeSticky(value: unknown, pageId: string): StickyNote | nu
         tiltY: typeof point.tiltY === "number" && Number.isFinite(point.tiltY) ? point.tiltY : undefined,
       })), createdAt: positive(stroke.createdAt, 1), updatedAt: positive(stroke.updatedAt, 1) }))
     .filter((stroke) => !removed.includes(stroke.id));
-  return { id: raw.id, pageId, x: Math.max(0, Math.min(1 - width, raw.x!)), y: Math.max(0, Math.min(1 - height, raw.y!)), width, height,
+  // Folded labels have their own visible bounds, enforced by the editor.
+  // Expanded dimensions must not pull a saved label away from the page edge.
+  return { id: raw.id, pageId, x: Math.max(0, Math.min(raw.collapsed === true ? 1 : 1 - width, raw.x!)),
+    y: Math.max(0, Math.min(raw.collapsed === true ? 1 : 1 - height, raw.y!)), width, height,
     title: string(raw.title), keywords: string(raw.keywords), text: string(raw.text), textUpdatedAt: positive(raw.textUpdatedAt, 1),
     textWidth: Math.max(60, positive(raw.textWidth, width * positive(raw.boardPageWidth, STICKY_UNIT) - 32)),
     color: typeof raw.color === "string" && /^#[0-9a-f]{6}$/i.test(raw.color) ? raw.color : "#fff1a8",

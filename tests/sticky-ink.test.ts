@@ -30,7 +30,7 @@ describe("inline sticky layer geometry", () => {
     const enlarged = { width: 1200, height: 1600 };
     const projection = stickyStrokeOnPage(boardInk, n, enlarged), restored = stickyStrokeFromPage(projection, n, enlarged);
     expect(restored.points[0].x).toBeCloseTo(2.1); expect(restored.points[0].y).toBeCloseTo(3.2);
-    expect(restored.width).toBe(3); expect(stickyBounds(n, enlarged).top).toBeCloseTo(.255);
+    expect(restored.width).toBe(3); expect(stickyBounds(n, enlarged).top).toBeCloseTo(.28);
     const moved = stickyStrokeOnPage(boardInk, { ...n, x: .3 }, enlarged);
     expect(moved.points[0].x - projection.points[0].x).toBeCloseTo(.1);
   });

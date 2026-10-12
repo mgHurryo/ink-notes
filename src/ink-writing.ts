@@ -886,6 +886,13 @@ export abstract class InkWritingView extends FileView {
   protected abstract toolbarRoot(): HTMLElement;
   /** Scrollable container the touch pan gesture moves. */
   protected abstract inputScroller(): HTMLElement;
+  /** Keep inline editing reachable when a software keyboard crops the pane. */
+  protected revealInlineEditor(): void {
+    const scroller = this.inputScroller(), input = scroller.ownerDocument.activeElement;
+    if (input?.matches(".ink-sticky-inline-input") && scroller.contains(input)) {
+      input.scrollIntoView({ block: "nearest", inline: "nearest" });
+    }
+  }
   /** Zoom applied for a two-finger pinch (value already computed). */
   protected abstract applyGestureZoom(value: number, focus: { x: number; y: number }, anchor: { x: number; y: number }): void;
 
