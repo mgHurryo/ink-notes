@@ -286,7 +286,7 @@ describe("reference-style editor", () => {
       const event = new WheelEvent("wheel", { deltaY, deltaMode, ctrlKey, bubbles: true, cancelable: true });
       scroller.dispatchEvent(event); return event;
     };
-    expect(wheel(30, 0, false).defaultPrevented).toBe(false);
+    expect(wheel(30, 0, false).defaultPrevented).toBe(true);
     expect(zoom).not.toHaveBeenCalled();
     wheel(-1, 1);
     expect(zoom).toHaveBeenLastCalledWith(Math.exp(16 * 0.004), { x: 0, y: 0 });

@@ -103,6 +103,12 @@ Sticky notes appear in previews, Ink embeds and exported PDFs. PDF export render
 
 Handwriting recognition is not bundled. An optional [handwriting index interface](docs/sticky-handwriting-index.md) allows another integration to provide recognized search terms. Without an integration, Ink Notes does not send handwriting anywhere or run recognition.
 
+## Desktop navigation
+
+Mouse wheel and two-finger trackpad scrolling first move within the current page. At the top/bottom boundary, continued scrolling by about 100 pixels changes to the previous/next page. Horizontal trackpad scrolling and **Shift+wheel** follow the same rule at the left/right boundary. Returning vertically to the previous page lands at its bottom; moving forward lands at the top. Pixel, line and page wheel units are supported.
+
+Decaying trackpad inertia is limited to one page per gesture. Reverse direction, pause briefly, or start a renewed flick after its tail to continue navigating. Navigation requests during animations or saves are combined into the latest destination instead of dropped. **PageUp/PageDown**, **Home/End** and **Alt+Left/Right** navigate; **Ctrl/Cmd+wheel**, **+/-** and **0** zoom/reset. **Space+drag** or middle-button drag pans in editing mode; left drag pans in reading mode. Text fields and nested scroll panels keep their own interaction.
+
 ## UI Preview
 
 Run `npm run preview` and open http://127.0.0.1:4173 to exercise the actual editor view with a lightweight browser host. Preview notes are in memory only; Vault storage and sync must be verified in Obsidian. The layout responds to the editor pane width, including split panes and mobile screens.

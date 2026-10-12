@@ -1543,7 +1543,7 @@ export class PdfInkView extends InkWritingView {
     return Math.max(this.scroller?.clientWidth ?? 0, this.pageWrap?.offsetWidth ?? 0) + 16;
   }
 
-  protected swipeSettle(delta: number, travel = 0): void {
+  protected swipeSettle(delta: number, travel = 0, scrollEdge?: "top" | "bottom"): void {
     if (this.flipSettling) return;
     const wrap = this.pageWrap;
     if (!wrap) { this.destroySwipeStage(); return; }
@@ -1555,7 +1555,7 @@ export class PdfInkView extends InkWritingView {
     const from = this.swipeDragOffset;
     const to = flip ? -side * this.swipePitch() : 0;
     const isCurrent = this.beginPageSwipe(this.noteIndex + (flip ? delta : 0),
-      this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 1);
+      this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 1, scrollEdge);
     this.flipSettling = true;
     this.animatePageSwipe(stage ? [wrap, stage] : [wrap], from, to, () => {
       if (!isCurrent()) return;

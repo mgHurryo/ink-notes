@@ -31,6 +31,77 @@ export function gestureContract(create: () => Promise<any>): void {
       return { editor, page, host, finger, send, draw };
     }
 
+    async function desktopSetup() {
+      const { editor } = await setup();
+      const scroller = editor.inputScroller() as HTMLElement;
+      let top = 0, left = 0;
+      Object.defineProperties(scroller, {
+        clientHeight: { configurable: true, value: 600 }, scrollHeight: { configurable: true, value: 1200 },
+        clientWidth: { configurable: true, value: 800 }, scrollWidth: { configurable: true, value: 800 },
+        scrollTop: { configurable: true, get: () => top, set: (v: number) => { top = Math.max(0, Math.min(600, v)); } },
+        scrollLeft: { configurable: true, get: () => left, set: (v: number) => { left = Math.max(0, Math.min(0, v)); } },
+      });
+      const settle = vi.spyOn(editor, "swipeSettle").mockImplementation(() => undefined);
+      vi.spyOn(editor, "swipeDrag").mockImplementation(() => undefined);
+      const wheel = (x: number, y: number, options: WheelEventInit = {}, target: HTMLElement = scroller) => {
+        const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX: x, deltaY: y, ...options });
+        target.dispatchEvent(event); return event;
+      };
+      return { editor, scroller, settle, wheel };
+    }
+
+    it.each([0, 1, 2])("scrolls inside the page before vertical boundary navigation (wheel mode %s)", async (mode) => {
+      const { scroller, settle, wheel } = await desktopSetup();
+      const amount = mode === 0 ? 120 : mode === 1 ? 8 : 1;
+      wheel(0, amount, { deltaMode: mode });
+      expect(scroller.scrollTop).toBeGreaterThan(0);
+      expect(settle).not.toHaveBeenCalled();
+      scroller.scrollTop = 600;
+      expect(wheel(0, amount, { deltaMode: mode }).defaultPrevented).toBe(true);
+      expect(settle).toHaveBeenCalledWith(1, 0, "top");
+      wheel(0, -amount, { deltaMode: mode }); // Reverse immediately, without waiting for inertia to expire.
+      expect(scroller.scrollTop).toBeLessThan(600);
+      scroller.scrollTop = 0;
+      wheel(0, -amount, { deltaMode: mode });
+      expect(settle).toHaveBeenLastCalledWith(-1, 0, "bottom");
+    });
+
+    it.each(["abrupt", "gradual"])("rearms trackpad navigation on reversal and %s renewed motion, but ignores decaying inertia", async (ramp) => {
+      const { wheel, settle } = await desktopSetup();
+      wheel(140, 0);
+      for (const delta of [90, 60, 30, 10, 4]) wheel(delta, 0);
+      expect(settle).toHaveBeenCalledTimes(1);
+      if (ramp === "gradual") for (const delta of [8, 20, 35]) wheel(delta, 0);
+      wheel(140, 0); // New flick after the inertia tail, with no idle interval.
+      expect(settle).toHaveBeenCalledTimes(2);
+      wheel(-140, 0);
+      expect(settle).toHaveBeenLastCalledWith(-1, 0, undefined);
+      expect(settle).toHaveBeenCalledTimes(3);
+    });
+
+    it("keeps nested editing and scroll surfaces independent from document navigation", async () => {
+      const { wheel, settle, scroller } = await desktopSetup();
+      const textarea = document.createElement("textarea"); scroller.append(textarea);
+      expect(wheel(140, 140, {}, textarea).defaultPrevented).toBe(false);
+      const nested = document.createElement("div"); nested.style.overflowY = "auto"; scroller.append(nested);
+      Object.defineProperties(nested, { clientHeight: { value: 100 }, scrollHeight: { value: 300 } });
+      expect(wheel(0, 140, {}, nested).defaultPrevented).toBe(false);
+      expect(settle).not.toHaveBeenCalled();
+      expect(wheel(0, 140, { altKey: true }).defaultPrevented).toBe(false);
+    });
+
+    it("accepts page keys during an ongoing handoff without enabling edits", async () => {
+      const { editor, scroller } = await desktopSetup();
+      const navigate = vi.spyOn(editor, "desktopNavigate").mockImplementation(() => undefined);
+      editor.flipSettling = true;
+      const key = new KeyboardEvent("keydown", { key: "PageDown", bubbles: true, cancelable: true });
+      scroller.dispatchEvent(key);
+      expect(key.defaultPrevented).toBe(true);
+      expect(navigate).toHaveBeenCalledWith("next");
+      scroller.dispatchEvent(new KeyboardEvent("keydown", { key: "e", bubbles: true }));
+      expect(editor.state.tool).toBe("pen");
+    });
+
     it.each(["loops", "horizontal waves", "vertical waves"])("locally erases %s with the normal pen and preserves adjacent ink, undo and redo", async (shape) => {
       const { editor, page } = await setup();
       editor.capturePointer = vi.fn(); editor.releasePointer = vi.fn();
