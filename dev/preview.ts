@@ -14,6 +14,7 @@ import { StickySearchModal } from "../src/sticky-index";
 import { exportNotebookPdf, exportHandwrittenPdf } from "../src/pdf-export";
 import { createSidecar } from "../src/pdf-sidecar";
 import { PDFDocument, degrees } from "pdf-lib";
+import { openPdfPreview } from "./pdf-preview";
 
 type RendererComparisonMode = "pen" | "highlighter" | "stroke-eraser" | "circle-eraser" | "square-eraser" | "lasso";
 
@@ -177,6 +178,13 @@ void (async () => {
         return { bytes: bytes.length, images };
       } };
   document.documentElement.dataset.inkReady = "true";
+  (window as any).__inkNotesPreview.openPdf = async () => {
+    await view.onClose();
+    for (const cleanup of (view as any).cleanups.splice(0)) cleanup();
+    view.contentEl.className = "";
+    const pdf = await openPdfPreview();
+    (window as any).__inkNotesPreview.view = pdf;
+  };
   if (new URLSearchParams(location.search).has("notebooks")) {
     const files = new URLSearchParams(location.search).has("empty") ? [] : ["Class notes", "Sketchbook"].map((name) =>
       Object.assign(new TFile(), { path: `Ink Notes/${name}.ink`, basename: name, extension: "ink" }));
