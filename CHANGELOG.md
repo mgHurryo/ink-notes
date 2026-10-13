@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3-beta.13 - 2026-10-13
+
+- Keep mounted handwriting tiles and queued render jobs during desktop scrolling within the same visible tile range; skip empty overlay redraws during ordinary viewport motion.
+- Share in-flight PDF neighbour rasters between swipe previews and destination pages, and invalidate pending work when a document or view is reset.
+- Add regressions for stable tile DOM and shared page renders. Automated typecheck, build, unit tests and desktop browser tests pass; physical Obsidian desktop performance remains unmeasured.
+
 ## 0.1.3-beta.12 - 2026-10-13
 
 - Compress saved handwriting losslessly when it reduces file size, while continuing to read existing JSON notebooks and PDF sidecars.
