@@ -3,6 +3,7 @@ import { TFile } from "obsidian";
 import type { App, Vault } from "obsidian";
 import { PdfSidecarFormatError, createSidecar } from "../src/pdf-sidecar";
 import { PdfSidecarStore, serializeSidecar } from "../src/pdf-store";
+import { parseStoredJson } from "../src/storage-codec";
 
 /** Minimal in-memory vault that mimics the surface PdfSidecarStore touches. */
 class FakeVault {
@@ -181,6 +182,18 @@ describe("findRecoveryCandidates", () => {
 });
 
 describe("migrateForRename", () => {
+  it("finds and renames compressed sidecars without changing their handwriting",async()=>{
+    const {vault,store}=setup(), sidecar=createSidecar(PDF_PATH,FINGERPRINT,SOURCE_PAGES), p=sidecar.notebook.pages[0];
+    p.strokes=[{id:"dense",pageId:p.id,tool:"pen",color:"#000",width:3,opacity:1,createdAt:1,updatedAt:2,
+      points:Array.from({length:500},(_,i)=>({x:i/1000,y:.3,pressure:.7,t:i+1}))}];
+    const raw=serializeSidecar(sidecar); expect(raw).toContain("INK-GZIP-1");
+    const {sidecarPathFor}=await import("../src/pdf-sidecar"); vault.put(sidecarPathFor(PDF_PATH),raw);
+    expect(await store.findRecoveryCandidates(FINGERPRINT)).toHaveLength(1);
+    expect(await store.migrateForRename("docs/renamed.pdf",PDF_PATH)).toBe(true);
+    const file=store.sidecarFileFor("docs/renamed.pdf")!;
+    expect((await store.read(file)).notebook.pages[0].strokes[0].points).toEqual(p.strokes[0].points);
+    expect(parseStoredJson(await store.readRaw(file)).source.path).toBe("docs/renamed.pdf");
+  });
   it("moves the sidecar when its PDF is renamed", async () => {
     const { vault, store } = setup();
     await store.createFor(vault.put(PDF_PATH, "%PDF"), FINGERPRINT, SOURCE_PAGES);

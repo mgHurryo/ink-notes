@@ -1,4 +1,5 @@
 import { InkNotebook, InkStroke, mergeNotebooks, normalizeNotebook } from "./model";
+import { parseStoredJson, serializeStoredJson } from "./storage-codec";
 import { cloneSticky, compareStickyOrder } from "./sticky-model";
 import { drawInkStroke, penOutlineRings } from "./rendering";
 import {
@@ -190,6 +191,9 @@ export class InkWorkerCore {
       throw new ProtocolError("revision-gap", `Worker revision ${session.revision} is behind request revision ${request.notebookRevision}`);
     }
 
+    if (request.type === "serialize-storage") {
+      return this.response(request, { type: "storage-serialized", content: serializeStoredJson(request.value) });
+    }
     if (request.type === "apply-operation") {
       if (request.notebookRevision !== request.revision) {
         throw new ProtocolError("revision-gap", "Operation revision metadata does not match its notebook revision");
@@ -240,7 +244,7 @@ export class InkWorkerCore {
       session.pendingSave.set(token, {
         notebook: normalizeNotebook(merged),
         revision: session.revision,
-        reconcile: serializeNotebook(merged) !== serializeNotebook(local),
+        reconcile: JSON.stringify(merged) !== JSON.stringify(local),
       });
       return this.response(request, { type: "save-prepared", token, content: serializeNotebook(merged), revision: session.revision });
     }
@@ -271,7 +275,7 @@ export class InkWorkerCore {
     }
     if (request.type === "merge-external") {
       const merged = mergeNotebooks(parseNotebook(request.raw), session.notebook);
-      const changed = serializeNotebook(merged) !== serializeNotebook(session.notebook);
+      const changed = JSON.stringify(merged) !== JSON.stringify(session.notebook);
       session.notebook = normalizeNotebook(merged);
       if (changed) {
         session.indexes = workerIndexes(session.notebook);
@@ -435,9 +439,9 @@ function drawWorkerStroke(ctx: CanvasRenderingContext2D, stroke: InkStroke, widt
 
 function parseNotebook(raw: string): InkNotebook {
   try {
-    return normalizeNotebook(JSON.parse(raw));
+    return normalizeNotebook(parseStoredJson(raw));
   } catch {
-    throw new ProtocolError("invalid-format", "Existing ink notebook is not valid JSON");
+    throw new ProtocolError("invalid-format", "Existing ink notebook is corrupt or uses an unsupported encoding");
   }
 }
 

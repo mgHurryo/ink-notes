@@ -276,6 +276,17 @@ export class InkWorkerSession {
     return response.revision;
   }
 
+  /** Caller supplies a detached snapshot; compression runs in the existing worker. */
+  async serializeStorage(value: unknown): Promise<string> {
+    await this.operationTail;
+    const response = await this.service.send({
+      type: "serialize-storage", sessionId: this.id, generation: this.generation,
+      notebookRevision: this.mirroredRevision, value,
+    });
+    if (response.type !== "storage-serialized") throw unexpected(response);
+    return response.content;
+  }
+
   async prepareSave(raw: string, minimumRevision: number): Promise<{ token: string; content: string; revision: number }> {
     await this.operationTail;
     const response = await this.service.send({

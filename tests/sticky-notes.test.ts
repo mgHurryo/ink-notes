@@ -10,6 +10,7 @@ import { paintStickyBoard } from "../src/sticky-rendering";
 import { imageVaultApp } from "../dev/image-vault";
 import { createSidecar, PDF_INK_FOLDER } from "../src/pdf-sidecar";
 import { notebookHasInk } from "../src/pdf-export";
+import { serializeStoredJson } from "../src/storage-codec";
 
 export function note(pageId: string): StickyNote {
   return { id: "sticky-a", pageId, x: .2, y: .2, width: .5, height: .3, title: "Physics", keywords: "force diagrams", text: "你好\nNewton",
@@ -190,12 +191,14 @@ describe("sticky note persistence and search", () => {
   });
   it("derives index from ink/PDF files, searches title/text/keywords and optional recognized terms", async () => {
     const app = imageVaultApp(), book = createNotebook(); book.pages[0].stickyNotes = [note(book.pages[0].id)];
-    await app.vault.create("Course.ink", JSON.stringify(book));
+    book.pages[0].stickyNotes![0].strokes[0].points = Array.from({length:100},(_,i)=>({x:4+i/100,y:8,pressure:.5,t:i+1}));
+    const compressed = serializeStoredJson(book); expect(compressed).toContain("INK-GZIP-1");
+    await app.vault.create("Course.ink", compressed);
     await app.vault.create("Broken.ink", "invalid");
     await app.vault.createBinary("Paper.pdf", new ArrayBuffer(2));
     const sidecar = createSidecar("Paper.pdf", { sha256: "a".repeat(64), byteLength: 2 }, [{ width: 600, height: 800, rotation: 0 }]);
     sidecar.notebook.pages[0].stickyNotes = [{ ...note(sidecar.notePages[0].id), title: "PDF note", text: "exam review" }];
-    await app.vault.create(`${PDF_INK_FOLDER}/Paper.pdfink.json`, JSON.stringify(sidecar));
+    await app.vault.create(`${PDF_INK_FOLDER}/Paper.pdfink.json`, serializeStoredJson(sidecar));
     // The preview vault supplies no parent; use the host's parent metadata as Obsidian does.
     const pdf = app.vault.getAbstractFileByPath(`${PDF_INK_FOLDER}/Paper.pdfink.json`)!;
     Object.assign(pdf, { parent: { path: PDF_INK_FOLDER } });
