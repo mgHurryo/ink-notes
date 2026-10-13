@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.3-beta.12 - 2026-10-13
+
+- Compress saved handwriting losslessly when it reduces file size, while continuing to read existing JSON notebooks and PDF sidecars.
+- Avoid duplicate visible-ink tile updates during PDF page navigation, promote matching neighbour rasters into the active page, and bound/release offscreen preview canvases.
+- Verified in automated unit and desktop browser tests; real Obsidian/iPad memory pressure and crash behavior remain unverified.
+
 ## 0.1.3-beta.9 - 2026-10-12
 
 - Prevent Obsidian safe-area padding from reducing the PDF canvas during sticky keyboard editing. Keep automatic scrolling inside the plugin canvas rather than scrolling outer panes or the WebView.
