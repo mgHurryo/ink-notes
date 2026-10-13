@@ -386,6 +386,12 @@ export class TileRenderer {
     // Keep both mounted tiles and in-flight tile jobs; rebuilding the queue on
     // every scroll event repeatedly cancels work and remounts the same frame.
     if (!refine && sameDensity && sameVisible) return;
+    // Refine callers run every animation frame while a render loop is active.
+    // Once the frame is settled, content edits are the only remaining trigger,
+    // and they advance the cell revision so the exact-cache probe below fails;
+    // skipping the rebuild then also keeps queued prewarm jobs alive instead
+    // of clearing and re-deriving them every frame.
+    if (sameDensity && sameVisible && this.visibleCurrent()) return;
     this.jobs = [];
     for (const node of Array.from(this.host.children)) {
       if (!this.visible.has((node as HTMLElement).dataset.cell ?? "")) node.remove();
@@ -455,6 +461,16 @@ export class TileRenderer {
         && (!best || Math.abs(tile.density - this.density) < Math.abs(best.density - this.density))) best = tile;
     }
     return best;
+  }
+  /** True when every visible cell already holds an up-to-date tile at the
+   *  exact current density, so a refine pass would only re-attach identical
+   *  rasters. get() revalidates the revision, so edited cells fail here. */
+  private visibleCurrent(): boolean {
+    if (!this.active) return false;
+    for (const cell of this.visible) {
+      if (!this.get(this.active, cell, this.density)) return false;
+    }
+    return true;
   }
   private attach(tile: Tile): void {
     if (tile.node.parentElement === this.host) { tile.used = ++this.sequence; return; }

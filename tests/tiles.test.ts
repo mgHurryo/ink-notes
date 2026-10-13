@@ -140,6 +140,42 @@ describe("interactive tile commits", () => {
     expect(renderer.jobs).toBe(queuedJobs);
   });
 
+  it("skips the per-frame refine rebuild once every visible cell holds its exact raster", () => {
+    const host = { children: [] };
+    const state = { id: 1, index: { width: 256, height: 256, revisions: new Map([["0:0", 3]]) } };
+    const tile = { node: { parentElement: host }, revision: 3 };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, {
+      active: state, disposed: false, host, density: 2, visible: new Set(["0:0"]),
+      viewport: { x: 0, y: 0, width: 100, height: 100 }, jobs: [{ cell: "9:9", priority: "prewarm" }],
+      get: vi.fn(() => tile), attach: vi.fn(), schedule: vi.fn(),
+    });
+    const queuedJobs = renderer.jobs;
+
+    renderer.update({ x: 0, y: 0, width: 100, height: 100 }, 2, true);
+
+    expect(renderer.get).toHaveBeenCalledWith(state, "0:0", 2);
+    expect(renderer.jobs).toBe(queuedJobs);
+    expect(renderer.attach).not.toHaveBeenCalled();
+    expect(renderer.schedule).not.toHaveBeenCalled();
+  });
+
+  it("rebuilds the refine queue when a visible cell lost its exact raster", () => {
+    const host = { children: [] };
+    const state = { id: 1, index: { width: 256, height: 256, revisions: new Map([["0:0", 4]]) } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, {
+      active: state, disposed: false, host, density: 2, visible: new Set(["0:0"]),
+      viewport: { x: 0, y: 0, width: 100, height: 100 }, jobs: [], heldCells: new Set(),
+      cache: new Map(), get: vi.fn(() => undefined), schedule: vi.fn(),
+    });
+
+    renderer.update({ x: 0, y: 0, width: 100, height: 100 }, 2, true);
+
+    expect(renderer.schedule).toHaveBeenCalledOnce();
+    expect(renderer.jobs).toEqual([expect.objectContaining({ cell: "0:0", density: 2, priority: "visible" })]);
+  });
+
   it("composes newly added ink over an exact stale tile without replaying history", () => {
     const addition = stroke("new", 0.1, 0.1);
     const state = { id: 3, index: {
