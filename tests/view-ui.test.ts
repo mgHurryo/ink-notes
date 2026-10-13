@@ -891,7 +891,7 @@ describe("page rail thumbnails and resizing", () => {
     // image, never like re-ruled paper.
     expect(page.style.getPropertyValue("--ink-page-scale")).toBe("2");
   });
-  it("refreshes only the current page's thumbnail after its ink changes", () => {
+  it("refreshes only the current page's thumbnail after its ink changes", async () => {
     const internal = view as unknown as {
       notebook: ReturnType<typeof createNotebook>;
       pageIndex: number;
@@ -906,10 +906,36 @@ describe("page rail thumbnails and resizing", () => {
     internal.notebook.pages[1].strokes.push(stroke(internal.notebook.pages[1], "s2"));
     internal.pageIndex = 1;
     internal.refreshCurrentPageThumbnail();
+    await new Promise(requestAnimationFrame);
     const drawn = vi.mocked(drawInkStroke).mock.calls;
     expect(drawn.length).toBeGreaterThan(0);
     // Scaled clones again: match the refreshed page's stroke by id.
     for (const call of drawn) expect((call[1] as InkStroke).id).toBe("s2");
+  });
+
+  it("coalesces same-frame thumbnail refresh requests into one repaint", async () => {
+    const internal = view as unknown as {
+      notebook: ReturnType<typeof createNotebook>;
+      pageIndex: number;
+      addPage(): void;
+      refreshCurrentPageThumbnail(): void;
+    };
+    internal.addPage();
+    button("Pages").click();
+    const canvases = document.querySelectorAll<HTMLCanvasElement>(".ink-page-thumb canvas");
+    canvases.forEach((canvas) => withBox(canvas, 152, 208));
+    vi.mocked(drawInkStroke).mockClear();
+    internal.notebook.pages[1].strokes.push(stroke(internal.notebook.pages[1], "s2"));
+    internal.pageIndex = 1;
+    // Pointerup and the tile ink commit both request a refresh within the
+    // same frame; the page's strokes must be painted once, not twice.
+    internal.refreshCurrentPageThumbnail();
+    internal.refreshCurrentPageThumbnail();
+    await new Promise(requestAnimationFrame);
+    expect(vi.mocked(drawInkStroke).mock.calls.length).toBeGreaterThan(0);
+    const paintedFrames = vi.mocked(drawInkStroke).mock.calls.length;
+    await new Promise(requestAnimationFrame);
+    expect(vi.mocked(drawInkStroke).mock.calls.length).toBe(paintedFrames);
   });
 
   it("keeps a failing thumbnail render contained to that thumbnail", () => {

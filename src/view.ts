@@ -96,6 +96,7 @@ export class InkView extends InkWritingView {
   private railResize: { pointerId: number; startWidth: number; startX: number } | null = null;
   /** Deferred thumbnail redraw while the rail's expand transition runs. */
   private railRevealTimer: number | undefined;
+  private thumbnailRefreshFrame: number | null = null;
   private pageManagement = false;
   private selectedPageIds = new Set<string>();
 
@@ -140,6 +141,8 @@ export class InkView extends InkWritingView {
     this.closeDevPanel();
     if (this.railRevealTimer !== undefined) window.clearTimeout(this.railRevealTimer);
     this.railRevealTimer = undefined;
+    if (this.thumbnailRefreshFrame !== null) window.cancelAnimationFrame(this.thumbnailRefreshFrame);
+    this.thumbnailRefreshFrame = null;
     if (this.renderFrame !== null) window.cancelAnimationFrame(this.renderFrame);
     this.renderFrame = null;
     if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
@@ -417,11 +420,18 @@ export class InkView extends InkWritingView {
   }
 
   /** Repaints only the current page's thumbnail after its content changed
-   *  (stroke added/removed, undo/redo, external merge) — never per frame. */
+   *  (stroke added/removed, undo/redo, external merge) — never per frame.
+   *  Pointerup and the tile ink commit both land here a few frames apart;
+   *  coalescing them onto one animation frame halves full-page thumbnail
+   *  repaints while writing, which redraws every stroke of the page. */
   private refreshCurrentPageThumbnail(): void {
-    const rail = this.root?.querySelector<HTMLElement>(".ink-page-rail");
-    const canvas = rail?.querySelectorAll<HTMLCanvasElement>(".ink-page-thumb canvas")[this.pageIndex];
-    if (canvas) this.drawPageThumbnail(canvas, this.currentPage());
+    if (this.thumbnailRefreshFrame !== null) return;
+    this.thumbnailRefreshFrame = window.requestAnimationFrame(() => {
+      this.thumbnailRefreshFrame = null;
+      const rail = this.root?.querySelector<HTMLElement>(".ink-page-rail");
+      const canvas = rail?.querySelectorAll<HTMLCanvasElement>(".ink-page-thumb canvas")[this.pageIndex];
+      if (canvas) this.drawPageThumbnail(canvas, this.currentPage());
+    });
   }
 
   /** Thumbnails blank-paint while the expand transition starts from 0; once

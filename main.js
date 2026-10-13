@@ -27102,6 +27102,11 @@ var InkWritingView = class extends import_obsidian6.FileView {
     this.eraserPointerInside = false;
     this.renderFrame = null;
     this.resizeRequested = false;
+    /** Path2D per confirmed outline. Worker outlines are immutable Float32Arrays
+     *  whose reference survives until a longer outline replaces them, so the
+     *  array identity keys the cache and every animation frame reuses the same
+     *  path instead of re-tracing tens of thousands of vertices. */
+    this.confirmedOutlinePaths = /* @__PURE__ */ new WeakMap();
     /** Popover root; reflects the eraser mode state (is-stroke-eraser). */
     this.settingsPanel = null;
     /** The eraser's own mini popover (mode + size only). */
@@ -29854,10 +29859,50 @@ var InkWritingView = class extends import_obsidian6.FileView {
   }
   drawConfirmedOutline(ctx, points, color, opacity, width, mode) {
     if (points.length < 4) return;
-    ctx.save();
-    ctx.globalAlpha = opacity;
     const scaleX = this.canvasLogicalWidth;
     const scaleY = this.canvasLogicalHeight;
+    let cached = this.confirmedOutlinePaths.get(points);
+    if (!cached || cached.width !== scaleX || cached.height !== scaleY || cached.mode !== mode) {
+      const path = new Path2D();
+      if (mode === "highlighter") {
+        path.moveTo(points[0] * scaleX, points[1] * scaleY);
+        for (let index = 2; index < points.length; index += 2) {
+          const previousX = points[index - 2] * scaleX;
+          const previousY = points[index - 1] * scaleY;
+          const pointX = points[index] * scaleX;
+          const pointY = points[index + 1] * scaleY;
+          const last = index === points.length - 2;
+          path.quadraticCurveTo(
+            previousX,
+            previousY,
+            last ? pointX : (previousX + pointX) / 2,
+            last ? pointY : (previousY + pointY) / 2
+          );
+        }
+        path.lineTo(points[points.length - 2] * scaleX, points[points.length - 1] * scaleY);
+      } else {
+        let tracing = false;
+        for (let index = 0; index < points.length; index += 2) {
+          const x = points[index] * scaleX;
+          const y = points[index + 1] * scaleY;
+          if (!Number.isFinite(x) || !Number.isFinite(y)) {
+            tracing = false;
+            continue;
+          }
+          if (!tracing) {
+            tracing = true;
+            path.moveTo(x, y);
+            continue;
+          }
+          path.lineTo(x, y);
+        }
+        if (tracing) path.closePath();
+      }
+      cached = { width: scaleX, height: scaleY, mode, path };
+      this.confirmedOutlinePaths.set(points, cached);
+    }
+    ctx.save();
+    ctx.globalAlpha = opacity;
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
     ctx.lineCap = "round";
@@ -29865,43 +29910,10 @@ var InkWritingView = class extends import_obsidian6.FileView {
     if (mode === "highlighter") {
       ctx.globalCompositeOperation = "multiply";
       ctx.lineWidth = width;
-      ctx.beginPath();
-      ctx.moveTo(points[0] * scaleX, points[1] * scaleY);
-      for (let index = 2; index < points.length; index += 2) {
-        const previousX = points[index - 2] * scaleX;
-        const previousY = points[index - 1] * scaleY;
-        const pointX = points[index] * scaleX;
-        const pointY = points[index + 1] * scaleY;
-        const last = index === points.length - 2;
-        ctx.quadraticCurveTo(
-          previousX,
-          previousY,
-          last ? pointX : (previousX + pointX) / 2,
-          last ? pointY : (previousY + pointY) / 2
-        );
-      }
-      ctx.lineTo(points[points.length - 2] * scaleX, points[points.length - 1] * scaleY);
-      ctx.stroke();
+      ctx.stroke(cached.path);
     } else {
       ctx.globalCompositeOperation = "source-over";
-      ctx.beginPath();
-      let tracing = false;
-      for (let index = 0; index < points.length; index += 2) {
-        const x = points[index] * scaleX;
-        const y = points[index + 1] * scaleY;
-        if (!Number.isFinite(x) || !Number.isFinite(y)) {
-          tracing = false;
-          continue;
-        }
-        if (!tracing) {
-          tracing = true;
-          ctx.moveTo(x, y);
-          continue;
-        }
-        ctx.lineTo(x, y);
-      }
-      if (tracing) ctx.closePath();
-      ctx.fill();
+      ctx.fill(cached.path);
     }
     ctx.restore();
   }
@@ -31148,6 +31160,7 @@ var TileRenderer = class {
     this.density = nextDensity;
     this.visible = visible;
     if (!refine && sameDensity && sameVisible) return;
+    if (sameDensity && sameVisible && this.visibleCurrent()) return;
     this.jobs = [];
     for (const node of Array.from(this.host.children)) {
       if (!this.visible.has((_a = node.dataset.cell) != null ? _a : "")) node.remove();
@@ -31220,6 +31233,16 @@ var TileRenderer = class {
       if (tile.state === state && tile.cell === cell && tile.revision === ((_a = state.index.revisions.get(cell)) != null ? _a : 0) && (!best || Math.abs(tile.density - this.density) < Math.abs(best.density - this.density))) best = tile;
     }
     return best;
+  }
+  /** True when every visible cell already holds an up-to-date tile at the
+   *  exact current density, so a refine pass would only re-attach identical
+   *  rasters. get() revalidates the revision, so edited cells fail here. */
+  visibleCurrent() {
+    if (!this.active) return false;
+    for (const cell of this.visible) {
+      if (!this.get(this.active, cell, this.density)) return false;
+    }
+    return true;
   }
   attach(tile) {
     var _a;
@@ -31933,6 +31956,7 @@ var InkView = class extends InkWritingView {
     this.devPanel = null;
     /** Live rail drag (pointerdown → pointerup) from the resize handle. */
     this.railResize = null;
+    this.thumbnailRefreshFrame = null;
     this.pageManagement = false;
     this.selectedPageIds = /* @__PURE__ */ new Set();
     this.swipeStage = null;
@@ -31984,6 +32008,8 @@ var InkView = class extends InkWritingView {
     this.closeDevPanel();
     if (this.railRevealTimer !== void 0) window.clearTimeout(this.railRevealTimer);
     this.railRevealTimer = void 0;
+    if (this.thumbnailRefreshFrame !== null) window.cancelAnimationFrame(this.thumbnailRefreshFrame);
+    this.thumbnailRefreshFrame = null;
     if (this.renderFrame !== null) window.cancelAnimationFrame(this.renderFrame);
     this.renderFrame = null;
     if (this.zoomRenderTimer !== void 0) window.clearTimeout(this.zoomRenderTimer);
@@ -32254,12 +32280,19 @@ var InkView = class extends InkWritingView {
     });
   }
   /** Repaints only the current page's thumbnail after its content changed
-   *  (stroke added/removed, undo/redo, external merge) — never per frame. */
+   *  (stroke added/removed, undo/redo, external merge) — never per frame.
+   *  Pointerup and the tile ink commit both land here a few frames apart;
+   *  coalescing them onto one animation frame halves full-page thumbnail
+   *  repaints while writing, which redraws every stroke of the page. */
   refreshCurrentPageThumbnail() {
-    var _a;
-    const rail = (_a = this.root) == null ? void 0 : _a.querySelector(".ink-page-rail");
-    const canvas = rail == null ? void 0 : rail.querySelectorAll(".ink-page-thumb canvas")[this.pageIndex];
-    if (canvas) this.drawPageThumbnail(canvas, this.currentPage());
+    if (this.thumbnailRefreshFrame !== null) return;
+    this.thumbnailRefreshFrame = window.requestAnimationFrame(() => {
+      var _a;
+      this.thumbnailRefreshFrame = null;
+      const rail = (_a = this.root) == null ? void 0 : _a.querySelector(".ink-page-rail");
+      const canvas = rail == null ? void 0 : rail.querySelectorAll(".ink-page-thumb canvas")[this.pageIndex];
+      if (canvas) this.drawPageThumbnail(canvas, this.currentPage());
+    });
   }
   /** Thumbnails blank-paint while the expand transition starts from 0; once
    *  the rail reached its width, repaint them at full resolution. */
