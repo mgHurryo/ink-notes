@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.4 - 2026-10-13
+
+- Replace operating-system detection through `navigator.userAgent` with Obsidian's `Platform` API while preserving handwriting-first defaults for iPad split windows.
+- Open linked sticky notes with the workspace API supported by the declared Obsidian minimum (1.5.7), instead of `revealLeaf`, which requires Obsidian 1.7.2.
+- Apply sticky-note layout and PDF snapshot styles through Obsidian's `setCssStyles` and `setCssProps` APIs. Preserve Markdown export styling and verify it in Ink and PDF browser tests.
+- No note migration or format change. Automated typecheck, unit tests, build, audit, and sticky browser regressions pass; the Community review scanner itself was not rerun in this environment.
+
 ## 0.1.3 - 2026-10-13
 
 - Promote the 0.1.3 beta series to stable. Create and manage Ink notebooks, write on PDF pages, add blank pages, reorder or hide handwritten pages, and edit the same PDF from split panes with conflict-aware sidecar saves. Source PDFs remain unchanged.

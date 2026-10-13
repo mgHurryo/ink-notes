@@ -211,23 +211,29 @@ export class StickyNoteLayer {
   }
   private position(el: HTMLElement, note: StickyNote): void {
     const { x, y } = stickyPosition(note);
-    el.style.left = `${x * 100}%`; el.style.top = `${y * 100}%`;
     const scale = this.host.clientWidth / note.boardPageWidth;
-    el.style.width = `${stickyFrameWidth(note, this.host.clientWidth)}px`;
-    el.style.height = `${stickyFrameHeight(note, this.host.clientWidth, this.host.clientHeight)}px`;
-    el.style.backgroundColor = note.kind === "text" ? "transparent" : note.color;
-    el.style.setProperty("--sticky-header-height", `${STICKY_HEADER * scale}px`);
+    el.setCssStyles({
+      left: `${x * 100}%`, top: `${y * 100}%`,
+      width: `${stickyFrameWidth(note, this.host.clientWidth)}px`,
+      height: `${stickyFrameHeight(note, this.host.clientWidth, this.host.clientHeight)}px`,
+      backgroundColor: note.kind === "text" ? "transparent" : note.color,
+    });
+    el.setCssProps({ "--sticky-header-height": `${STICKY_HEADER * scale}px` });
   }
   private card(id: string): HTMLElement | undefined {
     return Array.from(this.layer.children).find((el) => (el as HTMLElement).dataset.stickyId === id) as HTMLElement | undefined;
   }
   private positionBox(element: HTMLElement, note: StickyNote, box: StickyTextBox): void {
     const scale = this.host.clientWidth / note.boardPageWidth;
-    element.style.transformOrigin = "top left"; element.style.transform = `scale(${scale})`;
-    element.style.left = `${(box.x - note.scrollX) * scale}px`; element.style.top = `${(box.y - note.scrollY) * scale}px`;
-    element.style.width = `${box.width}px`; element.style.height = box.height === undefined ? "auto" : `${box.height}px`;
-    element.style.setProperty("--sticky-control-size", `${44 / Math.max(.1, scale)}px`);
-    element.style.setProperty("--sticky-control-icon", `${20 / Math.max(.1, scale)}px`);
+    element.setCssStyles({
+      transformOrigin: "top left", transform: `scale(${scale})`,
+      left: `${(box.x - note.scrollX) * scale}px`, top: `${(box.y - note.scrollY) * scale}px`,
+      width: `${box.width}px`, height: box.height === undefined ? "auto" : `${box.height}px`,
+    });
+    element.setCssProps({
+      "--sticky-control-size": `${44 / Math.max(.1, scale)}px`,
+      "--sticky-control-icon": `${20 / Math.max(.1, scale)}px`,
+    });
     // Fit the selected actions to the visible board, including small or
     // partially cropped boxes; their hit targets do not shrink with text.
     const pageText = note.kind === "text", position = stickyPosition(note);
@@ -245,9 +251,11 @@ export class StickyNoteLayer {
     const y = (box.y - note.scrollY) * scale + (pageText ? position.y * boardHeight : 0);
     const left = Math.max(minX, Math.min(maxX - controlsWidth, x + box.width * scale - controlsWidth));
     const top = Math.max(minY, Math.min(maxY - controlsHeight, y - minY >= controlsHeight ? y - controlsHeight : y + (box.height ?? element.offsetHeight) * scale));
-    element.style.setProperty("--sticky-controls-left", `${(left - x) / scale}px`);
-    element.style.setProperty("--sticky-controls-top", `${(top - y) / scale}px`);
-    element.style.setProperty("--sticky-controls-width", `${controlsWidth / scale}px`);
+    element.setCssProps({
+      "--sticky-controls-left": `${(left - x) / scale}px`,
+      "--sticky-controls-top": `${(top - y) / scale}px`,
+      "--sticky-controls-width": `${controlsWidth / scale}px`,
+    });
   }
   private selectBox(note?: string, box?: string): void {
     this.selectedBox = note && box ? { note, box } : undefined;
@@ -307,10 +315,12 @@ export class StickyNoteLayer {
     const left = viewport?.offsetLeft ?? 0, top = viewport?.offsetTop ?? 0;
     const width = viewport?.width ?? doc.documentElement.clientWidth, height = viewport?.height ?? doc.documentElement.clientHeight;
     const panel = format.element;
-    panel.style.width = `${Math.min(260, Math.max(44, width - 16))}px`;
-    panel.style.maxHeight = `${Math.max(44, height - 16)}px`;
-    panel.style.left = `${Math.max(left + 8, Math.min(rect.left, left + width - panel.offsetWidth - 8))}px`;
-    panel.style.top = `${Math.max(top + 8, Math.min(rect.bottom + 8, top + height - panel.offsetHeight - 8))}px`;
+    panel.setCssStyles({
+      width: `${Math.min(260, Math.max(44, width - 16))}px`,
+      maxHeight: `${Math.max(44, height - 16)}px`,
+      left: `${Math.max(left + 8, Math.min(rect.left, left + width - panel.offsetWidth - 8))}px`,
+      top: `${Math.max(top + 8, Math.min(rect.bottom + 8, top + height - panel.offsetHeight - 8))}px`,
+    });
   }
   private formatText(note: StickyNote, boxId: string): void {
     if (!this.context.editable() || this.context.busy() || this.editing) return;
@@ -428,7 +438,7 @@ export class StickyNoteLayer {
     if (box) {
       this.selectBox(current.id, boxId); input.classList.add("ink-sticky-box-input");
       this.positionBox(input, current, { ...box, height: box.height ?? 120 });
-      input.style.font = stickyFont(box, true);
+      input.setCssStyles({ font: stickyFont(box, true) });
     }
     input.value = box?.text ?? current[field]; this.editing = { id: current.id, field, boxId: box?.id, base: cloneSticky(current), input };
     for (const type of ["pointerdown", "pointermove", "pointerup", "pointercancel", "touchstart", "touchmove", "touchend", "touchcancel", "keydown"] as const) input.addEventListener(type, (e) => e.stopPropagation());
@@ -579,7 +589,7 @@ export class StickyNoteLayer {
       }
       if (note.kind !== "text") {
         const header = card.createDiv({ cls: "ink-sticky-header" });
-        header.style.height = `${STICKY_HEADER * width / note.boardPageWidth}px`;
+        header.setCssStyles({ height: `${STICKY_HEADER * width / note.boardPageWidth}px` });
         const grip = button(header, "Move sticky note", "grip-vertical", () => undefined);
         grip.classList.add("ink-sticky-move");
         const title = grip.createSpan({ cls: "ink-sticky-title", text: note.title || "Sticky note" });
@@ -631,12 +641,14 @@ export class StickyNoteLayer {
           this.positionBox(frame, note, box);
           frame.classList.toggle("is-selected", this.selectedBox?.note === note.id && this.selectedBox.box === box.id);
           const text = frame.createDiv({ cls: "ink-sticky-markdown markdown-rendered" });
-          text.style.font = stickyFont(box, true);
-          text.style.width = `${box.width}px`;
+          text.setCssStyles({
+            font: stickyFont(box, true), width: `${box.width}px`,
+            height: box.height === undefined ? "auto" : `${box.height}px`,
+            overflow: box.height === undefined ? "visible" : "hidden",
+          });
           text.addEventListener("click", (event) => {
             if ((event.target as HTMLElement).closest("a") && contact !== "touch" && !this.context.pointer()) { event.preventDefault(); event.stopPropagation(); }
           }, { signal: this.cards.signal, capture: true });
-          if (box.height !== undefined) { text.style.height = `${box.height}px`; text.style.overflow = "hidden"; }
           void MarkdownRenderer.render(this.app, box.text, text, this.context.source(), this.markdown).then(() => {
             if (!frame.isConnected) return;
             // A delayed Markdown render must not reset a live drag's layout.
@@ -749,7 +761,8 @@ export class StickyNoteLayer {
       for (const frame of Array.from(card?.querySelectorAll<HTMLElement>(".ink-sticky-text-box") ?? [])) {
         const box = stickyTextBoxes(note).find((box) => box.id === frame.dataset.textBoxId);
         if (box) { this.positionBox(frame, note, box); const text = frame.querySelector<HTMLElement>(".ink-sticky-markdown");
-          if (text) { text.style.font = stickyFont(box, true); text.style.width = `${box.width}px`; text.style.height = box.height === undefined ? "auto" : `${box.height}px`; text.style.overflow = box.height === undefined ? "visible" : "hidden"; } }
+          if (text) text.setCssStyles({ font: stickyFont(box, true), width: `${box.width}px`,
+            height: box.height === undefined ? "auto" : `${box.height}px`, overflow: box.height === undefined ? "visible" : "hidden" }); }
       }
     }
   }

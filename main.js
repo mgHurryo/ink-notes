@@ -23144,26 +23144,38 @@ async function markdownImage(note, context, viewportWidth, viewportHeight) {
     for (const box of stickyTextBoxes(note)) {
       if (!box.text) continue;
       const frame = document.createElement("div"), content = document.createElement("div");
-      frame.setAttribute("style", `position:absolute;left:${box.x - note.scrollX}px;top:${box.y - note.scrollY}px;width:${box.width}px;font:${stickyFont(box, true)};${box.height === void 0 ? "" : `height:${box.height}px;overflow:hidden;`}`);
+      frame.setCssStyles({
+        position: "absolute",
+        left: `${box.x - note.scrollX}px`,
+        top: `${box.y - note.scrollY}px`,
+        width: `${box.width}px`,
+        font: stickyFont(box, true),
+        ...box.height === void 0 ? {} : { height: `${box.height}px`, overflow: "hidden" }
+      });
       await import_obsidian2.MarkdownRenderer.render(context.app, box.text, content, context.source, component);
       frame.append(content);
       el.append(frame);
     }
     el.querySelectorAll("img,image,use,iframe,video,audio,object,script,style,link").forEach((node) => node.remove());
-    const body = document.createElementNS("http://www.w3.org/1999/xhtml", "div");
-    body.setAttribute("style", "font:20px/1.4 sans-serif;color:#25221d;position:relative;");
+    const body = document.createElement("div");
+    body.setCssStyles({ font: "20px/1.4 sans-serif", color: "#25221d", position: "relative" });
     body.append(...Array.from(el.childNodes));
     body.querySelectorAll("*").forEach((node) => {
       for (const attr of Array.from(node.attributes)) if (!(attr.name === "style" && node.parentElement === body) && (attr.name !== "href" || node.tagName.toLowerCase() !== "a")) node.removeAttribute(attr.name);
-      if (node.tagName.toLowerCase() === "p") node.setAttribute("style", "margin:0 0 12px");
+      if (node.tagName.toLowerCase() === "p") node.setCssStyles({ margin: "0 0 12px" });
       if (/^h[1-6]$/i.test(node.tagName)) {
         const sizes = [2, 1.5, 1.17, 1, 0.83, 0.67];
-        node.setAttribute("style", `font-size:${sizes[Number(node.tagName.slice(1)) - 1]}em;line-height:1.4;margin:0 0 12px;font-weight:700`);
+        node.setCssStyles({
+          fontSize: `${sizes[Number(node.tagName.slice(1)) - 1]}em`,
+          lineHeight: "1.4",
+          margin: "0 0 12px",
+          fontWeight: "700"
+        });
       }
-      if (node.tagName.toLowerCase() === "a") node.setAttribute("style", "color:#2459a6;text-decoration:underline");
+      if (node.tagName.toLowerCase() === "a") node.setCssStyles({ color: "#2459a6", textDecoration: "underline" });
     });
-    const wrapper = document.createElementNS("http://www.w3.org/1999/xhtml", "div");
-    wrapper.setAttribute("style", `position:relative;overflow:hidden;width:${viewportWidth}px;height:${viewportHeight}px`);
+    const wrapper = document.createElement("div");
+    wrapper.setCssStyles({ position: "relative", overflow: "hidden", width: `${viewportWidth}px`, height: `${viewportHeight}px` });
     wrapper.append(body);
     const width = Math.max(1, viewportWidth), height = Math.max(1, viewportHeight);
     const xml = new XMLSerializer().serializeToString(wrapper);
@@ -24126,9 +24138,8 @@ var import_obsidian6 = require("obsidian");
 // src/device-mode.ts
 function defaultReadingMode(platform, device) {
   if (platform.isDesktopApp || !platform.isMobileApp) return true;
-  const ipad = /iPad/i.test(device.userAgent) || /Macintosh/i.test(device.userAgent) && device.maxTouchPoints > 1;
   const shortEdge = Math.min(device.width, device.height);
-  if (ipad) return false;
+  if (shortEdge >= 600 && (platform.isIosApp || platform.isTablet)) return false;
   if (shortEdge > 0) return shortEdge < 600;
   return platform.isPhone || !platform.isTablet;
 }
@@ -24739,13 +24750,15 @@ var StickyNoteLayer = class {
   }
   position(el, note) {
     const { x, y } = stickyPosition(note);
-    el.style.left = `${x * 100}%`;
-    el.style.top = `${y * 100}%`;
     const scale = this.host.clientWidth / note.boardPageWidth;
-    el.style.width = `${stickyFrameWidth(note, this.host.clientWidth)}px`;
-    el.style.height = `${stickyFrameHeight(note, this.host.clientWidth, this.host.clientHeight)}px`;
-    el.style.backgroundColor = note.kind === "text" ? "transparent" : note.color;
-    el.style.setProperty("--sticky-header-height", `${STICKY_HEADER * scale}px`);
+    el.setCssStyles({
+      left: `${x * 100}%`,
+      top: `${y * 100}%`,
+      width: `${stickyFrameWidth(note, this.host.clientWidth)}px`,
+      height: `${stickyFrameHeight(note, this.host.clientWidth, this.host.clientHeight)}px`,
+      backgroundColor: note.kind === "text" ? "transparent" : note.color
+    });
+    el.setCssProps({ "--sticky-header-height": `${STICKY_HEADER * scale}px` });
   }
   card(id) {
     return Array.from(this.layer.children).find((el) => el.dataset.stickyId === id);
@@ -24753,14 +24766,18 @@ var StickyNoteLayer = class {
   positionBox(element, note, box) {
     var _a, _b;
     const scale = this.host.clientWidth / note.boardPageWidth;
-    element.style.transformOrigin = "top left";
-    element.style.transform = `scale(${scale})`;
-    element.style.left = `${(box.x - note.scrollX) * scale}px`;
-    element.style.top = `${(box.y - note.scrollY) * scale}px`;
-    element.style.width = `${box.width}px`;
-    element.style.height = box.height === void 0 ? "auto" : `${box.height}px`;
-    element.style.setProperty("--sticky-control-size", `${44 / Math.max(0.1, scale)}px`);
-    element.style.setProperty("--sticky-control-icon", `${20 / Math.max(0.1, scale)}px`);
+    element.setCssStyles({
+      transformOrigin: "top left",
+      transform: `scale(${scale})`,
+      left: `${(box.x - note.scrollX) * scale}px`,
+      top: `${(box.y - note.scrollY) * scale}px`,
+      width: `${box.width}px`,
+      height: box.height === void 0 ? "auto" : `${box.height}px`
+    });
+    element.setCssProps({
+      "--sticky-control-size": `${44 / Math.max(0.1, scale)}px`,
+      "--sticky-control-icon": `${20 / Math.max(0.1, scale)}px`
+    });
     const pageText = note.kind === "text", position = stickyPosition(note);
     const boardWidth = (pageText ? 1 : note.width) * this.host.clientWidth;
     const boardHeight = Math.max(1, (pageText ? 1 : note.height) * this.host.clientHeight - (pageText ? 0 : STICKY_HEADER * scale));
@@ -24776,9 +24793,11 @@ var StickyNoteLayer = class {
     const y = (box.y - note.scrollY) * scale + (pageText ? position.y * boardHeight : 0);
     const left = Math.max(minX, Math.min(maxX - controlsWidth, x + box.width * scale - controlsWidth));
     const top = Math.max(minY, Math.min(maxY - controlsHeight, y - minY >= controlsHeight ? y - controlsHeight : y + ((_b = box.height) != null ? _b : element.offsetHeight) * scale));
-    element.style.setProperty("--sticky-controls-left", `${(left - x) / scale}px`);
-    element.style.setProperty("--sticky-controls-top", `${(top - y) / scale}px`);
-    element.style.setProperty("--sticky-controls-width", `${controlsWidth / scale}px`);
+    element.setCssProps({
+      "--sticky-controls-left": `${(left - x) / scale}px`,
+      "--sticky-controls-top": `${(top - y) / scale}px`,
+      "--sticky-controls-width": `${controlsWidth / scale}px`
+    });
   }
   selectBox(note, box) {
     var _a;
@@ -24863,10 +24882,12 @@ var StickyNoteLayer = class {
     const left = (_a = viewport == null ? void 0 : viewport.offsetLeft) != null ? _a : 0, top = (_b = viewport == null ? void 0 : viewport.offsetTop) != null ? _b : 0;
     const width = (_c = viewport == null ? void 0 : viewport.width) != null ? _c : doc.documentElement.clientWidth, height = (_d = viewport == null ? void 0 : viewport.height) != null ? _d : doc.documentElement.clientHeight;
     const panel = format.element;
-    panel.style.width = `${Math.min(260, Math.max(44, width - 16))}px`;
-    panel.style.maxHeight = `${Math.max(44, height - 16)}px`;
-    panel.style.left = `${Math.max(left + 8, Math.min(rect.left, left + width - panel.offsetWidth - 8))}px`;
-    panel.style.top = `${Math.max(top + 8, Math.min(rect.bottom + 8, top + height - panel.offsetHeight - 8))}px`;
+    panel.setCssStyles({
+      width: `${Math.min(260, Math.max(44, width - 16))}px`,
+      maxHeight: `${Math.max(44, height - 16)}px`,
+      left: `${Math.max(left + 8, Math.min(rect.left, left + width - panel.offsetWidth - 8))}px`,
+      top: `${Math.max(top + 8, Math.min(rect.bottom + 8, top + height - panel.offsetHeight - 8))}px`
+    });
   }
   formatText(note, boxId) {
     var _a, _b, _c;
@@ -25032,7 +25053,7 @@ var StickyNoteLayer = class {
       this.selectBox(current.id, boxId);
       input.classList.add("ink-sticky-box-input");
       this.positionBox(input, current, { ...box, height: (_b = box.height) != null ? _b : 120 });
-      input.style.font = stickyFont(box, true);
+      input.setCssStyles({ font: stickyFont(box, true) });
     }
     input.value = (_c = box == null ? void 0 : box.text) != null ? _c : current[field];
     this.editing = { id: current.id, field, boxId: box == null ? void 0 : box.id, base: cloneSticky(current), input };
@@ -25247,7 +25268,7 @@ var StickyNoteLayer = class {
       }
       if (note.kind !== "text") {
         const header = card.createDiv({ cls: "ink-sticky-header" });
-        header.style.height = `${STICKY_HEADER * width / note.boardPageWidth}px`;
+        header.setCssStyles({ height: `${STICKY_HEADER * width / note.boardPageWidth}px` });
         const grip = button2(header, "Move sticky note", "grip-vertical", () => void 0);
         grip.classList.add("ink-sticky-move");
         const title = grip.createSpan({ cls: "ink-sticky-title", text: note.title || "Sticky note" });
@@ -25330,18 +25351,18 @@ var StickyNoteLayer = class {
           this.positionBox(frame, note, box);
           frame.classList.toggle("is-selected", ((_l = this.selectedBox) == null ? void 0 : _l.note) === note.id && this.selectedBox.box === box.id);
           const text = frame.createDiv({ cls: "ink-sticky-markdown markdown-rendered" });
-          text.style.font = stickyFont(box, true);
-          text.style.width = `${box.width}px`;
+          text.setCssStyles({
+            font: stickyFont(box, true),
+            width: `${box.width}px`,
+            height: box.height === void 0 ? "auto" : `${box.height}px`,
+            overflow: box.height === void 0 ? "visible" : "hidden"
+          });
           text.addEventListener("click", (event) => {
             if (event.target.closest("a") && contact !== "touch" && !this.context.pointer()) {
               event.preventDefault();
               event.stopPropagation();
             }
           }, { signal: this.cards.signal, capture: true });
-          if (box.height !== void 0) {
-            text.style.height = `${box.height}px`;
-            text.style.overflow = "hidden";
-          }
           void import_obsidian4.MarkdownRenderer.render(this.app, box.text, text, this.context.source(), this.markdown).then(() => {
             var _a2, _b2;
             if (!frame.isConnected) return;
@@ -25519,12 +25540,12 @@ var StickyNoteLayer = class {
         if (box) {
           this.positionBox(frame, note, box);
           const text = frame.querySelector(".ink-sticky-markdown");
-          if (text) {
-            text.style.font = stickyFont(box, true);
-            text.style.width = `${box.width}px`;
-            text.style.height = box.height === void 0 ? "auto" : `${box.height}px`;
-            text.style.overflow = box.height === void 0 ? "visible" : "hidden";
-          }
+          if (text) text.setCssStyles({
+            font: stickyFont(box, true),
+            width: `${box.width}px`,
+            height: box.height === void 0 ? "auto" : `${box.height}px`,
+            overflow: box.height === void 0 ? "visible" : "hidden"
+          });
         }
       }
     }
@@ -27595,9 +27616,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     if (!this.readingModeInitialized) {
       this.readingMode = defaultReadingMode(import_obsidian6.Platform, {
         width: window.screen.width,
-        height: window.screen.height,
-        userAgent: navigator.userAgent,
-        maxTouchPoints: navigator.maxTouchPoints
+        height: window.screen.height
       });
       this.readingModeInitialized = true;
     }
@@ -36353,7 +36372,7 @@ var InkNotesPlugin = class extends import_obsidian14.Plugin {
       if (file.extension.toLowerCase() === "pdf") await leaf.setViewState({ type: VIEW_TYPE_PDF_INK, state: { file: file.path } });
       else await leaf.openFile(file);
     }
-    await this.app.workspace.revealLeaf(leaf);
+    this.app.workspace.setActiveLeaf(leaf, false, true);
     if (leaf.view instanceof InkView || leaf.view instanceof PdfInkView) {
       if (block) await leaf.view.revealSticky(page, sticky, block);
       else await leaf.view.revealSticky(page, sticky);
