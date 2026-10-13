@@ -904,6 +904,9 @@ export abstract class InkWritingView extends FileView {
   protected eraserReplacementIds = new Set<string>();
   protected eraserReplacements: InkStroke[] = [];
   protected eraserPreviewCells = new Set<string>();
+  /** Reused dedup map for eraseAt(): cleared per call instead of rebuilt, so
+   *  a grazing eraser does not allocate a spread chain per input sample. */
+  private eraserCandidateScratch = new Map<string, InkStroke>();
 
   // --- lasso / selection
   protected lassoPath: InkPoint[] = [];
@@ -2702,19 +2705,41 @@ export abstract class InkWritingView extends FileView {
   protected eraseAt(point: InkPoint, page: InkPage, mode: EraserMode = this.state.eraserMode, size = this.state.eraserSize): boolean {
     const radius = mode === "stroke" ? STROKE_ERASER_HIT_RADIUS : size / 2;
     const indexed = this.tiles?.queryNear ? this.tiles.queryNear(point, radius) : page.strokes;
-    const top = [...(this.stickyInput?.notes ?? [])].reverse().find((n) => {
-      if (n.collapsed) return false;
-      const r = stickyBounds(n, this.stickyGeometry()); return point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom;
-    });
-    const candidates = [...new Map([...indexed, ...[...(this.stickyInput?.proxies.values() ?? [])], ...this.eraserReplacements].map((stroke) => [stroke.id, stroke])).values()]
-      .filter((stroke) => {
-        if (this.erasedCandidateIds.has(stroke.id)) return false;
-        const owner = this.stickyInput?.owners.get(stroke.id); if (!owner) return !top;
-        if (top?.id !== owner.id) return false;
+    const top = (() => {
+      // Reverse linear scan instead of [...notes].reverse().find(): the eraser
+      // calls this per input sample and the spread chain allocated two arrays.
+      const notes = this.stickyInput?.notes;
+      if (notes) {
+        for (let index = notes.length - 1; index >= 0; index--) {
+          const note = notes[index];
+          if (note.collapsed) continue;
+          const r = stickyBounds(note, this.stickyGeometry());
+          if (point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom) return note;
+        }
+      }
+      return undefined;
+    })();
+    // One reused Map replaces the per-sample [...indexed, ...proxies,
+    // ...replacements] spread chain; both candidate filters fold into the
+    // same loop, so a grazing eraser sample allocates only the result array.
+    const seen = this.eraserCandidateScratch;
+    seen.clear();
+    for (const stroke of indexed) seen.set(stroke.id, stroke);
+    if (this.stickyInput) for (const stroke of this.stickyInput.proxies.values()) seen.set(stroke.id, stroke);
+    for (const stroke of this.eraserReplacements) seen.set(stroke.id, stroke);
+    const removed: InkStroke[] = [];
+    for (const stroke of seen.values()) {
+      if (this.erasedCandidateIds.has(stroke.id)) continue;
+      const owner = this.stickyInput?.owners.get(stroke.id);
+      if (!owner) {
+        if (top) continue;
+      } else {
+        if (top?.id !== owner.id) continue;
         const r = stickyBounds(owner, this.stickyGeometry());
-        return point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom;
-      });
-    const removed = candidates.filter((stroke) => strokeIntersectsEraser(stroke, point, radius, mode, this.canvasLogicalWidth, this.canvasLogicalHeight));
+        if (!(point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom)) continue;
+      }
+      if (strokeIntersectsEraser(stroke, point, radius, mode, this.canvasLogicalWidth, this.canvasLogicalHeight)) removed.push(stroke);
+    }
     if (removed.length === 0) return false;
     for (const stroke of removed) {
       this.erasedCandidateIds.add(stroke.id);
