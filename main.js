@@ -31086,9 +31086,14 @@ var TileRenderer = class {
   update(viewport, density, refine) {
     var _a;
     if (!this.active || this.disposed) return;
+    const nextDensity = tileDensity(viewport, density);
+    const sameDensity = this.density === nextDensity;
+    const visible = new Set(cellKeys(viewport, this.active.index.width, this.active.index.height));
+    const sameVisible = visible.size === this.visible.size && [...visible].every((cell) => this.visible.has(cell));
     this.viewport = viewport;
-    this.density = tileDensity(viewport, density);
-    this.visible = new Set(cellKeys(viewport, this.active.index.width, this.active.index.height));
+    this.density = nextDensity;
+    this.visible = visible;
+    if (!refine && sameDensity && sameVisible) return;
     this.jobs = [];
     for (const node of Array.from(this.host.children)) {
       if (!this.visible.has((_a = node.dataset.cell) != null ? _a : "")) node.remove();
@@ -32308,7 +32313,7 @@ var InkView = class extends InkWritingView {
       height: Math.max(1, Math.min(this.canvasLogicalHeight - y, (screen.bottom - page.top) / this.zoom - y))
     };
     this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * ((_a = this.pinchRenderZoom) != null ? _a : this.zoom), refine);
-    if (this.pinchRenderZoom === void 0 && (refine || this.hasInkPreview())) {
+    if (this.pinchRenderZoom === void 0 && (refine || this.hasInkPreview() || this.selectedStrokeIds.size > 0 || this.lassoPath.length > 0)) {
       this.resizeOverlay(this.canvas, this.ctx);
       this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
       this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
@@ -34294,6 +34299,7 @@ var PdfInkView = class extends InkWritingView {
     this.zoomTouched = false;
     /** Offscreen renders of the neighbouring pages for instant flips. */
     this.neighbourCache = /* @__PURE__ */ new Map();
+    this.pendingNeighbourRenders = /* @__PURE__ */ new Map();
     this.prewarmToken = 0;
     // Page preview rail (behaviour parity with the notebook editor's rail).
     this.pageRail = null;
@@ -34389,6 +34395,8 @@ var PdfInkView = class extends InkWritingView {
     if (outcome.status === "conflict") new import_obsidian12.Notice(`Ink Notes kept a conflict copy: ${outcome.message}`);
     this.pendingMergedSidecar = null;
     this.loadGeneration += 1;
+    this.prewarmToken += 1;
+    this.pendingNeighbourRenders.clear();
     this.cancelPdfRender();
     if (this.pdfRenderTimer !== void 0) {
       window.clearTimeout(this.pdfRenderTimer);
@@ -35375,10 +35383,12 @@ var PdfInkView = class extends InkWritingView {
       (_a = this.desktopRenderDensity) != null ? _a : (window.devicePixelRatio || 1) * this.zoom,
       refine && this.desktopRenderDensity === void 0
     );
-    this.resizeSelectionCanvas();
-    this.resizePreview();
-    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
-    if (this.activeStroke) this.drawPreview();
+    if (refine || this.hasInkPreview() || this.selectedStrokeIds.size > 0 || this.lassoPath.length > 0) {
+      this.resizeSelectionCanvas();
+      this.resizePreview();
+      this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
+      if (this.activeStroke) this.drawPreview();
+    }
   }
   onViewportMotion() {
     this.updateViewport(false);
@@ -35619,6 +35629,9 @@ var PdfInkView = class extends InkWritingView {
       1,
       PDF_NEIGHBOUR_CACHE_BUDGET / 2
     );
+    const pending = this.pendingNeighbourRenders.get(index);
+    if ((pending == null ? void 0 : pending.token) === this.prewarmToken) await pending.promise;
+    if (!stage.isConnected) return;
     const cached = this.neighbourCache.get(index);
     if (cached && cached.width === resolution.width && cached.height === resolution.height) {
       canvas.width = cached.width;
@@ -35657,14 +35670,25 @@ var PdfInkView = class extends InkWritingView {
       }
     }
   }
-  async prewarmNeighbour(index, token) {
-    var _a;
+  prewarmNeighbour(index, token) {
+    const pending = this.pendingNeighbourRenders.get(index);
+    if ((pending == null ? void 0 : pending.token) === token) return pending.promise;
+    const entry = { token, promise: Promise.resolve(null) };
+    this.pendingNeighbourRenders.set(index, entry);
+    entry.promise = this.renderNeighbour(index, token);
+    void entry.promise.then(() => {
+      if (this.pendingNeighbourRenders.get(index) === entry) this.pendingNeighbourRenders.delete(index);
+    });
+    return entry.promise;
+  }
+  async renderNeighbour(index, token) {
+    var _a, _b, _c;
     const notePage = (_a = this.sidecar) == null ? void 0 : _a.notePages[index];
-    if (!notePage || notePage.sourceIndex === void 0 || !this.pdfDoc) return;
+    if (!notePage || notePage.sourceIndex === void 0 || !this.pdfDoc) return null;
     let buffer;
     try {
       const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
-      if (token !== this.prewarmToken || this.neighbourCache.has(index)) return;
+      if (token !== this.prewarmToken || this.neighbourCache.has(index)) return (_b = this.neighbourCache.get(index)) != null ? _b : null;
       const size = this.swipePageSize(notePage);
       const resolution = canvasResolution(
         size.width,
@@ -35679,10 +35703,12 @@ var PdfInkView = class extends InkWritingView {
       buffer.height = resolution.height;
       const viewport = page.getViewport({ scale });
       await page.render({ canvasContext: buffer.getContext("2d"), viewport }).promise;
-      if (token !== this.prewarmToken) return;
+      if (token !== this.prewarmToken) return null;
       this.cacheNeighbour(index, buffer);
       buffer = void 0;
+      return (_c = this.neighbourCache.get(index)) != null ? _c : null;
     } catch (e) {
+      return null;
     } finally {
       if (buffer) this.releaseCanvas(buffer);
     }
@@ -35814,7 +35840,7 @@ var PdfInkView = class extends InkWritingView {
     this.pdfRenderTask = null;
   }
   async renderPdfPage() {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     const canvas = this.pdfCanvas;
     if (!canvas) return;
     const generation = ++this.pdfRenderGeneration;
@@ -35850,6 +35876,25 @@ var PdfInkView = class extends InkWritingView {
       this.neighbourCache.delete(this.noteIndex);
       this.releaseCanvas(cached);
     }
+    const pendingNeighbour = this.pendingNeighbourRenders.get(this.noteIndex);
+    if ((pendingNeighbour == null ? void 0 : pendingNeighbour.token) === this.prewarmToken) {
+      await pendingNeighbour.promise;
+      if (generation !== this.pdfRenderGeneration) return;
+      const ready = this.neighbourCache.get(this.noteIndex);
+      if (ready && ready.width === targetWidth && ready.height === targetHeight) {
+        this.neighbourCache.delete(this.noteIndex);
+        canvas.width = targetWidth;
+        canvas.height = targetHeight;
+        (_b = canvas.getContext("2d")) == null ? void 0 : _b.drawImage(ready, 0, 0);
+        this.releaseCanvas(ready);
+        if (!this.touchGesture) this.prewarmNeighbours();
+        return;
+      }
+      if (ready) {
+        this.neighbourCache.delete(this.noteIndex);
+        this.releaseCanvas(ready);
+      }
+    }
     try {
       const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
       if (generation !== this.pdfRenderGeneration) return;
@@ -35866,13 +35911,13 @@ var PdfInkView = class extends InkWritingView {
         this.pdfRenderTask = null;
         if (canvas.width !== targetWidth) canvas.width = targetWidth;
         if (canvas.height !== targetHeight) canvas.height = targetHeight;
-        (_b = canvas.getContext("2d")) == null ? void 0 : _b.drawImage(buffer, 0, 0);
+        (_c = canvas.getContext("2d")) == null ? void 0 : _c.drawImage(buffer, 0, 0);
         if (!this.touchGesture) this.prewarmNeighbours();
       } finally {
         this.releaseCanvas(buffer);
       }
     } catch (error) {
-      if (((_c = this.pdfjs) == null ? void 0 : _c.RenderingCancelledException) && error instanceof this.pdfjs.RenderingCancelledException) return;
+      if (((_d = this.pdfjs) == null ? void 0 : _d.RenderingCancelledException) && error instanceof this.pdfjs.RenderingCancelledException) return;
       if (generation === this.pdfRenderGeneration) this.setStatus(`Could not render this page: ${messageOf(error)}`, true);
       return;
     }
@@ -35901,6 +35946,8 @@ var PdfInkView = class extends InkWritingView {
   resetViewState() {
     var _a;
     this.finishDesktopZoom(false);
+    this.prewarmToken += 1;
+    this.pendingNeighbourRenders.clear();
     this.destroySwipeStage();
     this.cancelPdfRender();
     this.finishPointerInput(false);
