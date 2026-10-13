@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.3-beta.14 - 2026-10-13
+
+- Count each discrete mouse-wheel notch as one page request and preserve queued notches through page transitions; renewed trackpad motion can start another flick without waiting for the idle timeout.
+- Preserve native scrolling within page bounds and the existing horizontal trackpad paging behavior. Automated unit and desktop browser tests pass; physical Obsidian desktop hardware remains unverified.
+
 ## 0.1.3-beta.13 - 2026-10-13
 
 - Keep mounted handwriting tiles and queued render jobs during desktop scrolling within the same visible tile range; skip empty overlay redraws during ordinary viewport motion.
