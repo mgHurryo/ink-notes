@@ -374,10 +374,18 @@ export class TileRenderer {
 
   update(viewport: Rect, density: number, refine: boolean): void {
     if (!this.active || this.disposed) return;
+    const nextDensity = tileDensity(viewport, density);
+    const sameDensity = this.density === nextDensity;
+    const visible = new Set(cellKeys(viewport, this.active.index.width, this.active.index.height));
+    const sameVisible = visible.size === this.visible.size && [...visible].every(cell => this.visible.has(cell));
     this.viewport = viewport;
     // Density is budgeted against the visible region, never the full page.
-    this.density = tileDensity(viewport, density);
-    this.visible = new Set(cellKeys(viewport, this.active.index.width, this.active.index.height));
+    this.density = nextDensity;
+    this.visible = visible;
+    // Scrolling within the current tile range only changes the viewport crop.
+    // Keep both mounted tiles and in-flight tile jobs; rebuilding the queue on
+    // every scroll event repeatedly cancels work and remounts the same frame.
+    if (!refine && sameDensity && sameVisible) return;
     this.jobs = [];
     for (const node of Array.from(this.host.children)) {
       if (!this.visible.has((node as HTMLElement).dataset.cell ?? "")) node.remove();

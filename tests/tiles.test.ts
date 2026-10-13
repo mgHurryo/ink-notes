@@ -119,6 +119,27 @@ describe("interactive tile commits", () => {
     expect(tile.canvas.style).toMatchObject({ left: "-8px", top: "-8px", width: "272px", height: "272px" });
   });
 
+  it("keeps a complete visible tile frame mounted during scrolling within the same cells", () => {
+    const host = { childElementCount: 1 };
+    const node = { parentElement: host };
+    const state = { id: 1, index: { width: 256, height: 256, revisions: new Map([ ["0:0", 0] ]) } };
+    const tile = { node, revision: 0 };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, {
+      active: state, disposed: false, host, density: 1, visible: new Set(["0:0"]),
+      cache: new Map([["1/0:0/1", tile]]), jobs: [{ cell: "0:0" }], viewport: { x: 0, y: 0, width: 100, height: 100 },
+      attach: vi.fn(), schedule: vi.fn(),
+    });
+    const queuedJobs = renderer.jobs;
+
+    renderer.update({ x: 12, y: 18, width: 100, height: 100 }, 1, false);
+
+    expect(renderer.viewport).toEqual({ x: 12, y: 18, width: 100, height: 100 });
+    expect(renderer.attach).not.toHaveBeenCalled();
+    expect(renderer.schedule).not.toHaveBeenCalled();
+    expect(renderer.jobs).toBe(queuedJobs);
+  });
+
   it("composes newly added ink over an exact stale tile without replaying history", () => {
     const addition = stroke("new", 0.1, 0.1);
     const state = { id: 3, index: {
