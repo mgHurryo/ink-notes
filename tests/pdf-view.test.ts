@@ -1,3 +1,4 @@
+import { parseStoredJson, serializeStoredJson } from "../src/storage-codec";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { TFile, WorkspaceLeaf } from "obsidian";
 import type { NotebookOperation } from "../src/worker-protocol";
@@ -81,13 +82,14 @@ function setup() {
   const session = {
     canRenderTiles: () => false,
     initializeRaw: vi.fn(async () => sidecar.notebook),
+    serializeStorage: vi.fn(async (value: unknown) => serializeStoredJson(value)),
     apply: vi.fn(async (_revision: number, operation: NotebookOperation) => {
       appliedOps.push(operation);
       return { type: "operation-applied", revision: _revision };
     }),
     dispose: vi.fn(),
   };
-  const workers = { createSession: vi.fn(() => session) } as unknown as InkWorkerService;
+  const workers = { createSession: vi.fn(() => session), isDisabled: () => false } as unknown as InkWorkerService;
 
   const vaultCalls: VaultCalls = { created: [], createdContents: [] };
   const vault = {
@@ -204,7 +206,7 @@ describe("split-pane sidecar synchronization", () => {
     const panes = [setup(), setup()];
     let raw = serializeSidecar(panes[0].internal.sidecar);
     for (const pane of panes) {
-      pane.internal.attachSidecar(JSON.parse(raw) as PdfSidecar, raw, pane.sidecarFile);
+      pane.internal.attachSidecar(parseStoredJson(raw) as PdfSidecar, raw, pane.sidecarFile);
       pane.store.readRaw.mockImplementation(async () => raw);
       pane.store.writeIfUnchanged.mockImplementation(async (_file, expected, next) => {
         if (raw !== expected) return false;
@@ -221,7 +223,7 @@ describe("split-pane sidecar synchronization", () => {
       settle(pane);
     };
     const refresh = () => Promise.all(panes.map(pane => pane.view.reloadExternalSidecar(pane.sidecarFile.path)));
-    return { panes, draw, settle, refresh, disk: () => JSON.parse(raw) as PdfSidecar };
+    return { panes, draw, settle, refresh, disk: () => parseStoredJson(raw) as PdfSidecar };
   }
 
   it("retains both panes' concurrent strokes on disk and synchronizes each pane", async () => {
@@ -262,7 +264,7 @@ describe("split-pane sidecar synchronization", () => {
     const { panes: [left, right], draw, refresh } = split();
     draw(right, 160); await right.internal.flushSaveNow(); await refresh();
     const page = right.internal.sidecar.notebook.pages[0], stroke = page.strokes[0];
-    const remote = JSON.parse(serializeSidecar(left.internal.sidecar)) as PdfSidecar;
+    const remote = parseStoredJson(serializeSidecar(left.internal.sidecar)) as PdfSidecar;
     remote.updatedAt += 1000; remote.notebook.updatedAt += 1000;
     remote.notebook.pages[0].updatedAt += 1000; remote.notebook.pages[0].strokes[0].updatedAt += 1000;
     right.store.readRaw.mockResolvedValueOnce(serializeSidecar(remote));
@@ -389,7 +391,7 @@ describe("split-pane sidecar synchronization", () => {
 
   it("ignores late refreshes after unloading and foreign PDF revision state", async () => {
     const { panes: [left, right] } = split();
-    const foreign = JSON.parse(serializeSidecar(right.internal.sidecar)) as PdfSidecar;
+    const foreign = parseStoredJson(serializeSidecar(right.internal.sidecar)) as PdfSidecar;
     foreign.source.sha256 = "b".repeat(64);
     right.store.readRaw.mockResolvedValueOnce(serializeSidecar(foreign));
     await right.view.reloadExternalSidecar(right.sidecarFile.path);
@@ -431,7 +433,7 @@ describe("split-pane sidecar synchronization", () => {
 
     await right.view.onClose();
     expect(right.vaultCalls.created).toHaveLength(1);
-    const recovery = JSON.parse(right.vaultCalls.createdContents[0]) as PdfSidecar;
+    const recovery = parseStoredJson(right.vaultCalls.createdContents[0]) as PdfSidecar;
     expect(recovery.notebook.pages[0].strokes.map((stroke) => stroke.id))
       .toEqual(expect.arrayContaining([...localIds, peerStrokeId]));
   });
@@ -505,8 +507,9 @@ describe("save gating", () => {
     expect(store.writeIfUnchanged).toHaveBeenCalledWith(
       expect.anything(),
       serializeSidecar(sidecar),
-      expect.stringContaining('"format": 1'),
+      expect.any(String),
     );
+    expect(parseStoredJson(store.writeIfUnchanged.mock.calls[0][2])).toMatchObject({format:1,source:sidecar.source});
     expect(internal.dirty).toBe(false);
   });
 
@@ -532,6 +535,7 @@ describe("save gating", () => {
     store.writeIfUnchanged.mockImplementationOnce(() => new Promise<boolean>((resolve) => { release = resolve; }));
     internal.markSidecarChanged();
     const saving = internal.flushSaveNow();
+    await vi.waitFor(() => expect(release).toBeDefined());
     view.sourcePdfModified();
     const closing = view.onClose();
     await Promise.resolve();
@@ -579,6 +583,7 @@ describe("save gating", () => {
     store.writeIfUnchanged.mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
     internal.markSidecarChanged();
     const saving = internal.flushSaveNow();
+    await vi.waitFor(() => expect(release).toBeDefined());
     internal.withPageUndo(() => insertBlankNotePage(internal.sidecar, sourcePageId(0)) !== null, "insert");
     const second = internal.flushSaveNow();
     const third = internal.flushSaveNow();
@@ -586,15 +591,43 @@ describe("save gating", () => {
     await Promise.all([saving, second, third]);
     expect(store.writeIfUnchanged).toHaveBeenCalledTimes(2);
     const lastRaw = store.writeIfUnchanged.mock.calls[1][2] as string;
-    expect(JSON.parse(lastRaw).notePages).toHaveLength(2);
+    expect(parseStoredJson(lastRaw).notePages).toHaveLength(2);
     expect(internal.sidecar.notePages).toHaveLength(2);
     expect(internal.dirty).toBe(false);
+  });
+
+  it("freezes the compression snapshot and saves edits arriving while the worker is busy", async () => {
+    const {internal,store,session}=setup();
+    let finish!:()=>void;
+    session.serializeStorage.mockImplementationOnce(value=>new Promise<string>(resolve=>{finish=()=>resolve(serializeStoredJson(value));}));
+    internal.markSidecarChanged(); const saving=internal.flushSaveNow();
+    await vi.waitFor(()=>expect(finish).toBeDefined());
+    internal.withPageUndo(()=>insertBlankNotePage(internal.sidecar,sourcePageId(0))!==null,"insert");
+    finish(); await saving;
+    expect(parseStoredJson(store.writeIfUnchanged.mock.calls[0][2]).notePages).toHaveLength(1);
+    expect(parseStoredJson(store.writeIfUnchanged.mock.calls[1][2]).notePages).toHaveLength(2);
+    expect(internal.dirty).toBe(false);
+  });
+
+  it("blocks a source revision change while compression is pending before issuing a CAS write",async()=>{
+    const {view,internal,store,session}=setup(); let finish!:()=>void;
+    session.serializeStorage.mockImplementationOnce(value=>new Promise<string>(resolve=>{finish=()=>resolve(serializeStoredJson(value));}));
+    internal.markSidecarChanged(); const saving=internal.flushSaveNow();
+    await vi.waitFor(()=>expect(finish).toBeDefined()); view.sourcePdfModified(); finish();
+    await expect(saving).resolves.toMatchObject({status:"failed"});
+    expect(store.writeIfUnchanged).not.toHaveBeenCalled(); expect(internal.dirty).toBe(true);
+  });
+
+  it("falls back to lossless local serialization when the storage worker fails",async()=>{
+    const {internal,store,session}=setup(); session.serializeStorage.mockRejectedValueOnce(new Error("worker stopped"));
+    internal.markSidecarChanged(); await expect(internal.flushSaveNow()).resolves.toMatchObject({status:"saved"});
+    expect(session.dispose).toHaveBeenCalled(); expect(parseStoredJson(store.writeIfUnchanged.mock.calls[0][2]).source).toMatchObject(FINGERPRINT);
   });
 
   it("retains both disk edits and local edits arriving during a merge write", async () => {
     const { internal, store } = setup();
     let release!: (saved: boolean) => void;
-    const remote = JSON.parse(serializeSidecar(internal.sidecar)) as PdfSidecar;
+    const remote = parseStoredJson(serializeSidecar(internal.sidecar)) as PdfSidecar;
     insertBlankNotePage(remote, sourcePageId(0));
     store.readRaw.mockResolvedValue(serializeSidecar(remote));
     store.writeIfUnchanged.mockResolvedValueOnce(false).mockImplementationOnce(() => new Promise((resolve) => { release = resolve; }));
@@ -606,7 +639,7 @@ describe("save gating", () => {
     release(true);
     await saving;
     const finalRaw = store.writeIfUnchanged.mock.calls.at(-1)![2] as string;
-    expect(JSON.parse(finalRaw).notePages).toHaveLength(3);
+    expect(parseStoredJson(finalRaw).notePages).toHaveLength(3);
     expect(internal.dirty).toBe(false);
   });
 });
@@ -632,7 +665,7 @@ describe("PDF plugin handoff and source revisions", () => {
     internal.onPointerMove(pointer(140, 100));
     await view.onUnloadFile(view.file!);
     expect(store.writeIfUnchanged).toHaveBeenCalled();
-    const saved = JSON.parse(store.writeIfUnchanged.mock.calls[0][2] as string);
+    const saved = parseStoredJson(store.writeIfUnchanged.mock.calls[0][2] as string);
     expect(saved.notebook.pages[0].strokes).toHaveLength(1);
     expect(saved.notebook.pages[0].strokes[0].points.length).toBeGreaterThan(1);
     expect(internal.sidecar).toBeNull();
@@ -658,7 +691,7 @@ describe("PDF plugin handoff and source revisions", () => {
     await view.onUnloadFile(view.file!);
 
     expect(vaultCalls.created).toHaveLength(1);
-    const recovery = JSON.parse(vaultCalls.createdContents[0]) as PdfSidecar;
+    const recovery = parseStoredJson(vaultCalls.createdContents[0]) as PdfSidecar;
     expect(recovery.notebook.pages[0].strokes).toHaveLength(1);
     expect(internal.sidecar).toBeNull();
     expect(internal.sidecarFile).toBeNull();

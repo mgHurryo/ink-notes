@@ -22,6 +22,7 @@ import {
   sidecarPathFor,
 } from "./pdf-sidecar";
 import { PdfSidecarStore, serializeSidecar } from "./pdf-store";
+import { parseStoredJson } from "./storage-codec";
 import { PdfExportError, exportHandwrittenPdf, exportPathFor, sidecarHasInk } from "./pdf-export";
 import { PdfTabTakeover, hasNativeNavigation } from "./pdf-takeover";
 import { paintPageImages } from "./image-library";
@@ -34,6 +35,7 @@ const PDF_ZOOM_MAX = 3;
 const PDF_ZOOM_STEP = 1.2;
 const PDF_PAGE_PADDING = 24;
 const SELECTION_OVERLAY_BUDGET = 4_000_000;
+const PDF_NEIGHBOUR_CACHE_BUDGET = 8_000_000;
 /** Thumbnail bitmap width in CSS pixels; on a portrait A4 page the pdf.js
  *  render scale for this lands around 0.2. */
 const RAIL_THUMB_WIDTH = 120;
@@ -208,7 +210,7 @@ export class PdfInkView extends InkWritingView {
     const observer = new ResizeObserver(() => {
       this.brushPopover?.position();
       this.prewarmToken += 1;
-      this.neighbourCache.clear();
+      this.clearNeighbourCache();
       this.layoutPage();
       this.revealInlineEditor();
       if (this.resizeRenderTimer !== undefined) window.clearTimeout(this.resizeRenderTimer);
@@ -234,7 +236,7 @@ export class PdfInkView extends InkWritingView {
     this.loadGeneration += 1;
     this.cancelPdfRender();
     if (this.pdfRenderTimer !== undefined) { window.clearTimeout(this.pdfRenderTimer); this.pdfRenderTimer = undefined; }
-    this.neighbourCache.clear();
+    this.clearNeighbourCache();
     this.clearRailState();
     this.destroySwipeStage();
     this.discardPendingInkPreview();
@@ -302,7 +304,8 @@ export class PdfInkView extends InkWritingView {
     if (generation !== this.loadGeneration) return;
     this.noteIndex = 0;
     this.layoutPage();
-    this.renderAll();
+    // layoutPage already switches and updates the visible ink tiles.
+    this.renderAll(false);
     await this.renderPdfPage();
     if (generation === this.loadGeneration && file.stat?.mtime !== sourceMtime) await this.checkSourcePdfRevision();
   }
@@ -350,7 +353,7 @@ export class PdfInkView extends InkWritingView {
     if (generation !== this.loadGeneration || this.sidecarFile !== file || !this.sidecar) return;
     if (raw === null || raw === this.sidecarRaw) return;
     try {
-      const sidecar = normalizeSidecar(JSON.parse(raw));
+      const sidecar = normalizeSidecar(parseStoredJson(raw));
       this.receiveMergedSidecar(sidecar);
     } catch {
       // Corrupt external state: keep the in-memory sidecar, never write over it.
@@ -393,7 +396,7 @@ export class PdfInkView extends InkWritingView {
       this.invalidateThumbnails();
       this.destroySwipeStage();
       this.prewarmToken += 1;
-      this.neighbourCache.clear();
+      this.clearNeighbourCache();
     }
     const currentGeometryChanged = JSON.stringify(selectedPage) !== JSON.stringify(merged.notePages[this.noteIndex]);
     if (currentGeometryChanged || changes.dimensionsChanged) {
@@ -507,7 +510,7 @@ export class PdfInkView extends InkWritingView {
       try {
         const raw = await this.store.readRaw(existing);
         if (generation !== this.loadGeneration) return;
-        const sidecar = normalizeSidecar(JSON.parse(raw));
+        const sidecar = normalizeSidecar(parseStoredJson(raw));
         if (sidecar.source.sha256 !== fingerprint.sha256 || sidecar.source.byteLength !== fingerprint.byteLength) {
           this.writeBlockedReason = "This PDF changed since these notes were created; handwriting is read-only for this copy";
         } else if (sidecar.source.path !== file.path) {
@@ -556,7 +559,7 @@ export class PdfInkView extends InkWritingView {
       const created = await this.store.createFor(file, fingerprint, this.sourcePages);
       const raw = await this.store.readRaw(created);
       if (generation !== this.loadGeneration) return;
-      this.attachSidecar(normalizeSidecar(JSON.parse(raw)), raw, created);
+      this.attachSidecar(normalizeSidecar(parseStoredJson(raw)), raw, created);
     } catch (error) {
       if (generation === this.loadGeneration) this.setStatus(`Could not create the notes file: ${messageOf(error)}`, true);
     }
@@ -570,7 +573,7 @@ export class PdfInkView extends InkWritingView {
     new RecoveryChoiceModal(this.app, candidates, async (chosen) => {
       if (!chosen || !this.file) return;
       try {
-        const sidecar = normalizeSidecar(JSON.parse(await this.store.readRaw(chosen)));
+        const sidecar = normalizeSidecar(parseStoredJson(await this.store.readRaw(chosen)));
         sidecar.source.path = this.file.path;
         if (!this.store.sidecarFileFor(this.file.path)) {
           await this.app.vault.rename(chosen, sidecarPathFor(this.file.path));
@@ -741,7 +744,7 @@ export class PdfInkView extends InkWritingView {
       if (this.railBuiltIds) {
         // Index-based rasters and prewarms belong to the previous page order.
         this.prewarmToken += 1;
-        this.neighbourCache.clear();
+        this.clearNeighbourCache();
         this.destroySwipeStage();
       }
       this.rebuildRailButtons(count);
@@ -869,6 +872,37 @@ export class PdfInkView extends InkWritingView {
   private evictDistantThumbnails(): void {
     for (const key of [...this.thumbCache.keys()]) {
       if (Math.abs(key - this.noteIndex) > 1) this.thumbCache.delete(key);
+    }
+  }
+
+  private releaseCanvas(canvas: HTMLCanvasElement): void {
+    // A swipe-stage raster can also be the visible canvas; its DOM owner will
+    // release it when the animation settles, so never blank a connected frame.
+    if (canvas.isConnected) return;
+    canvas.width = 1;
+    canvas.height = 1;
+  }
+
+  private clearNeighbourCache(): void {
+    for (const canvas of this.neighbourCache.values()) this.releaseCanvas(canvas);
+    this.neighbourCache.clear();
+  }
+
+  private cacheNeighbour(index: number, canvas: HTMLCanvasElement): void {
+    const previous = this.neighbourCache.get(index);
+    if (previous && previous !== canvas) this.releaseCanvas(previous);
+    this.neighbourCache.set(index, canvas);
+    let pixels = [...this.neighbourCache.values()].reduce((total, item) => total + item.width * item.height, 0);
+    while (pixels > PDF_NEIGHBOUR_CACHE_BUDGET || this.neighbourCache.size > 2) {
+      const farthest = [...this.neighbourCache.keys()].sort((a, b) =>
+        Math.abs(b - this.noteIndex) - Math.abs(a - this.noteIndex))[0];
+      if (farthest === undefined) break;
+      const removed = this.neighbourCache.get(farthest);
+      this.neighbourCache.delete(farthest);
+      if (removed) {
+        pixels -= removed.width * removed.height;
+        this.releaseCanvas(removed);
+      }
     }
   }
 
@@ -1058,7 +1092,7 @@ export class PdfInkView extends InkWritingView {
     if (this.zoomLocked) return;
     this.zoomTouched = false;
     // Neighbour previews carry the old scale; re-rendering refills them.
-    this.neighbourCache.clear();
+    this.clearNeighbourCache();
     this.layoutPage();
     this.schedulePdfRender();
   }
@@ -1083,13 +1117,13 @@ export class PdfInkView extends InkWritingView {
       return;
     }
     this.finishPointerInput(false);
-    const before = serializeSidecar(this.sidecar);
+    const before = JSON.stringify(this.sidecar);
     const beforePageId = this.sidecar.notePages[this.noteIndex]?.id;
     if (!change()) {
       new Notice(`Ink Notes could not ${label}: source PDF pages are permanent`);
       return;
     }
-    const after = serializeSidecar(this.sidecar);
+    const after = JSON.stringify(this.sidecar);
     const afterPageId = this.sidecar.notePages[this.noteIndex]?.id;
     this.markSidecarChanged();
     this.syncNotebookToWorker();
@@ -1144,7 +1178,7 @@ export class PdfInkView extends InkWritingView {
     }
     this.updatePageIndicator();
     this.layoutPage();
-    this.renderAll();
+    this.renderAll(false);
     await this.renderPdfPage();
     if (this.flipSettling) this.tiles?.previewInteractiveCells(
       cellKeys(this.viewport, this.canvasLogicalWidth, this.canvasLogicalHeight), this.viewport,
@@ -1162,7 +1196,7 @@ export class PdfInkView extends InkWritingView {
     this.zoomTouched = true;
     // Neighbour previews carry the old scale; re-rendering refills them.
     this.prewarmToken += 1;
-    this.neighbourCache.clear();
+    this.clearNeighbourCache();
     const scroller = this.scroller;
     const page = this.pageWrap;
     if (!scroller || !page) {
@@ -1504,7 +1538,8 @@ export class PdfInkView extends InkWritingView {
     canvas.setCssStyles({ position: "absolute", inset: "0", width: "100%", height: "100%" });
     if (!notePage || notePage.sourceIndex === undefined || !this.pdfDoc) return;
     // The prewarm cache makes the flip instant when it holds the page.
-    const resolution = canvasResolution(parseFloat(stage.style.width), parseFloat(stage.style.height), window.devicePixelRatio || 1, 1);
+    const resolution = canvasResolution(parseFloat(stage.style.width), parseFloat(stage.style.height),
+      window.devicePixelRatio || 1, 1, PDF_NEIGHBOUR_CACHE_BUDGET / 2);
     const cached = this.neighbourCache.get(index);
     if (cached && cached.width === resolution.width && cached.height === resolution.height) {
       canvas.width = cached.width;
@@ -1520,7 +1555,7 @@ export class PdfInkView extends InkWritingView {
       canvas.height = resolution.height;
       const viewport = page.getViewport({ scale });
       await page.render({ canvasContext: canvas.getContext("2d")!, viewport }).promise;
-      if (stage.isConnected && canvas.width > 0) this.neighbourCache.set(index, canvas);
+      if (stage.isConnected && canvas.width > 0) this.cacheNeighbour(index, canvas);
     } catch {
       // The neighbour preview is best-effort; a blank page is fine.
     }
@@ -1537,28 +1572,37 @@ export class PdfInkView extends InkWritingView {
       void this.prewarmNeighbour(index, token);
     }
     for (const key of [...this.neighbourCache.keys()]) {
-      if (Math.abs(key - this.noteIndex) > 1) this.neighbourCache.delete(key);
+      if (Math.abs(key - this.noteIndex) > 1) {
+        const canvas = this.neighbourCache.get(key);
+        this.neighbourCache.delete(key);
+        if (canvas) this.releaseCanvas(canvas);
+      }
     }
   }
 
   private async prewarmNeighbour(index: number, token: number): Promise<void> {
     const notePage = this.sidecar?.notePages[index];
     if (!notePage || notePage.sourceIndex === undefined || !this.pdfDoc) return;
+    let buffer: HTMLCanvasElement | undefined;
     try {
       const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
       if (token !== this.prewarmToken || this.neighbourCache.has(index)) return;
       const size = this.swipePageSize(notePage);
-      const resolution = canvasResolution(size.width, size.height, window.devicePixelRatio || 1, 1);
+      const resolution = canvasResolution(size.width, size.height, window.devicePixelRatio || 1, 1,
+        PDF_NEIGHBOUR_CACHE_BUDGET / 2);
       const scale = resolution.width / page.getViewport({ scale: 1 }).width;
-      const buffer = document.createElement("canvas");
+      buffer = document.createElement("canvas");
       buffer.width = resolution.width;
       buffer.height = resolution.height;
       const viewport = page.getViewport({ scale });
       await page.render({ canvasContext: buffer.getContext("2d")!, viewport }).promise;
       if (token !== this.prewarmToken) return;
-      this.neighbourCache.set(index, buffer);
+      this.cacheNeighbour(index, buffer);
+      buffer = undefined;
     } catch {
       // Best-effort prewarm.
+    } finally {
+      if (buffer) this.releaseCanvas(buffer);
     }
   }
 
@@ -1693,6 +1737,20 @@ export class PdfInkView extends InkWritingView {
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       return;
     }
+    const cached = this.neighbourCache.get(this.noteIndex);
+    if (cached && cached.width === targetWidth && cached.height === targetHeight) {
+      this.neighbourCache.delete(this.noteIndex);
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      canvas.getContext("2d")?.drawImage(cached, 0, 0);
+      this.releaseCanvas(cached);
+      if (!this.touchGesture) this.prewarmNeighbours();
+      return;
+    }
+    if (cached) {
+      this.neighbourCache.delete(this.noteIndex);
+      this.releaseCanvas(cached);
+    }
     try {
       const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
       if (generation !== this.pdfRenderGeneration) return;
@@ -1705,15 +1763,19 @@ export class PdfInkView extends InkWritingView {
       const buffer = document.createElement("canvas");
       buffer.width = targetWidth;
       buffer.height = targetHeight;
-      const task = page.render({ canvasContext: buffer.getContext("2d")!, viewport });
-      this.pdfRenderTask = task;
-      await task.promise;
-      if (generation !== this.pdfRenderGeneration) return;
-      this.pdfRenderTask = null;
-      if (canvas.width !== targetWidth) canvas.width = targetWidth;
-      if (canvas.height !== targetHeight) canvas.height = targetHeight;
-      canvas.getContext("2d")?.drawImage(buffer, 0, 0);
-      if (!this.touchGesture) this.prewarmNeighbours();
+      try {
+        const task = page.render({ canvasContext: buffer.getContext("2d")!, viewport });
+        this.pdfRenderTask = task;
+        await task.promise;
+        if (generation !== this.pdfRenderGeneration) return;
+        this.pdfRenderTask = null;
+        if (canvas.width !== targetWidth) canvas.width = targetWidth;
+        if (canvas.height !== targetHeight) canvas.height = targetHeight;
+        canvas.getContext("2d")?.drawImage(buffer, 0, 0);
+        if (!this.touchGesture) this.prewarmNeighbours();
+      } finally {
+        this.releaseCanvas(buffer);
+      }
     } catch (error) {
       if (this.pdfjs?.RenderingCancelledException && error instanceof this.pdfjs.RenderingCancelledException) return;
       if (generation === this.pdfRenderGeneration) this.setStatus(`Could not render this page: ${messageOf(error)}`, true);
@@ -1721,18 +1783,20 @@ export class PdfInkView extends InkWritingView {
     }
   }
 
-  protected renderAll(): void {
+  protected renderAll(renderPageContent = true): void {
     this.clampNoteIndex();
     this.updatePageIndicator();
     this.refreshPageRail();
     this.updateToolButtons();
     this.updateHistoryButtons();
-    const page = this.sidecar?.notebook.pages[this.noteIndex];
-    if (page && this.tiles) {
-      this.tiles.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight);
-      this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
+    if (renderPageContent) {
+      const page = this.sidecar?.notebook.pages[this.noteIndex];
+      if (page && this.tiles) {
+        this.tiles.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight);
+        this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
+      }
+      this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
     }
-    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
 
   private clampNoteIndex(): void {
@@ -1764,7 +1828,7 @@ export class PdfInkView extends InkWritingView {
     this.redoStack = [];
     this.dirty = false;
     this.zoomTouched = false;
-    this.neighbourCache.clear();
+    this.clearNeighbourCache();
     // Thumbnail bitmaps and rail buttons belong to the previous document.
     this.invalidateThumbnails();
     this.clearSaveTimers();
@@ -1810,7 +1874,24 @@ export class PdfInkView extends InkWritingView {
     });
   }
 
+  private async serializeSidecarForSave(sidecar: PdfSidecar): Promise<string> {
+    const session = this.workerSession;
+    if (!session) return serializeSidecar(sidecar);
+    // Waiting on the worker permits more handwriting/peer edits. Freeze this
+    // save candidate first, preserving the existing CAS and revision checks.
+    const snapshot: PdfSidecar = { ...sidecar, source: { ...sidecar.source },
+      sourcePages: sidecar.sourcePages.map(page => ({ ...page })), notePages: sidecar.notePages.map(page => ({ ...page })),
+      deletedNotePages: { ...sidecar.deletedNotePages }, notebook: { ...sidecar.notebook,
+        pages: sidecar.notebook.pages.map(clonePageValue), pageOrder: [...sidecar.notebook.pageOrder], deletedPages: { ...sidecar.notebook.deletedPages } } };
+    try { return await session.serializeStorage(snapshot); }
+    catch (error) {
+      if (this.workerSession === session) this.disableWorkerSession(error);
+      return serializeSidecar(snapshot);
+    }
+  }
+
   private async performSave(): Promise<SaveOutcome> {
+    const file = this.sidecarFile!, generation = this.loadGeneration;
     let latestRaw = this.sidecarRaw;
     for (let attempt = 0; attempt <= SAVE_CONFLICT_RETRIES; attempt++) {
       if (this.writeBlockedReason) return { status: "failed", message: this.writeBlockedReason };
@@ -1818,8 +1899,10 @@ export class PdfInkView extends InkWritingView {
       // Pending peer state must also reach disk when a save finishes mid-stroke.
       const snapshot = this.pendingMergedSidecar ? mergeSidecars(this.pendingMergedSidecar, this.sidecar!) : this.sidecar!;
       const next = { ...snapshot, updatedAt: Date.now() };
-      const nextRaw = serializeSidecar(next);
-      if (await this.store.writeIfUnchanged(this.sidecarFile!, this.sidecarRaw, nextRaw)) {
+      const expectedRaw = this.sidecarRaw;
+      const nextRaw = await this.serializeSidecarForSave(next);
+      if (generation !== this.loadGeneration || this.sidecarFile !== file || this.writeBlockedReason) return { status: "failed", message: this.writeBlockedReason || "PDF changed during save" };
+      if (await this.store.writeIfUnchanged(file, expectedRaw, nextRaw)) {
         this.sidecarRaw = nextRaw;
         this.dirty = this.editRevision !== revision;
         if (this.pendingMergedSidecar) this.receiveMergedSidecar(next);
@@ -1836,7 +1919,7 @@ export class PdfInkView extends InkWritingView {
       if (this.writeBlockedReason) return { status: "failed", message: this.writeBlockedReason };
       let latest: PdfSidecar;
       try {
-        latest = normalizeSidecar(JSON.parse(latestRaw));
+        latest = normalizeSidecar(parseStoredJson(latestRaw));
       } catch {
         return this.saveConflictCopy(latestRaw, "the notes file on disk is corrupt or uses an unknown format");
       }
@@ -1847,8 +1930,9 @@ export class PdfInkView extends InkWritingView {
         const mergeRevision = this.editRevision;
         const merged = mergeSidecars(latest, this.pendingMergedSidecar
           ? mergeSidecars(this.pendingMergedSidecar, this.sidecar!) : this.sidecar!);
-        const mergedRaw = serializeSidecar(merged);
-        if (await this.store.writeIfUnchanged(this.sidecarFile!, latestRaw, mergedRaw)) {
+        const mergedRaw = await this.serializeSidecarForSave(merged);
+        if (generation !== this.loadGeneration || this.sidecarFile !== file || this.writeBlockedReason) return { status: "failed", message: this.writeBlockedReason || "PDF changed during save" };
+        if (await this.store.writeIfUnchanged(file, latestRaw, mergedRaw)) {
           this.sidecarRaw = mergedRaw;
           this.dirty = this.editRevision !== mergeRevision;
           this.receiveMergedSidecar(merged);

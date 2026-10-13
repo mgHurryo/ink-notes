@@ -3,8 +3,9 @@ import { InkNotebook, InkPage, PaperStyle, createPage, mergeNotebooks, newId, no
 /**
  * Sidecar wrapper model for PDF handwriting.
  *
- * A sidecar is a Vault JSON file under `A_pdfinkwrittern/` that pairs one PDF
- * with an embedded standard ink notebook (schema 2). The wrapper carries the
+ * A sidecar is a Vault data file under `A_pdfinkwrittern/` that pairs one PDF
+ * with an embedded standard ink notebook (schema 2), stored as compact JSON
+ * or lossless gzip text via the shared disk codec. The wrapper carries the
  * source fingerprint (so a changed or swapped PDF can never be silently
  * overwritten), the per-page geometry observed at load time, and the note page
  * sequence. The sequence starts as one entry per source PDF page with a

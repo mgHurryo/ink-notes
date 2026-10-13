@@ -1,6 +1,7 @@
 import { InkView } from "../src/view";
 import { createInkEmbedProcessor } from "../src/embed";
-import { createNotebook } from "../src/model";
+import { createNotebook, normalizeNotebook } from "../src/model";
+import { parseStoredJson, serializeStoredJson } from "../src/storage-codec";
 import type { InkStroke } from "../src/model";
 import type { NotebookStore } from "../src/storage";
 import { InkWorkerService } from "../src/worker-service";
@@ -45,7 +46,7 @@ if (new URLSearchParams(location.search).has("performance")) {
 }
 let diskRaw = JSON.stringify(notebook);
 const store = {
-  read: async () => notebook,
+  read: async () => normalizeNotebook(parseStoredJson(diskRaw)),
   readRaw: async () => diskRaw,
   writeIfUnchanged: async (_file: unknown, expected: string, next: string) => {
     if (expected !== diskRaw) return false;
@@ -55,12 +56,15 @@ const store = {
   save: async (_file: unknown, value: unknown) => value,
 };
 const workers = new InkWorkerService((message) => console.warn(message));
+// Preview-only probes exercise the same disk codec used by both editors.
+(window as any).__inkNotesStorage = { encode: serializeStoredJson, decode: parseStoredJson };
 const view = new InkView({} as WorkspaceLeaf, store as unknown as NotebookStore, workers);
 view.useImageLibrary(new ImageLibraryStore(imageVaultApp()));
 void (async () => {
   await view.setState({ readingMode: false }, { history: false });
   await view.onOpen();
-  await view.onLoadFile({ path: "Ink Notes/Preview.ink", basename: "Preview" } as TFile);
+  view.file = Object.assign(new TFile(), { path: "Ink Notes/Preview.ink", basename: "Preview", extension: "ink" });
+  await view.onLoadFile(view.file);
   const compareRenderer = async (mode: RendererComparisonMode = "pen") => {
     const internal = view as unknown as { workerSession: { renderTile(...args: unknown[]): Promise<any>;
       apply(revision: number, operation: unknown): Promise<unknown> } | null; workerRevision: number;
@@ -212,7 +216,7 @@ document.body.append(embedHost);
 const embedApp = {
   vault: {
     getAbstractFileByPath: () => embedFile,
-    cachedRead: async () => JSON.stringify(notebook),
+    cachedRead: async () => serializeStoredJson(notebook),
     on: () => ({}),
   },
 };

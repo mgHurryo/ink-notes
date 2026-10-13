@@ -23,7 +23,8 @@ for (const mode of ["ink", "pdf"]) {
         const prepared = await v.workerSession.prepareSave(raw, v.workerRevision);
         await v.workerSession.abortSave(prepared.token); return prepared.content;
       }, rawBefore);
-      expect(JSON.parse(worker).pages.flatMap((p: any) => p.strokes.map((s: any) => s.points))).toContainEqual(points);
+      const persisted = await page.evaluate(raw => (window as any).__inkNotesStorage.decode(raw), worker);
+      expect(persisted.pages.flatMap((p: any) => p.strokes.map((s: any) => s.points))).toContainEqual(points);
       await page.getByRole("button", { name: "Undo", exact: true }).click();
       expect(await page.evaluate(() => (window as any).__inkNotesPreview.view.currentPage().strokes.length)).toBe(0);
     }

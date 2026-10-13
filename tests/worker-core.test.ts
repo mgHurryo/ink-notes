@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createNotebook, createPage } from "../src/model";
+import { parseStoredJson, serializeStoredJson } from "../src/storage-codec";
 import { InkWorkerCore } from "../src/worker-core";
 import type { InkWorkerRequest, InkWorkerResponse } from "../src/worker-protocol";
 import { penOutlineRings } from "../src/rendering";
@@ -23,6 +24,24 @@ async function response(core: InkWorkerCore, value: InkWorkerRequest): Promise<I
 }
 
 describe("InkWorkerCore persistence mirror", () => {
+  it("loads compressed disk state, preserves samples and serializes a sidecar snapshot without changing the mirror",async()=>{
+    const core=new InkWorkerCore({offscreenCanvas:false,imageBitmap:false}), book=createNotebook(), p=book.pages[0];
+    p.strokes=[{id:"compressed",pageId:p.id,tool:"pen",color:"#000",width:3,opacity:1,createdAt:1,updatedAt:2,
+      points:Array.from({length:500},(_,i)=>({x:i/1000,y:.3,pressure:.7,t:i+1,tiltX:12,tiltY:-6}))}];
+    const raw=serializeStoredJson(book); expect(raw).toContain("INK-GZIP-1");
+    const initialized=await response(core,request({type:"initialize-raw",raw,revision:0}));
+    expect(initialized).toMatchObject({type:"initialized",notebook:{pages:[{strokes:[{points:p.strokes[0].points}]}]}});
+    const serialized=await response(core,request({type:"serialize-storage",value:{notebook:book,format:1}},2));
+    if(serialized.type!=="storage-serialized")throw new Error("snapshot not serialized");
+    expect(parseStoredJson(serialized.content)).toEqual({notebook:book,format:1});
+    expect(await response(core,{...request({type:"serialize-storage",value:book},3),generation:2}))
+      .toMatchObject({type:"error",code:"stale-generation"});
+    const saved=await response(core,request({type:"prepare-save",raw,minimumRevision:0},4));
+    if(saved.type!=="save-prepared")throw new Error("save not prepared");
+    expect(parseStoredJson(saved.content).pages[0].strokes[0].points).toEqual(p.strokes[0].points);
+    expect(await response(core,request({type:"prepare-save",raw:"INK-GZIP-1\nAAAA",minimumRevision:0},5)))
+      .toMatchObject({type:"error",code:"invalid-format"});
+  });
   it("applies ordered operations and prepares a revision snapshot", async () => {
     const core = new InkWorkerCore({ offscreenCanvas: false, imageBitmap: false });
     const notebook = createNotebook("Worker");
@@ -42,7 +61,7 @@ describe("InkWorkerCore persistence mirror", () => {
     }, 3));
     expect(prepared).toMatchObject({ type: "save-prepared", revision: 1 });
     if (prepared.type !== "save-prepared") throw new Error("save was not prepared");
-    expect(JSON.parse(prepared.content).pages[0].strokes[0].id).toBe("stroke-1");
+    expect(parseStoredJson(prepared.content).pages[0].strokes[0].id).toBe("stroke-1");
   });
 
   it("rejects damaged disk JSON without preparing a write", async () => {
@@ -116,7 +135,7 @@ describe("InkWorkerCore persistence mirror", () => {
     const prepared = await response(core, request({ type: "prepare-save", raw: JSON.stringify(notebook), minimumRevision: 2 }, 4));
     expect(prepared).toMatchObject({ type: "save-prepared", revision: 2 });
     if (prepared.type !== "save-prepared") throw new Error("save was not prepared");
-    const points = JSON.parse(prepared.content).pages[0].strokes[0].points;
+    const points = parseStoredJson(prepared.content).pages[0].strokes[0].points;
     expect(points).toHaveLength(2);
     expect(points[1]).toMatchObject({ tiltX: 12, tiltY: -8, t: 2 });
   });
@@ -163,7 +182,7 @@ describe("InkWorkerCore persistence mirror", () => {
     } }, 2))).toMatchObject({ type: "operation-applied", revision: 1 });
     const prepared = await response(core, request({ type: "prepare-save", raw: JSON.stringify(createNotebook()), minimumRevision: 1 }, 3));
     if (prepared.type !== "save-prepared") throw new Error("save was not prepared");
-    const moved = JSON.parse(prepared.content).pages.find((candidate: { id: string }) => candidate.id === page.id).strokes[0];
+    const moved = parseStoredJson(prepared.content).pages.find((candidate: { id: string }) => candidate.id === page.id).strokes[0];
     expect(moved.points[0]).toMatchObject({ x: 0.35, y: 0.1 });
   });
 
@@ -198,7 +217,7 @@ describe("InkWorkerCore persistence mirror", () => {
     } }, 6));
     const prepared = await response(core, request({ type: "prepare-save", raw: JSON.stringify(notebook), minimumRevision: 5 }, 7));
     if (prepared.type !== "save-prepared") throw new Error("save was not prepared");
-    const saved = JSON.parse(prepared.content);
+    const saved = parseStoredJson(prepared.content);
     expect(saved.pageOrder).toEqual([second.id, restored.id]);
     expect(saved.pages.map((page: { id: string }) => page.id)).toEqual([second.id, restored.id]);
     expect(saved.deletedPages[first.id]).toBe(4);

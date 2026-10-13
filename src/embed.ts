@@ -4,6 +4,7 @@ import { drawInkStroke } from "./rendering";
 import { InkEmbedSpec, parseInkEmbed } from "./embed-spec";
 import { ImageLibraryStore } from "./image-library";
 import { paintPageStickies } from "./sticky-rendering";
+import { parseStoredJson } from "./storage-codec";
 export { parseInkEmbed } from "./embed-spec";
 
 export function createInkEmbedProcessor(app: App, open: (file: TFile, pageId?: string) => Promise<void>, images?: ImageLibraryStore) {
@@ -50,7 +51,7 @@ class InkEmbedChild extends MarkdownRenderChild {
     const file = this.app.vault.getAbstractFileByPath(this.spec.path);
     if (!(file instanceof TFile)) { this.renderError(revision, new Error(`Ink notebook not found: ${this.spec.path}`)); return; }
     let notebook: InkNotebook;
-    try { notebook = normalizeNotebook(JSON.parse(await this.app.vault.cachedRead(file))); }
+    try { notebook = normalizeNotebook(parseStoredJson(await this.app.vault.cachedRead(file))); }
     catch { this.renderError(revision, new Error(`Ink notebook is damaged: ${this.spec.path}`)); return; }
     if (!this.isCurrent(revision)) return;
     const page = this.spec.pageId ? notebook.pages.find((candidate) => candidate.id === this.spec.pageId) : notebook.pages[0];

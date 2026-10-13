@@ -1,6 +1,7 @@
 import type { InkImage, InkNotebook, InkPage, InkPoint, InkStroke, PaperStyle } from "./model";
 import { cloneSticky } from "./sticky-model";
 import type { StickyNote } from "./sticky-model";
+import { serializeStoredJson } from "./storage-codec";
 
 // Six doubles per sample keeps the hot path structured-clone free without
 // dropping Pencil metadata. The layout is x, y, pressure, tiltX, tiltY,
@@ -100,6 +101,7 @@ export type InkWorkerRequest =
   | RequestBase & { type: "apply-operation"; operation: NotebookOperation; revision: number }
   | RequestBase & { type: "barrier"; minimumRevision: number }
   | RequestBase & { type: "prepare-save"; raw: string; minimumRevision: number }
+  | RequestBase & { type: "serialize-storage"; value: unknown }
   | RequestBase & {
     type: "render-tile";
     pageId: string;
@@ -137,6 +139,7 @@ export type InkWorkerResponse =
   }
   | ResponseBase & { type: "barrier-complete"; revision: number }
   | ResponseBase & { type: "save-prepared"; token: string; content: string; revision: number }
+  | ResponseBase & { type: "storage-serialized"; content: string }
   | ResponseBase & {
     type: "tile-rendered";
     pageId: string;
@@ -173,7 +176,7 @@ export interface WorkerReply {
 }
 
 export function serializeNotebook(notebook: InkNotebook): string {
-  return `${JSON.stringify(notebook, null, 2)}\n`;
+  return serializeStoredJson(notebook);
 }
 
 export function cloneStrokeValue(stroke: InkStroke): InkStroke {

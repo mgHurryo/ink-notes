@@ -103,6 +103,14 @@ Sticky notes appear in previews, Ink embeds and exported PDFs. PDF export render
 
 Handwriting recognition is not bundled. An optional [handwriting index interface](docs/sticky-handwriting-index.md) allows another integration to provide recognized search terms. Without an integration, Ink Notes does not send handwriting anywhere or run recognition.
 
+## Lossless handwriting storage
+
+Ink notebooks and PDF handwriting sidecars automatically use compact JSON or gzip compression when it reduces file size. Every original sample, coordinate, pressure, tilt, timestamp and stroke style is retained: compression does not simplify handwriting or change its appearance. Images remain separate managed assets; this does not compress the original PDF, image assets or exported PDF.
+
+Existing JSON notes still open normally and become compressed on the next normal save; opening a note alone does not rewrite it. Saving uses the same merge, deletion tombstones and atomic conflict checks. Compression runs in the existing background Worker for normal Ink/PDF saves, with a local fallback when background processing is unavailable. Search, previews and PDF export read either format. Small files remain plain JSON; larger compressed files start with `INK-GZIP-1`, followed by base64 gzip (including `.pdfink.json` files). Compressed input is integrity checked and capped at 256 MiB after decompression; larger uncompressed legacy notes remain JSON on save.
+
+Update Ink Notes on **all devices that edit these files** before sharing compressed notes. Older versions cannot open compressed files and will report a format error. Keep a backup before downgrading; gzip/base64 decoding restores the original JSON for external recovery. Compression ratios depend on the note's data, not just the number of strokes.
+
 ## Page text boxes
 
 In an Ink notebook or PDF, choose the toolbar's **Add text box** (T on desktop) to insert text directly on the page and start typing. Add as many independent boxes as needed. These boxes have a transparent background, with no sticky-note title bar or folded state. They use the same inline Markdown editor and font controls as sticky text: local font presets, size, bold, italic and optional **Scale text with box**. Resizing changes wrapping and the visible window; font size stays fixed unless that option is enabled.
