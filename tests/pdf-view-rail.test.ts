@@ -761,6 +761,46 @@ describe("pdf page preview rail", () => {
     await view.onClose();
   });
 
+  it("shares an in-flight neighbour raster between the swipe stage and destination page", async () => {
+    const { view, sidecar, host, render } = await rasterSetup(800, 600, 1);
+    let finishRaster!: () => void;
+    render.mockImplementationOnce(() => ({ promise: new Promise<void>((resolve) => { finishRaster = resolve; }), cancel: vi.fn() }));
+    const token = (host as any).prewarmToken;
+    const prewarm = (host as any).prewarmNeighbour(1, token) as Promise<HTMLCanvasElement | null>;
+    await vi.waitFor(() => expect(render).toHaveBeenCalledOnce());
+
+    host.noteIndex = 1;
+    host.zoomTouched = false;
+    host.layoutPage();
+    const size = (host as any).swipePageSize(sidecar.notePages[1]);
+    const stage = document.createElement("div");
+    stage.style.width = `${size.width}px`;
+    stage.style.height = `${size.height}px`;
+    document.body.append(stage);
+    const stageRender = (host as any).renderSwipeStagePage(stage, 1) as Promise<void>;
+    const destinationRender = host.renderPdfPage();
+    expect(render).toHaveBeenCalledOnce();
+
+    finishRaster();
+    await Promise.all([prewarm, stageRender, destinationRender]);
+    expect(render).toHaveBeenCalledOnce();
+    expect(stage.querySelector("canvas")?.width).toBeGreaterThan(0);
+    await view.onClose();
+  });
+
+  it("releases an in-flight neighbour raster when the PDF view closes", async () => {
+    const { view, host, render } = await rasterSetup(800, 600, 1);
+    let finishRaster!: () => void;
+    render.mockImplementationOnce(() => ({ promise: new Promise<void>((resolve) => { finishRaster = resolve; }), cancel: vi.fn() }));
+    const pending = (host as any).prewarmNeighbour(1, (host as any).prewarmToken) as Promise<HTMLCanvasElement | null>;
+    await vi.waitFor(() => expect(render).toHaveBeenCalledOnce());
+    const close = view.onClose();
+    await close;
+    finishRaster();
+    await pending;
+    expect(host.neighbourCache.has(1)).toBe(false);
+  });
+
   it("keeps rapid swipe destinations and coalesces renders while the PDF is loading", async () => {
     const { view, internal, host, render, navigation, release } = await delayedSwipeSetup();
     for (const delta of [1, 1, -1, 1]) rapidSwipe(host, delta);

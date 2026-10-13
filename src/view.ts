@@ -536,7 +536,8 @@ export class InkView extends InkWritingView {
       width: Math.max(1, Math.min(this.canvasLogicalWidth - x, (screen.right - page.left) / this.zoom - x)),
       height: Math.max(1, Math.min(this.canvasLogicalHeight - y, (screen.bottom - page.top) / this.zoom - y)) };
     this.tiles!.update(this.viewport, (window.devicePixelRatio || 1) * (this.pinchRenderZoom ?? this.zoom), refine);
-    if (this.pinchRenderZoom === undefined && (refine || this.hasInkPreview())) {
+    if (this.pinchRenderZoom === undefined && (refine || this.hasInkPreview()
+      || this.selectedStrokeIds.size > 0 || this.lassoPath.length > 0)) {
       this.resizeOverlay(this.canvas, this.ctx);
       this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
       this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);

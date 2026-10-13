@@ -40,6 +40,37 @@ test(`${mode}, ${reducedMotion}: vertical native wheel scrolls the page, then fl
 }
 }
 
+for (const mode of ["ink", "pdf"] as const) {
+  test(`${mode}: small desktop scrolls keep the mounted handwriting tiles`, async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/");
+    await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+    const result = await page.evaluate(async (mode) => {
+      if (mode === "pdf") await (window as any).__inkNotesPreview.openPdf();
+      const view = (window as any).__inkNotesPreview.view;
+      const scroller = document.querySelector<HTMLElement>(mode === "ink" ? ".ink-page-scroller" : ".ink-pdf-scroller")!;
+      const layer = document.querySelector<HTMLElement>(".ink-tile-layer")!;
+      scroller.scrollTop = 20;
+      for (let attempt = 0; attempt < 50; attempt++) {
+        if (view.tiles.jobs.length === 0 && view.tiles.pendingTiles.size === 0) break;
+        await new Promise<void>((resolve) => setTimeout(resolve, 100));
+      }
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      const before = [...view.tiles.visible];
+      let changes = 0;
+      const observer = new MutationObserver((records) => { changes += records.reduce((sum, record) => sum + record.addedNodes.length + record.removedNodes.length, 0); });
+      observer.observe(layer, { childList: true });
+      scroller.scrollTop += 1;
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      observer.disconnect();
+      return { changes, tiles: layer.childElementCount, before, after: [...view.tiles.visible] };
+    }, mode);
+    expect(result.tiles).toBeGreaterThan(0);
+    expect(result.after).toEqual(result.before);
+    expect(result.changes).toBe(0);
+  });
+}
+
 test("renewed trackpad flicks and page keys coalesce while the previous page is still saving", async ({ page }) => {
   await page.goto("/");
   await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
