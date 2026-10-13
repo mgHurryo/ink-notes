@@ -810,6 +810,12 @@ export abstract class InkWritingView extends FileView {
   protected eraserPointerInside = false;
   protected renderFrame: number | null = null;
   protected resizeRequested = false;
+  /** Path2D per confirmed outline. Worker outlines are immutable Float32Arrays
+   *  whose reference survives until a longer outline replaces them, so the
+   *  array identity keys the cache and every animation frame reuses the same
+   *  path instead of re-tracing tens of thousands of vertices. */
+  private confirmedOutlinePaths = new WeakMap<Float32Array,
+    { width: number; height: number; mode: "pen" | "highlighter"; path: Path2D }>();
 
   // --- shared brush settings popover + toolbar
   protected brushPopover!: BrushPopoverController;
@@ -3198,10 +3204,45 @@ export abstract class InkWritingView extends FileView {
   protected drawConfirmedOutline(ctx: CanvasRenderingContext2D, points: Float32Array, color: string, opacity: number, width: number,
     mode: "pen" | "highlighter"): void {
     if (points.length < 4) return;
-    ctx.save();
-    ctx.globalAlpha = opacity;
     const scaleX = this.canvasLogicalWidth;
     const scaleY = this.canvasLogicalHeight;
+    let cached = this.confirmedOutlinePaths.get(points);
+    if (!cached || cached.width !== scaleX || cached.height !== scaleY || cached.mode !== mode) {
+      const path = new Path2D();
+      if (mode === "highlighter") {
+        path.moveTo(points[0] * scaleX, points[1] * scaleY);
+        for (let index = 2; index < points.length; index += 2) {
+          const previousX = points[index - 2] * scaleX;
+          const previousY = points[index - 1] * scaleY;
+          const pointX = points[index] * scaleX;
+          const pointY = points[index + 1] * scaleY;
+          const last = index === points.length - 2;
+          path.quadraticCurveTo(previousX, previousY,
+            last ? pointX : (previousX + pointX) / 2,
+            last ? pointY : (previousY + pointY) / 2);
+        }
+        path.lineTo(points[points.length - 2] * scaleX, points[points.length - 1] * scaleY);
+      } else {
+        // The outline is the final ink shape; render it as plain polygons so
+        // live ink, retained previews and committed tiles all keep sparse
+        // fast-written corners exactly where the pen turned. NaN separators
+        // split retraced runs, which fill separately so a retraced band keeps
+        // its ink instead of cancelling its neighbour's winding to holes.
+        let tracing = false;
+        for (let index = 0; index < points.length; index += 2) {
+          const x = points[index] * scaleX;
+          const y = points[index + 1] * scaleY;
+          if (!Number.isFinite(x) || !Number.isFinite(y)) { tracing = false; continue; }
+          if (!tracing) { tracing = true; path.moveTo(x, y); continue; }
+          path.lineTo(x, y);
+        }
+        if (tracing) path.closePath();
+      }
+      cached = { width: scaleX, height: scaleY, mode, path };
+      this.confirmedOutlinePaths.set(points, cached);
+    }
+    ctx.save();
+    ctx.globalAlpha = opacity;
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
     ctx.lineCap = "round";
@@ -3209,38 +3250,10 @@ export abstract class InkWritingView extends FileView {
     if (mode === "highlighter") {
       ctx.globalCompositeOperation = "multiply";
       ctx.lineWidth = width;
-      ctx.beginPath();
-      ctx.moveTo(points[0] * scaleX, points[1] * scaleY);
-      for (let index = 2; index < points.length; index += 2) {
-        const previousX = points[index - 2] * scaleX;
-        const previousY = points[index - 1] * scaleY;
-        const pointX = points[index] * scaleX;
-        const pointY = points[index + 1] * scaleY;
-        const last = index === points.length - 2;
-        ctx.quadraticCurveTo(previousX, previousY,
-          last ? pointX : (previousX + pointX) / 2,
-          last ? pointY : (previousY + pointY) / 2);
-      }
-      ctx.lineTo(points[points.length - 2] * scaleX, points[points.length - 1] * scaleY);
-      ctx.stroke();
+      ctx.stroke(cached.path);
     } else {
       ctx.globalCompositeOperation = "source-over";
-      // The outline is the final ink shape; render it as plain polygons so
-      // live ink, retained previews and committed tiles all keep sparse
-      // fast-written corners exactly where the pen turned. NaN separators
-      // split retraced runs, which fill separately so a retraced band keeps
-      // its ink instead of cancelling its neighbour's winding to holes.
-      ctx.beginPath();
-      let tracing = false;
-      for (let index = 0; index < points.length; index += 2) {
-        const x = points[index] * scaleX;
-        const y = points[index + 1] * scaleY;
-        if (!Number.isFinite(x) || !Number.isFinite(y)) { tracing = false; continue; }
-        if (!tracing) { tracing = true; ctx.moveTo(x, y); continue; }
-        ctx.lineTo(x, y);
-      }
-      if (tracing) ctx.closePath();
-      ctx.fill();
+      ctx.fill(cached.path);
     }
     ctx.restore();
   }
