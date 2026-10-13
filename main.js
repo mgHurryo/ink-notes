@@ -26770,6 +26770,7 @@ var SAVE_MAX_DELAY = 1e4;
 var INK_COMMIT_IDLE_DELAY = 180;
 var LIVE_TAIL_SAMPLE_LIMIT = 32;
 var COMPLETED_PREVIEW_SAMPLE_LIMIT = 256;
+var LINE_HOLD_MS = 2e3;
 var PEN_CAPTURE_MIN_DISTANCE = 0.35;
 var SPARSE_SAMPLE_INTERVAL_MS = 24;
 var PEN_SAMPLE_INTERVAL_WINDOW = 32;
@@ -27128,6 +27129,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     this.shapeKind = "rectangle";
     this.geometricStroke = null;
     this.lineHoldAnchor = null;
+    this.lineHoldLastMoveAt = 0;
     this.workerStrokePointIndex = 0;
     this.lastPoint = null;
     this.touchGesture = null;
@@ -30111,24 +30113,37 @@ var InkWritingView = class extends import_obsidian6.FileView {
       (point.x - anchor.x) * this.canvasLogicalWidth,
       (point.y - anchor.y) * this.canvasLogicalHeight
     ) <= 3) return;
-    this.cancelLineHold();
     this.lineHoldAnchor = { ...point };
+    this.lineHoldLastMoveAt = Date.now();
+    if (this.lineHoldTimer !== void 0) return;
     const start = this.scribbleGesturePoints[0];
     if (!start || Math.hypot(
       (point.x - start.x) * this.canvasLogicalWidth,
       (point.y - start.y) * this.canvasLogicalHeight
     ) < 40) return;
     const generation = (_a = this.interaction) == null ? void 0 : _a.generation;
-    this.lineHoldTimer = window.setTimeout(() => {
-      var _a2;
-      this.lineHoldTimer = void 0;
-      if (!this.activeStroke || ((_a2 = this.interaction) == null ? void 0 : _a2.generation) !== generation || this.inputLocked() || !canStraighten(this.scribbleGesturePoints, this.canvasLogicalWidth, this.canvasLogicalHeight)) return;
-      this.geometricStroke = { start: { ...this.scribbleGesturePoints[0] }, kind: "line" };
-      this.penModeler = null;
-      this.activeStroke.dynamics = { taper: 0, pressure: 0, speed: 0 };
-      this.replaceGeometricPoints(point);
-      this.requestRender();
-    }, 2e3);
+    this.lineHoldTimer = window.setTimeout(() => this.settleLineHold(generation), LINE_HOLD_MS);
+  }
+  settleLineHold(generation) {
+    var _a;
+    this.lineHoldTimer = void 0;
+    if (!this.activeStroke || ((_a = this.interaction) == null ? void 0 : _a.generation) !== generation || this.inputLocked()) return;
+    const remaining = LINE_HOLD_MS - (Date.now() - this.lineHoldLastMoveAt);
+    if (remaining > 0) {
+      this.lineHoldTimer = window.setTimeout(() => this.settleLineHold(generation), remaining);
+      return;
+    }
+    const anchor = this.lineHoldAnchor;
+    const start = this.scribbleGesturePoints[0];
+    if (!anchor || !start || Math.hypot(
+      (anchor.x - start.x) * this.canvasLogicalWidth,
+      (anchor.y - start.y) * this.canvasLogicalHeight
+    ) < 40 || !canStraighten(this.scribbleGesturePoints, this.canvasLogicalWidth, this.canvasLogicalHeight)) return;
+    this.geometricStroke = { start: { ...start }, kind: "line" };
+    this.penModeler = null;
+    this.activeStroke.dynamics = { taper: 0, pressure: 0, speed: 0 };
+    this.replaceGeometricPoints(anchor);
+    this.requestRender();
   }
   replaceGeometricPoints(end) {
     if (!this.activeStroke || !this.geometricStroke) return;
@@ -30862,8 +30877,7 @@ var StrokeIndex = class {
   }
   upsert(stroke, order) {
     const previous = this.entries.get(stroke.id);
-    const style = [stroke.tool, stroke.color, stroke.width, stroke.opacity].join(":");
-    if ((previous == null ? void 0 : previous.stroke) === stroke && previous.points === stroke.points && previous.count === stroke.points.length && previous.revision === stroke.updatedAt && previous.style === style) {
+    if ((previous == null ? void 0 : previous.stroke) === stroke && previous.points === stroke.points && previous.count === stroke.points.length && previous.revision === stroke.updatedAt && previous.tool === stroke.tool && previous.color === stroke.color && previous.width === stroke.width && previous.opacity === stroke.opacity) {
       previous.order = order;
       return [];
     }
@@ -30877,7 +30891,18 @@ var StrokeIndex = class {
       maxY = Math.max(maxY, p.y * this.height);
     }
     const keys = cellKeys({ x: minX - padding, y: minY - padding, width: maxX - minX + padding * 2, height: maxY - minY + padding * 2 }, this.width, this.height);
-    const entry = { stroke, points: stroke.points, count: stroke.points.length, revision: stroke.updatedAt, order, style, cells: keys };
+    const entry = {
+      stroke,
+      points: stroke.points,
+      count: stroke.points.length,
+      revision: stroke.updatedAt,
+      order,
+      tool: stroke.tool,
+      color: stroke.color,
+      width: stroke.width,
+      opacity: stroke.opacity,
+      cells: keys
+    };
     this.entries.set(stroke.id, entry);
     for (const key of keys) {
       if (!this.cells.has(key)) this.cells.set(key, /* @__PURE__ */ new Set());
@@ -31188,7 +31213,9 @@ var TileRenderer = class {
       const state = this.state(page, this.active.index.width, this.active.index.height);
       state.index.sync(page.strokes);
       for (const cell of cellKeys(this.viewport, state.index.width, state.index.height)) {
-        if (!this.get(state, cell, this.density)) this.jobs.push({ state, cell, density: this.density, priority: "prewarm" });
+        if (this.get(state, cell, this.density)) continue;
+        if (this.jobs.some((job) => job.state === state && job.cell === cell && job.density === this.density)) continue;
+        this.jobs.push({ state, cell, density: this.density, priority: "prewarm" });
       }
     }
     this.schedule();

@@ -138,6 +138,8 @@ const SAVE_MAX_DELAY = 10_000;
 export const INK_COMMIT_IDLE_DELAY = 180;
 const LIVE_TAIL_SAMPLE_LIMIT = 32;
 const COMPLETED_PREVIEW_SAMPLE_LIMIT = 256;
+// How long the pen must rest in place before a drawn path straightens.
+const LINE_HOLD_MS = 2_000;
 // Modeled pen samples are deduplicated against this page-pixel radius. The
 // radius must exceed the modeler's end-of-stroke catch-up step sizes: those
 // converging (and overshoot-reversing) micro-segments otherwise reach the
@@ -846,6 +848,7 @@ export abstract class InkWritingView extends FileView {
   private geometricStroke: { start: InkPoint; kind: ShapeKind } | null = null;
   private lineHoldTimer: number | undefined;
   private lineHoldAnchor: InkPoint | null = null;
+  private lineHoldLastMoveAt = 0;
   protected workerStrokePointIndex = 0;
   protected lastPoint: InkPoint | null = null;
   protected touchGesture: {
@@ -3430,23 +3433,39 @@ export abstract class InkWritingView extends FileView {
     // Hardware jitter while the nib rests must not keep postponing the hold.
     if (anchor && Math.hypot((point.x - anchor.x) * this.canvasLogicalWidth,
       (point.y - anchor.y) * this.canvasLogicalHeight) <= 3) return;
-    this.cancelLineHold();
     this.lineHoldAnchor = { ...point };
+    this.lineHoldLastMoveAt = Date.now();
+    if (this.lineHoldTimer !== undefined) return;
     const start = this.scribbleGesturePoints[0];
     // Keep device-rate input constant-time; inspect the whole path only on hold.
     if (!start || Math.hypot((point.x - start.x) * this.canvasLogicalWidth,
       (point.y - start.y) * this.canvasLogicalHeight) < 40) return;
+    // One timer serves the whole stroke. Raw-update streams used to cancel and
+    // re-arm here on every hardware sample (hundreds of timers per second);
+    // the settle callback instead re-checks the rest deadline and re-arms the
+    // remainder, so the hold still fires only after the full quiet window.
     const generation = this.interaction?.generation;
-    this.lineHoldTimer = window.setTimeout(() => {
-      this.lineHoldTimer = undefined;
-      if (!this.activeStroke || this.interaction?.generation !== generation || this.inputLocked()
-        || !canStraighten(this.scribbleGesturePoints, this.canvasLogicalWidth, this.canvasLogicalHeight)) return;
-      this.geometricStroke = { start: { ...this.scribbleGesturePoints[0] }, kind: "line" };
-      this.penModeler = null;
-      this.activeStroke.dynamics = { taper: 0, pressure: 0, speed: 0 };
-      this.replaceGeometricPoints(point);
-      this.requestRender();
-    }, 2_000);
+    this.lineHoldTimer = window.setTimeout(() => this.settleLineHold(generation), LINE_HOLD_MS);
+  }
+
+  private settleLineHold(generation: number | undefined): void {
+    this.lineHoldTimer = undefined;
+    if (!this.activeStroke || this.interaction?.generation !== generation || this.inputLocked()) return;
+    const remaining = LINE_HOLD_MS - (Date.now() - this.lineHoldLastMoveAt);
+    if (remaining > 0) {
+      this.lineHoldTimer = window.setTimeout(() => this.settleLineHold(generation), remaining);
+      return;
+    }
+    const anchor = this.lineHoldAnchor;
+    const start = this.scribbleGesturePoints[0];
+    if (!anchor || !start || Math.hypot((anchor.x - start.x) * this.canvasLogicalWidth,
+      (anchor.y - start.y) * this.canvasLogicalHeight) < 40
+      || !canStraighten(this.scribbleGesturePoints, this.canvasLogicalWidth, this.canvasLogicalHeight)) return;
+    this.geometricStroke = { start: { ...start }, kind: "line" };
+    this.penModeler = null;
+    this.activeStroke.dynamics = { taper: 0, pressure: 0, speed: 0 };
+    this.replaceGeometricPoints(anchor);
+    this.requestRender();
   }
 
   private replaceGeometricPoints(end: InkPoint): void {
