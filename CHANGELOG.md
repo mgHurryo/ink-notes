@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.1.3 - 2026-10-13
+
+- Promote the 0.1.3 beta series to stable. Create and manage Ink notebooks, write on PDF pages, add blank pages, reorder or hide handwritten pages, and edit the same PDF from split panes with conflict-aware sidecar saves. Source PDFs remain unchanged.
+- Add pressure-aware handwriting, highlighter and eraser tools, adjustable scribble erasing, freehand/rectangle lasso with clipboard actions, shapes, movable text boxes, inline Markdown sticky notes, and a grouped image library with batch import and management.
+- Add per-tab Reading and Editing modes, device-aware initial modes, desktop keyboard/mouse/wheel/trackpad navigation, and PDF viewer preferences for Ink-first, native, and plugin-compatible workflows.
+- Compress saved handwriting losslessly when it reduces file size. Existing JSON notes remain readable, but older plugin versions cannot open notes after they have been saved in the compressed format. Update every device that edits a vault before sharing compressed notes, and keep a backup before downgrading.
+- Require Obsidian 1.5.7 or later. Automated typecheck, unit, browser, audit and build checks pass; physical iPad and desktop hardware validation remains device-dependent.
+
 ## 0.1.3-beta.14 - 2026-10-13
 
 - Count each discrete mouse-wheel notch as one page request and preserve queued notches through page transitions; renewed trackpad motion can start another flick without waiting for the idle timeout.
