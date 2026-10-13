@@ -1,25 +1,38 @@
 # Ink Notes
 
-Ink Notes is a cross-platform handwritten notebook plugin for Obsidian. It stores notebooks as JSON files inside the Vault under `Ink Notes/`, so Obsidian Sync and other Vault sync tools can replicate the same pages and strokes to Windows, macOS, Linux, iOS, and iPadOS.
+**Handwrite, annotate PDFs, and organize visual notes directly in Obsidian.** Ink Notes keeps notebooks and handwriting in your vault, so your existing sync service can carry them across desktop, iPhone, and iPad.
 
-Ink Notes is licensed under Apache-2.0. The bundled stroke model is adapted from Google's `ink-stroke-modeler` and retains its Apache-2.0 attribution. Other bundled dependencies retain their original licenses; see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
+[![Obsidian Community Plugin](https://img.shields.io/badge/Obsidian-Community%20Plugin-483699?logo=obsidian&logoColor=white)](https://community.obsidian.md/plugins/ink-notes)
+[![Latest release](https://img.shields.io/github/v/release/mgHurryo/ink-notes?include_prereleases&label=latest%20release)](https://github.com/mgHurryo/ink-notes/releases/latest)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![Obsidian 1.5.7+](https://img.shields.io/badge/Obsidian-1.5.7%2B-483699?logo=obsidian&logoColor=white)](https://obsidian.md/)
 
-## Install and enable
+Pressure-aware handwriting, PDF annotation, movable images, sticky notes, and text boxes share one page-based workspace. The original PDF stays untouched; notebooks and PDF notes are stored in your vault.
 
-Ink Notes requires Obsidian 1.5.7 or later for view-scoped keyboard shortcuts.
+## Quick start
 
-Install Ink Notes from the [Obsidian Community directory](https://community.obsidian.md/plugins/ink-notes), or open **Settings -> Community plugins -> Browse**, search for **Ink Notes**, and select **Install**. Then enable it in **Settings -> Community plugins -> Installed plugins**. Installation and enabling are separate steps.
+1. **Install:** In Obsidian, open **Settings → Community plugins → Browse**, find **Ink Notes**, choose **Install**, then enable it under **Installed plugins**. Ink Notes requires Obsidian 1.5.7 or later.
+2. **Open a notebook:** Select the pen icon in the ribbon, or run **Ink Notes: Open Ink Notebook**. The picker can create, open, and rename notebooks; **Ink Notes: Create Ink Notebook** creates one directly.
+3. **Write on a PDF:** Open a PDF and run **Ink Notes: Open current PDF with handwriting**, or choose **Open PDF with Ink Notes handwriting** from the file menu. This opens a separate Ink Notes tab; assign the command a hotkey in **Settings → Hotkeys** for quicker access.
+4. **Read or edit:** Use **Reading** to navigate without drawing and **Editing** to write. Export creates a PDF copy with handwriting; the source PDF is preserved.
 
-For manual installation, download `main.js`, `manifest.json` and `styles.css` from the [latest GitHub release](https://github.com/mgHurryo/ink-notes/releases/latest), place them in `.obsidian/plugins/ink-notes/` inside your vault, reload Obsidian, then enable **Ink Notes** in **Settings -> Community plugins**. Existing installations with the old higher version numbers need a manual reinstall of 0.1.0.
+<details>
+<summary>Manual installation and upgrade notes</summary>
 
-If you installed the withdrawn initial 0.1.2 package, manually replace all three plugin files with the corrected 0.1.2 release and restart Obsidian. The version number is unchanged, so an automatic update check may report that you are already up to date.
+Download `main.js`, `manifest.json`, and `styles.css` from the [latest GitHub release](https://github.com/mgHurryo/ink-notes/releases/latest). Place them in `.obsidian/plugins/ink-notes/` inside your vault, reload Obsidian, and enable **Ink Notes** in **Settings → Community plugins**.
 
-## Start a notebook or PDF
+If you installed the withdrawn initial 0.1.2 package, replace all three plugin files with the corrected 0.1.2 release and restart Obsidian. Because the version number is unchanged, an automatic update check may report that you are already up to date.
+</details>
 
-- For a native notebook, select the pen icon in the ribbon or run **Ink Notes: Open Ink Notebook** from the command palette. The picker can create, open and rename notebooks. **Ink Notes: Create Ink Notebook** creates one directly.
-- For a PDF, open the PDF, then run **Ink Notes: Open current PDF with handwriting** from the command palette. This opens a separate Ink Notes tab. You can also right-click the PDF in the file explorer, or open its file context menu on mobile, and choose **Open PDF with Ink Notes handwriting**. The command palette and file menu are alternatives to the editor's three-dot menu.
-- Assign a hotkey to **Open current PDF with handwriting** in **Settings -> Hotkeys** for quicker access.
-- In the handwriting view, use **Editing** for writing and erasing, or **Reading** for navigation without drawing. Export creates a PDF copy with handwriting; the source PDF is preserved.
+## Contents
+
+| Create and edit | Navigate and organize | Reference |
+| --- | --- | --- |
+| [Features](#features) · [Scribble erase](#scribble-to-erase-with-the-pen) · [Lasso](#copy-handwriting-with-the-lasso) | [Desktop navigation](#desktop-navigation) · [PDF viewer behavior](#why-does-a-pdf-still-open-in-the-default-viewer) · [UI preview](#ui-preview) | [Markdown embeds](#markdown-embeds) · [Privacy and storage](#privacy-and-storage) |
+| [Images](#insert-and-arrange-images) · [Sticky notes](#sticky-notes) · [Text boxes](#page-text-boxes) · [Shapes](#shapes-and-hold-to-straighten) | [Lossless storage](#lossless-handwriting-storage) · [PDF plugin compatibility](#pdf-plugin-compatibility) | [Build](#build) |
+
+<details>
+<summary>PDF viewer settings and plugin compatibility</summary>
 
 ### Why does a PDF still open in the default viewer?
 
@@ -31,19 +44,15 @@ To use both workflows, keep the other plugin enabled and choose **Ink Notes firs
 
 If the explicit command is missing, check that Ink Notes is enabled in this vault and reload it. If an unknown plugin still intercepts the explicit opening, temporarily disable that plugin to isolate the conflict, then [report an issue](https://github.com/mgHurryo/ink-notes/issues) with plugin names, versions and the opening steps. Compatibility with every plugin combination is not guaranteed.
 
+</details>
+
 ## Features
 
-- Pointer Events input for pen, mouse, and touch-capable WebViews.
-- Pressure-aware pen strokes with tilt values retained in the file and adjustable smoothing for cleaner everyday handwriting.
-- Real-time pen and highlighter previews, including long strokes that cross render tiles.
-- Stroke, circular, and square erasers with an always-visible aiming outline and adjustable local-eraser size.
-- Paper templates, a collapsible page rail, page creation, duplication, deletion, reordering, rename, and zoom.
-- Undo and redo for drawing, erasing, lasso moves, cut/paste/delete, and page operations.
-- Lasso selection, constrained on-page movement, and a floating Copy / Cut / Delete / Paste menu that stays inside the current editor pane.
-- A single compact 56px responsive toolbar with tool settings in an accessible popover and no duplicate offscreen controls.
-- Atomic Vault writes with stroke and page tombstones so deleted content stays deleted during cross-device merges.
-- Read-only Markdown `ink` code-block embeds with optional page targeting.
-- No native dependency, so the plugin is packaged once for all Obsidian platforms.
+| Write | Edit | Organize |
+| --- | --- | --- |
+| Pressure-aware pen and highlighter, smoothing controls, paper templates, and stroke/circle/square erasers. | Lasso, movable images, text boxes, shapes, sticky notes, undo/redo, and PDF export. | Multi-page notebooks, page rails, vault-backed sync, Markdown embeds, and cross-device conflict handling. |
+
+Ink Notes uses pointer input for pen, mouse, and touch-capable WebViews. It has no native dependency and is packaged once for desktop and mobile Obsidian.
 
 ### Scribble to erase with the pen
 
@@ -177,7 +186,11 @@ The [compatibility audit](docs/pdf-plugin-compatibility.md), [283-plugin invento
 ## Build
 
 ```bash
-npm install
+npm ci
 npm run typecheck
 npm run build
 ```
+
+## License and attribution
+
+Ink Notes is licensed under [Apache-2.0](LICENSE). The bundled stroke model is adapted from Google's [`ink-stroke-modeler`](THIRD-PARTY-NOTICES.md) and retains its Apache-2.0 attribution. Bundled dependencies retain their respective licenses; see [third-party notices](THIRD-PARTY-NOTICES.md).
