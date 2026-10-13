@@ -27161,6 +27161,9 @@ var InkWritingView = class extends import_obsidian6.FileView {
     this.eraserReplacementIds = /* @__PURE__ */ new Set();
     this.eraserReplacements = [];
     this.eraserPreviewCells = /* @__PURE__ */ new Set();
+    /** Reused dedup map for eraseAt(): cleared per call instead of rebuilt, so
+     *  a grazing eraser does not allocate a spread chain per input sample. */
+    this.eraserCandidateScratch = /* @__PURE__ */ new Map();
     // --- lasso / selection
     this.lassoPath = [];
     this.selectedStrokeIds = /* @__PURE__ */ new Set();
@@ -29358,24 +29361,40 @@ var InkWritingView = class extends import_obsidian6.FileView {
   }
   // --------------------------------------------------------------- eraser
   eraseAt(point, page, mode = this.state.eraserMode, size = this.state.eraserSize) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a, _b, _c, _d, _e, _f;
     const radius = mode === "stroke" ? STROKE_ERASER_HIT_RADIUS : size / 2;
     const indexed = ((_a = this.tiles) == null ? void 0 : _a.queryNear) ? this.tiles.queryNear(point, radius) : page.strokes;
-    const top = [...(_c = (_b = this.stickyInput) == null ? void 0 : _b.notes) != null ? _c : []].reverse().find((n) => {
-      if (n.collapsed) return false;
-      const r = stickyBounds(n, this.stickyGeometry());
-      return point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom;
-    });
-    const candidates = [...new Map([...indexed, ...[...(_e = (_d = this.stickyInput) == null ? void 0 : _d.proxies.values()) != null ? _e : []], ...this.eraserReplacements].map((stroke) => [stroke.id, stroke])).values()].filter((stroke) => {
+    const top = (() => {
       var _a2;
-      if (this.erasedCandidateIds.has(stroke.id)) return false;
-      const owner = (_a2 = this.stickyInput) == null ? void 0 : _a2.owners.get(stroke.id);
-      if (!owner) return !top;
-      if ((top == null ? void 0 : top.id) !== owner.id) return false;
-      const r = stickyBounds(owner, this.stickyGeometry());
-      return point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom;
-    });
-    const removed = candidates.filter((stroke) => strokeIntersectsEraser(stroke, point, radius, mode, this.canvasLogicalWidth, this.canvasLogicalHeight));
+      const notes = (_a2 = this.stickyInput) == null ? void 0 : _a2.notes;
+      if (notes) {
+        for (let index = notes.length - 1; index >= 0; index--) {
+          const note = notes[index];
+          if (note.collapsed) continue;
+          const r = stickyBounds(note, this.stickyGeometry());
+          if (point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom) return note;
+        }
+      }
+      return void 0;
+    })();
+    const seen = this.eraserCandidateScratch;
+    seen.clear();
+    for (const stroke of indexed) seen.set(stroke.id, stroke);
+    if (this.stickyInput) for (const stroke of this.stickyInput.proxies.values()) seen.set(stroke.id, stroke);
+    for (const stroke of this.eraserReplacements) seen.set(stroke.id, stroke);
+    const removed = [];
+    for (const stroke of seen.values()) {
+      if (this.erasedCandidateIds.has(stroke.id)) continue;
+      const owner = (_b = this.stickyInput) == null ? void 0 : _b.owners.get(stroke.id);
+      if (!owner) {
+        if (top) continue;
+      } else {
+        if ((top == null ? void 0 : top.id) !== owner.id) continue;
+        const r = stickyBounds(owner, this.stickyGeometry());
+        if (!(point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom)) continue;
+      }
+      if (strokeIntersectsEraser(stroke, point, radius, mode, this.canvasLogicalWidth, this.canvasLogicalHeight)) removed.push(stroke);
+    }
     if (removed.length === 0) return false;
     for (const stroke of removed) {
       this.erasedCandidateIds.add(stroke.id);
@@ -29395,8 +29414,8 @@ var InkWritingView = class extends import_obsidian6.FileView {
           const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, createdAt: now, updatedAt: now };
           page.strokes.push(replacement);
           replacements.push(replacement);
-          const owner = (_f = this.stickyInput) == null ? void 0 : _f.owners.get(stroke.id);
-          if (owner) (_g = this.stickyInput) == null ? void 0 : _g.owners.set(replacement.id, owner);
+          const owner = (_c = this.stickyInput) == null ? void 0 : _c.owners.get(stroke.id);
+          if (owner) (_d = this.stickyInput) == null ? void 0 : _d.owners.set(replacement.id, owner);
           this.eraserReplacementIds.add(replacement.id);
           this.eraserReplacements.push(cloneStroke(replacement));
         }
@@ -29404,13 +29423,13 @@ var InkWritingView = class extends import_obsidian6.FileView {
       page.strokes.sort((left, right) => left.createdAt - right.createdAt);
     }
     if (page === this.currentPage()) {
-      for (const cell of (_i = (_h = this.tiles) == null ? void 0 : _h.patchStrokes(replacements.filter((s) => {
+      for (const cell of (_f = (_e = this.tiles) == null ? void 0 : _e.patchStrokes(replacements.filter((s) => {
         var _a2;
         return !((_a2 = this.stickyInput) == null ? void 0 : _a2.owners.has(s.id));
       }), removed.map((stroke) => stroke.id), page.strokes.filter((s) => {
         var _a2;
         return !((_a2 = this.stickyInput) == null ? void 0 : _a2.owners.has(s.id));
-      }))) != null ? _i : []) {
+      }))) != null ? _f : []) {
         this.eraserPreviewCells.add(cell);
       }
     }
@@ -31984,6 +32003,8 @@ var InkView = class extends InkWritingView {
     /** Live rail drag (pointerdown → pointerup) from the resize handle. */
     this.railResize = null;
     this.thumbnailRefreshFrame = null;
+    this.thumbObserver = null;
+    this.pendingThumbs = /* @__PURE__ */ new WeakMap();
     this.pageManagement = false;
     this.selectedPageIds = /* @__PURE__ */ new Set();
     this.swipeStage = null;
@@ -32028,7 +32049,7 @@ var InkView = class extends InkWritingView {
     this.renderAll();
   }
   async onClose() {
-    var _a, _b, _c, _d;
+    var _a, _b, _c, _d, _e;
     this.disposeZoomHud();
     this.closePageOptionsMenu();
     this.pageNavigationGeneration += 1;
@@ -32037,6 +32058,8 @@ var InkView = class extends InkWritingView {
     this.railRevealTimer = void 0;
     if (this.thumbnailRefreshFrame !== null) window.cancelAnimationFrame(this.thumbnailRefreshFrame);
     this.thumbnailRefreshFrame = null;
+    (_a = this.thumbObserver) == null ? void 0 : _a.disconnect();
+    this.thumbObserver = null;
     if (this.renderFrame !== null) window.cancelAnimationFrame(this.renderFrame);
     this.renderFrame = null;
     if (this.zoomRenderTimer !== void 0) window.clearTimeout(this.zoomRenderTimer);
@@ -32048,10 +32071,10 @@ var InkView = class extends InkWritingView {
     this.clearSaveTimers();
     this.destroySwipeStage();
     if (this.file && (this.dirtyRevision > this.savedRevision || this.activeSave)) await this.save(this.file);
-    (_b = (_a = this.tiles) == null ? void 0 : _a.setBackend) == null ? void 0 : _b.call(_a, null);
-    (_c = this.workerSession) == null ? void 0 : _c.dispose();
+    (_c = (_b = this.tiles) == null ? void 0 : _b.setBackend) == null ? void 0 : _c.call(_b, null);
+    (_d = this.workerSession) == null ? void 0 : _d.dispose();
     this.workerSession = null;
-    (_d = this.tiles) == null ? void 0 : _d.dispose();
+    (_e = this.tiles) == null ? void 0 : _e.dispose();
     this.viewReady = false;
   }
   async onLoadFile(file) {
@@ -32260,10 +32283,46 @@ var InkView = class extends InkWritingView {
       button3.createSpan({ text: String(index + 1), cls: "ink-page-thumb-number" });
       button3.createSpan({ text: page.title, cls: "ink-page-thumb-title" });
       button3.addEventListener("click", () => this.pageManagement ? this.togglePageSelection(page.id) : this.navigateToPage(page.id));
-      this.drawPageThumbnail(canvas, page);
+      this.scheduleThumbnail(canvas, page);
     });
     this.mountRailResizer(rail);
     (_b = (_a = rail.querySelector(".ink-page-thumb.is-active")) == null ? void 0 : _a.scrollIntoView) == null ? void 0 : _b.call(_a, { block: "nearest" });
+  }
+  /** Paints a thumbnail now when it is on screen, defers offscreen ones to
+   *  the intersection observer. The synchronous probe keeps the common cases
+   *  (short page lists, the active thumb after a rebuild) painted in the same
+   *  tick as before — no flash between a rail rebuild and the observer's
+   *  async first report — while a long scrolled list only paints what the
+   *  user can actually see. Hosts without IntersectionObserver (tests) and
+   *  any geometry the probe cannot judge fall back to immediate painting. */
+  scheduleThumbnail(canvas, page) {
+    var _a;
+    let onScreen = true;
+    const scroller = canvas.closest(".ink-page-rail");
+    if (scroller && typeof IntersectionObserver === "function") {
+      const box = scroller.getBoundingClientRect();
+      const rect = canvas.getBoundingClientRect();
+      onScreen = rect.width > 0 && rect.bottom > box.top && rect.top < box.bottom;
+    }
+    if (onScreen || typeof IntersectionObserver !== "function") {
+      this.drawPageThumbnail(canvas, page);
+      return;
+    }
+    this.pendingThumbs.set(canvas, page);
+    (_a = this.thumbObserver) != null ? _a : this.thumbObserver = new IntersectionObserver((entries) => {
+      var _a2;
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        (_a2 = this.thumbObserver) == null ? void 0 : _a2.unobserve(entry.target);
+        const thumb = entry.target;
+        const deferred = this.pendingThumbs.get(thumb);
+        if (deferred) {
+          this.pendingThumbs.delete(thumb);
+          this.drawPageThumbnail(thumb, deferred);
+        }
+      }
+    });
+    this.thumbObserver.observe(canvas);
   }
   /**
    * Paints one page's strokes into its rail thumbnail as a small vector

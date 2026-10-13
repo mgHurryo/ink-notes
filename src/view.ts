@@ -97,6 +97,8 @@ export class InkView extends InkWritingView {
   /** Deferred thumbnail redraw while the rail's expand transition runs. */
   private railRevealTimer: number | undefined;
   private thumbnailRefreshFrame: number | null = null;
+  private thumbObserver: IntersectionObserver | null = null;
+  private pendingThumbs = new WeakMap<HTMLCanvasElement, InkPage>();
   private pageManagement = false;
   private selectedPageIds = new Set<string>();
 
@@ -143,6 +145,8 @@ export class InkView extends InkWritingView {
     this.railRevealTimer = undefined;
     if (this.thumbnailRefreshFrame !== null) window.cancelAnimationFrame(this.thumbnailRefreshFrame);
     this.thumbnailRefreshFrame = null;
+    this.thumbObserver?.disconnect();
+    this.thumbObserver = null;
     if (this.renderFrame !== null) window.cancelAnimationFrame(this.renderFrame);
     this.renderFrame = null;
     if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
@@ -366,10 +370,45 @@ export class InkView extends InkWritingView {
       button.createSpan({ text: page.title, cls: "ink-page-thumb-title" });
       button.addEventListener("click", () => this.pageManagement
         ? this.togglePageSelection(page.id) : this.navigateToPage(page.id));
-      this.drawPageThumbnail(canvas, page);
+      this.scheduleThumbnail(canvas, page);
     });
     this.mountRailResizer(rail);
     rail.querySelector<HTMLElement>(".ink-page-thumb.is-active")?.scrollIntoView?.({ block: "nearest" });
+  }
+
+  /** Paints a thumbnail now when it is on screen, defers offscreen ones to
+   *  the intersection observer. The synchronous probe keeps the common cases
+   *  (short page lists, the active thumb after a rebuild) painted in the same
+   *  tick as before — no flash between a rail rebuild and the observer's
+   *  async first report — while a long scrolled list only paints what the
+   *  user can actually see. Hosts without IntersectionObserver (tests) and
+   *  any geometry the probe cannot judge fall back to immediate painting. */
+  private scheduleThumbnail(canvas: HTMLCanvasElement, page: InkPage): void {
+    let onScreen = true;
+    const scroller = canvas.closest(".ink-page-rail");
+    if (scroller && typeof IntersectionObserver === "function") {
+      const box = scroller.getBoundingClientRect();
+      const rect = canvas.getBoundingClientRect();
+      onScreen = rect.width > 0 && rect.bottom > box.top && rect.top < box.bottom;
+    }
+    if (onScreen || typeof IntersectionObserver !== "function") {
+      this.drawPageThumbnail(canvas, page);
+      return;
+    }
+    this.pendingThumbs.set(canvas, page);
+    this.thumbObserver ??= new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting) continue;
+        this.thumbObserver?.unobserve(entry.target);
+        const thumb = entry.target as HTMLCanvasElement;
+        const deferred = this.pendingThumbs.get(thumb);
+        if (deferred) {
+          this.pendingThumbs.delete(thumb);
+          this.drawPageThumbnail(thumb, deferred);
+        }
+      }
+    });
+    this.thumbObserver.observe(canvas);
   }
 
   /**
