@@ -369,4 +369,22 @@ describe("interactive tile commits", () => {
     expect(renderer.cache.has("first")).toBe(false);
     expect(renderer.pixels).toBe(7_500_000);
   });
+
+  it("does not queue a prewarm cell twice across repeated passes", () => {
+    const page = { id: "neighbor", strokes: [] };
+    const state = { id: 2, page, index: { width: 256, height: 256, revisions: new Map(), sync: vi.fn() } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, {
+      active: { id: 1, page: { id: "active" }, index: { width: 256, height: 256, revisions: new Map() } },
+      disposed: false, viewport: { x: 0, y: 0, width: 100, height: 100 }, density: 1,
+      states: new Map([[page, state]]), get: vi.fn(() => undefined),
+      jobs: [{ state, cell: "0:0", density: 1, priority: "prewarm" }],
+      schedule: vi.fn(),
+    });
+
+    renderer.prewarm([page]);
+
+    expect(renderer.jobs).toHaveLength(1);
+    expect(renderer.jobs[0]).toMatchObject({ cell: "0:0", priority: "prewarm" });
+  });
 });

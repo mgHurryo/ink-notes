@@ -37,7 +37,13 @@ interface IndexedStroke {
   count: number;
   revision: number;
   order: number;
-  style: string;
+  // Style snapshots as scalars: sync() compares them per stroke per frame, so
+  // the check must detect in-place mutation (same stroke reference, edited
+  // field) without building a join key string on every pass.
+  tool: string;
+  color: string;
+  width: number;
+  opacity: number;
   cells: string[];
 }
 
@@ -66,9 +72,13 @@ export class StrokeIndex {
 
   upsert(stroke: InkStroke, order: number): string[] {
     const previous = this.entries.get(stroke.id);
-    const style = [stroke.tool, stroke.color, stroke.width, stroke.opacity].join(":");
+    // sync() runs per stroke on every animation frame, so the unchanged
+    // majority short-circuits before any allocation; the scalar snapshots
+    // still catch in-place style mutation, exactly like the old join key.
     if (previous?.stroke === stroke && previous.points === stroke.points && previous.count === stroke.points.length
-      && previous.revision === stroke.updatedAt && previous.style === style) {
+      && previous.revision === stroke.updatedAt
+      && previous.tool === stroke.tool && previous.color === stroke.color
+      && previous.width === stroke.width && previous.opacity === stroke.opacity) {
       // Compositing order is metadata, not geometry. Updating it must not
       // invalidate every later tile when an early stroke is removed.
       previous.order = order;
@@ -82,7 +92,8 @@ export class StrokeIndex {
       minY = Math.min(minY, p.y * this.height); maxY = Math.max(maxY, p.y * this.height);
     }
     const keys = cellKeys({ x: minX - padding, y: minY - padding, width: maxX - minX + padding * 2, height: maxY - minY + padding * 2 }, this.width, this.height);
-    const entry = { stroke, points: stroke.points, count: stroke.points.length, revision: stroke.updatedAt, order, style, cells: keys };
+    const entry = { stroke, points: stroke.points, count: stroke.points.length, revision: stroke.updatedAt, order,
+      tool: stroke.tool, color: stroke.color, width: stroke.width, opacity: stroke.opacity, cells: keys };
     this.entries.set(stroke.id, entry);
     for (const key of keys) {
       if (!this.cells.has(key)) this.cells.set(key, new Set());
@@ -422,7 +433,12 @@ export class TileRenderer {
       state.index.sync(page.strokes);
       // Preload only the same visible region, not entire neighboring pages.
       for (const cell of cellKeys(this.viewport, state.index.width, state.index.height)) {
-        if (!this.get(state, cell, this.density)) this.jobs.push({ state, cell, density: this.density, priority: "prewarm" });
+        if (this.get(state, cell, this.density)) continue;
+        // Repeated prewarm passes must not queue a cell twice: the schedule
+        // loop drains one job per frame, so duplicates would linger behind
+        // and re-render work that an earlier pass already has in flight.
+        if (this.jobs.some(job => job.state === state && job.cell === cell && job.density === this.density)) continue;
+        this.jobs.push({ state, cell, density: this.density, priority: "prewarm" });
       }
     }
     this.schedule();
