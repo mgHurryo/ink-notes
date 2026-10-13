@@ -15,6 +15,7 @@ import { InkClipboard } from "../src/lasso-clipboard";
 import { defaultToolState, type SharedToolState } from "../src/tool-state";
 import type { InkNotebook, InkStroke } from "../src/model";
 import { mergeNotebooks } from "../src/model";
+import { canvasResolution } from "../src/rendering";
 import type { ImageLibraryStore } from "../src/image-library";
 import type { StickyNote } from "../src/sticky-model";
 import { gestureContract } from "./gesture-contract";
@@ -34,6 +35,8 @@ interface RailInternals {
   thumbCache: Map<number, HTMLCanvasElement>;
   renderPdfPage(): Promise<void>;
   renderAll(): void;
+  cacheNeighbour(index: number, canvas: HTMLCanvasElement): void;
+  clearNeighbourCache(): void;
   refreshPageRail(): void;
   paintThumbnail(index: number): void;
   paintVisibleThumbnails(): void;
@@ -143,6 +146,45 @@ it("updates a remote PDF page's preview without touching the selected canvas or 
   expect(draw).not.toHaveBeenCalled(); expect(setPage).not.toHaveBeenCalled();
   expect(layout).not.toHaveBeenCalled(); expect(raster).not.toHaveBeenCalled();
   expect(editor.sidecar.notebook.pages[1].strokes[0].id).toBe("peer-other");
+});
+
+it("updates page ink once and promotes a matching neighbour raster on PDF navigation", async () => {
+  const { view, host, render } = await rasterSetup(800, 700, 2);
+  const raster = document.createElement("canvas");
+  const target = canvasResolution(host.pageBaseWidth, host.pageBaseHeight, 2, host.fitZoom);
+  raster.width = target.width;
+  raster.height = target.height;
+  host.neighbourCache.set(1, raster);
+  const setPage = vi.spyOn(host.tiles!, "setPage");
+  const update = vi.spyOn(host.tiles!, "update");
+
+  await view.navigatePages(1);
+
+  expect(setPage).toHaveBeenCalledTimes(1);
+  expect(update).toHaveBeenCalledTimes(1);
+  expect(render).not.toHaveBeenCalled();
+  expect(raster.width).toBe(1);
+  expect(raster.height).toBe(1);
+  expect(host.pdfCanvas!.width).toBe(target.width);
+  expect(host.pdfCanvas!.height).toBe(target.height);
+});
+
+it("releases neighbour rasters when the bounded cache evicts or clears them", async () => {
+  const { view, internal } = await setup();
+  const first = document.createElement("canvas");
+  const second = document.createElement("canvas");
+  const third = document.createElement("canvas");
+  for (const canvas of [first, second, third]) { canvas.width = 1500; canvas.height = 2000; }
+
+  internal.cacheNeighbour(0, first);
+  internal.cacheNeighbour(1, second);
+  internal.cacheNeighbour(2, third);
+  expect(internal.neighbourCache.size).toBeLessThanOrEqual(2);
+  expect([first, second, third].filter((canvas) => canvas.width > 1)).toHaveLength(2);
+
+  internal.clearNeighbourCache();
+  expect(internal.neighbourCache.size).toBe(0);
+  expect([first, second, third].every((canvas) => canvas.width === 1 && canvas.height === 1)).toBe(true);
 });
 
 it("routes image-target finger movement before PDF navigation and keeps native touch targets attached", async () => {
@@ -267,8 +309,12 @@ interface RasterInternals extends RailInternals {
   scroller: HTMLElement;
   pageWrap: HTMLElement;
   pdfCanvas: HTMLCanvasElement;
+  pageBaseWidth: number;
+  pageBaseHeight: number;
+  tiles: { setPage: (...args: unknown[]) => void; update: (...args: unknown[]) => void };
   zoom: number;
   zoomTouched: boolean;
+  fitZoom: number;
   layoutPage(): void;
   swipeDrag(offset: number): void;
   prewarmToken: number;

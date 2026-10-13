@@ -34257,6 +34257,7 @@ var PDF_ZOOM_MAX = 3;
 var PDF_ZOOM_STEP = 1.2;
 var PDF_PAGE_PADDING = 24;
 var SELECTION_OVERLAY_BUDGET = 4e6;
+var PDF_NEIGHBOUR_CACHE_BUDGET = 8e6;
 var RAIL_THUMB_WIDTH = 120;
 var RAIL_SWEEP_THROTTLE_MS = 120;
 var RAIL_REVEAL_DELAY_MS = 230;
@@ -34364,7 +34365,7 @@ var PdfInkView = class extends InkWritingView {
       var _a;
       (_a = this.brushPopover) == null ? void 0 : _a.position();
       this.prewarmToken += 1;
-      this.neighbourCache.clear();
+      this.clearNeighbourCache();
       this.layoutPage();
       this.revealInlineEditor();
       if (this.resizeRenderTimer !== void 0) window.clearTimeout(this.resizeRenderTimer);
@@ -34393,7 +34394,7 @@ var PdfInkView = class extends InkWritingView {
       window.clearTimeout(this.pdfRenderTimer);
       this.pdfRenderTimer = void 0;
     }
-    this.neighbourCache.clear();
+    this.clearNeighbourCache();
     this.clearRailState();
     this.destroySwipeStage();
     this.discardPendingInkPreview();
@@ -34460,7 +34461,7 @@ var PdfInkView = class extends InkWritingView {
     if (generation !== this.loadGeneration) return;
     this.noteIndex = 0;
     this.layoutPage();
-    this.renderAll();
+    this.renderAll(false);
     await this.renderPdfPage();
     if (generation === this.loadGeneration && ((_b = file.stat) == null ? void 0 : _b.mtime) !== sourceMtime) await this.checkSourcePdfRevision();
   }
@@ -34541,7 +34542,7 @@ var PdfInkView = class extends InkWritingView {
       this.invalidateThumbnails();
       this.destroySwipeStage();
       this.prewarmToken += 1;
-      this.neighbourCache.clear();
+      this.clearNeighbourCache();
     }
     const currentGeometryChanged = JSON.stringify(selectedPage) !== JSON.stringify(merged.notePages[this.noteIndex]);
     if (currentGeometryChanged || changes.dimensionsChanged) {
@@ -34860,7 +34861,7 @@ var PdfInkView = class extends InkWritingView {
     if (ids !== this.railBuiltIds) {
       if (this.railBuiltIds) {
         this.prewarmToken += 1;
-        this.neighbourCache.clear();
+        this.clearNeighbourCache();
         this.destroySwipeStage();
       }
       this.rebuildRailButtons(count);
@@ -34991,6 +34992,31 @@ var PdfInkView = class extends InkWritingView {
   evictDistantThumbnails() {
     for (const key of [...this.thumbCache.keys()]) {
       if (Math.abs(key - this.noteIndex) > 1) this.thumbCache.delete(key);
+    }
+  }
+  releaseCanvas(canvas) {
+    if (canvas.isConnected) return;
+    canvas.width = 1;
+    canvas.height = 1;
+  }
+  clearNeighbourCache() {
+    for (const canvas of this.neighbourCache.values()) this.releaseCanvas(canvas);
+    this.neighbourCache.clear();
+  }
+  cacheNeighbour(index, canvas) {
+    const previous = this.neighbourCache.get(index);
+    if (previous && previous !== canvas) this.releaseCanvas(previous);
+    this.neighbourCache.set(index, canvas);
+    let pixels = [...this.neighbourCache.values()].reduce((total, item) => total + item.width * item.height, 0);
+    while (pixels > PDF_NEIGHBOUR_CACHE_BUDGET || this.neighbourCache.size > 2) {
+      const farthest = [...this.neighbourCache.keys()].sort((a, b) => Math.abs(b - this.noteIndex) - Math.abs(a - this.noteIndex))[0];
+      if (farthest === void 0) break;
+      const removed = this.neighbourCache.get(farthest);
+      this.neighbourCache.delete(farthest);
+      if (removed) {
+        pixels -= removed.width * removed.height;
+        this.releaseCanvas(removed);
+      }
     }
   }
   scheduleRailSweep() {
@@ -35165,7 +35191,7 @@ var PdfInkView = class extends InkWritingView {
   resetZoom() {
     if (this.zoomLocked) return;
     this.zoomTouched = false;
-    this.neighbourCache.clear();
+    this.clearNeighbourCache();
     this.layoutPage();
     this.schedulePdfRender();
   }
@@ -35247,7 +35273,7 @@ var PdfInkView = class extends InkWritingView {
     }
     this.updatePageIndicator();
     this.layoutPage();
-    this.renderAll();
+    this.renderAll(false);
     await this.renderPdfPage();
     if (this.flipSettling) (_e = this.tiles) == null ? void 0 : _e.previewInteractiveCells(
       cellKeys(this.viewport, this.canvasLogicalWidth, this.canvasLogicalHeight),
@@ -35266,7 +35292,7 @@ var PdfInkView = class extends InkWritingView {
     if (clamped === this.zoom) return;
     this.zoomTouched = true;
     this.prewarmToken += 1;
-    this.neighbourCache.clear();
+    this.clearNeighbourCache();
     const scroller = this.scroller;
     const page = this.pageWrap;
     if (!scroller || !page) {
@@ -35586,7 +35612,13 @@ var PdfInkView = class extends InkWritingView {
     const canvas = stage.createEl("canvas");
     canvas.setCssStyles({ position: "absolute", inset: "0", width: "100%", height: "100%" });
     if (!notePage || notePage.sourceIndex === void 0 || !this.pdfDoc) return;
-    const resolution = canvasResolution(parseFloat(stage.style.width), parseFloat(stage.style.height), window.devicePixelRatio || 1, 1);
+    const resolution = canvasResolution(
+      parseFloat(stage.style.width),
+      parseFloat(stage.style.height),
+      window.devicePixelRatio || 1,
+      1,
+      PDF_NEIGHBOUR_CACHE_BUDGET / 2
+    );
     const cached = this.neighbourCache.get(index);
     if (cached && cached.width === resolution.width && cached.height === resolution.height) {
       canvas.width = cached.width;
@@ -35602,7 +35634,7 @@ var PdfInkView = class extends InkWritingView {
       canvas.height = resolution.height;
       const viewport = page.getViewport({ scale });
       await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
-      if (stage.isConnected && canvas.width > 0) this.neighbourCache.set(index, canvas);
+      if (stage.isConnected && canvas.width > 0) this.cacheNeighbour(index, canvas);
     } catch (e) {
     }
   }
@@ -35618,27 +35650,41 @@ var PdfInkView = class extends InkWritingView {
       void this.prewarmNeighbour(index, token);
     }
     for (const key of [...this.neighbourCache.keys()]) {
-      if (Math.abs(key - this.noteIndex) > 1) this.neighbourCache.delete(key);
+      if (Math.abs(key - this.noteIndex) > 1) {
+        const canvas = this.neighbourCache.get(key);
+        this.neighbourCache.delete(key);
+        if (canvas) this.releaseCanvas(canvas);
+      }
     }
   }
   async prewarmNeighbour(index, token) {
     var _a;
     const notePage = (_a = this.sidecar) == null ? void 0 : _a.notePages[index];
     if (!notePage || notePage.sourceIndex === void 0 || !this.pdfDoc) return;
+    let buffer;
     try {
       const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
       if (token !== this.prewarmToken || this.neighbourCache.has(index)) return;
       const size = this.swipePageSize(notePage);
-      const resolution = canvasResolution(size.width, size.height, window.devicePixelRatio || 1, 1);
+      const resolution = canvasResolution(
+        size.width,
+        size.height,
+        window.devicePixelRatio || 1,
+        1,
+        PDF_NEIGHBOUR_CACHE_BUDGET / 2
+      );
       const scale = resolution.width / page.getViewport({ scale: 1 }).width;
-      const buffer = document.createElement("canvas");
+      buffer = document.createElement("canvas");
       buffer.width = resolution.width;
       buffer.height = resolution.height;
       const viewport = page.getViewport({ scale });
       await page.render({ canvasContext: buffer.getContext("2d"), viewport }).promise;
       if (token !== this.prewarmToken) return;
-      this.neighbourCache.set(index, buffer);
+      this.cacheNeighbour(index, buffer);
+      buffer = void 0;
     } catch (e) {
+    } finally {
+      if (buffer) this.releaseCanvas(buffer);
     }
   }
   swipePitch() {
@@ -35768,7 +35814,7 @@ var PdfInkView = class extends InkWritingView {
     this.pdfRenderTask = null;
   }
   async renderPdfPage() {
-    var _a, _b;
+    var _a, _b, _c;
     const canvas = this.pdfCanvas;
     if (!canvas) return;
     const generation = ++this.pdfRenderGeneration;
@@ -35790,6 +35836,20 @@ var PdfInkView = class extends InkWritingView {
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       return;
     }
+    const cached = this.neighbourCache.get(this.noteIndex);
+    if (cached && cached.width === targetWidth && cached.height === targetHeight) {
+      this.neighbourCache.delete(this.noteIndex);
+      canvas.width = targetWidth;
+      canvas.height = targetHeight;
+      (_a = canvas.getContext("2d")) == null ? void 0 : _a.drawImage(cached, 0, 0);
+      this.releaseCanvas(cached);
+      if (!this.touchGesture) this.prewarmNeighbours();
+      return;
+    }
+    if (cached) {
+      this.neighbourCache.delete(this.noteIndex);
+      this.releaseCanvas(cached);
+    }
     try {
       const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
       if (generation !== this.pdfRenderGeneration) return;
@@ -35798,34 +35858,40 @@ var PdfInkView = class extends InkWritingView {
       const buffer = document.createElement("canvas");
       buffer.width = targetWidth;
       buffer.height = targetHeight;
-      const task = page.render({ canvasContext: buffer.getContext("2d"), viewport });
-      this.pdfRenderTask = task;
-      await task.promise;
-      if (generation !== this.pdfRenderGeneration) return;
-      this.pdfRenderTask = null;
-      if (canvas.width !== targetWidth) canvas.width = targetWidth;
-      if (canvas.height !== targetHeight) canvas.height = targetHeight;
-      (_a = canvas.getContext("2d")) == null ? void 0 : _a.drawImage(buffer, 0, 0);
-      if (!this.touchGesture) this.prewarmNeighbours();
+      try {
+        const task = page.render({ canvasContext: buffer.getContext("2d"), viewport });
+        this.pdfRenderTask = task;
+        await task.promise;
+        if (generation !== this.pdfRenderGeneration) return;
+        this.pdfRenderTask = null;
+        if (canvas.width !== targetWidth) canvas.width = targetWidth;
+        if (canvas.height !== targetHeight) canvas.height = targetHeight;
+        (_b = canvas.getContext("2d")) == null ? void 0 : _b.drawImage(buffer, 0, 0);
+        if (!this.touchGesture) this.prewarmNeighbours();
+      } finally {
+        this.releaseCanvas(buffer);
+      }
     } catch (error) {
-      if (((_b = this.pdfjs) == null ? void 0 : _b.RenderingCancelledException) && error instanceof this.pdfjs.RenderingCancelledException) return;
+      if (((_c = this.pdfjs) == null ? void 0 : _c.RenderingCancelledException) && error instanceof this.pdfjs.RenderingCancelledException) return;
       if (generation === this.pdfRenderGeneration) this.setStatus(`Could not render this page: ${messageOf(error)}`, true);
       return;
     }
   }
-  renderAll() {
+  renderAll(renderPageContent = true) {
     var _a;
     this.clampNoteIndex();
     this.updatePageIndicator();
     this.refreshPageRail();
     this.updateToolButtons();
     this.updateHistoryButtons();
-    const page = (_a = this.sidecar) == null ? void 0 : _a.notebook.pages[this.noteIndex];
-    if (page && this.tiles) {
-      this.tiles.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight);
-      this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
+    if (renderPageContent) {
+      const page = (_a = this.sidecar) == null ? void 0 : _a.notebook.pages[this.noteIndex];
+      if (page && this.tiles) {
+        this.tiles.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight);
+        this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
+      }
+      this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
     }
-    this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
   clampNoteIndex() {
     var _a, _b, _c, _d;
@@ -35855,7 +35921,7 @@ var PdfInkView = class extends InkWritingView {
     this.redoStack = [];
     this.dirty = false;
     this.zoomTouched = false;
-    this.neighbourCache.clear();
+    this.clearNeighbourCache();
     this.invalidateThumbnails();
     this.clearSaveTimers();
     this.setStatus("Loading PDF\u2026");
