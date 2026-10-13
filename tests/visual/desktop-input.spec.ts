@@ -205,6 +205,34 @@ test("touchpad-like ctrl wheel zooms at the cursor and horizontal wheel flips on
   await expect(page.locator(".ink-page-status")).toHaveText("2 / 2");
 });
 
+test("a renewed trackpad flick and five mouse-wheel notches navigate without a cooldown or overshoot", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  await page.evaluate(async () => {
+    const view = (window as any).__inkNotesPreview.view;
+    for (let index = 1; index < 6; index++) view.duplicateCurrentPage();
+    await view.navigateToPage(view.notebook.pages[0].id);
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    scroller.scrollLeft = scroller.scrollWidth;
+    for (const deltaX of [140, 90, 60, 30, 20, 40, 70]) scroller.dispatchEvent(new WheelEvent("wheel", {
+      bubbles: true, cancelable: true, deltaX,
+    }));
+  });
+  await expect(page.locator(".ink-page-status")).toHaveText("3 / 6");
+
+  await page.evaluate(async () => {
+    const view = (window as any).__inkNotesPreview.view;
+    await view.navigateToPage(view.notebook.pages[0].id);
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    scroller.scrollTop = scroller.scrollHeight;
+    for (let index = 0; index < 5; index++) scroller.dispatchEvent(new WheelEvent("wheel", {
+      bubbles: true, cancelable: true, deltaY: 100,
+    }));
+  });
+  await expect(page.locator(".ink-page-status")).toHaveText("6 / 6");
+});
+
 test("desktop reader drag flips at the page edge without waiting on the animation", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");

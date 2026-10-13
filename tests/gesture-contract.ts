@@ -189,6 +189,23 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenLastCalledWith(-1, 0, "bottom");
     });
 
+    it("turns one page for each standard vertical mouse-wheel notch", async () => {
+      const { scroller, settle, wheel } = await desktopSetup();
+      scroller.scrollTop = 600;
+      for (let index = 0; index < 5; index++) wheel(0, 100);
+      expect(settle).toHaveBeenCalledTimes(5);
+      expect(settle).toHaveBeenNthCalledWith(1, 1, 0, "top");
+    });
+
+    it("rearms a trackpad flick as soon as motion grows after its inertia tail", async () => {
+      const { wheel, settle } = await desktopSetup();
+      wheel(140, 0);
+      for (const delta of [90, 60, 30, 20]) wheel(delta, 0);
+      wheel(40, 0); // A new flick can begin before the old 180ms idle timeout.
+      wheel(70, 0);
+      expect(settle).toHaveBeenCalledTimes(2);
+    });
+
     it.each(["abrupt", "gradual"])("rearms trackpad navigation on reversal and %s renewed motion, but ignores decaying inertia", async (ramp) => {
       const { wheel, settle } = await desktopSetup();
       wheel(140, 0);

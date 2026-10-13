@@ -27174,6 +27174,8 @@ var InkWritingView = class extends import_obsidian6.FileView {
     this.desktopWheelFlipped = false;
     this.desktopWheelAxis = null;
     this.desktopWheelLastDelta = 0;
+    this.desktopWheelLastEventAt = 0;
+    this.desktopWheelDiscrete = false;
   }
   disposeStickyNotes() {
     var _a;
@@ -28352,6 +28354,8 @@ var InkWritingView = class extends import_obsidian6.FileView {
     this.desktopWheelFlipped = false;
     this.desktopWheelAxis = null;
     this.desktopWheelLastDelta = 0;
+    this.desktopWheelLastEventAt = 0;
+    this.desktopWheelDiscrete = false;
   }
   onWheel(event) {
     var _a;
@@ -28377,11 +28381,40 @@ var InkWritingView = class extends import_obsidian6.FileView {
     const axis = event.shiftKey || Math.abs(x) > Math.abs(y) * 1.5 ? "x" : "y";
     const movement = axis === "x" ? x || (event.shiftKey ? y : 0) : y;
     if (!movement) return;
-    const reversed = Math.sign(movement) !== Math.sign(this.desktopWheelLastDelta);
-    const renewed = this.desktopWheelFlipped && Math.abs(this.desktopWheelLastDelta) <= 12 && Math.abs(movement) >= 40;
-    if (axis !== this.desktopWheelAxis || reversed || renewed) this.resetDesktopWheel();
+    const discrete = event.deltaMode !== 0 || axis === "y" && Math.abs(movement) >= 80;
+    if (axis !== this.desktopWheelAxis || discrete !== this.desktopWheelDiscrete) this.resetDesktopWheel();
     this.desktopWheelAxis = axis;
-    this.desktopWheelLastDelta = this.desktopWheelFlipped ? Math.sign(movement) * Math.min(Math.abs(this.desktopWheelLastDelta), Math.abs(movement)) : movement;
+    this.desktopWheelDiscrete = discrete;
+    if (discrete) {
+      event.preventDefault();
+      if (!this.flipSettling) {
+        const property = axis === "x" ? "scrollLeft" : "scrollTop";
+        const before = scroller[property];
+        scroller[property] += movement;
+        if (Math.abs(scroller[property] - before) > 0.5) return;
+      }
+      const notches = event.deltaMode === 2 ? 1 : Math.max(1, Math.round(Math.abs(movement) / (event.deltaMode === 1 ? 48 : 120)));
+      const direction = Math.sign(movement);
+      const delta = direction > 0 ? notches : -notches;
+      const scrollEdge = axis === "y" ? delta > 0 ? "top" : "bottom" : void 0;
+      if (this.flipSettling) {
+        if (this.pageSwipeRequest) this.queuePageSwipeTarget(this.pageSwipeRequest.target + delta, scrollEdge);
+        return;
+      }
+      this.swipeDrag(-Math.sign(delta) * 24);
+      this.swipeSettle(Math.sign(delta), 0, scrollEdge);
+      if (notches > 1) this.queuePageSwipeDelta(Math.sign(delta) * (notches - 1), scrollEdge);
+      return;
+    }
+    const reversed = Math.sign(movement) !== Math.sign(this.desktopWheelLastDelta);
+    const eventAt = event.timeStamp || performance.now();
+    const gap = this.desktopWheelLastEventAt > 0 ? eventAt - this.desktopWheelLastEventAt : 0;
+    const renewed = !discrete && this.desktopWheelFlipped && (Math.abs(this.desktopWheelLastDelta) <= 24 && Math.abs(movement) >= 36 || gap >= 45 && Math.abs(movement) >= 36 && Math.abs(movement) > Math.abs(this.desktopWheelLastDelta) * 1.6);
+    if (reversed || renewed) this.resetDesktopWheel();
+    this.desktopWheelAxis = axis;
+    this.desktopWheelDiscrete = false;
+    this.desktopWheelLastDelta = !discrete && this.desktopWheelFlipped ? Math.sign(movement) * Math.min(Math.abs(this.desktopWheelLastDelta), Math.abs(movement)) : movement;
+    this.desktopWheelLastEventAt = eventAt;
     if (this.desktopWheelTimer !== void 0) window.clearTimeout(this.desktopWheelTimer);
     this.desktopWheelTimer = window.setTimeout(() => {
       this.desktopWheelTimer = void 0;
@@ -28400,8 +28433,10 @@ var InkWritingView = class extends import_obsidian6.FileView {
     }
     this.desktopWheelTravel += movement;
     if (Math.abs(this.desktopWheelTravel) >= 100) {
+      const direction = Math.sign(this.desktopWheelTravel);
       this.desktopWheelFlipped = true;
-      const delta = movement > 0 ? 1 : -1;
+      this.desktopWheelTravel = 0;
+      const delta = direction > 0 ? 1 : -1;
       const scrollEdge = axis === "y" ? delta > 0 ? "top" : "bottom" : void 0;
       if (this.queuePageSwipeDelta(delta, scrollEdge)) return;
       this.swipeDrag(-delta * 24);
