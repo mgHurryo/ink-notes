@@ -2,7 +2,7 @@ import { createElement, icons } from "lucide";
 
 // The editing preview/test host emulates a tablet. Device-default tests set
 // these facts explicitly; production reads Obsidian's real Platform object.
-export const Platform = { isDesktopApp: false, isMobileApp: true, isPhone: false, isTablet: true };
+export const Platform = { isDesktopApp: false, isMobileApp: true, isIosApp: false, isPhone: false, isTablet: true };
 
 // Minimal host adapter for exercising the real plugin view in a browser.
 function createEl(this: HTMLElement, tag: string, options: any = {}) {
@@ -26,6 +26,7 @@ Object.assign(HTMLElement.prototype, {
   toggle(this: HTMLElement, value: boolean) { this.style.display = value ? "" : "none"; },
   setText(this: HTMLElement, text: string) { this.textContent = text; return this; },
   setCssStyles(this: HTMLElement, styles: Record<string, string>) { Object.assign(this.style, styles); },
+  setCssProps(this: HTMLElement, props: Record<string, string>) { for (const [name, value] of Object.entries(props)) this.style.setProperty(name, value); },
 });
 export class FileView {
   app = { scope: {}, workspace: { requestSaveLayout() {} } };

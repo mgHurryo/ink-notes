@@ -48,7 +48,7 @@ export default class InkNotesPlugin extends Plugin {
       if (file.extension.toLowerCase() === "pdf") await leaf.setViewState({ type: VIEW_TYPE_PDF_INK, state: { file: file.path } });
       else await leaf.openFile(file);
     }
-    await this.app.workspace.revealLeaf(leaf);
+    this.app.workspace.setActiveLeaf(leaf, false, true);
     if (leaf.view instanceof InkView || leaf.view instanceof PdfInkView) {
       if (block) await leaf.view.revealSticky(page, sticky, block);
       else await leaf.view.revealSticky(page, sticky);

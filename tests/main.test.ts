@@ -109,12 +109,12 @@ describe("plugin event synchronization", () => {
     const handler = (plugin.registerObsidianProtocolHandler as ReturnType<typeof vi.fn>).mock.calls.find(([action]) => action === "ink-notes-sticky")![1];
     const file = Object.assign(new TFile(), { path: "Paper.pdf", extension: "pdf" });
     const revealSticky = vi.fn(async () => undefined), leaf = { view: Object.assign(Object.create(PdfInkView.prototype), { file, revealSticky }) };
-    const revealLeaf = vi.fn(async () => undefined);
+    const setActiveLeaf = vi.fn();
     Object.assign(plugin.app, { vault: { getName: () => "Vault A", getAbstractFileByPath: (path: string) => path === file.path ? file : null } });
-    Object.assign(plugin.app.workspace, { revealLeaf, getLeavesOfType: () => [leaf] });
+    Object.assign(plugin.app.workspace, { setActiveLeaf, getLeavesOfType: () => [leaf] });
     handler({ vault: "Vault A", file: file.path, page: "p", sticky: "n" });
     await vi.waitFor(() => expect(revealSticky).toHaveBeenCalledWith("p", "n"));
-    expect(revealLeaf).toHaveBeenCalledWith(leaf);
+    expect(setActiveLeaf).toHaveBeenCalledWith(leaf, false, true);
     handler({ vault: "Other vault", file: file.path, page: "p", sticky: "n" });
     expect(revealSticky).toHaveBeenCalledOnce();
     handler({ vault: "Vault A", file: file.path, page: "p", sticky: "n", block: "definition-1" });

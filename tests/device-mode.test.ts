@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { defaultReadingMode } from "../src/device-mode";
 
-const mobile = { isDesktopApp: false, isMobileApp: true, isPhone: false, isTablet: true };
-const tablet = { width: 1024, height: 1366, userAgent: "Android", maxTouchPoints: 5 };
+const mobile = { isDesktopApp: false, isMobileApp: true, isIosApp: false, isPhone: false, isTablet: true };
+const tablet = { width: 1024, height: 1366 };
 
 describe("device default mode", () => {
   it("starts phones and small touch devices reading, in either orientation", () => {
@@ -16,10 +16,12 @@ describe("device default mode", () => {
     expect(defaultReadingMode({ ...mobile, isPhone: true, isTablet: false }, tablet)).toBe(false);
   });
 
-  it.each(["iPad", "Mozilla/5.0 (Macintosh; Intel Mac OS X)"])("keeps %s multiwindow handwriting-first", (userAgent) => {
-    expect(defaultReadingMode({ ...mobile, isPhone: true, isTablet: false }, {
-      ...tablet, width: 320, height: 800, userAgent,
-    })).toBe(false);
+  it("keeps iPad split windows handwriting-first using platform and device screen facts", () => {
+    expect(defaultReadingMode({ ...mobile, isIosApp: true, isPhone: true, isTablet: false }, tablet)).toBe(false);
+  });
+
+  it("starts iPhones in reading mode even when the UI is rotated", () => {
+    expect(defaultReadingMode({ ...mobile, isIosApp: true, isPhone: true, isTablet: false }, { width: 844, height: 390 })).toBe(true);
   });
 
   it("starts desktop and unknown devices reading, including touch-enabled computers", () => {

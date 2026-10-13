@@ -16,25 +16,33 @@ async function markdownImage(note: StickyNote, context: StickyMarkdownContext, v
     for (const box of stickyTextBoxes(note)) {
       if (!box.text) continue;
       const frame = document.createElement("div"), content = document.createElement("div");
-      frame.setAttribute("style", `position:absolute;left:${box.x - note.scrollX}px;top:${box.y - note.scrollY}px;width:${box.width}px;font:${stickyFont(box, true)};${box.height === undefined ? "" : `height:${box.height}px;overflow:hidden;`}`);
+      frame.setCssStyles({
+        position: "absolute", left: `${box.x - note.scrollX}px`, top: `${box.y - note.scrollY}px`,
+        width: `${box.width}px`, font: stickyFont(box, true),
+        ...(box.height === undefined ? {} : { height: `${box.height}px`, overflow: "hidden" }),
+      });
       await MarkdownRenderer.render(context.app, box.text, content, context.source, component);
       frame.append(content); el.append(frame);
     }
     el.querySelectorAll("img,image,use,iframe,video,audio,object,script,style,link").forEach((node) => node.remove());
-    const body = document.createElementNS("http://www.w3.org/1999/xhtml", "div");
-    body.setAttribute("style", "font:20px/1.4 sans-serif;color:#25221d;position:relative;");
+    const body = document.createElement("div");
+    body.setCssStyles({ font: "20px/1.4 sans-serif", color: "#25221d", position: "relative" });
     body.append(...Array.from(el.childNodes));
-    body.querySelectorAll("*").forEach((node) => {
+    body.querySelectorAll<HTMLElement>("*").forEach((node) => {
       for (const attr of Array.from(node.attributes)) if (!(attr.name === "style" && node.parentElement === body) && (attr.name !== "href" || node.tagName.toLowerCase() !== "a")) node.removeAttribute(attr.name);
-      if (node.tagName.toLowerCase() === "p") node.setAttribute("style", "margin:0 0 12px");
+      if (node.tagName.toLowerCase() === "p") node.setCssStyles({ margin: "0 0 12px" });
       if (/^h[1-6]$/i.test(node.tagName)) {
         const sizes = [2, 1.5, 1.17, 1, .83, .67];
-        node.setAttribute("style", `font-size:${sizes[Number(node.tagName.slice(1)) - 1]}em;line-height:1.4;margin:0 0 12px;font-weight:700`);
+        node.setCssStyles({
+          fontSize: `${sizes[Number(node.tagName.slice(1)) - 1]}em`, lineHeight: "1.4",
+          margin: "0 0 12px", fontWeight: "700",
+        });
       }
-      if (node.tagName.toLowerCase() === "a") node.setAttribute("style", "color:#2459a6;text-decoration:underline");
+      if (node.tagName.toLowerCase() === "a") node.setCssStyles({ color: "#2459a6", textDecoration: "underline" });
     });
-    const wrapper = document.createElementNS("http://www.w3.org/1999/xhtml", "div");
-    wrapper.setAttribute("style", `position:relative;overflow:hidden;width:${viewportWidth}px;height:${viewportHeight}px`); wrapper.append(body);
+    const wrapper = document.createElement("div");
+    wrapper.setCssStyles({ position: "relative", overflow: "hidden", width: `${viewportWidth}px`, height: `${viewportHeight}px` });
+    wrapper.append(body);
     const width = Math.max(1, viewportWidth), height = Math.max(1, viewportHeight);
     const xml = new XMLSerializer().serializeToString(wrapper);
     const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}"><foreignObject width="100%" height="100%">${xml}</foreignObject></svg>`;
