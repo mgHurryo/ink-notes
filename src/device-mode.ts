@@ -1,6 +1,7 @@
 interface DevicePlatform {
   isDesktopApp: boolean;
   isMobileApp: boolean;
+  isIosApp: boolean;
   isPhone: boolean;
   isTablet: boolean;
 }
@@ -8,8 +9,6 @@ interface DevicePlatform {
 interface DeviceScreen {
   width: number;
   height: number;
-  userAgent: string;
-  maxTouchPoints: number;
 }
 
 /** Choose once from device facts, never from a view's resizable viewport.
@@ -18,12 +17,10 @@ interface DeviceScreen {
  */
 export function defaultReadingMode(platform: DevicePlatform, device: DeviceScreen): boolean {
   if (platform.isDesktopApp || !platform.isMobileApp) return true;
-  const ipad = /iPad/i.test(device.userAgent)
-    || (/Macintosh/i.test(device.userAgent) && device.maxTouchPoints > 1);
   const shortEdge = Math.min(device.width, device.height);
-  // Obsidian's isPhone/isTablet reflect available UI space. A narrow iPad
-  // multiwindow can report phone UI, but its physical screen is still a tablet.
-  if (ipad) return false;
+  // iPad split windows can report phone-sized UI while Platform.isIosApp and
+  // the device screen still identify the tablet-sized device.
+  if (shortEdge >= 600 && (platform.isIosApp || platform.isTablet)) return false;
   if (shortEdge > 0) return shortEdge < 600;
   return platform.isPhone || !platform.isTablet;
 }

@@ -65,12 +65,13 @@ for (const mode of ["ink", "pdf"] as const) {
       try {
         const result = await (window as any).__inkNotesPreview.exportStickies(90);
         const svg = new DOMParser().parseFromString(decodeURIComponent(urls[0].split(",").slice(1).join(",")), "image/svg+xml");
-        const frame = Array.from(svg.querySelectorAll("div")).find((node) => node.getAttribute("style")?.includes("position:absolute"))!;
-        return { ...result, font: frame.getAttribute("style") };
+        const frame = Array.from(svg.querySelectorAll<HTMLElement>("div")).find((node) => node.style.position === "absolute")!;
+        return { ...result, position: frame.style.position, font: frame.style.font };
       } finally { Object.defineProperty(HTMLImageElement.prototype, "src", descriptor); }
     });
     expect(exported.images).toBe(1); expect(exported.bytes).toBeGreaterThan(1000);
-    expect(exported.font).toContain(`font:italic bold ${scaled.fontSize}px/1.4 serif`);
+    expect(exported.position).toBe("absolute");
+    expect(exported.font.replace(/\s/g, "")).toContain(`italicbold${scaled.fontSize}px/1.4serif`);
     await frame.getByRole("button", { name: "Format text box", exact: true }).tap();
     await frame.getByRole("button", { name: "Format text box", exact: true }).tap(); await expect(panel).toHaveCount(0);
     await frame.getByRole("button", { name: "Format text box", exact: true }).tap();

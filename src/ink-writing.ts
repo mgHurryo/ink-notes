@@ -960,7 +960,6 @@ export abstract class InkWritingView extends FileView {
     if (!this.readingModeInitialized) {
       this.readingMode = defaultReadingMode(Platform, {
         width: window.screen.width, height: window.screen.height,
-        userAgent: navigator.userAgent, maxTouchPoints: navigator.maxTouchPoints,
       });
       this.readingModeInitialized = true;
     }

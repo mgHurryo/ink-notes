@@ -20,12 +20,11 @@ afterEach(async () => {
     (view as any).cleanups.forEach((cleanup: () => void) => cleanup());
   }
   vi.restoreAllMocks(); vi.unstubAllGlobals(); document.body.replaceChildren();
-  Reflect.deleteProperty(navigator, "maxTouchPoints");
   Object.assign(Platform, originalPlatform);
 });
 
-function device(desktop: boolean, shortEdge = 1024) {
-  Object.assign(Platform, { isDesktopApp: desktop, isMobileApp: !desktop,
+function device(desktop: boolean, shortEdge = 1024, ios = false) {
+  Object.assign(Platform, { isDesktopApp: desktop, isMobileApp: !desktop, isIosApp: ios,
     isPhone: !desktop && shortEdge < 600, isTablet: !desktop && shortEdge >= 600 });
   vi.spyOn(window.screen, "width", "get").mockReturnValue(shortEdge);
   vi.spyOn(window.screen, "height", "get").mockReturnValue(1366);
@@ -57,9 +56,8 @@ for (const mode of ["ink", "pdf"] as const) describe(`${mode} device mode lifecy
     });
 
   it("keeps iPad handwriting priority in narrow multiwindow UI", async () => {
-    device(false, 320);
-    vi.spyOn(navigator, "userAgent", "get").mockReturnValue("Mozilla/5.0 (Macintosh; Intel Mac OS X)");
-    Object.defineProperty(navigator, "maxTouchPoints", { configurable: true, value: 5 });
+    device(false, 1024, true);
+    Object.assign(Platform, { isPhone: true, isTablet: false });
     const { toggle } = await open(mode);
     expect(toggle.getAttribute("aria-pressed")).toBe("false");
   });
