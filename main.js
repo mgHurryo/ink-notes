@@ -30980,6 +30980,10 @@ var StrokeIndex = class {
       height: radius * 2
     });
   }
+  hasCell(cell) {
+    var _a, _b;
+    return ((_b = (_a = this.cells.get(cell)) == null ? void 0 : _a.size) != null ? _b : 0) > 0;
+  }
   cellsFor(strokes) {
     var _a, _b;
     const cells = /* @__PURE__ */ new Set();
@@ -31087,12 +31091,17 @@ var TileRenderer = class {
     return (_b = (_a = this.active) == null ? void 0 : _a.index.query(rect)) != null ? _b : [];
   }
   previewInteractiveCells(cells, viewport, density) {
+    var _a;
     if (!this.active || this.disposed || cells.length === 0) return;
     this.viewport = viewport;
     this.density = tileDensity(viewport, density);
     this.visible = new Set(cellKeys(viewport, this.active.index.width, this.active.index.height));
     for (const cell of new Set(cells)) {
       if (!this.visible.has(cell)) continue;
+      if (!this.active.index.hasCell(cell)) {
+        (_a = this.host.querySelector('[data-cell="' + cell + '"]')) == null ? void 0 : _a.remove();
+        continue;
+      }
       const exact = this.get(this.active, cell, this.density);
       const tile = exact != null ? exact : this.paint({ state: this.active, cell, density: this.density, priority: "visible" });
       this.attach(tile);
@@ -31111,7 +31120,7 @@ var TileRenderer = class {
     this.evict();
   }
   commitInteractive(viewport, density, refine = true, onComplete = () => void 0) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     this.cancelInkCommit();
     if (!this.active || this.disposed) {
       onComplete(false);
@@ -31126,10 +31135,16 @@ var TileRenderer = class {
       if (!this.visible.has((_c = node.dataset.cell) != null ? _c : "")) node.remove();
     }
     const jobs = [];
+    const clearCells = [];
     for (const cell of this.visible) {
+      if (!this.active.index.hasCell(cell)) {
+        clearCells.push(cell);
+        continue;
+      }
       if (!this.get(this.active, cell, this.density)) jobs.push({ state: this.active, cell, density: this.density, priority: "visible" });
     }
     if (jobs.length === 0) {
+      for (const cell of clearCells) (_d = this.host.querySelector('[data-cell="' + cell + '"]')) == null ? void 0 : _d.remove();
       onComplete(true);
       return;
     }
@@ -31140,6 +31155,7 @@ var TileRenderer = class {
       state: this.active,
       strokes: [],
       cells,
+      clearCells,
       jobs,
       tiles: [],
       onComplete,
@@ -31166,7 +31182,7 @@ var TileRenderer = class {
       else jobs.push({ state: this.active, cell, density: this.density });
     }
     this.jobs = this.jobs.filter((job) => !this.isHeld(job));
-    this.inkCommit = { state: this.active, strokes, cells, jobs, tiles, onComplete, invalid: false, generation: this.renderGeneration };
+    this.inkCommit = { state: this.active, strokes, cells, clearCells: [], jobs, tiles, onComplete, invalid: false, generation: this.renderGeneration };
     if (jobs.length === 0) this.finishInkCommit(true);
     else this.scheduleInkCommit();
   }
@@ -31207,9 +31223,11 @@ var TileRenderer = class {
     if (sameDensity && sameVisible && this.visibleCurrent()) return;
     this.jobs = [];
     for (const node of Array.from(this.host.children)) {
-      if (!this.visible.has((_a = node.dataset.cell) != null ? _a : "")) node.remove();
+      const cell = (_a = node.dataset.cell) != null ? _a : "";
+      if (!this.visible.has(cell) || !this.active.index.hasCell(cell)) node.remove();
     }
     for (const cell of this.visible) {
+      if (!this.active.index.hasCell(cell)) continue;
       const exact = this.get(this.active, cell, this.density);
       const fallback = exact != null ? exact : this.fallback(this.active, cell);
       if (fallback) this.attach(fallback);
@@ -31232,6 +31250,7 @@ var TileRenderer = class {
       const state = this.state(page, this.active.index.width, this.active.index.height);
       state.index.sync(page.strokes);
       for (const cell of cellKeys(this.viewport, state.index.width, state.index.height)) {
+        if (!state.index.hasCell(cell)) continue;
         if (this.get(state, cell, this.density)) continue;
         if (this.jobs.some((job) => job.state === state && job.cell === cell && job.density === this.density)) continue;
         this.jobs.push({ state, cell, density: this.density, priority: "prewarm" });
@@ -31286,6 +31305,10 @@ var TileRenderer = class {
   visibleCurrent() {
     if (!this.active) return false;
     for (const cell of this.visible) {
+      if (!this.active.index.hasCell(cell)) {
+        if (this.host.querySelector('[data-cell="' + cell + '"]')) return false;
+        continue;
+      }
       if (!this.get(this.active, cell, this.density)) return false;
     }
     return true;
@@ -31372,15 +31395,17 @@ var TileRenderer = class {
     });
   }
   finishInkCommit(requested) {
+    var _a;
     const commit = this.inkCommit;
     if (!commit) return;
     const valid = requested && !commit.invalid && !this.disposed && this.active === commit.state && commit.tiles.every((tile) => {
-      var _a;
-      return tile.revision === ((_a = tile.state.index.revisions.get(tile.cell)) != null ? _a : 0);
+      var _a2;
+      return tile.revision === ((_a2 = tile.state.index.revisions.get(tile.cell)) != null ? _a2 : 0);
     });
     this.inkCommit = null;
     for (const cell of commit.cells) this.heldCells.delete(this.holdKey(commit.state, cell));
     if (valid) {
+      for (const cell of commit.clearCells) (_a = this.host.querySelector('[data-cell="' + cell + '"]')) == null ? void 0 : _a.remove();
       for (const tile of commit.tiles) {
         this.cacheTile(tile);
         if (this.visible.has(tile.cell)) this.attach(tile);

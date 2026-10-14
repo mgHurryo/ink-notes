@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Render only visible tiles that contain handwriting, avoiding worker and raster work for transparent cells. Chromium now finishes loading visible ink without requiring a pointer hover; no note migration or format change.
+
 ## 0.1.5-beta.1 - 2026-10-14
 
 - Cut per-frame rebuild work shared by the desktop (Chromium) and mobile (WebKit) writing paths: settled render frames no longer rebuild the tile queue and rescan the whole tile cache, confirmed stroke outlines reuse one cached path object per frame, and the page-rail thumbnail refresh for the current page coalesces onto a single animation frame.
