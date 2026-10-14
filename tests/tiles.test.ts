@@ -140,6 +140,42 @@ describe("interactive tile commits", () => {
     expect(renderer.jobs).toBe(queuedJobs);
   });
 
+  it("skips the per-frame refine rebuild once every visible cell holds its exact raster", () => {
+    const host = { children: [] };
+    const state = { id: 1, index: { width: 256, height: 256, revisions: new Map([["0:0", 3]]) } };
+    const tile = { node: { parentElement: host }, revision: 3 };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, {
+      active: state, disposed: false, host, density: 2, visible: new Set(["0:0"]),
+      viewport: { x: 0, y: 0, width: 100, height: 100 }, jobs: [{ cell: "9:9", priority: "prewarm" }],
+      get: vi.fn(() => tile), attach: vi.fn(), schedule: vi.fn(),
+    });
+    const queuedJobs = renderer.jobs;
+
+    renderer.update({ x: 0, y: 0, width: 100, height: 100 }, 2, true);
+
+    expect(renderer.get).toHaveBeenCalledWith(state, "0:0", 2);
+    expect(renderer.jobs).toBe(queuedJobs);
+    expect(renderer.attach).not.toHaveBeenCalled();
+    expect(renderer.schedule).not.toHaveBeenCalled();
+  });
+
+  it("rebuilds the refine queue when a visible cell lost its exact raster", () => {
+    const host = { children: [] };
+    const state = { id: 1, index: { width: 256, height: 256, revisions: new Map([["0:0", 4]]) } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, {
+      active: state, disposed: false, host, density: 2, visible: new Set(["0:0"]),
+      viewport: { x: 0, y: 0, width: 100, height: 100 }, jobs: [], heldCells: new Set(),
+      cache: new Map(), get: vi.fn(() => undefined), schedule: vi.fn(),
+    });
+
+    renderer.update({ x: 0, y: 0, width: 100, height: 100 }, 2, true);
+
+    expect(renderer.schedule).toHaveBeenCalledOnce();
+    expect(renderer.jobs).toEqual([expect.objectContaining({ cell: "0:0", density: 2, priority: "visible" })]);
+  });
+
   it("composes newly added ink over an exact stale tile without replaying history", () => {
     const addition = stroke("new", 0.1, 0.1);
     const state = { id: 3, index: {
@@ -332,5 +368,23 @@ describe("interactive tile commits", () => {
     expect(firstCanvas).toEqual({ width: 1, height: 1 });
     expect(renderer.cache.has("first")).toBe(false);
     expect(renderer.pixels).toBe(7_500_000);
+  });
+
+  it("does not queue a prewarm cell twice across repeated passes", () => {
+    const page = { id: "neighbor", strokes: [] };
+    const state = { id: 2, page, index: { width: 256, height: 256, revisions: new Map(), sync: vi.fn() } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, {
+      active: { id: 1, page: { id: "active" }, index: { width: 256, height: 256, revisions: new Map() } },
+      disposed: false, viewport: { x: 0, y: 0, width: 100, height: 100 }, density: 1,
+      states: new Map([[page, state]]), get: vi.fn(() => undefined),
+      jobs: [{ state, cell: "0:0", density: 1, priority: "prewarm" }],
+      schedule: vi.fn(),
+    });
+
+    renderer.prewarm([page]);
+
+    expect(renderer.jobs).toHaveLength(1);
+    expect(renderer.jobs[0]).toMatchObject({ cell: "0:0", priority: "prewarm" });
   });
 });

@@ -138,6 +138,8 @@ const SAVE_MAX_DELAY = 10_000;
 export const INK_COMMIT_IDLE_DELAY = 180;
 const LIVE_TAIL_SAMPLE_LIMIT = 32;
 const COMPLETED_PREVIEW_SAMPLE_LIMIT = 256;
+// How long the pen must rest in place before a drawn path straightens.
+const LINE_HOLD_MS = 2_000;
 // Modeled pen samples are deduplicated against this page-pixel radius. The
 // radius must exceed the modeler's end-of-stroke catch-up step sizes: those
 // converging (and overshoot-reversing) micro-segments otherwise reach the
@@ -810,6 +812,12 @@ export abstract class InkWritingView extends FileView {
   protected eraserPointerInside = false;
   protected renderFrame: number | null = null;
   protected resizeRequested = false;
+  /** Path2D per confirmed outline. Worker outlines are immutable Float32Arrays
+   *  whose reference survives until a longer outline replaces them, so the
+   *  array identity keys the cache and every animation frame reuses the same
+   *  path instead of re-tracing tens of thousands of vertices. */
+  private confirmedOutlinePaths = new WeakMap<Float32Array,
+    { width: number; height: number; mode: "pen" | "highlighter"; path: Path2D }>();
 
   // --- shared brush settings popover + toolbar
   protected brushPopover!: BrushPopoverController;
@@ -840,6 +848,7 @@ export abstract class InkWritingView extends FileView {
   private geometricStroke: { start: InkPoint; kind: ShapeKind } | null = null;
   private lineHoldTimer: number | undefined;
   private lineHoldAnchor: InkPoint | null = null;
+  private lineHoldLastMoveAt = 0;
   protected workerStrokePointIndex = 0;
   protected lastPoint: InkPoint | null = null;
   protected touchGesture: {
@@ -895,6 +904,9 @@ export abstract class InkWritingView extends FileView {
   protected eraserReplacementIds = new Set<string>();
   protected eraserReplacements: InkStroke[] = [];
   protected eraserPreviewCells = new Set<string>();
+  /** Reused dedup map for eraseAt(): cleared per call instead of rebuilt, so
+   *  a grazing eraser does not allocate a spread chain per input sample. */
+  private eraserCandidateScratch = new Map<string, InkStroke>();
 
   // --- lasso / selection
   protected lassoPath: InkPoint[] = [];
@@ -2693,19 +2705,41 @@ export abstract class InkWritingView extends FileView {
   protected eraseAt(point: InkPoint, page: InkPage, mode: EraserMode = this.state.eraserMode, size = this.state.eraserSize): boolean {
     const radius = mode === "stroke" ? STROKE_ERASER_HIT_RADIUS : size / 2;
     const indexed = this.tiles?.queryNear ? this.tiles.queryNear(point, radius) : page.strokes;
-    const top = [...(this.stickyInput?.notes ?? [])].reverse().find((n) => {
-      if (n.collapsed) return false;
-      const r = stickyBounds(n, this.stickyGeometry()); return point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom;
-    });
-    const candidates = [...new Map([...indexed, ...[...(this.stickyInput?.proxies.values() ?? [])], ...this.eraserReplacements].map((stroke) => [stroke.id, stroke])).values()]
-      .filter((stroke) => {
-        if (this.erasedCandidateIds.has(stroke.id)) return false;
-        const owner = this.stickyInput?.owners.get(stroke.id); if (!owner) return !top;
-        if (top?.id !== owner.id) return false;
+    const top = (() => {
+      // Reverse linear scan instead of [...notes].reverse().find(): the eraser
+      // calls this per input sample and the spread chain allocated two arrays.
+      const notes = this.stickyInput?.notes;
+      if (notes) {
+        for (let index = notes.length - 1; index >= 0; index--) {
+          const note = notes[index];
+          if (note.collapsed) continue;
+          const r = stickyBounds(note, this.stickyGeometry());
+          if (point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom) return note;
+        }
+      }
+      return undefined;
+    })();
+    // One reused Map replaces the per-sample [...indexed, ...proxies,
+    // ...replacements] spread chain; both candidate filters fold into the
+    // same loop, so a grazing eraser sample allocates only the result array.
+    const seen = this.eraserCandidateScratch;
+    seen.clear();
+    for (const stroke of indexed) seen.set(stroke.id, stroke);
+    if (this.stickyInput) for (const stroke of this.stickyInput.proxies.values()) seen.set(stroke.id, stroke);
+    for (const stroke of this.eraserReplacements) seen.set(stroke.id, stroke);
+    const removed: InkStroke[] = [];
+    for (const stroke of seen.values()) {
+      if (this.erasedCandidateIds.has(stroke.id)) continue;
+      const owner = this.stickyInput?.owners.get(stroke.id);
+      if (!owner) {
+        if (top) continue;
+      } else {
+        if (top?.id !== owner.id) continue;
         const r = stickyBounds(owner, this.stickyGeometry());
-        return point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom;
-      });
-    const removed = candidates.filter((stroke) => strokeIntersectsEraser(stroke, point, radius, mode, this.canvasLogicalWidth, this.canvasLogicalHeight));
+        if (!(point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom)) continue;
+      }
+      if (strokeIntersectsEraser(stroke, point, radius, mode, this.canvasLogicalWidth, this.canvasLogicalHeight)) removed.push(stroke);
+    }
     if (removed.length === 0) return false;
     for (const stroke of removed) {
       this.erasedCandidateIds.add(stroke.id);
@@ -3198,10 +3232,45 @@ export abstract class InkWritingView extends FileView {
   protected drawConfirmedOutline(ctx: CanvasRenderingContext2D, points: Float32Array, color: string, opacity: number, width: number,
     mode: "pen" | "highlighter"): void {
     if (points.length < 4) return;
-    ctx.save();
-    ctx.globalAlpha = opacity;
     const scaleX = this.canvasLogicalWidth;
     const scaleY = this.canvasLogicalHeight;
+    let cached = this.confirmedOutlinePaths.get(points);
+    if (!cached || cached.width !== scaleX || cached.height !== scaleY || cached.mode !== mode) {
+      const path = new Path2D();
+      if (mode === "highlighter") {
+        path.moveTo(points[0] * scaleX, points[1] * scaleY);
+        for (let index = 2; index < points.length; index += 2) {
+          const previousX = points[index - 2] * scaleX;
+          const previousY = points[index - 1] * scaleY;
+          const pointX = points[index] * scaleX;
+          const pointY = points[index + 1] * scaleY;
+          const last = index === points.length - 2;
+          path.quadraticCurveTo(previousX, previousY,
+            last ? pointX : (previousX + pointX) / 2,
+            last ? pointY : (previousY + pointY) / 2);
+        }
+        path.lineTo(points[points.length - 2] * scaleX, points[points.length - 1] * scaleY);
+      } else {
+        // The outline is the final ink shape; render it as plain polygons so
+        // live ink, retained previews and committed tiles all keep sparse
+        // fast-written corners exactly where the pen turned. NaN separators
+        // split retraced runs, which fill separately so a retraced band keeps
+        // its ink instead of cancelling its neighbour's winding to holes.
+        let tracing = false;
+        for (let index = 0; index < points.length; index += 2) {
+          const x = points[index] * scaleX;
+          const y = points[index + 1] * scaleY;
+          if (!Number.isFinite(x) || !Number.isFinite(y)) { tracing = false; continue; }
+          if (!tracing) { tracing = true; path.moveTo(x, y); continue; }
+          path.lineTo(x, y);
+        }
+        if (tracing) path.closePath();
+      }
+      cached = { width: scaleX, height: scaleY, mode, path };
+      this.confirmedOutlinePaths.set(points, cached);
+    }
+    ctx.save();
+    ctx.globalAlpha = opacity;
     ctx.strokeStyle = color;
     ctx.fillStyle = color;
     ctx.lineCap = "round";
@@ -3209,38 +3278,10 @@ export abstract class InkWritingView extends FileView {
     if (mode === "highlighter") {
       ctx.globalCompositeOperation = "multiply";
       ctx.lineWidth = width;
-      ctx.beginPath();
-      ctx.moveTo(points[0] * scaleX, points[1] * scaleY);
-      for (let index = 2; index < points.length; index += 2) {
-        const previousX = points[index - 2] * scaleX;
-        const previousY = points[index - 1] * scaleY;
-        const pointX = points[index] * scaleX;
-        const pointY = points[index + 1] * scaleY;
-        const last = index === points.length - 2;
-        ctx.quadraticCurveTo(previousX, previousY,
-          last ? pointX : (previousX + pointX) / 2,
-          last ? pointY : (previousY + pointY) / 2);
-      }
-      ctx.lineTo(points[points.length - 2] * scaleX, points[points.length - 1] * scaleY);
-      ctx.stroke();
+      ctx.stroke(cached.path);
     } else {
       ctx.globalCompositeOperation = "source-over";
-      // The outline is the final ink shape; render it as plain polygons so
-      // live ink, retained previews and committed tiles all keep sparse
-      // fast-written corners exactly where the pen turned. NaN separators
-      // split retraced runs, which fill separately so a retraced band keeps
-      // its ink instead of cancelling its neighbour's winding to holes.
-      ctx.beginPath();
-      let tracing = false;
-      for (let index = 0; index < points.length; index += 2) {
-        const x = points[index] * scaleX;
-        const y = points[index + 1] * scaleY;
-        if (!Number.isFinite(x) || !Number.isFinite(y)) { tracing = false; continue; }
-        if (!tracing) { tracing = true; ctx.moveTo(x, y); continue; }
-        ctx.lineTo(x, y);
-      }
-      if (tracing) ctx.closePath();
-      ctx.fill();
+      ctx.fill(cached.path);
     }
     ctx.restore();
   }
@@ -3417,23 +3458,39 @@ export abstract class InkWritingView extends FileView {
     // Hardware jitter while the nib rests must not keep postponing the hold.
     if (anchor && Math.hypot((point.x - anchor.x) * this.canvasLogicalWidth,
       (point.y - anchor.y) * this.canvasLogicalHeight) <= 3) return;
-    this.cancelLineHold();
     this.lineHoldAnchor = { ...point };
+    this.lineHoldLastMoveAt = Date.now();
+    if (this.lineHoldTimer !== undefined) return;
     const start = this.scribbleGesturePoints[0];
     // Keep device-rate input constant-time; inspect the whole path only on hold.
     if (!start || Math.hypot((point.x - start.x) * this.canvasLogicalWidth,
       (point.y - start.y) * this.canvasLogicalHeight) < 40) return;
+    // One timer serves the whole stroke. Raw-update streams used to cancel and
+    // re-arm here on every hardware sample (hundreds of timers per second);
+    // the settle callback instead re-checks the rest deadline and re-arms the
+    // remainder, so the hold still fires only after the full quiet window.
     const generation = this.interaction?.generation;
-    this.lineHoldTimer = window.setTimeout(() => {
-      this.lineHoldTimer = undefined;
-      if (!this.activeStroke || this.interaction?.generation !== generation || this.inputLocked()
-        || !canStraighten(this.scribbleGesturePoints, this.canvasLogicalWidth, this.canvasLogicalHeight)) return;
-      this.geometricStroke = { start: { ...this.scribbleGesturePoints[0] }, kind: "line" };
-      this.penModeler = null;
-      this.activeStroke.dynamics = { taper: 0, pressure: 0, speed: 0 };
-      this.replaceGeometricPoints(point);
-      this.requestRender();
-    }, 2_000);
+    this.lineHoldTimer = window.setTimeout(() => this.settleLineHold(generation), LINE_HOLD_MS);
+  }
+
+  private settleLineHold(generation: number | undefined): void {
+    this.lineHoldTimer = undefined;
+    if (!this.activeStroke || this.interaction?.generation !== generation || this.inputLocked()) return;
+    const remaining = LINE_HOLD_MS - (Date.now() - this.lineHoldLastMoveAt);
+    if (remaining > 0) {
+      this.lineHoldTimer = window.setTimeout(() => this.settleLineHold(generation), remaining);
+      return;
+    }
+    const anchor = this.lineHoldAnchor;
+    const start = this.scribbleGesturePoints[0];
+    if (!anchor || !start || Math.hypot((anchor.x - start.x) * this.canvasLogicalWidth,
+      (anchor.y - start.y) * this.canvasLogicalHeight) < 40
+      || !canStraighten(this.scribbleGesturePoints, this.canvasLogicalWidth, this.canvasLogicalHeight)) return;
+    this.geometricStroke = { start: { ...start }, kind: "line" };
+    this.penModeler = null;
+    this.activeStroke.dynamics = { taper: 0, pressure: 0, speed: 0 };
+    this.replaceGeometricPoints(anchor);
+    this.requestRender();
   }
 
   private replaceGeometricPoints(end: InkPoint): void {

@@ -845,6 +845,45 @@ describe("page rail thumbnails and resizing", () => {
     Object.defineProperty(canvas, "clientHeight", { value: height, configurable: true });
   };
 
+  it("defers offscreen thumbnails to the intersection observer and paints on visibility", () => {
+    const reports: Array<{ callback: IntersectionObserverCallback }> = [];
+    const observed: Element[] = [];
+    class FakeObserver {
+      constructor(callback: IntersectionObserverCallback) { reports.push({ callback }); }
+      observe(target: Element): void { observed.push(target); }
+      unobserve(target: Element): void {
+        const at = observed.indexOf(target);
+        if (at >= 0) observed.splice(at, 1);
+      }
+      disconnect(): void { observed.length = 0; }
+    }
+    vi.stubGlobal("IntersectionObserver", FakeObserver);
+    const internal = view as unknown as {
+      addPage(): void;
+      notebook: ReturnType<typeof createNotebook>;
+    };
+    internal.addPage();
+    internal.notebook.pages[0].strokes.push(stroke(internal.notebook.pages[0], "deferred"));
+    const canvases = document.querySelectorAll<HTMLCanvasElement>(".ink-page-thumb canvas");
+    expect(canvases).toHaveLength(2);
+    // jsdom rects are zero-size, so both thumbs count as offscreen: neither
+    // painted, both watched by the observer.
+    vi.mocked(drawInkStroke).mockClear();
+    expect(observed).toHaveLength(2);
+    // The observer reports the first thumb visible: exactly that one paints.
+    withBox(canvases[0], 152, 208);
+    const drawSpy = vi.spyOn(view as unknown as { drawPageThumbnail: (c: HTMLCanvasElement, p: unknown) => void }, "drawPageThumbnail");
+    reports[0].callback([
+      { isIntersecting: true, target: canvases[0] } as unknown as IntersectionObserverEntry,
+    ], { disconnect() {}, unobserve() {}, observe() {} } as unknown as IntersectionObserver);
+    const drawn = vi.mocked(drawInkStroke).mock.calls;
+    expect(drawSpy).toHaveBeenCalledOnce();
+    expect(drawn.length).toBe(1);
+    expect((drawn[0][1] as InkStroke).id).toBe("deferred");
+    expect(observed).toHaveLength(1);
+    expect(observed[0]).toBe(canvases[1]);
+  });
+
   it("paints every thumbnail as a vector snapshot once the rail is visible", () => {
     vi.useFakeTimers();
     try {
@@ -891,7 +930,7 @@ describe("page rail thumbnails and resizing", () => {
     // image, never like re-ruled paper.
     expect(page.style.getPropertyValue("--ink-page-scale")).toBe("2");
   });
-  it("refreshes only the current page's thumbnail after its ink changes", () => {
+  it("refreshes only the current page's thumbnail after its ink changes", async () => {
     const internal = view as unknown as {
       notebook: ReturnType<typeof createNotebook>;
       pageIndex: number;
@@ -906,10 +945,36 @@ describe("page rail thumbnails and resizing", () => {
     internal.notebook.pages[1].strokes.push(stroke(internal.notebook.pages[1], "s2"));
     internal.pageIndex = 1;
     internal.refreshCurrentPageThumbnail();
+    await new Promise(requestAnimationFrame);
     const drawn = vi.mocked(drawInkStroke).mock.calls;
     expect(drawn.length).toBeGreaterThan(0);
     // Scaled clones again: match the refreshed page's stroke by id.
     for (const call of drawn) expect((call[1] as InkStroke).id).toBe("s2");
+  });
+
+  it("coalesces same-frame thumbnail refresh requests into one repaint", async () => {
+    const internal = view as unknown as {
+      notebook: ReturnType<typeof createNotebook>;
+      pageIndex: number;
+      addPage(): void;
+      refreshCurrentPageThumbnail(): void;
+    };
+    internal.addPage();
+    button("Pages").click();
+    const canvases = document.querySelectorAll<HTMLCanvasElement>(".ink-page-thumb canvas");
+    canvases.forEach((canvas) => withBox(canvas, 152, 208));
+    vi.mocked(drawInkStroke).mockClear();
+    internal.notebook.pages[1].strokes.push(stroke(internal.notebook.pages[1], "s2"));
+    internal.pageIndex = 1;
+    // Pointerup and the tile ink commit both request a refresh within the
+    // same frame; the page's strokes must be painted once, not twice.
+    internal.refreshCurrentPageThumbnail();
+    internal.refreshCurrentPageThumbnail();
+    await new Promise(requestAnimationFrame);
+    expect(vi.mocked(drawInkStroke).mock.calls.length).toBeGreaterThan(0);
+    const paintedFrames = vi.mocked(drawInkStroke).mock.calls.length;
+    await new Promise(requestAnimationFrame);
+    expect(vi.mocked(drawInkStroke).mock.calls.length).toBe(paintedFrames);
   });
 
   it("keeps a failing thumbnail render contained to that thumbnail", () => {

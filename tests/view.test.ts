@@ -111,6 +111,9 @@ function setup() {
     drawPreview: vi.fn(),
     commitPreview: vi.fn(),
     requestRender: vi.fn(),
+    // The coalesced thumbnail repaint runs on rAF, which this node-environment
+    // window stub has no analogue for; these tests never observe the rail.
+    refreshCurrentPageThumbnail: vi.fn(),
     tiles: { sync: vi.fn(), patchStrokes: vi.fn(), commitInteractive: vi.fn(),
       commitInk: vi.fn((_strokes: unknown, _viewport: unknown, _density: number, complete: (committed: boolean) => void) => complete(true)),
       removeStrokes: vi.fn(), previewInteractiveCells: vi.fn(), beginInput: vi.fn(), pauseInkCommit: vi.fn(), resumeInkCommit: vi.fn(), cancelInkCommit: vi.fn() },

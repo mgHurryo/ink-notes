@@ -17,6 +17,7 @@ function view(): any {
     pendingInkStrokes: [], committingInkStrokes: null, pendingInkPageId: null,
     activePointerId: null, pendingMergedNotebook: null, externalRefreshPending: false, viewReady: true,
     canvasLogicalWidth: 800, canvasLogicalHeight: 1000, renderFrame: null, resizeRequested: false,
+    confirmedOutlinePaths: new WeakMap(),
     currentPage: () => page,
     viewport: { x: 0, y: 0, width: 800, height: 1000 }, zoom: 1,
     tiles: { sync: vi.fn(), patchStrokes: vi.fn(), update: vi.fn(), flushVisible: vi.fn(), commitInteractive: vi.fn(), commitInk: vi.fn(),
@@ -36,8 +37,20 @@ function setCssStyles(this: { style: object }, styles: object): void {
   Object.assign(this.style, styles);
 }
 
+// Path2D stubs record outline construction: confirmed outlines now trace into
+// a cached path object instead of the live context, so assertions follow it.
+const pathInstances: any[] = [];
+
 beforeEach(() => {
   vi.clearAllMocks();
+  pathInstances.length = 0;
+  vi.stubGlobal("Path2D", class {
+    moveTo = vi.fn();
+    lineTo = vi.fn();
+    quadraticCurveTo = vi.fn();
+    closePath = vi.fn();
+    constructor() { pathInstances.push(this); }
+  });
   vi.stubGlobal("window", { requestAnimationFrame: vi.fn(() => 1), cancelAnimationFrame: vi.fn(),
     setTimeout: vi.fn(() => 2), clearTimeout: vi.fn() });
 });
@@ -427,8 +440,30 @@ it("renders retained pen previews as the same faithful polygon as committed tile
     sampleCount: 3, mode: "pen",
   }]]);
   v.drawCompletedPreviewStroke(ctx, stroke);
-  expect(ctx.closePath).toHaveBeenCalled();
-  expect(ctx.lineTo).toHaveBeenCalled();
-  expect(ctx.quadraticCurveTo).not.toHaveBeenCalled();
-  expect(ctx.fill).toHaveBeenCalled();
+  const outlinePath = pathInstances.at(-1);
+  expect(outlinePath.closePath).toHaveBeenCalled();
+  expect(outlinePath.lineTo).toHaveBeenCalled();
+  expect(outlinePath.quadraticCurveTo).not.toHaveBeenCalled();
+  expect(ctx.fill).toHaveBeenCalledWith(outlinePath);
+});
+
+it("reuses one cached outline path across frames of the same confirmed stroke", () => {
+  const v = view();
+  const ctx = drawingContext();
+  const points = new Float32Array([0.1, 0.1, 0.2, 0.16, 0.3, 0.2, 0.2, 0.12]);
+  v.drawConfirmedOutline(ctx, points, "#111111", 1, 3, "pen");
+  const firstPath = pathInstances.at(-1);
+  v.drawConfirmedOutline(ctx, points, "#111111", 1, 3, "pen");
+  expect(pathInstances).toHaveLength(1);
+  expect(ctx.fill).toHaveBeenLastCalledWith(firstPath);
+
+  // A replacement outline (a new Float32Array from the Worker) builds a fresh
+  // path, and the highlighter mode keys separately and renders as a stroke.
+  v.drawConfirmedOutline(ctx, new Float32Array([0.1, 0.1, 0.4, 0.2]), "#111111", 1, 3, "pen");
+  expect(pathInstances).toHaveLength(2);
+  const highlighterCtx = drawingContext();
+  v.drawConfirmedOutline(highlighterCtx, points, "#ffee00", 1, 6, "highlighter");
+  expect(pathInstances).toHaveLength(3);
+  expect(highlighterCtx.stroke).toHaveBeenCalledWith(pathInstances.at(-1));
+  expect(highlighterCtx.fill).not.toHaveBeenCalled();
 });
