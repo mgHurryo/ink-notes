@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.5-beta.1 - 2026-10-14
+
+- Cut per-frame rebuild work shared by the desktop (Chromium) and mobile (WebKit) writing paths: settled render frames no longer rebuild the tile queue and rescan the whole tile cache, confirmed stroke outlines reuse one cached path object per frame, and the page-rail thumbnail refresh for the current page coalesces onto a single animation frame.
+- Reduce input-path overhead on hardware-pen streams: the line-hold straightening timer arms once per stroke instead of re-arming on every raw pen sample (up to ~266 Hz), eraser hit-testing reuses one dedup map per sample, unchanged strokes skip the style-key rebuild during tile sync, and neighboring-page prewarm jobs no longer queue duplicates.
+- Defer offscreen page-rail thumbnails until they scroll into view; visible thumbnails and all explicit repaints keep their previous synchronous behavior.
+- No note migration or format change. Automated typecheck, unit tests, build, and visual browser regressions pass; the frame-time gains are code-path verified and await device measurement.
+
 ## 0.1.4 - 2026-10-13
 
 - Replace operating-system detection through `navigator.userAgent` with Obsidian's `Platform` API while preserving handwriting-first defaults for iPad split windows.
