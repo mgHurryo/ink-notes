@@ -81,6 +81,47 @@ describe("tile spatial index", () => {
 });
 
 describe("interactive tile commits", () => {
+  it("submits the queued tile batch to the worker in one animation frame", () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => { frames.push(callback); return frames.length; }));
+    const state = { id: 1, page: { id: "page" }, index: { width: 384, height: 128,
+      revisions: new Map([["0:0", 1], ["1:0", 1], ["2:0", 1]]) } };
+    const backend = { renderTile: vi.fn(() => new Promise(() => {})) };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, { backend, disposed: false, inkCommitPaused: false, inkCommit: null, frame: null,
+      active: state, renderGeneration: 1, pendingTiles: new Map(), cache: new Map(), jobs: ["0:0", "1:0", "2:0"]
+        .map(cell => ({ state, cell, density: 1, priority: "visible" })), visible: new Set(["0:0", "1:0", "2:0"]),
+      schedule: (TileRenderer.prototype as any).schedule, get: vi.fn(() => undefined), isHeld: vi.fn(() => false),
+      key: (jobState: any, cell: string, density: number) => `${jobState.id}/${cell}/${density}` });
+
+    renderer.schedule();
+    frames.shift()!(0);
+
+    expect(backend.renderTile).toHaveBeenCalledTimes(3);
+    expect(renderer.jobs).toEqual([]);
+    expect(frames).toHaveLength(0);
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps main-thread tile painting limited to one tile per animation frame", () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => { frames.push(callback); return frames.length; }));
+    const state = { id: 1 };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, { backend: null, disposed: false, inkCommitPaused: false, inkCommit: null, frame: null,
+      active: state, jobs: ["0:0", "1:0", "2:0"].map(cell => ({ state, cell, density: 1 })),
+      visible: new Set(["0:0", "1:0", "2:0"]), schedule: (TileRenderer.prototype as any).schedule,
+      get: vi.fn(() => undefined), isHeld: vi.fn(() => false), paint: vi.fn(job => job), attach: vi.fn(), evict: vi.fn() });
+
+    renderer.schedule();
+    frames.shift()!(0);
+
+    expect(renderer.paint).toHaveBeenCalledOnce();
+    expect(renderer.jobs).toHaveLength(2);
+    expect(frames).toHaveLength(1);
+    vi.unstubAllGlobals();
+  });
+
   it("preserves full 2x density for an iPad-sized viewport", () => {
     expect(tileDensity({ x: 0, y: 0, width: 1024, height: 1366 }, 2)).toBe(2);
   });

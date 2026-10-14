@@ -50,6 +50,20 @@ show the variance, not a stable 60 FPS claim. The visible sample had 276491
 nontransparent pixels; deleting the crossing stroke changed 15 visible tiles
 and restoring it reproduced the original pixels exactly.
 
+## Worker queue scheduling
+
+On 2026-10-14, a cold visible-tile pass in local Chromium used the `?performance`
+preview at 1024 x 900 with 1001 strokes. After clearing the tile cache, all 56
+visible cells contained ink. Completion was measured from `update()` until the
+worker queue and pending requests were empty and every occupied visible cell was
+mounted. Before the change, dispatching one worker request per animation frame
+took 932-953 ms (four runs; median 933.9 ms). The renderer now submits the
+current queue batch in one frame and leaves prioritization to the existing
+worker queue; five runs took 139.9-252.2 ms (median 156.1 ms), about 83% lower.
+This is a local synthetic cold-cache comparison, not an end-to-end input or
+mobile latency guarantee. Main-thread fallback rendering remains capped at one
+tile per frame to limit competition with input.
+
 ## Intermediate full-page baseline
 
 Measured in the local Codex Chromium browser on 2026-09-08. Synthetic strokes,

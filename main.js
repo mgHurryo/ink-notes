@@ -31327,8 +31327,10 @@ var TileRenderer = class {
     if (this.frame !== null || !this.jobs.length || this.disposed || this.inkCommitPaused || this.inkCommit) return;
     this.frame = requestAnimationFrame(() => {
       this.frame = null;
-      const job = this.jobs.shift();
-      if (job && !this.isHeld(job)) {
+      const limit = this.backend ? this.jobs.length : 1;
+      for (let count = 0; count < limit; count++) {
+        const job = this.jobs.shift();
+        if (!job || this.isHeld(job)) continue;
         const tile = this.get(job.state, job.cell, job.density);
         if (tile) {
           if (job.state === this.active && this.visible.has(job.cell)) this.attach(tile);

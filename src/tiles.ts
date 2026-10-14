@@ -519,9 +519,13 @@ export class TileRenderer {
     if (this.frame !== null || !this.jobs.length || this.disposed || this.inkCommitPaused || this.inkCommit) return;
     this.frame = requestAnimationFrame(() => {
       this.frame = null;
-      // One tile per frame bounds scheduling work and gives input priority.
-      const job = this.jobs.shift();
-      if (job && !this.isHeld(job)) {
+      // The worker owns a priority queue, so feed it the visible batch at once
+      // instead of limiting its throughput to one request per animation frame.
+      // Main-thread rasterization stays one tile per frame to bound input work.
+      const limit = this.backend ? this.jobs.length : 1;
+      for (let count = 0; count < limit; count++) {
+        const job = this.jobs.shift();
+        if (!job || this.isHeld(job)) continue;
         const tile = this.get(job.state, job.cell, job.density);
         if (tile) {
           if (job.state === this.active && this.visible.has(job.cell)) this.attach(tile);
