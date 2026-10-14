@@ -37,7 +37,13 @@ interface IndexedStroke {
   count: number;
   revision: number;
   order: number;
-  style: string;
+  // Style snapshots as scalars: sync() compares them per stroke per frame, so
+  // the check must detect in-place mutation (same stroke reference, edited
+  // field) without building a join key string on every pass.
+  tool: string;
+  color: string;
+  width: number;
+  opacity: number;
   cells: string[];
 }
 
@@ -66,9 +72,13 @@ export class StrokeIndex {
 
   upsert(stroke: InkStroke, order: number): string[] {
     const previous = this.entries.get(stroke.id);
-    const style = [stroke.tool, stroke.color, stroke.width, stroke.opacity].join(":");
+    // sync() runs per stroke on every animation frame, so the unchanged
+    // majority short-circuits before any allocation; the scalar snapshots
+    // still catch in-place style mutation, exactly like the old join key.
     if (previous?.stroke === stroke && previous.points === stroke.points && previous.count === stroke.points.length
-      && previous.revision === stroke.updatedAt && previous.style === style) {
+      && previous.revision === stroke.updatedAt
+      && previous.tool === stroke.tool && previous.color === stroke.color
+      && previous.width === stroke.width && previous.opacity === stroke.opacity) {
       // Compositing order is metadata, not geometry. Updating it must not
       // invalidate every later tile when an early stroke is removed.
       previous.order = order;
@@ -82,7 +92,8 @@ export class StrokeIndex {
       minY = Math.min(minY, p.y * this.height); maxY = Math.max(maxY, p.y * this.height);
     }
     const keys = cellKeys({ x: minX - padding, y: minY - padding, width: maxX - minX + padding * 2, height: maxY - minY + padding * 2 }, this.width, this.height);
-    const entry = { stroke, points: stroke.points, count: stroke.points.length, revision: stroke.updatedAt, order, style, cells: keys };
+    const entry = { stroke, points: stroke.points, count: stroke.points.length, revision: stroke.updatedAt, order,
+      tool: stroke.tool, color: stroke.color, width: stroke.width, opacity: stroke.opacity, cells: keys };
     this.entries.set(stroke.id, entry);
     for (const key of keys) {
       if (!this.cells.has(key)) this.cells.set(key, new Set());
@@ -386,6 +397,12 @@ export class TileRenderer {
     // Keep both mounted tiles and in-flight tile jobs; rebuilding the queue on
     // every scroll event repeatedly cancels work and remounts the same frame.
     if (!refine && sameDensity && sameVisible) return;
+    // Refine callers run every animation frame while a render loop is active.
+    // Once the frame is settled, content edits are the only remaining trigger,
+    // and they advance the cell revision so the exact-cache probe below fails;
+    // skipping the rebuild then also keeps queued prewarm jobs alive instead
+    // of clearing and re-deriving them every frame.
+    if (sameDensity && sameVisible && this.visibleCurrent()) return;
     this.jobs = [];
     for (const node of Array.from(this.host.children)) {
       if (!this.visible.has((node as HTMLElement).dataset.cell ?? "")) node.remove();
@@ -416,7 +433,12 @@ export class TileRenderer {
       state.index.sync(page.strokes);
       // Preload only the same visible region, not entire neighboring pages.
       for (const cell of cellKeys(this.viewport, state.index.width, state.index.height)) {
-        if (!this.get(state, cell, this.density)) this.jobs.push({ state, cell, density: this.density, priority: "prewarm" });
+        if (this.get(state, cell, this.density)) continue;
+        // Repeated prewarm passes must not queue a cell twice: the schedule
+        // loop drains one job per frame, so duplicates would linger behind
+        // and re-render work that an earlier pass already has in flight.
+        if (this.jobs.some(job => job.state === state && job.cell === cell && job.density === this.density)) continue;
+        this.jobs.push({ state, cell, density: this.density, priority: "prewarm" });
       }
     }
     this.schedule();
@@ -455,6 +477,16 @@ export class TileRenderer {
         && (!best || Math.abs(tile.density - this.density) < Math.abs(best.density - this.density))) best = tile;
     }
     return best;
+  }
+  /** True when every visible cell already holds an up-to-date tile at the
+   *  exact current density, so a refine pass would only re-attach identical
+   *  rasters. get() revalidates the revision, so edited cells fail here. */
+  private visibleCurrent(): boolean {
+    if (!this.active) return false;
+    for (const cell of this.visible) {
+      if (!this.get(this.active, cell, this.density)) return false;
+    }
+    return true;
   }
   private attach(tile: Tile): void {
     if (tile.node.parentElement === this.host) { tile.used = ++this.sequence; return; }
