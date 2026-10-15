@@ -827,7 +827,7 @@ describe("pdf page preview rail", () => {
     desktop.onPointerDown(mouse);
     desktop.onPointerMove({ ...mouse, clientX: -200 });
     desktop.onPointerUp({ ...mouse, clientX: -200 });
-    desktop.onWheel({ deltaMode: 0, deltaX: 120, deltaY: 0, preventDefault: vi.fn() });
+    desktop.onWheel(new WheelEvent("wheel", { deltaX: 120, cancelable: true }));
     expect(host.flipSettling).toBe(true);
     release();
     await vi.waitFor(() => expect(host.flipSettling).toBe(false));

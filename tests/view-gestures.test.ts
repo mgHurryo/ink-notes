@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("obsidian", () => ({ Modal: class {}, FileView: class {} }));
 
 import { InkView } from "../src/view";
+import { DesktopWheelGesture } from "../src/desktop-wheel";
 
 // Exercise the real view handlers with scroll bounds and centered-page geometry.
 function setup(viewportWidth = 800) {
@@ -14,7 +15,7 @@ function setup(viewportWidth = 800) {
   const viewportHeight = Math.min(600, height);
   let left = 0;
   let top = 0;
-  Object.assign(view, { zoom: 1, activePointerId: null, touchGesture: null,
+  Object.assign(view, { zoom: 1, activePointerId: null, touchGesture: null, desktopWheel: new DesktopWheelGesture(),
     selectedStrokeIds: new Set(), lassoPath: [], lassoDrag: null });
   const zoomReadout = { textContent: "100%" };
   const zoomOut = { disabled: false };
@@ -300,7 +301,8 @@ describe("page touch navigation", () => {
   it("preserves cursor-centered wheel zoom", () => {
     const { view, point } = setup();
     const anchor = point(320, 430);
-    const event = { ctrlKey: true, metaKey: false, deltaY: -20, clientX: 320, clientY: 430, preventDefault: vi.fn() };
+    const event = { ctrlKey: true, metaKey: false, deltaMode: 0, deltaX: 0, deltaY: -20, clientX: 320, clientY: 430,
+      timeStamp: 100, target: null, cancelable: true, preventDefault: vi.fn() };
     view.onWheel(event);
     expect(view.zoom).toBeCloseTo(1.08);
     expect(view.layoutPage).toHaveBeenCalledOnce();
