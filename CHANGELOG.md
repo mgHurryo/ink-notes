@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5-beta.12 - 2026-10-15
+
+- Recognize short-gap renewed trackpad flicks as separate gestures so each receives a fresh two-page allowance, while requiring the prior inertia to settle near zero before rearming to avoid replaying momentum peaks. When a mouse drag takes over during a page handoff, discard wheel destinations that have not started and keep the active transition plus the drag's own page. Typecheck, 876 unit tests, focused Chromium regressions, build and PR CI pass; physical trackpad validation remains unverified.
+
 ## 0.1.5-beta.11 - 2026-10-15
 
 - Reset the per-gesture two-page limit for each renewed trackpad swipe, so repeated independent swipes keep paging instead of becoming permanently blocked. Preserve the two-page cap within one gesture and existing mouse-wheel behavior. Typecheck, 874 unit tests, focused Chromium regression, build, dependency audit and PR CI pass; physical trackpad validation remains unverified.

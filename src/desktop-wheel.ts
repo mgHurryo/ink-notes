@@ -1,6 +1,8 @@
 /** WheelEvent exposes units and distance, but no portable device or gesture phase. */
 const GESTURE_IDLE_MS = 180;
 const RENEWED_FLICK_GAP_MS = 55;
+// A renewed same-direction flick must follow the prior inertia settling near zero.
+const RENEWED_FLICK_RELEASE_PX = 4;
 const PAGE_TRAVEL_PX = 100;
 const HORIZONTAL_PAGE_TRAVEL_PX = 48;
 const MAX_TRACKPAD_PAGES_PER_GESTURE = 2;
@@ -46,9 +48,13 @@ export class DesktopWheelGesture {
   private renewedPeak = 0;
   private renewedIncreases = 0;
   private renewalBlocked = false;
-  private renewalPeak = 0;
   private trackpadPages = 0;
   private gestureId = 0;
+
+  private beginRenewedGesture(): void {
+    this.gestureId += 1;
+    this.trackpadPages = 0;
+  }
 
   reset(): void {
     this.gestureId += 1;
@@ -57,7 +63,6 @@ export class DesktopWheelGesture {
     this.lastDelta = this.travel = this.notchCredit = 0;
     this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     this.renewalBlocked = false;
-    this.renewalPeak = 0;
     this.trackpadPages = 0;
     this.flipped = this.discrete = false;
     this.mode = 0;
@@ -94,10 +99,8 @@ export class DesktopWheelGesture {
     let renewedTravel: number | undefined;
     if (this.flipped && !this.discrete && axis === "x") {
       if (this.renewalBlocked) {
-        this.renewalPeak = Math.max(this.renewalPeak, magnitude);
-        if (magnitude < this.renewalPeak * 0.7) {
+        if (magnitude <= RENEWED_FLICK_RELEASE_PX) {
           this.renewalBlocked = false;
-          this.renewalPeak = 0;
         }
       } else if (this.renewedPeak === 0) {
         if (magnitude >= Math.max(2, Math.abs(this.lastDelta) * 1.2)) {
@@ -111,10 +114,10 @@ export class DesktopWheelGesture {
         this.renewedIncreases += 1;
         if (this.renewedIncreases >= 2 && this.renewedTravel >= HORIZONTAL_PAGE_TRAVEL_PX) {
           renewedTravel = Math.sign(movement) * (this.renewedTravel - magnitude);
+          this.beginRenewedGesture();
           this.flipped = false;
           this.travel = 0;
           this.renewalBlocked = true;
-          this.renewalPeak = magnitude;
           this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
         }
       } else if (magnitude < this.renewedPeak * 0.7) {
@@ -134,6 +137,7 @@ export class DesktopWheelGesture {
           this.renewedIncreases += 1;
           if (this.renewedIncreases >= 2 && this.renewedTravel >= PAGE_TRAVEL_PX) {
             renewedTravel = Math.sign(movement) * this.renewedTravel;
+            this.beginRenewedGesture();
             this.flipped = false;
             this.travel = 0;
             this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
@@ -155,7 +159,6 @@ export class DesktopWheelGesture {
     if (scrolled) {
       this.travel = this.notchCredit = 0;
       this.renewalBlocked = false;
-      this.renewalPeak = 0;
       return 0;
     }
     if (motion.suppressed) return 0;

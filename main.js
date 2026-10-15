@@ -24147,6 +24147,7 @@ function defaultReadingMode(platform, device) {
 // src/desktop-wheel.ts
 var GESTURE_IDLE_MS = 180;
 var RENEWED_FLICK_GAP_MS = 55;
+var RENEWED_FLICK_RELEASE_PX = 4;
 var PAGE_TRAVEL_PX = 100;
 var HORIZONTAL_PAGE_TRAVEL_PX = 48;
 var MAX_TRACKPAD_PAGES_PER_GESTURE = 2;
@@ -24172,9 +24173,12 @@ var DesktopWheelGesture = class {
     this.renewedPeak = 0;
     this.renewedIncreases = 0;
     this.renewalBlocked = false;
-    this.renewalPeak = 0;
     this.trackpadPages = 0;
     this.gestureId = 0;
+  }
+  beginRenewedGesture() {
+    this.gestureId += 1;
+    this.trackpadPages = 0;
   }
   reset() {
     this.gestureId += 1;
@@ -24183,7 +24187,6 @@ var DesktopWheelGesture = class {
     this.lastDelta = this.travel = this.notchCredit = 0;
     this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     this.renewalBlocked = false;
-    this.renewalPeak = 0;
     this.trackpadPages = 0;
     this.flipped = this.discrete = false;
     this.mode = 0;
@@ -24216,10 +24219,8 @@ var DesktopWheelGesture = class {
     let renewedTravel;
     if (this.flipped && !this.discrete && axis === "x") {
       if (this.renewalBlocked) {
-        this.renewalPeak = Math.max(this.renewalPeak, magnitude);
-        if (magnitude < this.renewalPeak * 0.7) {
+        if (magnitude <= RENEWED_FLICK_RELEASE_PX) {
           this.renewalBlocked = false;
-          this.renewalPeak = 0;
         }
       } else if (this.renewedPeak === 0) {
         if (magnitude >= Math.max(2, Math.abs(this.lastDelta) * 1.2)) {
@@ -24233,10 +24234,10 @@ var DesktopWheelGesture = class {
         this.renewedIncreases += 1;
         if (this.renewedIncreases >= 2 && this.renewedTravel >= HORIZONTAL_PAGE_TRAVEL_PX) {
           renewedTravel = Math.sign(movement) * (this.renewedTravel - magnitude);
+          this.beginRenewedGesture();
           this.flipped = false;
           this.travel = 0;
           this.renewalBlocked = true;
-          this.renewalPeak = magnitude;
           this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
         }
       } else if (magnitude < this.renewedPeak * 0.7) {
@@ -24256,6 +24257,7 @@ var DesktopWheelGesture = class {
           this.renewedIncreases += 1;
           if (this.renewedIncreases >= 2 && this.renewedTravel >= PAGE_TRAVEL_PX) {
             renewedTravel = Math.sign(movement) * this.renewedTravel;
+            this.beginRenewedGesture();
             this.flipped = false;
             this.travel = 0;
             this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
@@ -24283,7 +24285,6 @@ var DesktopWheelGesture = class {
     if (scrolled) {
       this.travel = this.notchCredit = 0;
       this.renewalBlocked = false;
-      this.renewalPeak = 0;
       return 0;
     }
     if (motion.suppressed) return 0;
@@ -27925,7 +27926,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
   }
   /** Track the requested destination, including swipes made while saving/rendering. */
   beginPageSwipe(target, count, scrollEdge) {
-    const request = { target, count, scrollEdge, wheelGestureId: null };
+    const request = { target, activeTarget: target, count, scrollEdge, wheelGestureId: null };
     this.pageSwipeRequest = request;
     return () => this.flipSettling && this.pageSwipeRequest === request;
   }
@@ -27951,6 +27952,13 @@ var InkWritingView = class extends import_obsidian6.FileView {
     request.scrollEdge = scrollEdge;
     return true;
   }
+  /** A fresh direct-manipulation swipe supersedes wheel destinations not yet started. */
+  discardQueuedPageSwipeSteps() {
+    const request = this.pageSwipeRequest;
+    if (!this.flipSettling || !request) return;
+    request.target = request.activeTarget;
+    request.scrollEdge = void 0;
+  }
   clearPageSwipeTarget() {
     this.pageSwipeRequest = null;
   }
@@ -27964,6 +27972,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
       if (target === current) return;
       const direction = Math.sign(target - current);
       const next = current + direction;
+      this.pageSwipeRequest.activeTarget = next;
       if (!firstStep && animateStep) await animateStep(direction);
       if (!isCurrent()) return;
       await navigate(next);
@@ -28768,7 +28777,10 @@ var InkWritingView = class extends import_obsidian6.FileView {
         pan.mode = Math.abs(totalX) > Math.abs(totalY) * 1.5 && flipAllowed ? "swipe" : "pan";
       }
       if (pan.mode === "swipe") {
-        if (this.flipSettling) this.finishPageSwipeAnimations();
+        if (this.flipSettling) {
+          this.discardQueuedPageSwipeSteps();
+          this.finishPageSwipeAnimations();
+        }
         this.swipeDrag(totalX);
       } else if (!this.flipSettling) {
         const before = scroller.scrollLeft;
