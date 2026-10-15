@@ -24204,7 +24204,7 @@ var DesktopWheelGesture = class {
     const pixelNotch = delta.x === 0 && (axis === "y" || shift) && magnitude >= 80 && (magnitude % 100 === 0 || magnitude % 120 === 0);
     const discrete = delta.mode !== 0 || pixelNotch;
     const reversed = this.lastDelta !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta);
-    const renewed = !this.discrete && this.flipped && gap >= RENEWED_FLICK_GAP_MS && magnitude >= 48 && magnitude > Math.abs(this.lastDelta) * 1.8;
+    const renewed = !this.discrete && this.flipped && axis === "x" && gap >= RENEWED_FLICK_GAP_MS;
     if (axis !== this.axis || delta.mode !== this.mode || reversed) {
       this.reset();
       gap = 0;
@@ -24219,14 +24219,7 @@ var DesktopWheelGesture = class {
     let renewedTravel;
     if (this.flipped && !this.discrete && axis === "x") {
       if (this.renewalBlocked) {
-        if (magnitude <= RENEWED_FLICK_RELEASE_PX) {
-          this.renewalBlocked = false;
-        } else if (gap >= RENEWED_FLICK_GAP_MS) {
-          this.renewalBlocked = false;
-          this.renewedTravel = magnitude;
-          this.renewedPeak = magnitude;
-          this.renewedIncreases = 0;
-        }
+        if (magnitude <= RENEWED_FLICK_RELEASE_PX) this.renewalBlocked = false;
       } else if (this.renewedPeak === 0) {
         if (magnitude >= Math.max(2, Math.abs(this.lastDelta) * 1.2)) {
           this.renewedTravel = magnitude;
