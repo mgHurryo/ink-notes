@@ -45,8 +45,11 @@ export function gestureContract(create: () => Promise<any>): void {
       });
       const settle = vi.spyOn(editor, "swipeSettle").mockImplementation(() => undefined);
       vi.spyOn(editor, "swipeDrag").mockImplementation(() => undefined);
-      const wheel = (x: number, y: number, options: WheelEventInit = {}, target: HTMLElement = scroller) => {
-        const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX: x, deltaY: y, ...options });
+      let wheelTime = 0;
+      const wheel = (x: number, y: number, options: WheelEventInit & { timeStamp?: number } = {}, target: HTMLElement = scroller) => {
+        const { timeStamp, ...init } = options;
+        const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX: x, deltaY: y, ...init });
+        Object.defineProperty(event, "timeStamp", { configurable: true, value: timeStamp ?? (wheelTime += 200) });
         target.dispatchEvent(event); return event;
       };
       return { editor, scroller, settle, wheel };
@@ -197,26 +200,39 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenNthCalledWith(1, 1, 0, "top");
     });
 
-    it("rearms a trackpad flick as soon as motion grows after its inertia tail", async () => {
-      const { wheel, settle } = await desktopSetup();
-      wheel(140, 0);
-      for (const delta of [90, 60, 30, 20]) wheel(delta, 0);
-      wheel(40, 0); // A new flick can begin before the old 180ms idle timeout.
-      wheel(70, 0);
-      expect(settle).toHaveBeenCalledTimes(2);
+    it("counts one high-speed pixel wheel event as one page and slightly dampens rapid notches", async () => {
+      const { scroller, settle, wheel } = await desktopSetup();
+      scroller.scrollTop = 600;
+      wheel(0, 1200, { timeStamp: 100 });
+      expect(settle).toHaveBeenCalledTimes(1);
+
+      for (const timeStamp of [140, 180, 220, 260]) wheel(0, 100, { timeStamp });
+      expect(settle).toHaveBeenCalledTimes(4);
     });
 
-    it.each(["abrupt", "gradual"])("rearms trackpad navigation on reversal and %s renewed motion, but ignores decaying inertia", async (ramp) => {
+    it("waits for a quiet gap before rearming a same-direction trackpad flick", async () => {
+      const { wheel, settle } = await desktopSetup();
+      vi.useFakeTimers();
+      try {
+        wheel(140, 0);
+        for (const delta of [90, 60, 30, 20, 40, 70]) wheel(delta, 0);
+        expect(settle).toHaveBeenCalledTimes(1);
+        vi.advanceTimersByTime(180);
+        wheel(140, 0);
+        expect(settle).toHaveBeenCalledTimes(2);
+      } finally { vi.useRealTimers(); }
+    });
+
+    it("rearms trackpad navigation immediately on reversal and ignores renewed same-direction inertia", async () => {
       const { wheel, settle } = await desktopSetup();
       wheel(140, 0);
       for (const delta of [90, 60, 30, 10, 4]) wheel(delta, 0);
       expect(settle).toHaveBeenCalledTimes(1);
-      if (ramp === "gradual") for (const delta of [8, 20, 35]) wheel(delta, 0);
-      wheel(140, 0); // New flick after the inertia tail, with no idle interval.
-      expect(settle).toHaveBeenCalledTimes(2);
+      for (const delta of [8, 20, 35, 140]) wheel(delta, 0);
+      expect(settle).toHaveBeenCalledTimes(1);
       wheel(-140, 0);
       expect(settle).toHaveBeenLastCalledWith(-1, 0, undefined);
-      expect(settle).toHaveBeenCalledTimes(3);
+      expect(settle).toHaveBeenCalledTimes(2);
     });
 
     it("keeps nested editing and scroll surfaces independent from document navigation", async () => {

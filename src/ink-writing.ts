@@ -1450,6 +1450,7 @@ export abstract class InkWritingView extends FileView {
   private desktopWheelLastDelta = 0;
   private desktopWheelLastEventAt = 0;
   private desktopWheelDiscrete = false;
+  private desktopWheelNotchCredit = 0;
 
   /** Snapshot the trigger press before the host dismisses its menu on pointerdown. */
   protected beginPageOptionsMenu(event: Pick<MouseEvent, "currentTarget">): Menu | null {
@@ -1664,6 +1665,7 @@ export abstract class InkWritingView extends FileView {
     this.desktopWheelLastDelta = 0;
     this.desktopWheelLastEventAt = 0;
     this.desktopWheelDiscrete = false;
+    this.desktopWheelNotchCredit = 0;
   }
 
   protected onWheel(event: WheelEvent): void {
@@ -1692,12 +1694,25 @@ export abstract class InkWritingView extends FileView {
     const axis = event.shiftKey || Math.abs(x) > Math.abs(y) * 1.5 ? "x" : "y";
     const movement = axis === "x" ? (x || (event.shiftKey ? y : 0)) : y;
     if (!movement) return;
-    // Discrete wheel events represent deliberate notches; trackpads send a
-    // continuous pixel stream and are handled as one page per renewed flick.
+    const eventAt = event.timeStamp || performance.now();
+    let gap = this.desktopWheelLastEventAt > 0 ? eventAt - this.desktopWheelLastEventAt : 0;
+    // Pixel-mode deltas describe distance, not a reliable number of notches.
     const discrete = event.deltaMode !== 0 || (axis === "y" && Math.abs(movement) >= 80);
-    if (axis !== this.desktopWheelAxis || discrete !== this.desktopWheelDiscrete) this.resetDesktopWheel();
+    if (axis !== this.desktopWheelAxis || discrete !== this.desktopWheelDiscrete) {
+      this.resetDesktopWheel();
+      gap = 0;
+    }
+    const reversed = this.desktopWheelLastDelta !== 0 && Math.sign(movement) !== Math.sign(this.desktopWheelLastDelta);
+    if (reversed) {
+      this.resetDesktopWheel();
+      gap = 0;
+    }
     this.desktopWheelAxis = axis;
     this.desktopWheelDiscrete = discrete;
+    if (this.desktopWheelTimer !== undefined) window.clearTimeout(this.desktopWheelTimer);
+    this.desktopWheelTimer = window.setTimeout(() => {
+      this.desktopWheelTimer = undefined; this.resetDesktopWheel();
+    }, 180);
     if (discrete) {
       event.preventDefault();
       if (!this.flipSettling) {
@@ -1707,10 +1722,17 @@ export abstract class InkWritingView extends FileView {
         // Let the browser consume the wheel inside the page before paging.
         if (Math.abs(scroller[property] - before) > 0.5) return;
       }
-      const notches = event.deltaMode === 2 ? 1
-        : Math.max(1, Math.round(Math.abs(movement) / (event.deltaMode === 1 ? 48 : 120)));
+      const notches = event.deltaMode === 2 ? 1 : event.deltaMode === 1
+        ? Math.max(1, Math.round(Math.abs(movement) / 48)) : 1;
+      const sensitivity = event.deltaMode === 0 && gap > 0 && gap < 80 ? 0.8 : 1;
+      this.desktopWheelNotchCredit += notches * sensitivity;
+      const pages = Math.floor(this.desktopWheelNotchCredit + 1e-8);
+      this.desktopWheelNotchCredit -= pages;
+      this.desktopWheelLastDelta = movement;
+      this.desktopWheelLastEventAt = eventAt;
+      if (pages === 0) return;
       const direction = Math.sign(movement);
-      const delta = direction > 0 ? notches : -notches;
+      const delta = direction > 0 ? pages : -pages;
       const scrollEdge = axis === "y" ? (delta > 0 ? "top" : "bottom") : undefined;
       if (this.flipSettling) {
         if (this.pageSwipeRequest) this.queuePageSwipeTarget(this.pageSwipeRequest.target + delta, scrollEdge);
@@ -1718,18 +1740,11 @@ export abstract class InkWritingView extends FileView {
       }
       this.swipeDrag(-Math.sign(delta) * 24);
       this.swipeSettle(Math.sign(delta), 0, scrollEdge);
-      if (notches > 1) this.queuePageSwipeDelta(Math.sign(delta) * (notches - 1), scrollEdge);
+      if (pages > 1) this.queuePageSwipeDelta(Math.sign(delta) * (pages - 1), scrollEdge);
       return;
     }
-    // WheelEvent has no portable gesture phase. Detect a renewed flick when
-    // motion accelerates after its tail, without waiting for the idle timer.
-    const reversed = Math.sign(movement) !== Math.sign(this.desktopWheelLastDelta);
-    const eventAt = event.timeStamp || performance.now();
-    const gap = this.desktopWheelLastEventAt > 0 ? eventAt - this.desktopWheelLastEventAt : 0;
-    const renewed = !discrete && this.desktopWheelFlipped && (
-      (Math.abs(this.desktopWheelLastDelta) <= 24 && Math.abs(movement) >= 36)
-      || (gap >= 45 && Math.abs(movement) >= 36 && Math.abs(movement) > Math.abs(this.desktopWheelLastDelta) * 1.6));
-    if (reversed || renewed) this.resetDesktopWheel();
+    // WheelEvent has no portable gesture phase, so same-direction inertia
+    // stays in one gesture until the quiet timer expires.
     this.desktopWheelAxis = axis;
     this.desktopWheelDiscrete = false;
     // Keep the smallest tail sample after a trackpad flip so a renewed flick
@@ -1737,10 +1752,6 @@ export abstract class InkWritingView extends FileView {
     this.desktopWheelLastDelta = !discrete && this.desktopWheelFlipped
       ? Math.sign(movement) * Math.min(Math.abs(this.desktopWheelLastDelta), Math.abs(movement)) : movement;
     this.desktopWheelLastEventAt = eventAt;
-    if (this.desktopWheelTimer !== undefined) window.clearTimeout(this.desktopWheelTimer);
-    this.desktopWheelTimer = window.setTimeout(() => {
-      this.desktopWheelTimer = undefined; this.resetDesktopWheel();
-    }, 180);
     event.preventDefault();
     if (this.desktopWheelFlipped) return;
     if (!this.flipSettling) {

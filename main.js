@@ -27207,6 +27207,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     this.desktopWheelLastDelta = 0;
     this.desktopWheelLastEventAt = 0;
     this.desktopWheelDiscrete = false;
+    this.desktopWheelNotchCredit = 0;
   }
   disposeStickyNotes() {
     var _a;
@@ -28385,6 +28386,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     this.desktopWheelLastDelta = 0;
     this.desktopWheelLastEventAt = 0;
     this.desktopWheelDiscrete = false;
+    this.desktopWheelNotchCredit = 0;
   }
   onWheel(event) {
     var _a;
@@ -28410,10 +28412,25 @@ var InkWritingView = class extends import_obsidian6.FileView {
     const axis = event.shiftKey || Math.abs(x) > Math.abs(y) * 1.5 ? "x" : "y";
     const movement = axis === "x" ? x || (event.shiftKey ? y : 0) : y;
     if (!movement) return;
+    const eventAt = event.timeStamp || performance.now();
+    let gap = this.desktopWheelLastEventAt > 0 ? eventAt - this.desktopWheelLastEventAt : 0;
     const discrete = event.deltaMode !== 0 || axis === "y" && Math.abs(movement) >= 80;
-    if (axis !== this.desktopWheelAxis || discrete !== this.desktopWheelDiscrete) this.resetDesktopWheel();
+    if (axis !== this.desktopWheelAxis || discrete !== this.desktopWheelDiscrete) {
+      this.resetDesktopWheel();
+      gap = 0;
+    }
+    const reversed = this.desktopWheelLastDelta !== 0 && Math.sign(movement) !== Math.sign(this.desktopWheelLastDelta);
+    if (reversed) {
+      this.resetDesktopWheel();
+      gap = 0;
+    }
     this.desktopWheelAxis = axis;
     this.desktopWheelDiscrete = discrete;
+    if (this.desktopWheelTimer !== void 0) window.clearTimeout(this.desktopWheelTimer);
+    this.desktopWheelTimer = window.setTimeout(() => {
+      this.desktopWheelTimer = void 0;
+      this.resetDesktopWheel();
+    }, 180);
     if (discrete) {
       event.preventDefault();
       if (!this.flipSettling) {
@@ -28422,9 +28439,16 @@ var InkWritingView = class extends import_obsidian6.FileView {
         scroller[property] += movement;
         if (Math.abs(scroller[property] - before) > 0.5) return;
       }
-      const notches = event.deltaMode === 2 ? 1 : Math.max(1, Math.round(Math.abs(movement) / (event.deltaMode === 1 ? 48 : 120)));
+      const notches = event.deltaMode === 2 ? 1 : event.deltaMode === 1 ? Math.max(1, Math.round(Math.abs(movement) / 48)) : 1;
+      const sensitivity = event.deltaMode === 0 && gap > 0 && gap < 80 ? 0.8 : 1;
+      this.desktopWheelNotchCredit += notches * sensitivity;
+      const pages = Math.floor(this.desktopWheelNotchCredit + 1e-8);
+      this.desktopWheelNotchCredit -= pages;
+      this.desktopWheelLastDelta = movement;
+      this.desktopWheelLastEventAt = eventAt;
+      if (pages === 0) return;
       const direction = Math.sign(movement);
-      const delta = direction > 0 ? notches : -notches;
+      const delta = direction > 0 ? pages : -pages;
       const scrollEdge = axis === "y" ? delta > 0 ? "top" : "bottom" : void 0;
       if (this.flipSettling) {
         if (this.pageSwipeRequest) this.queuePageSwipeTarget(this.pageSwipeRequest.target + delta, scrollEdge);
@@ -28432,23 +28456,13 @@ var InkWritingView = class extends import_obsidian6.FileView {
       }
       this.swipeDrag(-Math.sign(delta) * 24);
       this.swipeSettle(Math.sign(delta), 0, scrollEdge);
-      if (notches > 1) this.queuePageSwipeDelta(Math.sign(delta) * (notches - 1), scrollEdge);
+      if (pages > 1) this.queuePageSwipeDelta(Math.sign(delta) * (pages - 1), scrollEdge);
       return;
     }
-    const reversed = Math.sign(movement) !== Math.sign(this.desktopWheelLastDelta);
-    const eventAt = event.timeStamp || performance.now();
-    const gap = this.desktopWheelLastEventAt > 0 ? eventAt - this.desktopWheelLastEventAt : 0;
-    const renewed = !discrete && this.desktopWheelFlipped && (Math.abs(this.desktopWheelLastDelta) <= 24 && Math.abs(movement) >= 36 || gap >= 45 && Math.abs(movement) >= 36 && Math.abs(movement) > Math.abs(this.desktopWheelLastDelta) * 1.6);
-    if (reversed || renewed) this.resetDesktopWheel();
     this.desktopWheelAxis = axis;
     this.desktopWheelDiscrete = false;
     this.desktopWheelLastDelta = !discrete && this.desktopWheelFlipped ? Math.sign(movement) * Math.min(Math.abs(this.desktopWheelLastDelta), Math.abs(movement)) : movement;
     this.desktopWheelLastEventAt = eventAt;
-    if (this.desktopWheelTimer !== void 0) window.clearTimeout(this.desktopWheelTimer);
-    this.desktopWheelTimer = window.setTimeout(() => {
-      this.desktopWheelTimer = void 0;
-      this.resetDesktopWheel();
-    }, 180);
     event.preventDefault();
     if (this.desktopWheelFlipped) return;
     if (!this.flipSettling) {

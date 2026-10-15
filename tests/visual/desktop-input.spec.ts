@@ -71,7 +71,7 @@ for (const mode of ["ink", "pdf"] as const) {
   });
 }
 
-test("renewed trackpad flicks and page keys coalesce while the previous page is still saving", async ({ page }) => {
+test("separate trackpad flicks and page keys coalesce while the previous page is still saving", async ({ page }) => {
   await page.goto("/");
   await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
   await page.evaluate(async () => {
@@ -95,7 +95,13 @@ test("renewed trackpad flicks and page keys coalesce while the previous page is 
     document.getAnimations().forEach(animation => animation.finish());
   });
   await expect.poll(() => page.evaluate(() => typeof (window as any).releaseWheelBarrier)).toBe("function");
-  await page.evaluate(() => { (window as any).flick(); (window as any).flick(); });
+  await page.waitForTimeout(200);
+  await page.evaluate(async () => {
+    (window as any).flick();
+    await new Promise<void>(resolve => setTimeout(resolve, 200));
+    (window as any).flick();
+    await new Promise<void>(resolve => setTimeout(resolve, 200));
+  });
   await page.keyboard.press("PageDown");
   await expect(page.locator(".ink-page-status")).toHaveText("1 / 5");
   await page.evaluate(() => (window as any).releaseWheelBarrier());
@@ -205,7 +211,7 @@ test("touchpad-like ctrl wheel zooms at the cursor and horizontal wheel flips on
   await expect(page.locator(".ink-page-status")).toHaveText("2 / 2");
 });
 
-test("a renewed trackpad flick and five mouse-wheel notches navigate without a cooldown or overshoot", async ({ page }) => {
+test("a trackpad flick advances one page and fast mouse-wheel notches are dampened", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
   await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
@@ -219,7 +225,7 @@ test("a renewed trackpad flick and five mouse-wheel notches navigate without a c
       bubbles: true, cancelable: true, deltaX,
     }));
   });
-  await expect(page.locator(".ink-page-status")).toHaveText("3 / 6");
+  await expect(page.locator(".ink-page-status")).toHaveText("2 / 6");
 
   await page.evaluate(async () => {
     const view = (window as any).__inkNotesPreview.view;
@@ -230,7 +236,7 @@ test("a renewed trackpad flick and five mouse-wheel notches navigate without a c
       bubbles: true, cancelable: true, deltaY: 100,
     }));
   });
-  await expect(page.locator(".ink-page-status")).toHaveText("6 / 6");
+  await expect(page.locator(".ink-page-status")).toHaveText("5 / 6");
 });
 
 test("desktop reader drag flips at the page edge without waiting on the animation", async ({ page }) => {
