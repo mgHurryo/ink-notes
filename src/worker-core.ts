@@ -92,6 +92,11 @@ class WorkerPageIndex {
   getOrder(strokeId: string): number | undefined { return this.entries.get(strokeId)?.order; }
 
   query(cell: string, queryWidth = this.width, queryHeight = this.height): InkStroke[] {
+    if (queryWidth === this.width && queryHeight === this.height) {
+      return [...(this.cells.get(cell) ?? [])]
+        .sort((left, right) => left.order - right.order)
+        .map((entry) => entry.stroke);
+    }
     const [column, row] = cell.split(":").map(Number);
     const x = column * 128;
     const y = row * 128;

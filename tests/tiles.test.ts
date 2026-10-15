@@ -17,6 +17,8 @@ describe("tile spatial index", () => {
     const a = stroke("a", 0.24, 0.24), b = stroke("b", 0.25, 0.25), c = stroke("c", 0.8, 0.8);
     index.sync([b, a, c]);
     expect(index.query({ x: 200, y: 200, width: 100, height: 100 })).toEqual([b, a]);
+    expect(index.hasCell("1:1")).toBe(true);
+    expect(index.hasCell("7:7")).toBe(false);
   });
   it("exposes bounded spatial queries through the tile renderer", () => {
     const candidate = stroke("candidate", 0.24, 0.24);
@@ -79,6 +81,47 @@ describe("tile spatial index", () => {
 });
 
 describe("interactive tile commits", () => {
+  it("submits the queued tile batch to the worker in one animation frame", () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => { frames.push(callback); return frames.length; }));
+    const state = { id: 1, page: { id: "page" }, index: { width: 384, height: 128,
+      revisions: new Map([["0:0", 1], ["1:0", 1], ["2:0", 1]]) } };
+    const backend = { renderTile: vi.fn(() => new Promise(() => {})) };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, { backend, disposed: false, inkCommitPaused: false, inkCommit: null, frame: null,
+      active: state, renderGeneration: 1, pendingTiles: new Map(), cache: new Map(), jobs: ["0:0", "1:0", "2:0"]
+        .map(cell => ({ state, cell, density: 1, priority: "visible" })), visible: new Set(["0:0", "1:0", "2:0"]),
+      schedule: (TileRenderer.prototype as any).schedule, get: vi.fn(() => undefined), isHeld: vi.fn(() => false),
+      key: (jobState: any, cell: string, density: number) => `${jobState.id}/${cell}/${density}` });
+
+    renderer.schedule();
+    frames.shift()!(0);
+
+    expect(backend.renderTile).toHaveBeenCalledTimes(3);
+    expect(renderer.jobs).toEqual([]);
+    expect(frames).toHaveLength(0);
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps main-thread tile painting limited to one tile per animation frame", () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => { frames.push(callback); return frames.length; }));
+    const state = { id: 1 };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, { backend: null, disposed: false, inkCommitPaused: false, inkCommit: null, frame: null,
+      active: state, jobs: ["0:0", "1:0", "2:0"].map(cell => ({ state, cell, density: 1 })),
+      visible: new Set(["0:0", "1:0", "2:0"]), schedule: (TileRenderer.prototype as any).schedule,
+      get: vi.fn(() => undefined), isHeld: vi.fn(() => false), paint: vi.fn(job => job), attach: vi.fn(), evict: vi.fn() });
+
+    renderer.schedule();
+    frames.shift()!(0);
+
+    expect(renderer.paint).toHaveBeenCalledOnce();
+    expect(renderer.jobs).toHaveLength(2);
+    expect(frames).toHaveLength(1);
+    vi.unstubAllGlobals();
+  });
+
   it("preserves full 2x density for an iPad-sized viewport", () => {
     expect(tileDensity({ x: 0, y: 0, width: 1024, height: 1366 }, 2)).toBe(2);
   });
@@ -142,7 +185,7 @@ describe("interactive tile commits", () => {
 
   it("skips the per-frame refine rebuild once every visible cell holds its exact raster", () => {
     const host = { children: [] };
-    const state = { id: 1, index: { width: 256, height: 256, revisions: new Map([["0:0", 3]]) } };
+    const state = { id: 1, index: { width: 256, height: 256, revisions: new Map([["0:0", 3]]), hasCell: () => true } };
     const tile = { node: { parentElement: host }, revision: 3 };
     const renderer = Object.create(TileRenderer.prototype) as any;
     Object.assign(renderer, {
@@ -162,7 +205,7 @@ describe("interactive tile commits", () => {
 
   it("rebuilds the refine queue when a visible cell lost its exact raster", () => {
     const host = { children: [] };
-    const state = { id: 1, index: { width: 256, height: 256, revisions: new Map([["0:0", 4]]) } };
+    const state = { id: 1, index: { width: 256, height: 256, revisions: new Map([["0:0", 4]]), hasCell: () => true } };
     const renderer = Object.create(TileRenderer.prototype) as any;
     Object.assign(renderer, {
       active: state, disposed: false, host, density: 2, visible: new Set(["0:0"]),
@@ -176,11 +219,42 @@ describe("interactive tile commits", () => {
     expect(renderer.jobs).toEqual([expect.objectContaining({ cell: "0:0", density: 2, priority: "visible" })]);
   });
 
+  it("queues only visible cells that contain strokes", () => {
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    const active = { id: 1, index: { width: 256, height: 128, revisions: new Map([["1:0", 1]]),
+      hasCell: (cell: string) => cell === "1:0" } };
+    Object.assign(renderer, { active, disposed: false, host: { children: [] }, density: 1,
+      visible: new Set(), viewport: { x: 0, y: 0, width: 1, height: 1 }, jobs: [], heldCells: new Set(),
+      cache: new Map(), get: vi.fn(() => undefined), fallback: vi.fn(() => undefined), schedule: vi.fn() });
+
+    renderer.update({ x: 0, y: 0, width: 256, height: 128 }, 1, true);
+
+    expect(renderer.jobs).toEqual([expect.objectContaining({ cell: "1:0", priority: "visible" })]);
+    expect(renderer.jobs).toHaveLength(1);
+  });
+
+  it("removes an obsolete visible tile after its last stroke is deleted", () => {
+    const children: any[] = [];
+    const staleNode = { dataset: { cell: "0:0" }, remove: vi.fn(() => { children.splice(children.indexOf(staleNode), 1); }) };
+    children.push(staleNode);
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    const active = { id: 1, index: { width: 128, height: 128, revisions: new Map([["0:0", 2]]), hasCell: () => false } };
+    Object.assign(renderer, { active, disposed: false, host: { children, querySelector: (selector: string) =>
+      selector === '[data-cell="0:0"]' ? children.find(node => node.dataset.cell === "0:0") ?? null : null },
+      density: 1, visible: new Set(["0:0"]), viewport: { x: 0, y: 0, width: 128, height: 128 }, jobs: [],
+      heldCells: new Set(), cache: new Map(), get: vi.fn(() => undefined), fallback: vi.fn(() => undefined), schedule: vi.fn() });
+
+    renderer.update({ x: 0, y: 0, width: 128, height: 128 }, 1, true);
+
+    expect(staleNode.remove).toHaveBeenCalledOnce();
+    expect(renderer.jobs).toEqual([]);
+  });
+
   it("composes newly added ink over an exact stale tile without replaying history", () => {
     const addition = stroke("new", 0.1, 0.1);
     const state = { id: 3, index: {
       revisions: new Map([["0:0", 8]]),
-      cellsFor: vi.fn(() => ["0:0"]),
+      cellsFor: vi.fn(() => ["0:0"]), hasCell: (cell: string) => cell === "0:0",
     } };
     const base = { revision: 7 };
     const renderer = Object.create(TileRenderer.prototype) as any;
@@ -234,7 +308,7 @@ describe("interactive tile commits", () => {
 
   it("keeps the old frame mounted while preparing a coherent replacement batch", () => {
     const renderer = Object.create(TileRenderer.prototype) as any;
-    const active = { id: 1, index: { width: 400, height: 600, revisions: new Map() } };
+    const active = { id: 1, index: { width: 400, height: 600, revisions: new Map(), hasCell: () => true } };
     const cancelGeneration = vi.fn();
     Object.assign(renderer, { active, disposed: false, inkCommit: null, inkFrame: null, renderGeneration: 4,
       backend: { cancelGeneration }, host: { children: [] }, cache: new Map(), heldCells: new Set(), jobs: [],
@@ -251,7 +325,7 @@ describe("interactive tile commits", () => {
 
   it("does not spend work on density refinement during an active gesture", () => {
     const renderer = Object.create(TileRenderer.prototype) as any;
-    const active = { id: 1, index: { width: 400, height: 600, revisions: new Map() } };
+    const active = { id: 1, index: { width: 400, height: 600, revisions: new Map(), hasCell: () => true } };
     Object.assign(renderer, { active, disposed: false, inkCommit: null, inkFrame: null, renderGeneration: 0,
       backend: null, host: { children: [] }, cache: new Map(), heldCells: new Set(), jobs: [],
       get: vi.fn(() => undefined), scheduleInkCommit: vi.fn() });
@@ -263,7 +337,8 @@ describe("interactive tile commits", () => {
 
   it("repaints only visible cells changed by an active eraser", () => {
     const renderer = Object.create(TileRenderer.prototype) as any;
-    const active = { id: 1, index: { width: 512, height: 512, revisions: new Map([["0:0", 2], ["3:3", 2]]) } };
+    const active = { id: 1, index: { width: 512, height: 512, revisions: new Map([["0:0", 2], ["3:3", 2]]),
+      hasCell: (cell: string) => cell === "0:0" } };
     const visibleTile = { cell: "0:0" };
     Object.assign(renderer, {
       active, disposed: false, cache: new Map(), pixels: 0, density: 1,
@@ -372,7 +447,7 @@ describe("interactive tile commits", () => {
 
   it("does not queue a prewarm cell twice across repeated passes", () => {
     const page = { id: "neighbor", strokes: [] };
-    const state = { id: 2, page, index: { width: 256, height: 256, revisions: new Map(), sync: vi.fn() } };
+    const state = { id: 2, page, index: { width: 256, height: 256, revisions: new Map(), sync: vi.fn(), hasCell: () => true } };
     const renderer = Object.create(TileRenderer.prototype) as any;
     Object.assign(renderer, {
       active: { id: 1, page: { id: "active" }, index: { width: 256, height: 256, revisions: new Map() } },
