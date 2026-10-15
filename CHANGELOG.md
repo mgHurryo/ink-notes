@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5-beta.10 - 2026-10-15
+
+- Prevent one continuous trackpad gesture from queuing repeated page turns during slow handoffs, while keeping separate swipes and discrete mouse-wheel notches. Reuse prewarmed adjacent-page previews and defer their painting until page-turn animations settle. Typecheck, 872 unit tests, build and PR CI pass; the desktop-input suite has one unrelated PDF tile-mount fixture failure, and physical trackpad frame pacing remains unverified.
+
 ## 0.1.5-beta.9 - 2026-10-15
 
 - Rework continuous horizontal trackpad paging: shorter intentional swipes now reach the page threshold, a same-direction swipe can rearm while the previous inertia is still active, and the rest of one swipe cannot trigger a duplicate page. Preserve vertical mouse-wheel scrolling and notch behavior. Automated tests and Chromium wheel/trackpad simulations pass; physical trackpad validation remains unverified.
