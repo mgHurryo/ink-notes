@@ -192,10 +192,25 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenLastCalledWith(-1, 0, "bottom");
     });
 
+    it("keeps a fast pixel touchpad flick together and normalizes line-unit scrolling", async () => {
+      const { scroller, settle, wheel } = await desktopSetup();
+      scroller.scrollTop = 600;
+      wheel(0, 140, { timeStamp: 100 });
+      for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [10, 140], [4, 150]]) wheel(0, delta, { timeStamp: time });
+      expect(settle).toHaveBeenCalledOnce();
+      scroller.scrollTop = 0;
+      wheel(0, 10, { deltaMode: 1, timeStamp: 160 });
+      expect(settle).toHaveBeenCalledOnce();
+      expect(scroller.scrollTop).toBe(160);
+      wheel(0, 2, { deltaMode: 1, timeStamp: 400 });
+      expect(scroller.scrollTop).toBe(192);
+      expect(settle).toHaveBeenCalledOnce();
+    });
+
     it("turns one page for each standard vertical mouse-wheel notch", async () => {
       const { scroller, settle, wheel } = await desktopSetup();
       scroller.scrollTop = 600;
-      for (let index = 0; index < 5; index++) wheel(0, 100);
+      for (let index = 0; index < 5; index++) wheel(0, 100, { timeStamp: 100 + index * 100 });
       expect(settle).toHaveBeenCalledTimes(5);
       expect(settle).toHaveBeenNthCalledWith(1, 1, 0, "top");
     });
@@ -242,7 +257,9 @@ export function gestureContract(create: () => Promise<any>): void {
       wheel(140, 0);
       for (const delta of [90, 60, 30, 10, 4]) wheel(delta, 0);
       expect(settle).toHaveBeenCalledTimes(1);
-      for (const delta of [8, 20, 35, 140]) wheel(delta, 0);
+      // A new flick ramps up after a short pause; the pause is in event time.
+      for (const delta of [8, 20, 35]) wheel(delta, 0);
+      wheel(140, 0, { timeStamp: performance.now() + 60 });
       expect(settle).toHaveBeenCalledTimes(2);
       wheel(-140, 0);
       expect(settle).toHaveBeenLastCalledWith(-1, 0, undefined);

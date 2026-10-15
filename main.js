@@ -24144,6 +24144,91 @@ function defaultReadingMode(platform, device) {
   return platform.isPhone || !platform.isTablet;
 }
 
+// src/desktop-wheel.ts
+var GESTURE_IDLE_MS = 180;
+var RENEWED_FLICK_GAP_MS = 55;
+var PAGE_TRAVEL_PX = 100;
+var AXIS_RETENTION_RATIO = 0.65;
+function normalizeWheel(event, viewport) {
+  const { deltaX, deltaY, deltaMode } = event;
+  if (![deltaX, deltaY].every(Number.isFinite) || ![0, 1, 2].includes(deltaMode)) return null;
+  const x = deltaX * (deltaMode === 2 ? viewport.clientWidth : deltaMode === 1 ? 16 : 1);
+  const y = deltaY * (deltaMode === 2 ? viewport.clientHeight : deltaMode === 1 ? 16 : 1);
+  return Number.isFinite(x) && Number.isFinite(y) && (x !== 0 || y !== 0) ? { x, y, mode: deltaMode } : null;
+}
+var DesktopWheelGesture = class {
+  constructor() {
+    this.axis = null;
+    this.discrete = false;
+    this.mode = 0;
+    this.lastAt = null;
+    this.lastDelta = 0;
+    this.travel = 0;
+    this.flipped = false;
+    this.notchCredit = 0;
+  }
+  reset() {
+    this.axis = null;
+    this.lastAt = null;
+    this.lastDelta = this.travel = this.notchCredit = 0;
+    this.flipped = this.discrete = false;
+    this.mode = 0;
+  }
+  begin(delta, shift, at) {
+    let gap = this.lastAt === null ? 0 : at - this.lastAt;
+    if (gap < 0 || gap >= GESTURE_IDLE_MS) {
+      this.reset();
+      gap = 0;
+    }
+    const horizontal = Math.abs(delta.x), vertical = Math.abs(delta.y);
+    const axis = shift ? "x" : this.axis === "x" && horizontal >= vertical * AXIS_RETENTION_RATIO ? "x" : this.axis === "y" && vertical >= horizontal * AXIS_RETENTION_RATIO ? "y" : horizontal >= vertical ? "x" : "y";
+    const movement = axis === "x" ? delta.x || (shift ? delta.y : 0) : delta.y;
+    const magnitude = Math.abs(movement);
+    const pixelNotch = delta.x === 0 && (axis === "y" || shift) && magnitude >= 80 && (magnitude % 100 === 0 || magnitude % 120 === 0);
+    const discrete = delta.mode !== 0 || pixelNotch;
+    const reversed = this.lastDelta !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta);
+    const renewed = !this.discrete && this.flipped && gap >= RENEWED_FLICK_GAP_MS && magnitude >= 48 && magnitude > Math.abs(this.lastDelta) * 1.8;
+    if (axis !== this.axis || delta.mode !== this.mode || reversed || renewed) {
+      this.reset();
+      gap = 0;
+    }
+    this.discrete = this.axis === null ? discrete : this.discrete && discrete;
+    this.axis = axis;
+    this.mode = delta.mode;
+    this.lastAt = at;
+    this.lastDelta = this.flipped && !this.discrete ? Math.sign(movement) * Math.min(Math.abs(this.lastDelta), magnitude) : movement;
+    return {
+      axis,
+      movement,
+      discrete: this.discrete,
+      mode: delta.mode,
+      gap,
+      suppressed: !this.discrete && this.flipped
+    };
+  }
+  pageDelta(motion, scrolled) {
+    if (scrolled) {
+      this.travel = this.notchCredit = 0;
+      return 0;
+    }
+    if (motion.suppressed) return 0;
+    if (motion.discrete) {
+      const notches = motion.mode === 1 ? Math.max(1, Math.round(Math.abs(motion.movement) / 48)) : 1;
+      const sensitivity = motion.mode === 0 && motion.gap > 0 && motion.gap < 80 ? 0.8 : 1;
+      this.notchCredit += notches * sensitivity;
+      const pages = Math.floor(this.notchCredit + 1e-8);
+      this.notchCredit -= pages;
+      if (pages > 0) this.flipped = true;
+      return Math.sign(motion.movement) * pages;
+    }
+    this.travel += motion.movement;
+    if (Math.abs(this.travel) < PAGE_TRAVEL_PX) return 0;
+    this.flipped = true;
+    this.travel = 0;
+    return Math.sign(motion.movement);
+  }
+};
+
 // src/shapes.ts
 var SHAPES = [
   ["line", "Line", "minus"],
@@ -27202,13 +27287,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     this.pageOptionsDismissRegistered = false;
     this.desktopPan = null;
     this.desktopSpaceDown = false;
-    this.desktopWheelTravel = 0;
-    this.desktopWheelFlipped = false;
-    this.desktopWheelAxis = null;
-    this.desktopWheelLastDelta = 0;
-    this.desktopWheelLastEventAt = 0;
-    this.desktopWheelDiscrete = false;
-    this.desktopWheelNotchCredit = 0;
+    this.desktopWheel = new DesktopWheelGesture();
   }
   disposeStickyNotes() {
     var _a;
@@ -28249,9 +28328,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
       this.desktopSpaceDown = false;
       scroller.classList.remove("ink-pan-ready");
       this.endDesktopPan();
-      if (this.desktopWheelTimer !== void 0) window.clearTimeout(this.desktopWheelTimer);
-      this.desktopWheelTimer = void 0;
-      this.resetDesktopWheel();
+      this.desktopWheel.reset();
     };
     if (doc.defaultView) this.registerDomEvent(doc.defaultView, "blur", reset);
     this.register(reset);
@@ -28388,116 +28465,63 @@ var InkWritingView = class extends import_obsidian6.FileView {
     }
     if (pan) this.releasePointer(pan.pointerId);
   }
-  resetDesktopWheel() {
-    this.desktopWheelTravel = 0;
-    this.desktopWheelFlipped = false;
-    this.desktopWheelAxis = null;
-    this.desktopWheelLastDelta = 0;
-    this.desktopWheelLastEventAt = 0;
-    this.desktopWheelDiscrete = false;
-    this.desktopWheelNotchCredit = 0;
-  }
   onWheel(event) {
     var _a;
-    if (event.defaultPrevented || event.altKey || this.nativeMenuOpen() || this.activePointerId !== null || this.desktopPan) return;
+    if (event.defaultPrevented || event.altKey || this.nativeMenuOpen() || this.activePointerId !== null || this.desktopPan) {
+      this.desktopWheel.reset();
+      return;
+    }
     const scroller = this.inputScroller();
     const target = event.target;
-    if ((_a = target == null ? void 0 : target.closest) == null ? void 0 : _a.call(target, 'input, textarea, select, [contenteditable], [role="dialog"]')) return;
-    const unit = event.deltaMode === 1 ? 16 : 1;
-    const x = event.deltaX * (event.deltaMode === 2 ? scroller.clientWidth : unit);
-    const y = event.deltaY * (event.deltaMode === 2 ? scroller.clientHeight : unit);
+    if ((_a = target == null ? void 0 : target.closest) == null ? void 0 : _a.call(target, 'input, textarea, select, [contenteditable], [role="dialog"]')) {
+      this.desktopWheel.reset();
+      return;
+    }
+    const delta = normalizeWheel(event, scroller);
+    if (!delta) return;
     if (event.ctrlKey || event.metaKey) {
+      this.desktopWheel.reset();
       event.preventDefault();
-      if (this.flipSettling) return;
-      this.desktopZoom(Math.exp(-Math.max(-100, Math.min(100, y)) * 4e-3), { x: event.clientX, y: event.clientY });
+      if (this.flipSettling || delta.y === 0) return;
+      this.desktopZoom(Math.exp(-Math.max(-100, Math.min(100, delta.y)) * 4e-3), { x: event.clientX, y: event.clientY });
       this.showZoomHud();
       this.scheduleZoomHudHide();
       return;
     }
-    const eventAt = event.timeStamp || performance.now();
-    const recentAxis = this.desktopWheelAxis !== null && this.desktopWheelLastEventAt > 0 && eventAt - this.desktopWheelLastEventAt < 180;
-    const horizontal = Math.abs(x), vertical = Math.abs(y);
-    const axis = event.shiftKey ? "x" : recentAxis && this.desktopWheelAxis === "x" && horizontal >= vertical * 0.65 ? "x" : recentAxis && this.desktopWheelAxis === "y" && vertical >= horizontal * 0.65 ? "y" : horizontal >= vertical ? "x" : "y";
-    const movement = axis === "x" ? x || (event.shiftKey ? y : 0) : y;
-    if (!movement) return;
+    const motion = this.desktopWheel.begin(delta, event.shiftKey, event.timeStamp);
+    const ownerWindow = scroller.ownerDocument.defaultView;
     for (let element = target; element && element !== scroller; element = element.parentElement) {
-      const style = window.getComputedStyle(element);
-      const nestedScroll = axis === "x" ? /(auto|scroll)/.test(style.overflowX) && element.scrollWidth > element.clientWidth : /(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight;
-      if (nestedScroll) return;
-    }
-    let gap = this.desktopWheelLastEventAt > 0 ? eventAt - this.desktopWheelLastEventAt : 0;
-    const discrete = event.deltaMode !== 0 || axis === "y" && Math.abs(movement) >= 80;
-    if (axis !== this.desktopWheelAxis || discrete !== this.desktopWheelDiscrete) {
-      this.resetDesktopWheel();
-      gap = 0;
-    }
-    const reversed = this.desktopWheelLastDelta !== 0 && Math.sign(movement) !== Math.sign(this.desktopWheelLastDelta);
-    const renewedHorizontalFlick = axis === "x" && !discrete && this.desktopWheelFlipped && gap >= 55 && Math.abs(movement) >= 48 && Math.abs(movement) > Math.abs(this.desktopWheelLastDelta) * 1.8;
-    if (reversed || renewedHorizontalFlick) {
-      this.resetDesktopWheel();
-      gap = 0;
-    }
-    this.desktopWheelAxis = axis;
-    this.desktopWheelDiscrete = discrete;
-    if (this.desktopWheelTimer !== void 0) window.clearTimeout(this.desktopWheelTimer);
-    this.desktopWheelTimer = window.setTimeout(() => {
-      this.desktopWheelTimer = void 0;
-      this.resetDesktopWheel();
-    }, 180);
-    if (discrete) {
-      event.preventDefault();
-      if (!this.flipSettling && (axis === "y" || this.zoomLevel() > 1)) {
-        const property = axis === "x" ? "scrollLeft" : "scrollTop";
-        const before = scroller[property];
-        scroller[property] += movement;
-        if (Math.abs(scroller[property] - before) > 0.5) return;
-      }
-      const notches = event.deltaMode === 2 ? 1 : event.deltaMode === 1 ? Math.max(1, Math.round(Math.abs(movement) / 48)) : 1;
-      const sensitivity = event.deltaMode === 0 && gap > 0 && gap < 80 ? 0.8 : 1;
-      this.desktopWheelNotchCredit += notches * sensitivity;
-      const pages = Math.floor(this.desktopWheelNotchCredit + 1e-8);
-      this.desktopWheelNotchCredit -= pages;
-      this.desktopWheelLastDelta = movement;
-      this.desktopWheelLastEventAt = eventAt;
-      if (pages === 0) return;
-      const direction = Math.sign(movement);
-      const delta = direction > 0 ? pages : -pages;
-      const scrollEdge = axis === "y" ? delta > 0 ? "top" : "bottom" : void 0;
-      if (this.flipSettling) {
-        if (this.pageSwipeRequest) this.queuePageSwipeTarget(this.pageSwipeRequest.target + delta, scrollEdge);
+      const style = ownerWindow.getComputedStyle(element);
+      const nestedScroll = motion.axis === "x" ? /(auto|scroll)/.test(style.overflowX) && element.scrollWidth > element.clientWidth : /(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight;
+      if (nestedScroll) {
+        this.desktopWheel.reset();
         return;
       }
-      this.swipeDrag(-Math.sign(delta) * 24);
-      this.swipeSettle(Math.sign(delta), 0, scrollEdge);
-      if (pages > 1) this.queuePageSwipeDelta(Math.sign(delta) * (pages - 1), scrollEdge);
+    }
+    if (!event.cancelable) {
+      this.desktopWheel.reset();
       return;
     }
-    this.desktopWheelAxis = axis;
-    this.desktopWheelDiscrete = false;
-    this.desktopWheelLastDelta = !discrete && this.desktopWheelFlipped ? Math.sign(movement) * Math.min(Math.abs(this.desktopWheelLastDelta), Math.abs(movement)) : movement;
-    this.desktopWheelLastEventAt = eventAt;
     event.preventDefault();
-    if (this.desktopWheelFlipped) return;
-    if (!this.flipSettling && (axis === "y" || this.zoomLevel() > 1)) {
-      const property = axis === "x" ? "scrollLeft" : "scrollTop";
+    if (motion.suppressed) return;
+    let scrolled = false;
+    if (!this.flipSettling && (motion.axis === "y" || this.zoomLevel() > 1)) {
+      const property = motion.axis === "x" ? "scrollLeft" : "scrollTop";
       const before = scroller[property];
-      scroller[property] += movement;
-      if (Math.abs(scroller[property] - before) > 0.5) {
-        this.desktopWheelTravel = 0;
-        return;
-      }
+      scroller[property] += motion.movement;
+      scrolled = Math.abs(scroller[property] - before) > 0.5;
     }
-    this.desktopWheelTravel += movement;
-    if (Math.abs(this.desktopWheelTravel) >= 100) {
-      const direction = Math.sign(this.desktopWheelTravel);
-      this.desktopWheelFlipped = true;
-      this.desktopWheelTravel = 0;
-      const delta = direction > 0 ? 1 : -1;
-      const scrollEdge = axis === "y" ? delta > 0 ? "top" : "bottom" : void 0;
-      if (this.queuePageSwipeDelta(delta, scrollEdge)) return;
-      this.swipeDrag(-delta * 24);
-      this.swipeSettle(delta, 0, scrollEdge);
-    }
+    const pages = this.desktopWheel.pageDelta(motion, scrolled);
+    if (pages !== 0) this.navigateWheelPages(pages, motion.axis);
+  }
+  navigateWheelPages(pages, axis) {
+    const direction = Math.sign(pages);
+    const scrollEdge = axis === "y" ? direction > 0 ? "top" : "bottom" : void 0;
+    if (this.queuePageSwipeDelta(pages, scrollEdge)) return;
+    if (this.flipSettling) return;
+    this.swipeDrag(-direction * 24);
+    this.swipeSettle(direction, 0, scrollEdge);
+    if (Math.abs(pages) > 1) this.queuePageSwipeDelta(pages - direction, scrollEdge);
   }
   onPointerDown(event, source = "pointer") {
     var _a, _b, _c, _d, _e, _f, _g, _h;

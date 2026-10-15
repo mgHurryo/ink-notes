@@ -387,7 +387,7 @@ describe("reference-style editor", () => {
     expect(button("Unlock zoom").getAttribute("aria-pressed")).toBe("true");
     host.onTouchMove(touch([[1, 100, 300], [2, 400, 300]]));
     expect(host.zoom).toBe(2);
-    host.onWheel({ ctrlKey: true, deltaY: -10, preventDefault: vi.fn() } as unknown as WheelEvent);
+    host.onWheel(new WheelEvent("wheel", { ctrlKey: true, deltaY: -10, cancelable: true }));
     expect(host.zoom).toBe(2);
     button("Page options").click();
     const menuButtons = Array.from(document.querySelectorAll<HTMLButtonElement>(".preview-menu button"));
