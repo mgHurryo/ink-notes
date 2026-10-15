@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5-beta.11 - 2026-10-15
+
+- Reset the per-gesture two-page limit for each renewed trackpad swipe, so repeated independent swipes keep paging instead of becoming permanently blocked. Preserve the two-page cap within one gesture and existing mouse-wheel behavior. Typecheck, 874 unit tests, focused Chromium regression, build, dependency audit and PR CI pass; physical trackpad validation remains unverified.
+
 ## 0.1.5-beta.10 - 2026-10-15
 
 - Prevent one continuous trackpad gesture from queuing repeated page turns during slow handoffs, while keeping separate swipes and discrete mouse-wheel notches. Reuse prewarmed adjacent-page previews and defer their painting until page-turn animations settle. Typecheck, 872 unit tests, build and PR CI pass; the desktop-input suite has one unrelated PDF tile-mount fixture failure, and physical trackpad frame pacing remains unverified.
