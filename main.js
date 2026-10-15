@@ -27782,18 +27782,26 @@ var InkWritingView = class extends import_obsidian6.FileView {
   clearPageSwipeTarget() {
     this.pageSwipeRequest = null;
   }
-  /** Coalesce rapid swipes instead of replaying a backlog of animations/renders. */
-  async navigatePageSwipe(navigate, index, isCurrent) {
+  /** Drain the latest destination one page at a time so each transition can animate. */
+  async navigatePageSwipe(navigate, index, isCurrent, animateStep, afterStep) {
     var _a;
+    let firstStep = true;
     while (isCurrent() && this.pageSwipeRequest !== null) {
       const { target, scrollEdge } = this.pageSwipeRequest;
-      if (target === index()) return;
-      await navigate(target);
-      if (index() !== target) return;
-      if (isCurrent() && scrollEdge && ((_a = this.pageSwipeRequest) == null ? void 0 : _a.target) === target && this.pageSwipeRequest.scrollEdge === scrollEdge) {
+      const current = index();
+      if (target === current) return;
+      const direction = Math.sign(target - current);
+      const next = current + direction;
+      if (!firstStep && animateStep) await animateStep(direction);
+      if (!isCurrent()) return;
+      await navigate(next);
+      if (index() !== next) return;
+      afterStep == null ? void 0 : afterStep();
+      if (isCurrent() && scrollEdge && target === next && ((_a = this.pageSwipeRequest) == null ? void 0 : _a.target) === next && this.pageSwipeRequest.scrollEdge === scrollEdge) {
         const scroller = this.inputScroller();
         scroller.scrollTop = scrollEdge === "bottom" ? scroller.scrollHeight - scroller.clientHeight : 0;
       }
+      firstStep = false;
     }
   }
   resumePageSwipeDrag() {
@@ -28420,7 +28428,8 @@ var InkWritingView = class extends import_obsidian6.FileView {
       gap = 0;
     }
     const reversed = this.desktopWheelLastDelta !== 0 && Math.sign(movement) !== Math.sign(this.desktopWheelLastDelta);
-    if (reversed) {
+    const renewedHorizontalFlick = axis === "x" && !discrete && this.desktopWheelFlipped && gap >= 55 && Math.abs(movement) >= 48 && Math.abs(movement) > Math.abs(this.desktopWheelLastDelta) * 1.8;
+    if (reversed || renewedHorizontalFlick) {
       this.resetDesktopWheel();
       gap = 0;
     }
@@ -32758,6 +32767,30 @@ var InkView = class extends InkWritingView {
   swipePitch() {
     return Math.max(this.pageScroller.clientWidth, this.pageElement.offsetWidth) + 16;
   }
+  animateQueuedPageSwipe(direction) {
+    const extent = this.pageExtent;
+    if (!extent) return Promise.resolve();
+    this.ensureSwipeStage(-direction * 24);
+    const stage = this.swipeStage;
+    return new Promise((resolve) => this.animatePageSwipe(
+      stage ? [extent, stage] : [extent],
+      0,
+      -direction * this.swipePitch(),
+      () => {
+        this.cancelPageSwipeAnimations();
+        extent.setCssStyles({ transform: "", visibility: stage ? "hidden" : "" });
+        resolve();
+      }
+    ));
+  }
+  revealQueuedPage() {
+    var _a, _b, _c;
+    (_a = this.swipeLayer) == null ? void 0 : _a.remove();
+    (_b = this.swipeStage) == null ? void 0 : _b.remove();
+    this.swipeLayer = this.swipeStage = null;
+    (_c = this.pageExtent) == null ? void 0 : _c.setCssStyles({ transform: "", visibility: "" });
+    this.swipeDragOffset = 0;
+  }
   swipeSettle(delta, travel = 0, scrollEdge) {
     if (this.flipSettling) return;
     const extent = this.pageExtent;
@@ -32785,10 +32818,16 @@ var InkView = class extends InkWritingView {
         return;
       }
       if (flip && stage) extent.setCssStyles({ visibility: "hidden" });
-      void this.navigatePageSwipe((index) => {
-        const page = this.notebook.pages[index];
-        return page ? this.navigateToPage(page.id) : Promise.resolve();
-      }, () => this.pageIndex, isCurrent).finally(() => {
+      void this.navigatePageSwipe(
+        (index) => {
+          const page = this.notebook.pages[index];
+          return page ? this.navigateToPage(page.id) : Promise.resolve();
+        },
+        () => this.pageIndex,
+        isCurrent,
+        (direction) => this.animateQueuedPageSwipe(direction),
+        () => this.revealQueuedPage()
+      ).finally(() => {
         if (isCurrent()) {
           this.destroySwipeStage();
           this.resumePageSwipeDrag();
@@ -35931,6 +35970,30 @@ var PdfInkView = class extends InkWritingView {
     var _a, _b, _c, _d;
     return Math.max((_b = (_a = this.scroller) == null ? void 0 : _a.clientWidth) != null ? _b : 0, (_d = (_c = this.pageWrap) == null ? void 0 : _c.offsetWidth) != null ? _d : 0) + 16;
   }
+  animateQueuedPageSwipe(direction) {
+    const wrap = this.pageWrap;
+    if (!wrap) return Promise.resolve();
+    this.ensureSwipeStage(-direction * 24);
+    const stage = this.swipeStage;
+    return new Promise((resolve) => this.animatePageSwipe(
+      stage ? [wrap, stage] : [wrap],
+      0,
+      -direction * this.swipePitch(),
+      () => {
+        this.cancelPageSwipeAnimations();
+        wrap.setCssStyles({ transform: "", visibility: stage ? "hidden" : "" });
+        resolve();
+      }
+    ));
+  }
+  revealQueuedPage() {
+    var _a, _b, _c;
+    (_a = this.swipeLayer) == null ? void 0 : _a.remove();
+    (_b = this.swipeStage) == null ? void 0 : _b.remove();
+    this.swipeLayer = this.swipeStage = null;
+    (_c = this.pageWrap) == null ? void 0 : _c.setCssStyles({ transform: "", visibility: "" });
+    this.swipeDragOffset = 0;
+  }
   swipeSettle(delta, travel = 0, scrollEdge) {
     var _a, _b, _c, _d;
     if (this.flipSettling) return;
@@ -35966,7 +36029,9 @@ var PdfInkView = class extends InkWritingView {
       void this.navigatePageSwipe(
         (index) => this.navigatePages(index - this.noteIndex),
         () => this.noteIndex,
-        isCurrent
+        isCurrent,
+        (direction) => this.animateQueuedPageSwipe(direction),
+        () => this.revealQueuedPage()
       ).catch((error) => {
         this.setStatus(`Could not switch pages: ${messageOf(error)}`, true);
       }).finally(() => {

@@ -1635,6 +1635,27 @@ export class PdfInkView extends InkWritingView {
     return Math.max(this.scroller?.clientWidth ?? 0, this.pageWrap?.offsetWidth ?? 0) + 16;
   }
 
+  private animateQueuedPageSwipe(direction: number): Promise<void> {
+    const wrap = this.pageWrap;
+    if (!wrap) return Promise.resolve();
+    this.ensureSwipeStage(-direction * 24);
+    const stage = this.swipeStage;
+    return new Promise((resolve) => this.animatePageSwipe(stage ? [wrap, stage] : [wrap], 0,
+      -direction * this.swipePitch(), () => {
+        this.cancelPageSwipeAnimations();
+        wrap.setCssStyles({ transform: "", visibility: stage ? "hidden" : "" });
+        resolve();
+      }));
+  }
+
+  private revealQueuedPage(): void {
+    this.swipeLayer?.remove();
+    this.swipeStage?.remove();
+    this.swipeLayer = this.swipeStage = null;
+    this.pageWrap?.setCssStyles({ transform: "", visibility: "" });
+    this.swipeDragOffset = 0;
+  }
+
   protected swipeSettle(delta: number, travel = 0, scrollEdge?: "top" | "bottom"): void {
     if (this.flipSettling) return;
     const wrap = this.pageWrap;
@@ -1661,7 +1682,8 @@ export class PdfInkView extends InkWritingView {
       }
       if (flip && stage) wrap.setCssStyles({ visibility: "hidden" });
       void this.navigatePageSwipe((index) => this.navigatePages(index - this.noteIndex),
-        () => this.noteIndex, isCurrent).catch((error) => {
+        () => this.noteIndex, isCurrent, (direction) => this.animateQueuedPageSwipe(direction),
+        () => this.revealQueuedPage()).catch((error) => {
         this.setStatus(`Could not switch pages: ${messageOf(error)}`, true);
       }).finally(() => {
         if (isCurrent()) {

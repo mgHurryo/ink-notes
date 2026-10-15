@@ -223,16 +223,30 @@ export function gestureContract(create: () => Promise<any>): void {
       } finally { vi.useRealTimers(); }
     });
 
-    it("rearms trackpad navigation immediately on reversal and ignores renewed same-direction inertia", async () => {
+    it("rearms a horizontal trackpad flick after a short pause and a renewed swipe", async () => {
+      const { wheel, settle } = await desktopSetup();
+      vi.useFakeTimers();
+      try {
+        wheel(140, 0, { timeStamp: 100 });
+        for (const [delta, timeStamp] of [[90, 110], [60, 120], [30, 130], [10, 140], [4, 150]]) {
+          wheel(delta, 0, { timeStamp });
+        }
+        expect(settle).toHaveBeenCalledTimes(1);
+        wheel(140, 0, { timeStamp: 210 });
+        expect(settle).toHaveBeenCalledTimes(2);
+      } finally { vi.useRealTimers(); }
+    });
+
+    it("rearms trackpad navigation on reversal and a renewed horizontal flick", async () => {
       const { wheel, settle } = await desktopSetup();
       wheel(140, 0);
       for (const delta of [90, 60, 30, 10, 4]) wheel(delta, 0);
       expect(settle).toHaveBeenCalledTimes(1);
       for (const delta of [8, 20, 35, 140]) wheel(delta, 0);
-      expect(settle).toHaveBeenCalledTimes(1);
+      expect(settle).toHaveBeenCalledTimes(2);
       wheel(-140, 0);
       expect(settle).toHaveBeenLastCalledWith(-1, 0, undefined);
-      expect(settle).toHaveBeenCalledTimes(2);
+      expect(settle).toHaveBeenCalledTimes(3);
     });
 
     it("keeps nested editing and scroll surfaces independent from document navigation", async () => {
