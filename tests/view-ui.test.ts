@@ -910,8 +910,8 @@ describe("page rail thumbnails and resizing", () => {
       expect(drawn.some((call) => (call[1] as InkStroke).id === "s1" && call[2] === 152 && call[3] === 208)).toBe(true);
       expect(drawn.some((call) => (call[1] as InkStroke).id === "s2" && call[2] === 152 && call[3] === 208)).toBe(true);
       const scale = 152 / (internal as unknown as { pageBaseWidth: number }).pageBaseWidth;
-      const drawnStroke = drawn.find((call) => (call[1] as InkStroke).id === "s1")![1] as InkStroke;
-      expect(drawnStroke.width).toBeCloseTo(3 * scale, 6);
+      const thumbnailStroke = drawn.find((call) => (call[1] as InkStroke).id === "s1" && call[2] === 152 && call[3] === 208)![1] as InkStroke;
+      expect(thumbnailStroke.width).toBeCloseTo(3 * scale, 6);
       // The paper ruling follows the page's real line count (cells scaled to
       // the thumbnail), not a sparse re-flow.
       const paper = canvases[0].closest(".ink-page-thumb")?.querySelector<HTMLElement>(".ink-page-thumb-paper");
