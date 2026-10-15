@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.1.5-beta.2 - 2026-10-15
 
-- Render only visible tiles that contain handwriting, avoiding worker and raster work for transparent cells. Chromium now finishes loading visible ink without requiring a pointer hover; no note migration or format change.
+- Render only visible tiles that contain handwriting, avoiding worker and raster work for transparent cells. Chromium now finishes loading visible ink without requiring a pointer hover; no note migration or format change. Automated tests and Chromium regression pass; real Obsidian/mobile device latency remains unverified.
 
 ## 0.1.5-beta.1 - 2026-10-14
 
