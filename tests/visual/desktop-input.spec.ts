@@ -232,6 +232,59 @@ test("horizontal trackpad input passes a vertically scrollable nested target", a
   await expect.poll(() => page.evaluate(() => (window as any).nestedHorizontalWheelPrevented)).toBe(true);
 });
 
+test("horizontal trackpad input turns pages instead of scrolling the fit page", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  await page.evaluate(async () => {
+    const view = (window as any).__inkNotesPreview.view;
+    view.duplicateCurrentPage();
+    await view.navigateToPage(view.notebook.pages[0].id);
+    view.setZoom(1);
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    scroller.scrollLeft = 0;
+    const wideContent = document.createElement("div");
+    wideContent.style.cssText = "position: absolute; left: 0; top: 0; width: 3000px; height: 1px; pointer-events: none";
+    scroller.append(wideContent);
+    (window as any).trackpadHorizontalRange = scroller.scrollWidth - scroller.clientWidth;
+    const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX: 140 });
+    scroller.dispatchEvent(event);
+    (window as any).trackpadHorizontalWheelPrevented = event.defaultPrevented;
+  });
+  await expect.poll(() => page.evaluate(() => (window as any).trackpadHorizontalRange)).toBeGreaterThan(140);
+  await expect(page.locator(".ink-page-status")).toHaveText("2 / 2");
+  await expect.poll(() => page.evaluate(() => (window as any).trackpadHorizontalWheelPrevented)).toBe(true);
+});
+
+test("horizontal wheel still pans zoomed content before turning at the edge", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  await page.evaluate(async () => {
+    const view = (window as any).__inkNotesPreview.view;
+    view.duplicateCurrentPage();
+    await view.navigateToPage(view.notebook.pages[0].id);
+    view.setZoom(2);
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    scroller.scrollLeft = 0;
+    const send = () => scroller.dispatchEvent(new WheelEvent("wheel", {
+      bubbles: true, cancelable: true, deltaX: 140,
+    }));
+    (window as any).zoomedHorizontalRange = scroller.scrollWidth - scroller.clientWidth;
+    send();
+    (window as any).zoomedHorizontalPan = scroller.scrollLeft;
+    (window as any).sendHorizontalAtEdge = () => {
+      scroller.scrollLeft = scroller.scrollWidth - scroller.clientWidth;
+      send();
+    };
+  });
+  await expect.poll(() => page.evaluate(() => (window as any).zoomedHorizontalRange)).toBeGreaterThan(140);
+  await expect.poll(() => page.evaluate(() => (window as any).zoomedHorizontalPan)).toBeGreaterThan(0);
+  await expect(page.locator(".ink-page-status")).toHaveText("1 / 2");
+  await page.evaluate(() => (window as any).sendHorizontalAtEdge());
+  await expect(page.locator(".ink-page-status")).toHaveText("2 / 2");
+});
+
 test("a trackpad flick advances one page and fast mouse-wheel notches are dampened", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
