@@ -309,6 +309,16 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(3);
     });
 
+    it("rearms repeated horizontal swipes when each new stream starts below the prior inertia delta", async () => {
+      const { wheel, settle } = await desktopSetup();
+      for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [30, 130], [10, 140],
+        [20, 200], [30, 210], [45, 220], [20, 280], [30, 290], [45, 300]]) {
+        wheel(delta, 0, { timeStamp: time });
+      }
+
+      expect(settle).toHaveBeenCalledTimes(3);
+    });
+
     it("resets the two-page limit for each renewed same-direction swipe", async () => {
       const { wheel, settle } = await desktopSetup();
       for (const [delta, timeStamp] of [

@@ -353,7 +353,7 @@ describe("reference-style editor", () => {
     expect(host.notebook.pages[0].paper).toBe("blank");
   });
 
-  it("prewarms and reuses a small hidden-rail thumbnail for a page flip", async () => {
+  it("uses page-resolution ink for a page flip when the hidden-rail thumbnail is prewarmed", async () => {
     const host = view as any;
     const neighbor = structuredClone(host.currentPage());
     neighbor.id = "swipe-preview-neighbor";
@@ -366,12 +366,14 @@ describe("reference-style editor", () => {
     await vi.waitFor(() => expect(preview.dataset.previewReady).toBe("true"));
     expect(preview.width).toBe(120 * (window.devicePixelRatio || 1));
 
+    host.canvasLogicalWidth = 1000;
+    host.canvasLogicalHeight = 1400;
     vi.mocked(drawInkStroke).mockClear();
     host.ensureSwipeStage(-24);
 
     const stage = document.querySelector<HTMLCanvasElement>(".ink-swipe-stage .ink-swipe-canvas")!;
-    expect(stage.width).toBe(preview.width);
-    expect(drawInkStroke).not.toHaveBeenCalled();
+    expect(stage.width).toBeGreaterThan(preview.width);
+    expect(drawInkStroke).toHaveBeenCalled();
     host.destroySwipeStage();
   });
 
