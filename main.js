@@ -28446,7 +28446,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     }, 180);
     if (discrete) {
       event.preventDefault();
-      if (!this.flipSettling) {
+      if (!this.flipSettling && (axis === "y" || this.zoomLevel() > 1)) {
         const property = axis === "x" ? "scrollLeft" : "scrollTop";
         const before = scroller[property];
         scroller[property] += movement;
@@ -28478,7 +28478,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     this.desktopWheelLastEventAt = eventAt;
     event.preventDefault();
     if (this.desktopWheelFlipped) return;
-    if (!this.flipSettling) {
+    if (!this.flipSettling && (axis === "y" || this.zoomLevel() > 1)) {
       const property = axis === "x" ? "scrollLeft" : "scrollTop";
       const before = scroller[property];
       scroller[property] += movement;
