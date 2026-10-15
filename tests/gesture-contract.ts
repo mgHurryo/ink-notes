@@ -295,6 +295,20 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(2);
     });
 
+    it("rearms after a short-gap flick without requiring a near-zero inertia event", async () => {
+      const { wheel, settle } = await desktopSetup();
+      for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [30, 130], [10, 140], [8, 150],
+        [20, 160], [35, 170], [70, 180], [90, 190], [60, 200], [30, 210], [10, 220]]) {
+        wheel(delta, 0, { timeStamp: time });
+      }
+      expect(settle).toHaveBeenCalledTimes(2);
+
+      for (const [delta, time] of [[8, 280], [20, 290], [35, 300], [70, 310]]) {
+        wheel(delta, 0, { timeStamp: time });
+      }
+      expect(settle).toHaveBeenCalledTimes(3);
+    });
+
     it("resets the two-page limit for each renewed same-direction swipe", async () => {
       const { wheel, settle } = await desktopSetup();
       for (const [delta, timeStamp] of [

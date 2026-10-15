@@ -1,7 +1,6 @@
 /** WheelEvent exposes units and distance, but no portable device or gesture phase. */
 const GESTURE_IDLE_MS = 180;
 const RENEWED_FLICK_GAP_MS = 55;
-// A renewed same-direction flick must follow the prior inertia settling near zero.
 const RENEWED_FLICK_RELEASE_PX = 4;
 const PAGE_TRAVEL_PX = 100;
 const HORIZONTAL_PAGE_TRAVEL_PX = 48;
@@ -99,8 +98,15 @@ export class DesktopWheelGesture {
     let renewedTravel: number | undefined;
     if (this.flipped && !this.discrete && axis === "x") {
       if (this.renewalBlocked) {
+        // WheelEvent has no gesture-end signal, and some devices omit small
+        // inertia tail events. Accept either a quiet interval or a near-zero tail.
         if (magnitude <= RENEWED_FLICK_RELEASE_PX) {
           this.renewalBlocked = false;
+        } else if (gap >= RENEWED_FLICK_GAP_MS) {
+          this.renewalBlocked = false;
+          this.renewedTravel = magnitude;
+          this.renewedPeak = magnitude;
+          this.renewedIncreases = 0;
         }
       } else if (this.renewedPeak === 0) {
         if (magnitude >= Math.max(2, Math.abs(this.lastDelta) * 1.2)) {

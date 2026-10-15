@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5-beta.13 - 2026-10-15
+
+- Re-arm renewed horizontal trackpad flicks after a 55 ms quiet interval even when the device omits near-zero inertia tail events. Preserve the fast near-zero-tail path, momentum peak suppression, per-gesture two-page limit, mouse-wheel behavior and mouse-drag queue handling. Typecheck, 878 unit tests, build, PR CI and focused Chromium trackpad checks pass; the desktop-input suite retains one known PDF tile-mount fixture failure, and physical touchpad behavior remains unverified.
+
 ## 0.1.5-beta.12 - 2026-10-15
 
 - Recognize short-gap renewed trackpad flicks as separate gestures so each receives a fresh two-page allowance, while requiring the prior inertia to settle near zero before rearming to avoid replaying momentum peaks. When a mouse drag takes over during a page handoff, discard wheel destinations that have not started and keep the active transition plus the drag's own page. Typecheck, 876 unit tests, focused Chromium regressions, build and PR CI pass; physical trackpad validation remains unverified.
