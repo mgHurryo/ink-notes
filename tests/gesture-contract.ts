@@ -229,11 +229,13 @@ export function gestureContract(create: () => Promise<any>): void {
       const { wheel, settle } = await desktopSetup();
       vi.useFakeTimers();
       try {
-        wheel(140, 0);
-        for (const delta of [90, 60, 30, 20, 40, 70]) wheel(delta, 0);
+        wheel(140, 0, { timeStamp: 100 });
+        for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [20, 140], [40, 150], [70, 160]]) {
+          wheel(delta, 0, { timeStamp: time });
+        }
         expect(settle).toHaveBeenCalledTimes(1);
         vi.advanceTimersByTime(180);
-        wheel(140, 0);
+        wheel(140, 0, { timeStamp: 340 });
         expect(settle).toHaveBeenCalledTimes(2);
       } finally { vi.useRealTimers(); }
     });
@@ -254,14 +256,15 @@ export function gestureContract(create: () => Promise<any>): void {
 
     it("rearms trackpad navigation on reversal and a renewed horizontal flick", async () => {
       const { wheel, settle } = await desktopSetup();
-      wheel(140, 0);
-      for (const delta of [90, 60, 30, 10, 4]) wheel(delta, 0);
+      wheel(140, 0, { timeStamp: 100 });
+      for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [10, 140], [4, 150]]) {
+        wheel(delta, 0, { timeStamp: time });
+      }
       expect(settle).toHaveBeenCalledTimes(1);
-      // A new flick ramps up after a short pause; the pause is in event time.
-      for (const delta of [8, 20, 35]) wheel(delta, 0);
-      wheel(140, 0, { timeStamp: performance.now() + 60 });
+      // A new flick ramps up before the old burst reaches its idle timeout.
+      for (const [delta, time] of [[8, 154], [20, 164], [35, 174]]) wheel(delta, 0, { timeStamp: time });
       expect(settle).toHaveBeenCalledTimes(2);
-      wheel(-140, 0);
+      wheel(-60, 0, { timeStamp: 184 });
       expect(settle).toHaveBeenLastCalledWith(-1, 0, undefined);
       expect(settle).toHaveBeenCalledTimes(3);
     });
@@ -274,6 +277,35 @@ export function gestureContract(create: () => Promise<any>): void {
 
       for (const [delta, time] of [[8, 210], [20, 220], [35, 230], [70, 240]]) wheel(delta, 0, { timeStamp: time });
       expect(settle).toHaveBeenCalledTimes(2);
+    });
+
+    it("turns a page on a short intentional horizontal touchpad swipe", async () => {
+      const { wheel, settle } = await desktopSetup();
+      wheel(60, 0, { timeStamp: 100 });
+      expect(settle).toHaveBeenCalledOnce();
+    });
+
+    it("rearms a horizontal trackpad swipe that accelerates before inertia goes idle", async () => {
+      const { wheel, settle } = await desktopSetup();
+      wheel(140, 0, { timeStamp: 100 });
+      for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [10, 140], [4, 150]]) wheel(delta, 0, { timeStamp: time });
+      expect(settle).toHaveBeenCalledOnce();
+
+      for (const [delta, time] of [[8, 154], [20, 164], [35, 174], [70, 184]]) wheel(delta, 0, { timeStamp: time });
+      expect(settle).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not page again on one flick's later peak, then rearms after its tail decays", async () => {
+      const { wheel, settle } = await desktopSetup();
+      wheel(140, 0, { timeStamp: 100 });
+      for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [10, 140], [4, 150],
+        [8, 154], [20, 164], [35, 174], [70, 184], [90, 194], [110, 204], [90, 214], [60, 224]]) {
+        wheel(delta, 0, { timeStamp: time });
+      }
+      expect(settle).toHaveBeenCalledTimes(2);
+
+      for (const [delta, time] of [[8, 234], [20, 244], [35, 254], [70, 264]]) wheel(delta, 0, { timeStamp: time });
+      expect(settle).toHaveBeenCalledTimes(3);
     });
 
     it("keeps nested editing and scroll surfaces independent from document navigation", async () => {

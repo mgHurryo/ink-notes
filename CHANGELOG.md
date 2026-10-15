@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5-beta.9 - 2026-10-15
+
+- Rework continuous horizontal trackpad paging: shorter intentional swipes now reach the page threshold, a same-direction swipe can rearm while the previous inertia is still active, and the rest of one swipe cannot trigger a duplicate page. Preserve vertical mouse-wheel scrolling and notch behavior. Automated tests and Chromium wheel/trackpad simulations pass; physical trackpad validation remains unverified.
+
 ## 0.1.5-beta.8 - 2026-10-15
 
 - Restore repeat two-finger horizontal trackpad page turns when a new same-direction flick ramps up from small deltas after the prior gesture's inertia. Preserve inertia suppression, scrolling and edge paging; automated typecheck, 860 unit tests, build, dependency audit and PR CI pass. Physical trackpad behavior remains unverified.
