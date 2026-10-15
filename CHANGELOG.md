@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5-beta.3 - 2026-10-15
+
+- Reduce wheel-to-page sensitivity: one large pixel-mode event advances at most one page, same-direction trackpad inertia must pause before another page, and rapidly repeated mouse-wheel notches receive a small cumulative dampening. Typecheck, unit tests, high-severity dependency audit, build, and focused Chromium wheel regressions pass; the full desktop-input suite retains one unrelated PDF preview tile-fixture failure, and physical wheel hardware remains unverified.
+
 ## 0.1.5-beta.2 - 2026-10-15
 
 - Render only visible tiles that contain handwriting, avoiding worker and raster work for transparent cells. Chromium now finishes loading visible ink without requiring a pointer hover; no note migration or format change. Automated tests and Chromium regression pass; real Obsidian/mobile device latency remains unverified.
