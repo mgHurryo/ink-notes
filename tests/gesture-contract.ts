@@ -316,6 +316,27 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(desktop.pageSwipeRequest.target).toBe(3);
     });
 
+    it("keeps a mouse drag from adding a page to queued trackpad gestures", async () => {
+      const { editor } = await desktopSetup();
+      const desktop = editor as any;
+      desktop.flipSettling = true;
+      desktop.beginPageSwipe(1, 6, 0);
+      desktop.queueTrackpadPageSwipeDelta(1, 11);
+      desktop.queueTrackpadPageSwipeDelta(1, 12);
+      editor.capturePointer = vi.fn();
+      editor.releasePointer = vi.fn();
+
+      const sample = (x: number) => ({
+        pointerType: "mouse", pointerId: 7, button: 1, clientX: x, clientY: 200,
+        preventDefault: vi.fn(),
+      });
+      editor.onPointerDown(sample(500));
+      editor.onPointerMove(sample(100));
+      editor.onPointerUp(sample(100));
+
+      expect(desktop.pageSwipeRequest.target).toBe(2);
+    });
+
     it("keeps each discrete mouse-wheel notch queued during a slow page handoff", async () => {
       const { editor, wheel } = await desktopSetup();
       const desktop = editor as any;
