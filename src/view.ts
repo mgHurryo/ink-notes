@@ -14,7 +14,7 @@ import { reconcileNotebook } from "./notebook-reconciliation";
 import { exportNotebookPdf, exportPathFor, notebookHasInk } from "./pdf-export";
 import { paintPageImages } from "./image-library";
 import { registerDocumentPointerEndEvents } from "./ink-input";
-import { InkWritingView, InkPointerSample, cloneStroke, SPARSE_SAMPLE_INTERVAL_MS } from "./ink-writing";
+import { InkWritingView, InkPointerSample, cloneStroke, QUEUED_PAGE_SWIPE_DURATION_MS, SPARSE_SAMPLE_INTERVAL_MS } from "./ink-writing";
 import type { EditCommand } from "./ink-writing";
 import type { SharedToolState } from "./tool-state";
 export { BrushSettings, BrushTool, INK_COLORS, isBrushTool } from "./brush-popover";
@@ -823,7 +823,7 @@ export class InkView extends InkWritingView {
         this.cancelPageSwipeAnimations();
         extent.setCssStyles({ transform: "", visibility: stage ? "hidden" : "" });
         resolve();
-      }));
+      }, QUEUED_PAGE_SWIPE_DURATION_MS));
   }
 
   private revealQueuedPage(): void {

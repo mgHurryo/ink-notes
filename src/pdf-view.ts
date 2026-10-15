@@ -2,7 +2,7 @@ import { App, Notice, Scope, SuggestModal, TFile, WorkspaceLeaf, loadPdfJs, setI
 import { InkNotebook, InkPage, InkTool, createNotebook } from "./model";
 import { canvasResolution, drawInkStroke, scaledStroke } from "./rendering";
 import { registerDocumentPointerEndEvents } from "./ink-input";
-import { InkWritingView } from "./ink-writing";
+import { InkWritingView, QUEUED_PAGE_SWIPE_DURATION_MS } from "./ink-writing";
 import { reconcileNotebook } from "./notebook-reconciliation";
 import { clonePageValue } from "./worker-protocol";
 import type { SharedToolState } from "./tool-state";
@@ -1645,7 +1645,7 @@ export class PdfInkView extends InkWritingView {
         this.cancelPageSwipeAnimations();
         wrap.setCssStyles({ transform: "", visibility: stage ? "hidden" : "" });
         resolve();
-      }));
+      }, QUEUED_PAGE_SWIPE_DURATION_MS));
   }
 
   private revealQueuedPage(): void {

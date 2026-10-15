@@ -52,6 +52,7 @@ const PASTE_HOLD_DELAY_MS = 600;
 const PASTE_HOLD_SLOP_PX = 10;
 const MAX_SCRIBBLE_GESTURE_POINTS = 2_048;
 const SCRIBBLE_REFERENCE_SIZE = 24;
+export const QUEUED_PAGE_SWIPE_DURATION_MS = 64;
 
 export interface ToolState {
   tool: InkTool;
@@ -1197,10 +1198,11 @@ export abstract class InkWritingView extends FileView {
   }
 
   /** Both pages share a distance, clock and easing, so the gutter stays fixed. */
-  protected animatePageSwipe(elements: HTMLElement[], from: number, to: number, done: () => void): void {
+  protected animatePageSwipe(elements: HTMLElement[], from: number, to: number, done: () => void,
+    durationOverride?: number): void {
     this.cancelPageSwipeAnimations();
     const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
-    const duration = Math.min(260, Math.max(140, Math.abs(to - from) * 0.35));
+    const duration = durationOverride ?? Math.min(260, Math.max(140, Math.abs(to - from) * 0.35));
     const startTime = document.timeline?.currentTime;
     let remaining = elements.length;
     const finish = () => { if (--remaining === 0) done(); };
@@ -1683,13 +1685,6 @@ export abstract class InkWritingView extends FileView {
     const scroller = this.inputScroller();
     const target = event.target as HTMLElement | null;
     if (target?.closest?.('input, textarea, select, [contenteditable], [role="dialog"]')) return;
-    // Nested text/menus own their scroll even at their boundary; do not turn
-    // editing a sticky note into document navigation.
-    for (let element = target; element && element !== scroller; element = element.parentElement) {
-      const style = window.getComputedStyle(element);
-      if ((/(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight)
-        || (/(auto|scroll)/.test(style.overflowX) && element.scrollWidth > element.clientWidth)) return;
-    }
     const unit = event.deltaMode === 1 ? 16 : 1;
     const x = event.deltaX * (event.deltaMode === 2 ? scroller.clientWidth : unit);
     const y = event.deltaY * (event.deltaMode === 2 ? scroller.clientHeight : unit);
@@ -1700,10 +1695,25 @@ export abstract class InkWritingView extends FileView {
       this.showZoomHud(); this.scheduleZoomHudHide();
       return;
     }
-    const axis = event.shiftKey || Math.abs(x) > Math.abs(y) * 1.5 ? "x" : "y";
+    const eventAt = event.timeStamp || performance.now();
+    const recentAxis = this.desktopWheelAxis !== null && this.desktopWheelLastEventAt > 0
+      && eventAt - this.desktopWheelLastEventAt < 180;
+    const horizontal = Math.abs(x), vertical = Math.abs(y);
+    const axis = event.shiftKey ? "x"
+      : recentAxis && this.desktopWheelAxis === "x" && horizontal >= vertical * 0.65 ? "x"
+        : recentAxis && this.desktopWheelAxis === "y" && vertical >= horizontal * 0.65 ? "y"
+          : horizontal >= vertical ? "x" : "y";
     const movement = axis === "x" ? (x || (event.shiftKey ? y : 0)) : y;
     if (!movement) return;
-    const eventAt = event.timeStamp || performance.now();
+    // Nested content owns only the axis it can scroll. A vertical editor or
+    // sticky note must not consume a two-finger horizontal page gesture.
+    for (let element = target; element && element !== scroller; element = element.parentElement) {
+      const style = window.getComputedStyle(element);
+      const nestedScroll = axis === "x"
+        ? /(auto|scroll)/.test(style.overflowX) && element.scrollWidth > element.clientWidth
+        : /(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight;
+      if (nestedScroll) return;
+    }
     let gap = this.desktopWheelLastEventAt > 0 ? eventAt - this.desktopWheelLastEventAt : 0;
     // Pixel-mode deltas describe distance, not a reliable number of notches.
     const discrete = event.deltaMode !== 0 || (axis === "y" && Math.abs(movement) >= 80);
