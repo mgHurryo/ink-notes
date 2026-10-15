@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5-beta.6 - 2026-10-15
+
+- Route horizontal trackpad gestures to page navigation at fit zoom instead of consuming them as canvas scrolling. At increased zoom, preserve horizontal panning and turn the page at the horizontal edge. Typecheck, build, 856 unit tests, PR CI and focused Chromium regressions pass; the full desktop-input suite retains one unrelated PDF tile-fixture failure, and physical wheel hardware remains unverified.
+
 ## 0.1.5-beta.5 - 2026-10-15
 
 - Preserve horizontal trackpad page gestures when their target is inside vertically scrollable content, and keep noisy touchpad deltas on the active scroll axis. Queued multi-page transitions still animate each page but complete in 64ms per queued step, reducing the delay after a gesture. Typecheck, build, 856 unit tests, PR CI, and focused Chromium regressions pass; the full desktop-input suite retains one unrelated PDF tile-fixture failure, and physical wheel hardware remains unverified.
