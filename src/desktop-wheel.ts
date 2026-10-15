@@ -3,7 +3,7 @@ const GESTURE_IDLE_MS = 180;
 const RENEWED_FLICK_GAP_MS = 55;
 const PAGE_TRAVEL_PX = 100;
 const HORIZONTAL_PAGE_TRAVEL_PX = 48;
-const MAX_TRACKPAD_PAGES_PER_BURST = 2;
+const MAX_TRACKPAD_PAGES_PER_GESTURE = 2;
 const AXIS_RETENTION_RATIO = 0.65;
 
 export interface WheelDelta {
@@ -84,9 +84,7 @@ export class DesktopWheelGesture {
       && magnitude >= 48 && magnitude > Math.abs(this.lastDelta) * 1.8;
     if (axis !== this.axis || delta.mode !== this.mode || reversed) { this.reset(); gap = 0; }
     else if (renewed) {
-      const trackpadPages = this.trackpadPages;
       this.reset();
-      this.trackpadPages = trackpadPages;
       gap = 0;
     }
     this.discrete = this.axis === null ? discrete : this.discrete && discrete;
@@ -174,7 +172,7 @@ export class DesktopWheelGesture {
     this.travel += motion.movement;
     const travelThreshold = motion.axis === "x" ? HORIZONTAL_PAGE_TRAVEL_PX : PAGE_TRAVEL_PX;
     if (Math.abs(this.travel) < travelThreshold) return 0;
-    if (this.trackpadPages >= MAX_TRACKPAD_PAGES_PER_BURST) {
+    if (this.trackpadPages >= MAX_TRACKPAD_PAGES_PER_GESTURE) {
       this.travel = 0;
       return 0;
     }
