@@ -1136,11 +1136,12 @@ export abstract class InkWritingView extends FileView {
 
   protected flipSettling = false;
   private pageSwipeAnimations: Animation[] = [];
-  private pageSwipeRequest: { target: number; count: number; scrollEdge?: "top" | "bottom" } | null = null;
+  private pageSwipeRequest: { target: number; count: number; scrollEdge?: "top" | "bottom";
+    wheelGestureId: number | null } | null = null;
 
   /** Track the requested destination, including swipes made while saving/rendering. */
   protected beginPageSwipe(target: number, count: number, scrollEdge?: "top" | "bottom"): () => boolean {
-    const request = { target, count, scrollEdge };
+    const request = { target, count, scrollEdge, wheelGestureId: null };
     this.pageSwipeRequest = request;
     return () => this.flipSettling && this.pageSwipeRequest === request;
   }
@@ -1157,6 +1158,17 @@ export abstract class InkWritingView extends FileView {
   protected queuePageSwipeDelta(delta: number, scrollEdge?: "top" | "bottom"): boolean {
     const request = this.pageSwipeRequest;
     return request ? this.queuePageSwipeTarget(request.target + delta, scrollEdge) : false;
+  }
+
+  /** Trackpad inertia has no portable end event; coalesce each detected gesture once. */
+  protected queueTrackpadPageSwipeDelta(delta: number, gestureId: number, scrollEdge?: "top" | "bottom"): boolean {
+    const request = this.pageSwipeRequest;
+    if (!this.flipSettling || !request) return false;
+    if (request.wheelGestureId === gestureId) return true;
+    request.wheelGestureId = gestureId;
+    request.target = Math.max(0, Math.min(request.count - 1, request.target + delta));
+    request.scrollEdge = scrollEdge;
+    return true;
   }
 
   protected clearPageSwipeTarget(): void { this.pageSwipeRequest = null; }
@@ -1707,17 +1719,21 @@ export abstract class InkWritingView extends FileView {
       scrolled = Math.abs(scroller[property] - before) > 0.5;
     }
     const pages = this.desktopWheel.pageDelta(motion, scrolled);
-    if (pages !== 0) this.navigateWheelPages(pages, motion.axis);
+    if (pages !== 0) this.navigateWheelPages(pages, motion.axis, motion.discrete, motion.gestureId);
   }
 
-  private navigateWheelPages(pages: number, axis: "x" | "y"): void {
+  private navigateWheelPages(pages: number, axis: "x" | "y", discrete: boolean, gestureId: number): void {
     const direction = Math.sign(pages);
     const scrollEdge = axis === "y" ? (direction > 0 ? "top" : "bottom") : undefined;
-    if (this.queuePageSwipeDelta(pages, scrollEdge)) return;
+    if (discrete ? this.queuePageSwipeDelta(pages, scrollEdge)
+      : this.queueTrackpadPageSwipeDelta(pages, gestureId, scrollEdge)) return;
     if (this.flipSettling) return;
     this.swipeDrag(-direction * 24);
     this.swipeSettle(direction, 0, scrollEdge);
-    if (Math.abs(pages) > 1) this.queuePageSwipeDelta(pages - direction, scrollEdge);
+    if (Math.abs(pages) > 1) {
+      if (discrete) this.queuePageSwipeDelta(pages - direction, scrollEdge);
+      else this.queueTrackpadPageSwipeDelta(pages - direction, gestureId, scrollEdge);
+    }
   }
 
   protected onPointerDown(event: InkPointerSample, source: InteractionContext["source"] = "pointer"): void {
