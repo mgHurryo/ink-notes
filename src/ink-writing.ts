@@ -1737,7 +1737,7 @@ export abstract class InkWritingView extends FileView {
     }, 180);
     if (discrete) {
       event.preventDefault();
-      if (!this.flipSettling) {
+      if (!this.flipSettling && (axis === "y" || this.zoomLevel() > 1)) {
         const property = axis === "x" ? "scrollLeft" : "scrollTop";
         const before = scroller[property];
         scroller[property] += movement;
@@ -1776,7 +1776,7 @@ export abstract class InkWritingView extends FileView {
     this.desktopWheelLastEventAt = eventAt;
     event.preventDefault();
     if (this.desktopWheelFlipped) return;
-    if (!this.flipSettling) {
+    if (!this.flipSettling && (axis === "y" || this.zoomLevel() > 1)) {
       const property = axis === "x" ? "scrollLeft" : "scrollTop";
       const before = scroller[property];
       scroller[property] += movement;
