@@ -58,6 +58,8 @@ const RAIL_MAX_WIDTH = 420;
 const RAIL_TRANSITION_MS = 200;
 /** Fallback for the CSS aspect-ratio(.73) thumb box when clientHeight is 0. */
 const THUMB_ASPECT = 0.73;
+const SWIPE_PREVIEW_IDLE_DELAY_MS = 120;
+const SWIPE_PREVIEW_RETRY_MS = 50;
 
 class SaveConflictError extends Error {
   constructor(message: string) {
@@ -380,15 +382,20 @@ export class InkView extends InkWritingView {
   private scheduleSwipePreviewPaint(): void {
     const rail = this.root.querySelector<HTMLElement>(".ink-page-rail");
     if (!rail) return;
-    window.setTimeout(() => {
+    const paint = () => {
       if (!this.viewReady || !rail.isConnected) return;
+      if (this.flipSettling) {
+        window.setTimeout(paint, SWIPE_PREVIEW_RETRY_MS);
+        return;
+      }
       for (const index of [this.pageIndex - 1, this.pageIndex + 1]) {
         const page = this.notebook.pages[index];
         const canvas = rail.querySelectorAll<HTMLCanvasElement>(".ink-page-thumb-canvas")[index];
         if (!page || !canvas?.isConnected || canvas.dataset.previewReady === "true") continue;
         this.drawPageThumbnail(canvas, page, 120);
       }
-    }, 0);
+    };
+    window.setTimeout(paint, SWIPE_PREVIEW_IDLE_DELAY_MS);
   }
 
   /** Paints a thumbnail now when it is on screen, defers offscreen ones to

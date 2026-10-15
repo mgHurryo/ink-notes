@@ -32152,6 +32152,8 @@ var RAIL_MIN_WIDTH = 150;
 var RAIL_MAX_WIDTH = 420;
 var RAIL_TRANSITION_MS = 200;
 var THUMB_ASPECT = 0.73;
+var SWIPE_PREVIEW_IDLE_DELAY_MS = 120;
+var SWIPE_PREVIEW_RETRY_MS = 50;
 var SaveConflictError = class extends Error {
   constructor(message) {
     super(message);
@@ -32467,15 +32469,20 @@ var InkView = class extends InkWritingView {
   scheduleSwipePreviewPaint() {
     const rail = this.root.querySelector(".ink-page-rail");
     if (!rail) return;
-    window.setTimeout(() => {
+    const paint = () => {
       if (!this.viewReady || !rail.isConnected) return;
+      if (this.flipSettling) {
+        window.setTimeout(paint, SWIPE_PREVIEW_RETRY_MS);
+        return;
+      }
       for (const index of [this.pageIndex - 1, this.pageIndex + 1]) {
         const page = this.notebook.pages[index];
         const canvas = rail.querySelectorAll(".ink-page-thumb-canvas")[index];
         if (!page || !(canvas == null ? void 0 : canvas.isConnected) || canvas.dataset.previewReady === "true") continue;
         this.drawPageThumbnail(canvas, page, 120);
       }
-    }, 0);
+    };
+    window.setTimeout(paint, SWIPE_PREVIEW_IDLE_DELAY_MS);
   }
   /** Paints a thumbnail now when it is on screen, defers offscreen ones to
    *  the intersection observer. The synchronous probe keeps the common cases
@@ -34662,6 +34669,8 @@ var PDF_ZOOM_STEP = 1.2;
 var PDF_PAGE_PADDING = 24;
 var SELECTION_OVERLAY_BUDGET = 4e6;
 var PDF_NEIGHBOUR_CACHE_BUDGET = 8e6;
+var SWIPE_PREVIEW_IDLE_DELAY_MS2 = 120;
+var SWIPE_PREVIEW_RETRY_MS2 = 50;
 var RAIL_THUMB_WIDTH = 120;
 var RAIL_SWEEP_THROTTLE_MS = 120;
 var RAIL_REVEAL_DELAY_MS = 230;
@@ -35297,14 +35306,19 @@ var PdfInkView = class extends InkWritingView {
     this.scheduleSwipeThumbnailPaint();
   }
   scheduleSwipeThumbnailPaint() {
-    window.setTimeout(() => {
+    const paint = () => {
       var _a;
       if (!this.root || !this.sidecar) return;
+      if (this.flipSettling) {
+        window.setTimeout(paint, SWIPE_PREVIEW_RETRY_MS2);
+        return;
+      }
       for (const index of [this.noteIndex - 1, this.noteIndex + 1]) {
         const canvas = (_a = this.thumbButtons.get(index)) == null ? void 0 : _a.querySelector("canvas");
         if (canvas && canvas.dataset.previewReady !== "true") this.paintThumbnail(index);
       }
-    }, 0);
+    };
+    window.setTimeout(paint, SWIPE_PREVIEW_IDLE_DELAY_MS2);
   }
   rebuildRailButtons(count) {
     var _a, _b, _c;

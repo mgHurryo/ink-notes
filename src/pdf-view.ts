@@ -36,6 +36,8 @@ const PDF_ZOOM_STEP = 1.2;
 const PDF_PAGE_PADDING = 24;
 const SELECTION_OVERLAY_BUDGET = 4_000_000;
 const PDF_NEIGHBOUR_CACHE_BUDGET = 8_000_000;
+const SWIPE_PREVIEW_IDLE_DELAY_MS = 120;
+const SWIPE_PREVIEW_RETRY_MS = 50;
 /** Thumbnail bitmap width in CSS pixels; on a portrait A4 page the pdf.js
  *  render scale for this lands around 0.2. */
 const RAIL_THUMB_WIDTH = 120;
@@ -775,13 +777,18 @@ export class PdfInkView extends InkWritingView {
   }
 
   private scheduleSwipeThumbnailPaint(): void {
-    window.setTimeout(() => {
+    const paint = () => {
       if (!this.root || !this.sidecar) return;
+      if (this.flipSettling) {
+        window.setTimeout(paint, SWIPE_PREVIEW_RETRY_MS);
+        return;
+      }
       for (const index of [this.noteIndex - 1, this.noteIndex + 1]) {
         const canvas = this.thumbButtons.get(index)?.querySelector<HTMLCanvasElement>("canvas");
         if (canvas && canvas.dataset.previewReady !== "true") this.paintThumbnail(index);
       }
-    }, 0);
+    };
+    window.setTimeout(paint, SWIPE_PREVIEW_IDLE_DELAY_MS);
   }
 
   private rebuildRailButtons(count: number): void {
