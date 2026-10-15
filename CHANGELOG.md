@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5-beta.5 - 2026-10-15
+
+- Preserve horizontal trackpad page gestures when their target is inside vertically scrollable content, and keep noisy touchpad deltas on the active scroll axis. Queued multi-page transitions still animate each page but complete in 64ms per queued step, reducing the delay after a gesture. Typecheck, build, 856 unit tests, PR CI, and focused Chromium regressions pass; the full desktop-input suite retains one unrelated PDF tile-fixture failure, and physical wheel hardware remains unverified.
+
 ## 0.1.5-beta.4 - 2026-10-15
 
 - Let a renewed horizontal trackpad flick rearm after a short pause, and animate queued wheel destinations one page at a time instead of jumping directly to the last page. Typecheck, build, high-severity dependency audit, 854 unit tests, focused Chromium wheel regressions and PR CI pass; the full desktop-input suite retains one unrelated PDF preview tile-fixture failure, and physical wheel hardware remains unverified.
