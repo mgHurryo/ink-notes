@@ -1,8 +1,8 @@
 # Changelog
 
-## Unreleased
+## 0.1.5-beta.4 - 2026-10-15
 
-- Let a renewed horizontal trackpad flick rearm after a short pause, and animate queued wheel destinations one page at a time instead of jumping directly to the last page.
+- Let a renewed horizontal trackpad flick rearm after a short pause, and animate queued wheel destinations one page at a time instead of jumping directly to the last page. Typecheck, build, high-severity dependency audit, 854 unit tests, focused Chromium wheel regressions and PR CI pass; the full desktop-input suite retains one unrelated PDF preview tile-fixture failure, and physical wheel hardware remains unverified.
 
 ## 0.1.5-beta.3 - 2026-10-15
 
