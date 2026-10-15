@@ -252,4 +252,37 @@ describe("InkWorkerCore persistence mirror", () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it("queries padded tile membership directly at the indexed page dimensions", async () => {
+    const fill = vi.fn();
+    class FakeOffscreenCanvas {
+      constructor(public width: number, public height: number) {}
+      getContext() {
+        return { setTransform: vi.fn(), save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), moveTo: vi.fn(),
+          quadraticCurveTo: vi.fn(), lineTo: vi.fn(), stroke: vi.fn(), fill, arc: vi.fn(), closePath: vi.fn() };
+      }
+      transferToImageBitmap() { return { close: vi.fn() } as unknown as ImageBitmap; }
+    }
+    vi.stubGlobal("OffscreenCanvas", FakeOffscreenCanvas);
+    try {
+      const core = new InkWorkerCore({ offscreenCanvas: true, imageBitmap: true });
+      const notebook = createNotebook();
+      const page = notebook.pages[0];
+      const x = 128 / notebook.pageWidth;
+      page.strokes.push({
+        id: "boundary", pageId: page.id, tool: "pen", color: "#ff0", width: 24, opacity: 0.5,
+        points: [{ x, y: 0.1, pressure: 0.5, t: 1 }, { x, y: 0.2, pressure: 0.5, t: 2 }],
+        createdAt: 1, updatedAt: 1,
+      });
+      await response(core, request({ type: "initialize-notebook", notebook, revision: 0 }));
+      for (const cell of ["0:1", "1:1"]) {
+        expect(await response(core, request({ type: "render-tile", pageId: page.id, cell, density: 2,
+          revision: 1, renderGeneration: 1, priority: "visible", width: notebook.pageWidth, height: notebook.pageHeight }, 2, 0)))
+          .toMatchObject({ type: "tile-rendered", cell });
+      }
+      expect(fill).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

@@ -50,6 +50,39 @@ show the variance, not a stable 60 FPS claim. The visible sample had 276491
 nontransparent pixels; deleting the crossing stroke changed 15 visible tiles
 and restoring it reproduced the original pixels exactly.
 
+## Worker queue scheduling
+
+On 2026-10-14, a cold visible-tile pass in local Chromium used the `?performance`
+preview at 1024 x 900 with 1001 strokes. After clearing the tile cache, all 56
+visible cells contained ink. Completion was measured from `update()` until the
+worker queue and pending requests were empty and every occupied visible cell was
+mounted. Before the change, dispatching one worker request per animation frame
+took 932-953 ms (four runs; median 933.9 ms). The renderer now submits the
+current queue batch in one frame and leaves prioritization to the existing
+worker queue; five runs took 139.9-252.2 ms (median 156.1 ms), about 83% lower.
+This is a local synthetic cold-cache comparison, not an end-to-end input or
+mobile latency guarantee. Main-thread fallback rendering remains capped at one
+tile per frame to limit competition with input.
+
+## Worker tile candidate lookup
+
+On 2026-10-15, the same 1001-stroke Chromium preview at 1280 x 900 had 56
+occupied visible cells. For page dimensions matching the worker index, the
+worker now reads each tile's already padded occupancy bucket directly. The
+previous query expanded every tile by the page-wide maximum stroke width and
+then visited neighboring buckets. Across the visible cells, the equivalent
+spatial-index query returned 6867 candidates before and 1107 after across 20
+repetitions. Per-pass lookup time was 0.425 ms before and 0.035 ms after, a
+0.39 ms reduction for 56 cells. This avoids repeatedly considering strokes
+whose padded bounds do not touch the rendered tile. Dimensions that differ from
+the worker index retain the scaled-coordinate query. A controlled seven-run
+comparison of serial worker rendering measured medians of 138.0 ms on the old
+query and 159.5 ms on the direct-bucket path, with strongly overlapping ranges;
+overall tile-render latency improvement was not demonstrated. The change only
+claims lower query work, not faster end-to-end loading. In the same session,
+cache fallback lookup averaged about 0.0003 ms and a same-cell scroll update
+about 0.004 ms; neither justified adding another index or state.
+
 ## Intermediate full-page baseline
 
 Measured in the local Codex Chromium browser on 2026-09-08. Synthetic strokes,

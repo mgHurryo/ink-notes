@@ -156,6 +156,8 @@ export class StrokeIndex {
     });
   }
 
+  hasCell(cell: string): boolean { return (this.cells.get(cell)?.size ?? 0) > 0; }
+
   cellsFor(strokes: readonly InkStroke[]): string[] {
     const cells = new Set<string>();
     for (const stroke of strokes) for (const cell of this.entries.get(stroke.id)?.cells ?? []) cells.add(cell);
@@ -191,6 +193,7 @@ interface InkCommit {
   state: PageTiles;
   strokes: readonly InkStroke[];
   cells: string[];
+  clearCells: string[];
   jobs: Job[];
   tiles: Tile[];
   onComplete: (committed: boolean) => void;
@@ -290,6 +293,10 @@ export class TileRenderer {
     this.visible = new Set(cellKeys(viewport, this.active.index.width, this.active.index.height));
     for (const cell of new Set(cells)) {
       if (!this.visible.has(cell)) continue;
+      if (!this.active.index.hasCell(cell)) {
+        this.host.querySelector('[data-cell="' + cell + '"]')?.remove();
+        continue;
+      }
       const exact = this.get(this.active, cell, this.density);
       const tile = exact ?? this.paint({ state: this.active, cell, density: this.density, priority: "visible" });
       this.attach(tile);
@@ -324,14 +331,20 @@ export class TileRenderer {
       if (!this.visible.has((node as HTMLElement).dataset.cell ?? "")) node.remove();
     }
     const jobs: Job[] = [];
+    const clearCells: string[] = [];
     for (const cell of this.visible) {
+      if (!this.active.index.hasCell(cell)) { clearCells.push(cell); continue; }
       if (!this.get(this.active, cell, this.density)) jobs.push({ state: this.active, cell, density: this.density, priority: "visible" });
     }
-    if (jobs.length === 0) { onComplete(true); return; }
+    if (jobs.length === 0) {
+      for (const cell of clearCells) this.host.querySelector('[data-cell="' + cell + '"]')?.remove();
+      onComplete(true);
+      return;
+    }
     const cells = jobs.map((job) => job.cell);
     for (const cell of cells) this.heldCells.add(this.holdKey(this.active, cell));
     this.jobs = this.jobs.filter(job => !this.isHeld(job));
-    this.inkCommit = { state: this.active, strokes: [], cells, jobs, tiles: [], onComplete,
+    this.inkCommit = { state: this.active, strokes: [], cells, clearCells, jobs, tiles: [], onComplete,
       invalid: false, generation: this.renderGeneration };
     this.scheduleInkCommit();
   }
@@ -351,7 +364,7 @@ export class TileRenderer {
       else jobs.push({ state: this.active, cell, density: this.density });
     }
     this.jobs = this.jobs.filter(job => !this.isHeld(job));
-    this.inkCommit = { state: this.active, strokes, cells, jobs, tiles, onComplete, invalid: false, generation: this.renderGeneration };
+    this.inkCommit = { state: this.active, strokes, cells, clearCells: [], jobs, tiles, onComplete, invalid: false, generation: this.renderGeneration };
     if (jobs.length === 0) this.finishInkCommit(true);
     else this.scheduleInkCommit();
   }
@@ -405,9 +418,11 @@ export class TileRenderer {
     if (sameDensity && sameVisible && this.visibleCurrent()) return;
     this.jobs = [];
     for (const node of Array.from(this.host.children)) {
-      if (!this.visible.has((node as HTMLElement).dataset.cell ?? "")) node.remove();
+      const cell = (node as HTMLElement).dataset.cell ?? "";
+      if (!this.visible.has(cell) || !this.active.index.hasCell(cell)) node.remove();
     }
     for (const cell of this.visible) {
+      if (!this.active.index.hasCell(cell)) continue;
       const exact = this.get(this.active, cell, this.density);
       const fallback = exact ?? this.fallback(this.active, cell);
       if (fallback) this.attach(fallback);
@@ -433,6 +448,7 @@ export class TileRenderer {
       state.index.sync(page.strokes);
       // Preload only the same visible region, not entire neighboring pages.
       for (const cell of cellKeys(this.viewport, state.index.width, state.index.height)) {
+        if (!state.index.hasCell(cell)) continue;
         if (this.get(state, cell, this.density)) continue;
         // Repeated prewarm passes must not queue a cell twice: the schedule
         // loop drains one job per frame, so duplicates would linger behind
@@ -484,6 +500,10 @@ export class TileRenderer {
   private visibleCurrent(): boolean {
     if (!this.active) return false;
     for (const cell of this.visible) {
+      if (!this.active.index.hasCell(cell)) {
+        if (this.host.querySelector('[data-cell="' + cell + '"]')) return false;
+        continue;
+      }
       if (!this.get(this.active, cell, this.density)) return false;
     }
     return true;
@@ -499,9 +519,13 @@ export class TileRenderer {
     if (this.frame !== null || !this.jobs.length || this.disposed || this.inkCommitPaused || this.inkCommit) return;
     this.frame = requestAnimationFrame(() => {
       this.frame = null;
-      // One tile per frame bounds scheduling work and gives input priority.
-      const job = this.jobs.shift();
-      if (job && !this.isHeld(job)) {
+      // The worker owns a priority queue, so feed it the visible batch at once
+      // instead of limiting its throughput to one request per animation frame.
+      // Main-thread rasterization stays one tile per frame to bound input work.
+      const limit = this.backend ? this.jobs.length : 1;
+      for (let count = 0; count < limit; count++) {
+        const job = this.jobs.shift();
+        if (!job || this.isHeld(job)) continue;
         const tile = this.get(job.state, job.cell, job.density);
         if (tile) {
           if (job.state === this.active && this.visible.has(job.cell)) this.attach(tile);
@@ -560,6 +584,7 @@ export class TileRenderer {
     this.inkCommit = null;
     for (const cell of commit.cells) this.heldCells.delete(this.holdKey(commit.state, cell));
     if (valid) {
+      for (const cell of commit.clearCells) this.host.querySelector('[data-cell="' + cell + '"]')?.remove();
       for (const tile of commit.tiles) {
         this.cacheTile(tile);
         if (this.visible.has(tile.cell)) this.attach(tile);
