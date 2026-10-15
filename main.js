@@ -24221,6 +24221,11 @@ var DesktopWheelGesture = class {
       if (this.renewalBlocked) {
         if (magnitude <= RENEWED_FLICK_RELEASE_PX) {
           this.renewalBlocked = false;
+        } else if (gap >= RENEWED_FLICK_GAP_MS) {
+          this.renewalBlocked = false;
+          this.renewedTravel = magnitude;
+          this.renewedPeak = magnitude;
+          this.renewedIncreases = 0;
         }
       } else if (this.renewedPeak === 0) {
         if (magnitude >= Math.max(2, Math.abs(this.lastDelta) * 1.2)) {
