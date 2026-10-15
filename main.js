@@ -26763,6 +26763,7 @@ var PASTE_HOLD_DELAY_MS = 600;
 var PASTE_HOLD_SLOP_PX = 10;
 var MAX_SCRIBBLE_GESTURE_POINTS = 2048;
 var SCRIBBLE_REFERENCE_SIZE = 24;
+var QUEUED_PAGE_SWIPE_DURATION_MS = 64;
 var STROKE_ERASER_HIT_RADIUS = 10;
 var OVERLAY_PIXEL_BUDGET = 12e6;
 var SAVE_IDLE_DELAY = 1500;
@@ -27815,11 +27816,11 @@ var InkWritingView = class extends import_obsidian6.FileView {
     }
   }
   /** Both pages share a distance, clock and easing, so the gutter stays fixed. */
-  animatePageSwipe(elements, from, to, done) {
+  animatePageSwipe(elements, from, to, done, durationOverride) {
     var _a, _b;
     this.cancelPageSwipeAnimations();
     const reduced = (_a = window.matchMedia) == null ? void 0 : _a.call(window, "(prefers-reduced-motion: reduce)").matches;
-    const duration = Math.min(260, Math.max(140, Math.abs(to - from) * 0.35));
+    const duration = durationOverride != null ? durationOverride : Math.min(260, Math.max(140, Math.abs(to - from) * 0.35));
     const startTime = (_b = document.timeline) == null ? void 0 : _b.currentTime;
     let remaining = elements.length;
     const finish = () => {
@@ -28402,10 +28403,6 @@ var InkWritingView = class extends import_obsidian6.FileView {
     const scroller = this.inputScroller();
     const target = event.target;
     if ((_a = target == null ? void 0 : target.closest) == null ? void 0 : _a.call(target, 'input, textarea, select, [contenteditable], [role="dialog"]')) return;
-    for (let element = target; element && element !== scroller; element = element.parentElement) {
-      const style = window.getComputedStyle(element);
-      if (/(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight || /(auto|scroll)/.test(style.overflowX) && element.scrollWidth > element.clientWidth) return;
-    }
     const unit = event.deltaMode === 1 ? 16 : 1;
     const x = event.deltaX * (event.deltaMode === 2 ? scroller.clientWidth : unit);
     const y = event.deltaY * (event.deltaMode === 2 ? scroller.clientHeight : unit);
@@ -28417,10 +28414,17 @@ var InkWritingView = class extends import_obsidian6.FileView {
       this.scheduleZoomHudHide();
       return;
     }
-    const axis = event.shiftKey || Math.abs(x) > Math.abs(y) * 1.5 ? "x" : "y";
+    const eventAt = event.timeStamp || performance.now();
+    const recentAxis = this.desktopWheelAxis !== null && this.desktopWheelLastEventAt > 0 && eventAt - this.desktopWheelLastEventAt < 180;
+    const horizontal = Math.abs(x), vertical = Math.abs(y);
+    const axis = event.shiftKey ? "x" : recentAxis && this.desktopWheelAxis === "x" && horizontal >= vertical * 0.65 ? "x" : recentAxis && this.desktopWheelAxis === "y" && vertical >= horizontal * 0.65 ? "y" : horizontal >= vertical ? "x" : "y";
     const movement = axis === "x" ? x || (event.shiftKey ? y : 0) : y;
     if (!movement) return;
-    const eventAt = event.timeStamp || performance.now();
+    for (let element = target; element && element !== scroller; element = element.parentElement) {
+      const style = window.getComputedStyle(element);
+      const nestedScroll = axis === "x" ? /(auto|scroll)/.test(style.overflowX) && element.scrollWidth > element.clientWidth : /(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight;
+      if (nestedScroll) return;
+    }
     let gap = this.desktopWheelLastEventAt > 0 ? eventAt - this.desktopWheelLastEventAt : 0;
     const discrete = event.deltaMode !== 0 || axis === "y" && Math.abs(movement) >= 80;
     if (axis !== this.desktopWheelAxis || discrete !== this.desktopWheelDiscrete) {
@@ -32780,7 +32784,8 @@ var InkView = class extends InkWritingView {
         this.cancelPageSwipeAnimations();
         extent.setCssStyles({ transform: "", visibility: stage ? "hidden" : "" });
         resolve();
-      }
+      },
+      QUEUED_PAGE_SWIPE_DURATION_MS
     ));
   }
   revealQueuedPage() {
@@ -35983,7 +35988,8 @@ var PdfInkView = class extends InkWritingView {
         this.cancelPageSwipeAnimations();
         wrap.setCssStyles({ transform: "", visibility: stage ? "hidden" : "" });
         resolve();
-      }
+      },
+      QUEUED_PAGE_SWIPE_DURATION_MS
     ));
   }
   revealQueuedPage() {

@@ -211,6 +211,27 @@ test("touchpad-like ctrl wheel zooms at the cursor and horizontal wheel flips on
   await expect(page.locator(".ink-page-status")).toHaveText("2 / 2");
 });
 
+test("horizontal trackpad input passes a vertically scrollable nested target", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  await page.evaluate(async () => {
+    const view = (window as any).__inkNotesPreview.view;
+    view.duplicateCurrentPage();
+    await view.navigateToPage(view.notebook.pages[0].id);
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    scroller.scrollLeft = scroller.scrollWidth - scroller.clientWidth;
+    const nested = document.createElement("div");
+    nested.style.cssText = "position: absolute; width: 100px; height: 2000px; overflow-y: auto; overflow-x: hidden";
+    scroller.append(nested);
+    const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX: 140, deltaY: 140 });
+    nested.dispatchEvent(event);
+    (window as any).nestedHorizontalWheelPrevented = event.defaultPrevented;
+  });
+  await expect(page.locator(".ink-page-status")).toHaveText("2 / 2");
+  await expect.poll(() => page.evaluate(() => (window as any).nestedHorizontalWheelPrevented)).toBe(true);
+});
+
 test("a trackpad flick advances one page and fast mouse-wheel notches are dampened", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
@@ -264,8 +285,12 @@ test("repeated horizontal trackpad swipes rearm and queued wheel pages each anim
     const scope = window as any;
     const originalAnimate = Element.prototype.animate;
     scope.pageSwipeAnimationCount = 0;
+    scope.pageSwipeAnimationDurations = [];
     Element.prototype.animate = function (...args: Parameters<Element["animate"]>) {
-      if (this.classList.contains("ink-page-extent")) scope.pageSwipeAnimationCount++;
+      if (this.classList.contains("ink-page-extent")) {
+        scope.pageSwipeAnimationCount++;
+        scope.pageSwipeAnimationDurations.push((args[1] as KeyframeAnimationOptions).duration);
+      }
       return originalAnimate.apply(this, args);
     };
     const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
@@ -278,6 +303,9 @@ test("repeated horizontal trackpad swipes rearm and queued wheel pages each anim
   });
   await expect(page.locator(".ink-page-status")).toHaveText("8 / 8");
   await expect.poll(() => page.evaluate(() => (window as any).pageSwipeAnimationCount)).toBe(5);
+  const durations = await page.evaluate(() => (window as any).pageSwipeAnimationDurations as number[]);
+  expect(durations[0]).toBeGreaterThan(64);
+  expect(durations.slice(1)).toEqual([64, 64, 64, 64]);
 });
 
 test("desktop reader drag flips at the page edge without waiting on the animation", async ({ page }) => {

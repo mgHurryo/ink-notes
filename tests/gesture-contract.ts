@@ -260,6 +260,18 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(wheel(0, 140, { altKey: true }).defaultPrevented).toBe(false);
     });
 
+    it("keeps noisy horizontal gestures out of nested vertical scrollers", async () => {
+      const { wheel, settle, scroller } = await desktopSetup();
+      const nested = document.createElement("div"); nested.style.overflowY = "auto"; scroller.append(nested);
+      Object.defineProperties(nested, { clientHeight: { value: 100 }, scrollHeight: { value: 300 } });
+
+      const event = wheel(140, 140, {}, nested);
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(settle).toHaveBeenCalledOnce();
+      expect(settle).toHaveBeenCalledWith(1, 0, undefined);
+    });
+
     it("accepts page keys during an ongoing handoff without enabling edits", async () => {
       const { editor, scroller } = await desktopSetup();
       const navigate = vi.spyOn(editor, "desktopNavigate").mockImplementation(() => undefined);
