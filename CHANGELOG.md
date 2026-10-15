@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5-beta.7 - 2026-10-15
+
+- Unify desktop mouse-wheel and touchpad routing: normalize pixel, line and page deltas, preserve native scrolling within page content, and keep touchpad inertia within one edge-page gesture. Ink and PDF share the same routing and queued page transitions. Typecheck, build, 858 unit tests, PR CI and focused Chromium checks pass; one existing PDF tile fixture remains failing, and physical wheel hardware is unverified.
+
 ## 0.1.5-beta.6 - 2026-10-15
 
 - Route horizontal trackpad gestures to page navigation at fit zoom instead of consuming them as canvas scrolling. At increased zoom, preserve horizontal panning and turn the page at the horizontal edge. Typecheck, build, 856 unit tests, PR CI and focused Chromium regressions pass; the full desktop-input suite retains one unrelated PDF tile-fixture failure, and physical wheel hardware remains unverified.
