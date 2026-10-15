@@ -1159,20 +1159,29 @@ export abstract class InkWritingView extends FileView {
 
   protected clearPageSwipeTarget(): void { this.pageSwipeRequest = null; }
 
-  /** Coalesce rapid swipes instead of replaying a backlog of animations/renders. */
+  /** Drain the latest destination one page at a time so each transition can animate. */
   protected async navigatePageSwipe(navigate: (index: number) => Promise<void>,
-    index: () => number, isCurrent: () => boolean): Promise<void> {
+    index: () => number, isCurrent: () => boolean,
+    animateStep?: (direction: number) => Promise<void>, afterStep?: () => void): Promise<void> {
+    let firstStep = true;
     while (isCurrent() && this.pageSwipeRequest !== null) {
       const { target, scrollEdge } = this.pageSwipeRequest;
-      if (target === index()) return;
-      await navigate(target);
+      const current = index();
+      if (target === current) return;
+      const direction = Math.sign(target - current);
+      const next = current + direction;
+      if (!firstStep && animateStep) await animateStep(direction);
+      if (!isCurrent()) return;
+      await navigate(next);
       // A failed or superseded navigation must not retry indefinitely.
-      if (index() !== target) return;
-      if (isCurrent() && scrollEdge && this.pageSwipeRequest?.target === target
+      if (index() !== next) return;
+      afterStep?.();
+      if (isCurrent() && scrollEdge && target === next && this.pageSwipeRequest?.target === next
         && this.pageSwipeRequest.scrollEdge === scrollEdge) {
         const scroller = this.inputScroller();
         scroller.scrollTop = scrollEdge === "bottom" ? scroller.scrollHeight - scroller.clientHeight : 0;
       }
+      firstStep = false;
     }
   }
 
@@ -1703,7 +1712,10 @@ export abstract class InkWritingView extends FileView {
       gap = 0;
     }
     const reversed = this.desktopWheelLastDelta !== 0 && Math.sign(movement) !== Math.sign(this.desktopWheelLastDelta);
-    if (reversed) {
+    const renewedHorizontalFlick = axis === "x" && !discrete && this.desktopWheelFlipped
+      && gap >= 55 && Math.abs(movement) >= 48
+      && Math.abs(movement) > Math.abs(this.desktopWheelLastDelta) * 1.8;
+    if (reversed || renewedHorizontalFlick) {
       this.resetDesktopWheel();
       gap = 0;
     }

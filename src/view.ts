@@ -813,6 +813,27 @@ export class InkView extends InkWritingView {
     return Math.max(this.pageScroller.clientWidth, this.pageElement.offsetWidth) + 16;
   }
 
+  private animateQueuedPageSwipe(direction: number): Promise<void> {
+    const extent = this.pageExtent;
+    if (!extent) return Promise.resolve();
+    this.ensureSwipeStage(-direction * 24);
+    const stage = this.swipeStage;
+    return new Promise((resolve) => this.animatePageSwipe(stage ? [extent, stage] : [extent], 0,
+      -direction * this.swipePitch(), () => {
+        this.cancelPageSwipeAnimations();
+        extent.setCssStyles({ transform: "", visibility: stage ? "hidden" : "" });
+        resolve();
+      }));
+  }
+
+  private revealQueuedPage(): void {
+    this.swipeLayer?.remove();
+    this.swipeStage?.remove();
+    this.swipeLayer = this.swipeStage = null;
+    this.pageExtent?.setCssStyles({ transform: "", visibility: "" });
+    this.swipeDragOffset = 0;
+  }
+
   protected swipeSettle(delta: number, travel = 0, scrollEdge?: "top" | "bottom"): void {
     // Guard every settle path, including cancellation and a second touchend.
     if (this.flipSettling) return;
@@ -842,7 +863,8 @@ export class InkView extends InkWritingView {
       void this.navigatePageSwipe((index) => {
         const page = this.notebook.pages[index];
         return page ? this.navigateToPage(page.id) : Promise.resolve();
-      }, () => this.pageIndex, isCurrent).finally(() => {
+      }, () => this.pageIndex, isCurrent, (direction) => this.animateQueuedPageSwipe(direction),
+      () => this.revealQueuedPage()).finally(() => {
         if (isCurrent()) {
           this.destroySwipeStage();
           this.resumePageSwipeDrag();
