@@ -2,6 +2,7 @@
 const GESTURE_IDLE_MS = 180;
 const RENEWED_FLICK_GAP_MS = 55;
 const PAGE_TRAVEL_PX = 100;
+const HORIZONTAL_PAGE_TRAVEL_PX = 48;
 const AXIS_RETENTION_RATIO = 0.65;
 
 export interface WheelDelta {
@@ -42,12 +43,16 @@ export class DesktopWheelGesture {
   private renewedTravel = 0;
   private renewedPeak = 0;
   private renewedIncreases = 0;
+  private renewalBlocked = false;
+  private renewalPeak = 0;
 
   reset(): void {
     this.axis = null;
     this.lastAt = null;
     this.lastDelta = this.travel = this.notchCredit = 0;
     this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+    this.renewalBlocked = false;
+    this.renewalPeak = 0;
     this.flipped = this.discrete = false;
     this.mode = 0;
   }
@@ -77,7 +82,37 @@ export class DesktopWheelGesture {
     this.mode = delta.mode;
     this.lastAt = at;
     let renewedTravel: number | undefined;
-    if (this.flipped && !this.discrete) {
+    if (this.flipped && !this.discrete && axis === "x") {
+      if (this.renewalBlocked) {
+        this.renewalPeak = Math.max(this.renewalPeak, magnitude);
+        if (magnitude < this.renewalPeak * 0.7) {
+          this.renewalBlocked = false;
+          this.renewalPeak = 0;
+        }
+      } else if (this.renewedPeak === 0) {
+        if (magnitude >= Math.max(2, Math.abs(this.lastDelta) * 1.2)) {
+          this.renewedTravel = magnitude;
+          this.renewedPeak = magnitude;
+          this.renewedIncreases = 0;
+        }
+      } else if (magnitude >= this.renewedPeak * 1.2) {
+        this.renewedPeak = magnitude;
+        this.renewedTravel += magnitude;
+        this.renewedIncreases += 1;
+        if (this.renewedIncreases >= 2 && this.renewedTravel >= HORIZONTAL_PAGE_TRAVEL_PX) {
+          renewedTravel = Math.sign(movement) * (this.renewedTravel - magnitude);
+          this.flipped = false;
+          this.travel = 0;
+          this.renewalBlocked = true;
+          this.renewalPeak = magnitude;
+          this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+        }
+      } else if (magnitude < this.renewedPeak * 0.7) {
+        this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+      } else {
+        this.renewedTravel += magnitude;
+      }
+    } else if (this.flipped && !this.discrete && axis === "y") {
       if (gap >= RENEWED_FLICK_GAP_MS) {
         this.renewedTravel = magnitude;
         this.renewedPeak = magnitude;
@@ -107,7 +142,12 @@ export class DesktopWheelGesture {
   }
 
   pageDelta(motion: WheelMotion, scrolled: boolean): number {
-    if (scrolled) { this.travel = this.notchCredit = 0; return 0; }
+    if (scrolled) {
+      this.travel = this.notchCredit = 0;
+      this.renewalBlocked = false;
+      this.renewalPeak = 0;
+      return 0;
+    }
     if (motion.suppressed) return 0;
     if (motion.renewedTravel !== undefined) this.travel = motion.renewedTravel;
     if (motion.discrete) {
@@ -120,7 +160,8 @@ export class DesktopWheelGesture {
       return Math.sign(motion.movement) * pages;
     }
     this.travel += motion.movement;
-    if (Math.abs(this.travel) < PAGE_TRAVEL_PX) return 0;
+    const travelThreshold = motion.axis === "x" ? HORIZONTAL_PAGE_TRAVEL_PX : PAGE_TRAVEL_PX;
+    if (Math.abs(this.travel) < travelThreshold) return 0;
     this.flipped = true;
     this.travel = 0;
     return Math.sign(motion.movement);
