@@ -361,6 +361,29 @@ test("repeated horizontal trackpad swipes rearm and queued wheel pages each anim
   expect(durations.slice(1)).toEqual([64, 64, 64, 64]);
 });
 
+test("separate renewed trackpad swipes each get a fresh two-page limit", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  await page.evaluate(async () => {
+    const view = (window as any).__inkNotesPreview.view;
+    for (let index = 1; index < 6; index++) view.duplicateCurrentPage();
+    await view.navigateToPage(view.notebook.pages[0].id);
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    scroller.scrollLeft = scroller.scrollWidth - scroller.clientWidth;
+    const samples: Array<[number, number]> = [
+      [140, 100], [90, 110], [60, 120], [30, 130], [10, 140], [4, 150], [140, 210],
+      [90, 220], [60, 230], [30, 240], [10, 250], [4, 260], [140, 320],
+    ];
+    for (const [deltaX, timeStamp] of samples) {
+      const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX });
+      Object.defineProperty(event, "timeStamp", { configurable: true, value: timeStamp });
+      scroller.dispatchEvent(event);
+    }
+  });
+  await expect(page.locator(".ink-page-status")).toHaveText("4 / 6");
+});
+
 test("desktop reader drag flips at the page edge without waiting on the animation", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");

@@ -295,6 +295,15 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(2);
     });
 
+    it("resets the two-page limit for each renewed same-direction swipe", async () => {
+      const { wheel, settle } = await desktopSetup();
+      for (const [delta, timeStamp] of [
+        [140, 100], [90, 110], [60, 120], [30, 130], [10, 140], [4, 150],
+        [140, 210], [90, 220], [60, 230], [30, 240], [10, 250], [4, 260], [140, 320],
+      ]) wheel(delta, 0, { timeStamp });
+      expect(settle).toHaveBeenCalledTimes(3);
+    });
+
     it("bounds trackpad pages queued during one slow page handoff", async () => {
       const { editor, wheel } = await desktopSetup();
       const desktop = editor as any;
