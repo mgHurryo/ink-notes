@@ -266,6 +266,16 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(3);
     });
 
+    it("rearms a same-direction touchpad flick that ramps up from small deltas", async () => {
+      const { wheel, settle } = await desktopSetup();
+      wheel(140, 0, { timeStamp: 100 });
+      for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [10, 140], [4, 150]]) wheel(delta, 0, { timeStamp: time });
+      expect(settle).toHaveBeenCalledOnce();
+
+      for (const [delta, time] of [[8, 210], [20, 220], [35, 230], [70, 240]]) wheel(delta, 0, { timeStamp: time });
+      expect(settle).toHaveBeenCalledTimes(2);
+    });
+
     it("keeps nested editing and scroll surfaces independent from document navigation", async () => {
       const { wheel, settle, scroller } = await desktopSetup();
       const textarea = document.createElement("textarea"); scroller.append(textarea);

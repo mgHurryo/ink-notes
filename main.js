@@ -24166,11 +24166,15 @@ var DesktopWheelGesture = class {
     this.travel = 0;
     this.flipped = false;
     this.notchCredit = 0;
+    this.renewedTravel = 0;
+    this.renewedPeak = 0;
+    this.renewedIncreases = 0;
   }
   reset() {
     this.axis = null;
     this.lastAt = null;
     this.lastDelta = this.travel = this.notchCredit = 0;
+    this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     this.flipped = this.discrete = false;
     this.mode = 0;
   }
@@ -24196,6 +24200,30 @@ var DesktopWheelGesture = class {
     this.axis = axis;
     this.mode = delta.mode;
     this.lastAt = at;
+    let renewedTravel;
+    if (this.flipped && !this.discrete) {
+      if (gap >= RENEWED_FLICK_GAP_MS) {
+        this.renewedTravel = magnitude;
+        this.renewedPeak = magnitude;
+        this.renewedIncreases = 0;
+      } else if (this.renewedPeak > 0) {
+        if (magnitude >= this.renewedPeak * 1.2) {
+          this.renewedPeak = magnitude;
+          this.renewedTravel += magnitude;
+          this.renewedIncreases += 1;
+          if (this.renewedIncreases >= 2 && this.renewedTravel >= PAGE_TRAVEL_PX) {
+            renewedTravel = Math.sign(movement) * this.renewedTravel;
+            this.flipped = false;
+            this.travel = 0;
+            this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+          }
+        } else if (magnitude < this.renewedPeak * 0.7) {
+          this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+        }
+      }
+    } else {
+      this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+    }
     this.lastDelta = this.flipped && !this.discrete ? Math.sign(movement) * Math.min(Math.abs(this.lastDelta), magnitude) : movement;
     return {
       axis,
@@ -24203,7 +24231,8 @@ var DesktopWheelGesture = class {
       discrete: this.discrete,
       mode: delta.mode,
       gap,
-      suppressed: !this.discrete && this.flipped
+      suppressed: !this.discrete && this.flipped,
+      renewedTravel
     };
   }
   pageDelta(motion, scrolled) {
@@ -24212,6 +24241,7 @@ var DesktopWheelGesture = class {
       return 0;
     }
     if (motion.suppressed) return 0;
+    if (motion.renewedTravel !== void 0) this.travel = motion.renewedTravel;
     if (motion.discrete) {
       const notches = motion.mode === 1 ? Math.max(1, Math.round(Math.abs(motion.movement) / 48)) : 1;
       const sensitivity = motion.mode === 0 && motion.gap > 0 && motion.gap < 80 ? 0.8 : 1;
