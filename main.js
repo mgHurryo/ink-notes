@@ -24149,6 +24149,7 @@ var GESTURE_IDLE_MS = 180;
 var RENEWED_FLICK_GAP_MS = 55;
 var PAGE_TRAVEL_PX = 100;
 var HORIZONTAL_PAGE_TRAVEL_PX = 48;
+var MAX_TRACKPAD_PAGES_PER_BURST = 2;
 var AXIS_RETENTION_RATIO = 0.65;
 function normalizeWheel(event, viewport) {
   const { deltaX, deltaY, deltaMode } = event;
@@ -24172,14 +24173,18 @@ var DesktopWheelGesture = class {
     this.renewedIncreases = 0;
     this.renewalBlocked = false;
     this.renewalPeak = 0;
+    this.trackpadPages = 0;
+    this.gestureId = 0;
   }
   reset() {
+    this.gestureId += 1;
     this.axis = null;
     this.lastAt = null;
     this.lastDelta = this.travel = this.notchCredit = 0;
     this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     this.renewalBlocked = false;
     this.renewalPeak = 0;
+    this.trackpadPages = 0;
     this.flipped = this.discrete = false;
     this.mode = 0;
   }
@@ -24197,8 +24202,13 @@ var DesktopWheelGesture = class {
     const discrete = delta.mode !== 0 || pixelNotch;
     const reversed = this.lastDelta !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta);
     const renewed = !this.discrete && this.flipped && gap >= RENEWED_FLICK_GAP_MS && magnitude >= 48 && magnitude > Math.abs(this.lastDelta) * 1.8;
-    if (axis !== this.axis || delta.mode !== this.mode || reversed || renewed) {
+    if (axis !== this.axis || delta.mode !== this.mode || reversed) {
       this.reset();
+      gap = 0;
+    } else if (renewed) {
+      const trackpadPages = this.trackpadPages;
+      this.reset();
+      this.trackpadPages = trackpadPages;
       gap = 0;
     }
     this.discrete = this.axis === null ? discrete : this.discrete && discrete;
@@ -24266,6 +24276,7 @@ var DesktopWheelGesture = class {
       discrete: this.discrete,
       mode: delta.mode,
       gap,
+      gestureId: this.gestureId,
       suppressed: !this.discrete && this.flipped,
       renewedTravel
     };
@@ -24291,7 +24302,12 @@ var DesktopWheelGesture = class {
     this.travel += motion.movement;
     const travelThreshold = motion.axis === "x" ? HORIZONTAL_PAGE_TRAVEL_PX : PAGE_TRAVEL_PX;
     if (Math.abs(this.travel) < travelThreshold) return 0;
+    if (this.trackpadPages >= MAX_TRACKPAD_PAGES_PER_BURST) {
+      this.travel = 0;
+      return 0;
+    }
     this.flipped = true;
+    this.trackpadPages += 1;
     this.travel = 0;
     return Math.sign(motion.movement);
   }
@@ -27911,7 +27927,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
   }
   /** Track the requested destination, including swipes made while saving/rendering. */
   beginPageSwipe(target, count, scrollEdge) {
-    const request = { target, count, scrollEdge };
+    const request = { target, count, scrollEdge, wheelGestureId: null };
     this.pageSwipeRequest = request;
     return () => this.flipSettling && this.pageSwipeRequest === request;
   }
@@ -27926,6 +27942,16 @@ var InkWritingView = class extends import_obsidian6.FileView {
   queuePageSwipeDelta(delta, scrollEdge) {
     const request = this.pageSwipeRequest;
     return request ? this.queuePageSwipeTarget(request.target + delta, scrollEdge) : false;
+  }
+  /** Trackpad inertia has no portable end event; coalesce each detected gesture once. */
+  queueTrackpadPageSwipeDelta(delta, gestureId, scrollEdge) {
+    const request = this.pageSwipeRequest;
+    if (!this.flipSettling || !request) return false;
+    if (request.wheelGestureId === gestureId) return true;
+    request.wheelGestureId = gestureId;
+    request.target = Math.max(0, Math.min(request.count - 1, request.target + delta));
+    request.scrollEdge = scrollEdge;
+    return true;
   }
   clearPageSwipeTarget() {
     this.pageSwipeRequest = null;
@@ -28580,16 +28606,19 @@ var InkWritingView = class extends import_obsidian6.FileView {
       scrolled = Math.abs(scroller[property] - before) > 0.5;
     }
     const pages = this.desktopWheel.pageDelta(motion, scrolled);
-    if (pages !== 0) this.navigateWheelPages(pages, motion.axis);
+    if (pages !== 0) this.navigateWheelPages(pages, motion.axis, motion.discrete, motion.gestureId);
   }
-  navigateWheelPages(pages, axis) {
+  navigateWheelPages(pages, axis, discrete, gestureId) {
     const direction = Math.sign(pages);
     const scrollEdge = axis === "y" ? direction > 0 ? "top" : "bottom" : void 0;
-    if (this.queuePageSwipeDelta(pages, scrollEdge)) return;
+    if (discrete ? this.queuePageSwipeDelta(pages, scrollEdge) : this.queueTrackpadPageSwipeDelta(pages, gestureId, scrollEdge)) return;
     if (this.flipSettling) return;
     this.swipeDrag(-direction * 24);
     this.swipeSettle(direction, 0, scrollEdge);
-    if (Math.abs(pages) > 1) this.queuePageSwipeDelta(pages - direction, scrollEdge);
+    if (Math.abs(pages) > 1) {
+      if (discrete) this.queuePageSwipeDelta(pages - direction, scrollEdge);
+      else this.queueTrackpadPageSwipeDelta(pages - direction, gestureId, scrollEdge);
+    }
   }
   onPointerDown(event, source = "pointer") {
     var _a, _b, _c, _d, _e, _f, _g, _h;
@@ -32432,7 +32461,21 @@ var InkView = class extends InkWritingView {
       this.scheduleThumbnail(canvas, page);
     });
     this.mountRailResizer(rail);
+    this.scheduleSwipePreviewPaint();
     (_b = (_a = rail.querySelector(".ink-page-thumb.is-active")) == null ? void 0 : _a.scrollIntoView) == null ? void 0 : _b.call(_a, { block: "nearest" });
+  }
+  scheduleSwipePreviewPaint() {
+    const rail = this.root.querySelector(".ink-page-rail");
+    if (!rail) return;
+    window.setTimeout(() => {
+      if (!this.viewReady || !rail.isConnected) return;
+      for (const index of [this.pageIndex - 1, this.pageIndex + 1]) {
+        const page = this.notebook.pages[index];
+        const canvas = rail.querySelectorAll(".ink-page-thumb-canvas")[index];
+        if (!page || !(canvas == null ? void 0 : canvas.isConnected) || canvas.dataset.previewReady === "true") continue;
+        this.drawPageThumbnail(canvas, page, 120);
+      }
+    }, 0);
   }
   /** Paints a thumbnail now when it is on screen, defers offscreen ones to
    *  the intersection observer. The synchronous probe keeps the common cases
@@ -32477,10 +32520,10 @@ var InkView = class extends InkWritingView {
    * paper background. Skipped while the rail has no width (collapsed): the
    * redraw scheduled by the expand toggle repaints at the real size.
    */
-  drawPageThumbnail(canvas, page) {
+  drawPageThumbnail(canvas, page, widthHint) {
     var _a;
     try {
-      const width = canvas.clientWidth;
+      const width = widthHint != null ? widthHint : canvas.clientWidth;
       if (width <= 0) return;
       const height = canvas.clientHeight || Math.round(width / THUMB_ASPECT);
       const dpr = window.devicePixelRatio || 1;
@@ -32497,6 +32540,7 @@ var InkView = class extends InkWritingView {
         for (const stroke of page.strokes) drawInkStroke(context, scaledStroke(stroke, scale), width, height);
         context.setTransform(1, 0, 0, 1, 0, 0);
       });
+      canvas.dataset.previewReady = "true";
     } catch (error) {
       console.warn("Ink Notes could not render a page thumbnail", error);
     }
@@ -32849,7 +32893,12 @@ var InkView = class extends InkWritingView {
     canvas.width = resolution.width;
     canvas.height = resolution.height;
     const ctx = canvas.getContext("2d");
-    if (ctx) {
+    const preview = this.root.querySelectorAll(".ink-page-thumb-canvas")[neighborIndex];
+    if (ctx && (preview == null ? void 0 : preview.dataset.previewReady) === "true") {
+      canvas.width = preview.width;
+      canvas.height = preview.height;
+      ctx.drawImage(preview, 0, 0);
+    } else if (ctx) {
       ctx.setTransform(canvas.width / this.canvasLogicalWidth, 0, 0, canvas.height / this.canvasLogicalHeight, 0, 0);
       const width = this.canvasLogicalWidth, height = this.canvasLogicalHeight;
       paintPageImages(this.imageLibrary, canvas, neighbor, (context) => context.clearRect(0, 0, canvas.width, canvas.height), (context) => {
@@ -35245,6 +35294,17 @@ var PdfInkView = class extends InkWritingView {
     (_g = (_f = this.thumbButtons.get(this.noteIndex)) == null ? void 0 : _f.scrollIntoView) == null ? void 0 : _g.call(_f, { block: "nearest" });
     this.evictDistantThumbnails();
     this.paintVisibleThumbnails();
+    this.scheduleSwipeThumbnailPaint();
+  }
+  scheduleSwipeThumbnailPaint() {
+    window.setTimeout(() => {
+      var _a;
+      if (!this.root || !this.sidecar) return;
+      for (const index of [this.noteIndex - 1, this.noteIndex + 1]) {
+        const canvas = (_a = this.thumbButtons.get(index)) == null ? void 0 : _a.querySelector("canvas");
+        if (canvas && canvas.dataset.previewReady !== "true") this.paintThumbnail(index);
+      }
+    }, 0);
   }
   rebuildRailButtons(count) {
     var _a, _b, _c;
@@ -35491,6 +35551,7 @@ var PdfInkView = class extends InkWritingView {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(bitmap, 0, 0);
     this.overlayThumbInk(ctx, canvas, index);
+    canvas.dataset.previewReady = "true";
   }
   /**
    * Draws the note page's handwriting over the rendered thumbnail, strokes
@@ -35903,7 +35964,7 @@ var PdfInkView = class extends InkWritingView {
   }
   /** Slides the neighbouring page in beside the current one while dragging. */
   ensureSwipeStage(offset) {
-    var _a, _b, _c, _d, _e, _f, _g;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     const wrap = this.pageWrap;
     const scroller = this.scroller;
     if (!wrap || !scroller) return;
@@ -35949,6 +36010,14 @@ var PdfInkView = class extends InkWritingView {
       this.showPageInsertPreview(stage, side);
       return;
     }
+    const preview = (_g = this.thumbButtons.get(neighborIndex)) == null ? void 0 : _g.querySelector("canvas");
+    if ((preview == null ? void 0 : preview.dataset.previewReady) === "true") {
+      const canvas = stage.createEl("canvas", { cls: "ink-swipe-canvas" });
+      canvas.width = preview.width;
+      canvas.height = preview.height;
+      (_h = canvas.getContext("2d")) == null ? void 0 : _h.drawImage(preview, 0, 0);
+      return;
+    }
     void this.renderSwipeStagePage(stage, neighborIndex);
     const ink = stage.createEl("canvas", { cls: "ink-swipe-canvas" });
     const logicalHeight = baseWidth * display.height / display.width;
@@ -35958,7 +36027,7 @@ var PdfInkView = class extends InkWritingView {
     const ctx = ink.getContext("2d");
     if (ctx) {
       ctx.setTransform(ink.width / baseWidth, 0, 0, ink.height / logicalHeight, 0, 0);
-      const page = (_g = this.sidecar) == null ? void 0 : _g.notebook.pages[neighborIndex];
+      const page = (_i = this.sidecar) == null ? void 0 : _i.notebook.pages[neighborIndex];
       if (page) paintPageImages(this.imageLibrary, ink, page, (context) => context.clearRect(0, 0, ink.width, ink.height), (context) => {
         context.setTransform(ink.width / baseWidth, 0, 0, ink.height / logicalHeight, 0, 0);
         for (const stroke of page.strokes) drawInkStroke(context, stroke, baseWidth, logicalHeight);

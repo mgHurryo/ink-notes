@@ -3,6 +3,7 @@ const GESTURE_IDLE_MS = 180;
 const RENEWED_FLICK_GAP_MS = 55;
 const PAGE_TRAVEL_PX = 100;
 const HORIZONTAL_PAGE_TRAVEL_PX = 48;
+const MAX_TRACKPAD_PAGES_PER_BURST = 2;
 const AXIS_RETENTION_RATIO = 0.65;
 
 export interface WheelDelta {
@@ -26,6 +27,7 @@ interface WheelMotion {
   discrete: boolean;
   mode: number;
   gap: number;
+  gestureId: number;
   suppressed: boolean;
   renewedTravel?: number;
 }
@@ -45,14 +47,18 @@ export class DesktopWheelGesture {
   private renewedIncreases = 0;
   private renewalBlocked = false;
   private renewalPeak = 0;
+  private trackpadPages = 0;
+  private gestureId = 0;
 
   reset(): void {
+    this.gestureId += 1;
     this.axis = null;
     this.lastAt = null;
     this.lastDelta = this.travel = this.notchCredit = 0;
     this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     this.renewalBlocked = false;
     this.renewalPeak = 0;
+    this.trackpadPages = 0;
     this.flipped = this.discrete = false;
     this.mode = 0;
   }
@@ -76,7 +82,13 @@ export class DesktopWheelGesture {
     const reversed = this.lastDelta !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta);
     const renewed = !this.discrete && this.flipped && gap >= RENEWED_FLICK_GAP_MS
       && magnitude >= 48 && magnitude > Math.abs(this.lastDelta) * 1.8;
-    if (axis !== this.axis || delta.mode !== this.mode || reversed || renewed) { this.reset(); gap = 0; }
+    if (axis !== this.axis || delta.mode !== this.mode || reversed) { this.reset(); gap = 0; }
+    else if (renewed) {
+      const trackpadPages = this.trackpadPages;
+      this.reset();
+      this.trackpadPages = trackpadPages;
+      gap = 0;
+    }
     this.discrete = this.axis === null ? discrete : this.discrete && discrete;
     this.axis = axis;
     this.mode = delta.mode;
@@ -137,7 +149,7 @@ export class DesktopWheelGesture {
     }
     this.lastDelta = this.flipped && !this.discrete
       ? Math.sign(movement) * Math.min(Math.abs(this.lastDelta), magnitude) : movement;
-    return { axis, movement, discrete: this.discrete, mode: delta.mode, gap,
+    return { axis, movement, discrete: this.discrete, mode: delta.mode, gap, gestureId: this.gestureId,
       suppressed: !this.discrete && this.flipped, renewedTravel };
   }
 
@@ -162,7 +174,12 @@ export class DesktopWheelGesture {
     this.travel += motion.movement;
     const travelThreshold = motion.axis === "x" ? HORIZONTAL_PAGE_TRAVEL_PX : PAGE_TRAVEL_PX;
     if (Math.abs(this.travel) < travelThreshold) return 0;
+    if (this.trackpadPages >= MAX_TRACKPAD_PAGES_PER_BURST) {
+      this.travel = 0;
+      return 0;
+    }
     this.flipped = true;
+    this.trackpadPages += 1;
     this.travel = 0;
     return Math.sign(motion.movement);
   }

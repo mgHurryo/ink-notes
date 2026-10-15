@@ -295,7 +295,28 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(2);
     });
 
-    it("does not page again on one flick's later peak, then rearms after its tail decays", async () => {
+    it("bounds trackpad pages queued during one slow page handoff", async () => {
+      const { editor, wheel } = await desktopSetup();
+      const desktop = editor as any;
+      desktop.flipSettling = true;
+      desktop.beginPageSwipe(1, 6, 0);
+      for (const timeStamp of [100, 110, 120, 130]) wheel(120, 0, { timeStamp });
+      expect(desktop.pageSwipeRequest.target).toBe(2);
+      desktop.queueTrackpadPageSwipeDelta(1, 42);
+      desktop.queueTrackpadPageSwipeDelta(1, 42);
+      expect(desktop.pageSwipeRequest.target).toBe(3);
+    });
+
+    it("keeps each discrete mouse-wheel notch queued during a slow page handoff", async () => {
+      const { editor, wheel } = await desktopSetup();
+      const desktop = editor as any;
+      desktop.flipSettling = true;
+      desktop.beginPageSwipe(1, 6, 0);
+      for (const timeStamp of [100, 200, 300]) wheel(0, 100, { timeStamp });
+      expect(desktop.pageSwipeRequest.target).toBe(4);
+    });
+
+    it("does not page again on repeated momentum peaks until the next idle gesture", async () => {
       const { wheel, settle } = await desktopSetup();
       wheel(140, 0, { timeStamp: 100 });
       for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [10, 140], [4, 150],
@@ -305,6 +326,8 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(2);
 
       for (const [delta, time] of [[8, 234], [20, 244], [35, 254], [70, 264]]) wheel(delta, 0, { timeStamp: time });
+      expect(settle).toHaveBeenCalledTimes(2);
+      wheel(140, 0, { timeStamp: 500 });
       expect(settle).toHaveBeenCalledTimes(3);
     });
 

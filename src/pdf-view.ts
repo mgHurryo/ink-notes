@@ -771,6 +771,17 @@ export class PdfInkView extends InkWritingView {
     this.thumbButtons.get(this.noteIndex)?.scrollIntoView?.({ block: "nearest" });
     this.evictDistantThumbnails();
     this.paintVisibleThumbnails();
+    this.scheduleSwipeThumbnailPaint();
+  }
+
+  private scheduleSwipeThumbnailPaint(): void {
+    window.setTimeout(() => {
+      if (!this.root || !this.sidecar) return;
+      for (const index of [this.noteIndex - 1, this.noteIndex + 1]) {
+        const canvas = this.thumbButtons.get(index)?.querySelector<HTMLCanvasElement>("canvas");
+        if (canvas && canvas.dataset.previewReady !== "true") this.paintThumbnail(index);
+      }
+    }, 0);
   }
 
   private rebuildRailButtons(count: number): void {
@@ -1027,6 +1038,7 @@ export class PdfInkView extends InkWritingView {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(bitmap, 0, 0);
     this.overlayThumbInk(ctx, canvas, index);
+    canvas.dataset.previewReady = "true";
   }
 
   /**
@@ -1520,6 +1532,14 @@ export class PdfInkView extends InkWritingView {
     });
     this.swipeStage = stage;
     if (insert) { this.showPageInsertPreview(stage, side); return; }
+    const preview = this.thumbButtons.get(neighborIndex)?.querySelector<HTMLCanvasElement>("canvas");
+    if (preview?.dataset.previewReady === "true") {
+      const canvas = stage.createEl("canvas", { cls: "ink-swipe-canvas" });
+      canvas.width = preview.width;
+      canvas.height = preview.height;
+      canvas.getContext("2d")?.drawImage(preview, 0, 0);
+      return;
+    }
     void this.renderSwipeStagePage(stage, neighborIndex);
     const ink = stage.createEl("canvas", { cls: "ink-swipe-canvas" });
     const logicalHeight = baseWidth * display.height / display.width;

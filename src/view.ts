@@ -373,7 +373,22 @@ export class InkView extends InkWritingView {
       this.scheduleThumbnail(canvas, page);
     });
     this.mountRailResizer(rail);
+    this.scheduleSwipePreviewPaint();
     rail.querySelector<HTMLElement>(".ink-page-thumb.is-active")?.scrollIntoView?.({ block: "nearest" });
+  }
+
+  private scheduleSwipePreviewPaint(): void {
+    const rail = this.root.querySelector<HTMLElement>(".ink-page-rail");
+    if (!rail) return;
+    window.setTimeout(() => {
+      if (!this.viewReady || !rail.isConnected) return;
+      for (const index of [this.pageIndex - 1, this.pageIndex + 1]) {
+        const page = this.notebook.pages[index];
+        const canvas = rail.querySelectorAll<HTMLCanvasElement>(".ink-page-thumb-canvas")[index];
+        if (!page || !canvas?.isConnected || canvas.dataset.previewReady === "true") continue;
+        this.drawPageThumbnail(canvas, page, 120);
+      }
+    }, 0);
   }
 
   /** Paints a thumbnail now when it is on screen, defers offscreen ones to
@@ -418,9 +433,9 @@ export class InkView extends InkWritingView {
    * paper background. Skipped while the rail has no width (collapsed): the
    * redraw scheduled by the expand toggle repaints at the real size.
    */
-  private drawPageThumbnail(canvas: HTMLCanvasElement, page: InkPage): void {
+  private drawPageThumbnail(canvas: HTMLCanvasElement, page: InkPage, widthHint?: number): void {
     try {
-      const width = canvas.clientWidth;
+      const width = widthHint ?? canvas.clientWidth;
       if (width <= 0) return;
       const height = canvas.clientHeight || Math.round(width / THUMB_ASPECT);
       const dpr = window.devicePixelRatio || 1;
@@ -443,6 +458,7 @@ export class InkView extends InkWritingView {
         for (const stroke of page.strokes) drawInkStroke(context, scaledStroke(stroke, scale), width, height);
         context.setTransform(1, 0, 0, 1, 0, 0);
       });
+      canvas.dataset.previewReady = "true";
     } catch (error) {
       console.warn("Ink Notes could not render a page thumbnail", error);
     }
@@ -794,7 +810,12 @@ export class InkView extends InkWritingView {
     canvas.width = resolution.width;
     canvas.height = resolution.height;
     const ctx = canvas.getContext("2d");
-    if (ctx) {
+    const preview = this.root.querySelectorAll<HTMLCanvasElement>(".ink-page-thumb-canvas")[neighborIndex];
+    if (ctx && preview?.dataset.previewReady === "true") {
+      canvas.width = preview.width;
+      canvas.height = preview.height;
+      ctx.drawImage(preview, 0, 0);
+    } else if (ctx) {
       ctx.setTransform(canvas.width / this.canvasLogicalWidth, 0, 0, canvas.height / this.canvasLogicalHeight, 0, 0);
       const width = this.canvasLogicalWidth, height = this.canvasLogicalHeight;
       paintPageImages(this.imageLibrary, canvas, neighbor!, (context) => context.clearRect(0, 0, canvas.width, canvas.height), (context) => {
