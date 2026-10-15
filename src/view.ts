@@ -817,12 +817,7 @@ export class InkView extends InkWritingView {
     canvas.width = resolution.width;
     canvas.height = resolution.height;
     const ctx = canvas.getContext("2d");
-    const preview = this.root.querySelectorAll<HTMLCanvasElement>(".ink-page-thumb-canvas")[neighborIndex];
-    if (ctx && preview?.dataset.previewReady === "true") {
-      canvas.width = preview.width;
-      canvas.height = preview.height;
-      ctx.drawImage(preview, 0, 0);
-    } else if (ctx) {
+    if (ctx) {
       ctx.setTransform(canvas.width / this.canvasLogicalWidth, 0, 0, canvas.height / this.canvasLogicalHeight, 0, 0);
       const width = this.canvasLogicalWidth, height = this.canvasLogicalHeight;
       paintPageImages(this.imageLibrary, canvas, neighbor!, (context) => context.clearRect(0, 0, canvas.width, canvas.height), (context) => {
