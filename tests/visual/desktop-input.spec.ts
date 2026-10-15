@@ -71,7 +71,7 @@ for (const mode of ["ink", "pdf"] as const) {
   });
 }
 
-test("separate trackpad flicks and page keys coalesce while the previous page is still saving", async ({ page }) => {
+test("separate trackpad flicks and page keys queue while the previous page is still saving", async ({ page }) => {
   await page.goto("/");
   await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
   await page.evaluate(async () => {
@@ -237,6 +237,47 @@ test("a trackpad flick advances one page and fast mouse-wheel notches are dampen
     }));
   });
   await expect(page.locator(".ink-page-status")).toHaveText("5 / 6");
+});
+
+test("repeated horizontal trackpad swipes rearm and queued wheel pages each animate", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  await page.evaluate(async () => {
+    const scope = window as any, view = scope.__inkNotesPreview.view;
+    for (let index = 1; index < 8; index++) view.duplicateCurrentPage();
+    await view.navigateToPage(view.notebook.pages[0].id);
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    scroller.scrollLeft = scroller.scrollWidth - scroller.clientWidth;
+    let timeStamp = 100;
+    const send = (deltaX: number, at: number) => {
+      const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX });
+      Object.defineProperty(event, "timeStamp", { configurable: true, value: at });
+      scroller.dispatchEvent(event);
+    };
+    for (const delta of [140, 90, 60, 30, 10, 4]) send(delta, timeStamp += 10);
+    send(140, timeStamp + 60);
+  });
+  await expect(page.locator(".ink-page-status")).toHaveText("3 / 8");
+
+  await page.evaluate(() => {
+    const scope = window as any;
+    const originalAnimate = Element.prototype.animate;
+    scope.pageSwipeAnimationCount = 0;
+    Element.prototype.animate = function (...args: Parameters<Element["animate"]>) {
+      if (this.classList.contains("ink-page-extent")) scope.pageSwipeAnimationCount++;
+      return originalAnimate.apply(this, args);
+    };
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    scroller.scrollTop = scroller.scrollHeight - scroller.clientHeight;
+    for (let index = 0; index < 8; index++) {
+      const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 100 });
+      Object.defineProperty(event, "timeStamp", { configurable: true, value: 300 + index * 100 });
+      scroller.dispatchEvent(event);
+    }
+  });
+  await expect(page.locator(".ink-page-status")).toHaveText("8 / 8");
+  await expect.poll(() => page.evaluate(() => (window as any).pageSwipeAnimationCount)).toBe(5);
 });
 
 test("desktop reader drag flips at the page edge without waiting on the animation", async ({ page }) => {

@@ -801,7 +801,7 @@ describe("pdf page preview rail", () => {
     expect(host.neighbourCache.has(1)).toBe(false);
   });
 
-  it("keeps rapid swipe destinations and coalesces renders while the PDF is loading", async () => {
+  it("keeps rapid swipe destinations and renders every queued PDF page", async () => {
     const { view, internal, host, render, navigation, release } = await delayedSwipeSetup();
     for (const delta of [1, 1, -1, 1]) rapidSwipe(host, delta);
     expect(internal.noteIndex).toBe(1);
@@ -810,8 +810,8 @@ describe("pdf page preview rail", () => {
     release();
     await vi.waitFor(() => expect(host.flipSettling).toBe(false));
     expect(internal.noteIndex).toBe(3);
-    expect(navigation.mock.calls.map(([delta]) => delta)).toEqual([1, 2]);
-    expect(render).toHaveBeenCalledTimes(2);
+    expect(navigation.mock.calls.map(([delta]) => delta)).toEqual([1, 1, 1]);
+    expect(render).toHaveBeenCalledTimes(3);
     expect(host.pageWrap.style.visibility).toBe("");
     await view.onClose();
   });
