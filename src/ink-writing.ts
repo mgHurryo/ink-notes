@@ -1136,12 +1136,12 @@ export abstract class InkWritingView extends FileView {
 
   protected flipSettling = false;
   private pageSwipeAnimations: Animation[] = [];
-  private pageSwipeRequest: { target: number; count: number; scrollEdge?: "top" | "bottom";
+  private pageSwipeRequest: { target: number; activeTarget: number; count: number; scrollEdge?: "top" | "bottom";
     wheelGestureId: number | null } | null = null;
 
   /** Track the requested destination, including swipes made while saving/rendering. */
   protected beginPageSwipe(target: number, count: number, scrollEdge?: "top" | "bottom"): () => boolean {
-    const request = { target, count, scrollEdge, wheelGestureId: null };
+    const request = { target, activeTarget: target, count, scrollEdge, wheelGestureId: null };
     this.pageSwipeRequest = request;
     return () => this.flipSettling && this.pageSwipeRequest === request;
   }
@@ -1171,6 +1171,14 @@ export abstract class InkWritingView extends FileView {
     return true;
   }
 
+  /** A fresh direct-manipulation swipe supersedes wheel destinations not yet started. */
+  protected discardQueuedPageSwipeSteps(): void {
+    const request = this.pageSwipeRequest;
+    if (!this.flipSettling || !request) return;
+    request.target = request.activeTarget;
+    request.scrollEdge = undefined;
+  }
+
   protected clearPageSwipeTarget(): void { this.pageSwipeRequest = null; }
 
   /** Drain the latest destination one page at a time so each transition can animate. */
@@ -1184,6 +1192,7 @@ export abstract class InkWritingView extends FileView {
       if (target === current) return;
       const direction = Math.sign(target - current);
       const next = current + direction;
+      this.pageSwipeRequest.activeTarget = next;
       if (!firstStep && animateStep) await animateStep(direction);
       if (!isCurrent()) return;
       await navigate(next);
@@ -1891,7 +1900,10 @@ export abstract class InkWritingView extends FileView {
         pan.mode = Math.abs(totalX) > Math.abs(totalY) * 1.5 && flipAllowed ? "swipe" : "pan";
       }
       if (pan.mode === "swipe") {
-        if (this.flipSettling) this.finishPageSwipeAnimations();
+        if (this.flipSettling) {
+          this.discardQueuedPageSwipeSteps();
+          this.finishPageSwipeAnimations();
+        }
         this.swipeDrag(totalX);
       } else if (!this.flipSettling) {
         const before = scroller.scrollLeft;

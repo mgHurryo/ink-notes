@@ -27925,7 +27925,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
   }
   /** Track the requested destination, including swipes made while saving/rendering. */
   beginPageSwipe(target, count, scrollEdge) {
-    const request = { target, count, scrollEdge, wheelGestureId: null };
+    const request = { target, activeTarget: target, count, scrollEdge, wheelGestureId: null };
     this.pageSwipeRequest = request;
     return () => this.flipSettling && this.pageSwipeRequest === request;
   }
@@ -27951,6 +27951,13 @@ var InkWritingView = class extends import_obsidian6.FileView {
     request.scrollEdge = scrollEdge;
     return true;
   }
+  /** A fresh direct-manipulation swipe supersedes wheel destinations not yet started. */
+  discardQueuedPageSwipeSteps() {
+    const request = this.pageSwipeRequest;
+    if (!this.flipSettling || !request) return;
+    request.target = request.activeTarget;
+    request.scrollEdge = void 0;
+  }
   clearPageSwipeTarget() {
     this.pageSwipeRequest = null;
   }
@@ -27964,6 +27971,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
       if (target === current) return;
       const direction = Math.sign(target - current);
       const next = current + direction;
+      this.pageSwipeRequest.activeTarget = next;
       if (!firstStep && animateStep) await animateStep(direction);
       if (!isCurrent()) return;
       await navigate(next);
@@ -28768,7 +28776,10 @@ var InkWritingView = class extends import_obsidian6.FileView {
         pan.mode = Math.abs(totalX) > Math.abs(totalY) * 1.5 && flipAllowed ? "swipe" : "pan";
       }
       if (pan.mode === "swipe") {
-        if (this.flipSettling) this.finishPageSwipeAnimations();
+        if (this.flipSettling) {
+          this.discardQueuedPageSwipeSteps();
+          this.finishPageSwipeAnimations();
+        }
         this.swipeDrag(totalX);
       } else if (!this.flipSettling) {
         const before = scroller.scrollLeft;
