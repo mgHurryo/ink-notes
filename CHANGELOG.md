@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5-beta.8 - 2026-10-15
+
+- Restore repeat two-finger horizontal trackpad page turns when a new same-direction flick ramps up from small deltas after the prior gesture's inertia. Preserve inertia suppression, scrolling and edge paging; automated typecheck, 860 unit tests, build, dependency audit and PR CI pass. Physical trackpad behavior remains unverified.
+
 ## 0.1.5-beta.7 - 2026-10-15
 
 - Unify desktop mouse-wheel and touchpad routing: normalize pixel, line and page deltas, preserve native scrolling within page content, and keep touchpad inertia within one edge-page gesture. Ink and PDF share the same routing and queued page transitions. Typecheck, build, 858 unit tests, PR CI and focused Chromium checks pass; one existing PDF tile fixture remains failing, and physical wheel hardware is unverified.
