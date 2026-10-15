@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5-beta.14 - 2026-10-15
+
+- Treat a 55 ms quiet interval as a renewed horizontal trackpad swipe even when the next swipe starts with a smaller delta. Repeated same-direction swipes can resume paging while the two-page gesture cap, inertia suppression and mouse-wheel behavior remain. Typecheck, 880 unit tests, focused Chromium desktop-input tests, build and PR CI pass; dependency audit passes the high-severity gate with two existing moderate Moment advisories. Physical trackpad behavior remains unverified.
+
 ## 0.1.5-beta.13 - 2026-10-15
 
 - Re-arm renewed horizontal trackpad flicks after a 55 ms quiet interval even when the device omits near-zero inertia tail events. Preserve the fast near-zero-tail path, momentum peak suppression, per-gesture two-page limit, mouse-wheel behavior and mouse-drag queue handling. Typecheck, 878 unit tests, build, PR CI and focused Chromium trackpad checks pass; the desktop-input suite retains one known PDF tile-mount fixture failure, and physical touchpad behavior remains unverified.
