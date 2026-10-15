@@ -36,6 +36,8 @@ const PDF_ZOOM_STEP = 1.2;
 const PDF_PAGE_PADDING = 24;
 const SELECTION_OVERLAY_BUDGET = 4_000_000;
 const PDF_NEIGHBOUR_CACHE_BUDGET = 8_000_000;
+const SWIPE_PREVIEW_IDLE_DELAY_MS = 120;
+const SWIPE_PREVIEW_RETRY_MS = 50;
 /** Thumbnail bitmap width in CSS pixels; on a portrait A4 page the pdf.js
  *  render scale for this lands around 0.2. */
 const RAIL_THUMB_WIDTH = 120;
@@ -771,6 +773,22 @@ export class PdfInkView extends InkWritingView {
     this.thumbButtons.get(this.noteIndex)?.scrollIntoView?.({ block: "nearest" });
     this.evictDistantThumbnails();
     this.paintVisibleThumbnails();
+    this.scheduleSwipeThumbnailPaint();
+  }
+
+  private scheduleSwipeThumbnailPaint(): void {
+    const paint = () => {
+      if (!this.root || !this.sidecar) return;
+      if (this.flipSettling) {
+        window.setTimeout(paint, SWIPE_PREVIEW_RETRY_MS);
+        return;
+      }
+      for (const index of [this.noteIndex - 1, this.noteIndex + 1]) {
+        const canvas = this.thumbButtons.get(index)?.querySelector<HTMLCanvasElement>("canvas");
+        if (canvas && canvas.dataset.previewReady !== "true") this.paintThumbnail(index);
+      }
+    };
+    window.setTimeout(paint, SWIPE_PREVIEW_IDLE_DELAY_MS);
   }
 
   private rebuildRailButtons(count: number): void {
@@ -1027,6 +1045,7 @@ export class PdfInkView extends InkWritingView {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(bitmap, 0, 0);
     this.overlayThumbInk(ctx, canvas, index);
+    canvas.dataset.previewReady = "true";
   }
 
   /**
@@ -1520,6 +1539,14 @@ export class PdfInkView extends InkWritingView {
     });
     this.swipeStage = stage;
     if (insert) { this.showPageInsertPreview(stage, side); return; }
+    const preview = this.thumbButtons.get(neighborIndex)?.querySelector<HTMLCanvasElement>("canvas");
+    if (preview?.dataset.previewReady === "true") {
+      const canvas = stage.createEl("canvas", { cls: "ink-swipe-canvas" });
+      canvas.width = preview.width;
+      canvas.height = preview.height;
+      canvas.getContext("2d")?.drawImage(preview, 0, 0);
+      return;
+    }
     void this.renderSwipeStagePage(stage, neighborIndex);
     const ink = stage.createEl("canvas", { cls: "ink-swipe-canvas" });
     const logicalHeight = baseWidth * display.height / display.width;

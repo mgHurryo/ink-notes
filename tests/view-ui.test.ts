@@ -353,6 +353,28 @@ describe("reference-style editor", () => {
     expect(host.notebook.pages[0].paper).toBe("blank");
   });
 
+  it("prewarms and reuses a small hidden-rail thumbnail for a page flip", async () => {
+    const host = view as any;
+    const neighbor = structuredClone(host.currentPage());
+    neighbor.id = "swipe-preview-neighbor";
+    neighbor.strokes.push({ id: "preview-ink", pageId: neighbor.id, tool: "pen", color: "#000000", width: 3,
+      opacity: 1, points: [{ x: .2, y: .2, pressure: .5, t: 1 }], createdAt: 1, updatedAt: 1 });
+    host.notebook.pages.push(neighbor);
+    host.pageIndex = 0;
+    host.renderPageRail();
+    const preview = document.querySelectorAll<HTMLCanvasElement>(".ink-page-thumb-canvas")[1]!;
+    await vi.waitFor(() => expect(preview.dataset.previewReady).toBe("true"));
+    expect(preview.width).toBe(120 * (window.devicePixelRatio || 1));
+
+    vi.mocked(drawInkStroke).mockClear();
+    host.ensureSwipeStage(-24);
+
+    const stage = document.querySelector<HTMLCanvasElement>(".ink-swipe-stage .ink-swipe-canvas")!;
+    expect(stage.width).toBe(preview.width);
+    expect(drawInkStroke).not.toHaveBeenCalled();
+    host.destroySwipeStage();
+  });
+
   it("shows pinch magnification, keeps it while held, and hides within one second of release", () => {
     vi.useFakeTimers();
     try {

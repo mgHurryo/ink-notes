@@ -816,7 +816,7 @@ describe("pdf page preview rail", () => {
     await view.onClose();
   });
 
-  it("coalesces mouse and trackpad navigation during a slow PDF handoff", async () => {
+  it("queues one trackpad page during a slow PDF handoff", async () => {
     const { view, internal, host, release } = await delayedSwipeSetup();
     const desktop = view as any;
     desktop.readingMode = true;
@@ -832,6 +832,26 @@ describe("pdf page preview rail", () => {
     release();
     await vi.waitFor(() => expect(host.flipSettling).toBe(false));
     expect(internal.noteIndex).toBe(3);
+    await view.onClose();
+  });
+
+  it("reuses a ready page thumbnail for the swipe stage", async () => {
+    const { view, host } = await rasterSetup(800, 600, 1);
+    const editor = host as any;
+    editor.refreshPageRail();
+    const preview = editor.thumbButtons.get(1)!.querySelector("canvas") as HTMLCanvasElement;
+    preview.width = 120;
+    preview.height = 170;
+    preview.dataset.previewReady = "true";
+    const render = vi.spyOn(editor, "renderSwipeStagePage");
+
+    editor.ensureSwipeStage(-24);
+
+    const stageCanvas = host.scroller.querySelector<HTMLCanvasElement>(".ink-swipe-stage .ink-swipe-canvas");
+    expect(stageCanvas).not.toBeNull();
+    expect(stageCanvas).toMatchObject({ width: 120, height: 170 });
+    expect(render).not.toHaveBeenCalled();
+    await view.onClose();
   });
 
   it("keeps PDF ink at one density throughout a desktop zoom burst", async () => {
