@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5-beta.15 - 2026-10-25
+
+- Render page-flip previews at the same density as live tiles (16M-pixel budget instead of the 4M overlay budget), so Retina iPads no longer show a blurry incoming page for the whole flip that only sharpens once the real tiles replace it. Recognize a renewed horizontal trackpad gesture when a wheel sample jumps clear of the decaying inertia envelope in a single step (>= max(24px, 2.2x the decayed level), with the previous sample held low inside the post-renewal block window) instead of requiring two compound 1.2x growth spikes that real precision-trackpad fast phases never produce; flicks landing inside the previous 1-2s Windows inertia tail now page immediately, while momentum peaks, the two-page gesture cap and the 55ms quiet-gap rearm remain. Expose pinchRenderZoom, tileDensity and tileDisplayScale in the dev panel and diagnostics JSON to pin down the intermittent fully-zoomed blur on Retina iPads (not yet root-caused). Patch dev-only vite and moment to clear the npm-audit high gate. Typecheck, 886 unit tests, WebKit swipe regression (2 tests including a new iPad-sized viewport), Chromium desktop-input (18) and full visual suite (174) pass; physical iPad and precision-trackpad behavior remains unverified.
+
 ## 0.1.5-beta.14 - 2026-10-15
 
 - Treat a 55 ms quiet interval as a renewed horizontal trackpad swipe even when the next swipe starts with a smaller delta. Repeated same-direction swipes can resume paging while the two-page gesture cap, inertia suppression and mouse-wheel behavior remain. Typecheck, 880 unit tests, focused Chromium desktop-input tests, build and PR CI pass; dependency audit passes the high-severity gate with two existing moderate Moment advisories. Physical trackpad behavior remains unverified.
