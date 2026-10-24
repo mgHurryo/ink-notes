@@ -2,6 +2,11 @@
 const GESTURE_IDLE_MS = 180;
 const RENEWED_FLICK_GAP_MS = 55;
 const RENEWED_FLICK_RELEASE_PX = 4;
+/** A renewed flick jumps clear of the decaying inertia tail; real fast-phase
+ *  trackpad deltas then hold nearly constant, so a single jump over the decayed
+ *  envelope marks a new gesture - compound acceleration never happens. */
+const RENEWED_FLICK_JUMP_PX = 24;
+const RENEWED_FLICK_JUMP_RATIO = 2.2;
 const PAGE_TRAVEL_PX = 100;
 const HORIZONTAL_PAGE_TRAVEL_PX = 48;
 const MAX_TRACKPAD_PAGES_PER_GESTURE = 2;
@@ -40,6 +45,10 @@ export class DesktopWheelGesture {
   private mode = 0;
   private lastAt: number | null = null;
   private lastDelta = 0;
+  /** Raw magnitude of the previous sample (unlike the decayed lastDelta
+   *  envelope), so a blocked renewal can demand a single-step jump: momentum
+   *  continuation ramps up sample over sample, a fresh flick does not. */
+  private lastMagnitude = 0;
   private travel = 0;
   private flipped = false;
   private notchCredit = 0;
@@ -59,7 +68,7 @@ export class DesktopWheelGesture {
     this.gestureId += 1;
     this.axis = null;
     this.lastAt = null;
-    this.lastDelta = this.travel = this.notchCredit = 0;
+    this.lastDelta = this.lastMagnitude = this.travel = this.notchCredit = 0;
     this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     this.renewalBlocked = false;
     this.trackpadPages = 0;
@@ -98,31 +107,25 @@ export class DesktopWheelGesture {
     this.lastAt = at;
     let renewedTravel: number | undefined;
     if (this.flipped && !this.discrete && axis === "x") {
+      const jump = magnitude >= Math.max(RENEWED_FLICK_JUMP_PX, Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO);
       if (this.renewalBlocked) {
-        // Ignore the momentum peak after a renewed gesture until its tail settles.
+        // Ignore the momentum continuation after a renewed gesture until its
+        // tail settles; momentum ramps up sample over sample, so a re-arm
+        // inside the block must be a single-step jump from a low level.
         if (magnitude <= RENEWED_FLICK_RELEASE_PX) this.renewalBlocked = false;
-      } else if (this.renewedPeak === 0) {
-        if (magnitude >= Math.max(2, Math.abs(this.lastDelta) * 1.2)) {
-          this.renewedTravel = magnitude;
-          this.renewedPeak = magnitude;
-          this.renewedIncreases = 0;
-        }
-      } else if (magnitude >= this.renewedPeak * 1.2) {
-        this.renewedPeak = magnitude;
-        this.renewedTravel += magnitude;
-        this.renewedIncreases += 1;
-        if (this.renewedIncreases >= 2 && this.renewedTravel >= HORIZONTAL_PAGE_TRAVEL_PX) {
-          renewedTravel = Math.sign(movement) * (this.renewedTravel - magnitude);
+        else if (jump && magnitude > this.lastMagnitude * RENEWED_FLICK_JUMP_RATIO) {
           this.beginRenewedGesture();
           this.flipped = false;
           this.travel = 0;
           this.renewalBlocked = true;
           this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
         }
-      } else if (magnitude < this.renewedPeak * 0.7) {
+      } else if (jump) {
+        this.beginRenewedGesture();
+        this.flipped = false;
+        this.travel = 0;
+        this.renewalBlocked = true;
         this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
-      } else {
-        this.renewedTravel += magnitude;
       }
     } else if (this.flipped && !this.discrete && axis === "y") {
       if (gap >= RENEWED_FLICK_GAP_MS) {
@@ -150,6 +153,7 @@ export class DesktopWheelGesture {
     }
     this.lastDelta = this.flipped && !this.discrete
       ? Math.sign(movement) * Math.min(Math.abs(this.lastDelta), magnitude) : movement;
+    this.lastMagnitude = magnitude;
     return { axis, movement, discrete: this.discrete, mode: delta.mode, gap, gestureId: this.gestureId,
       suppressed: !this.discrete && this.flipped, renewedTravel };
   }

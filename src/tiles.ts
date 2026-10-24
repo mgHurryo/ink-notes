@@ -216,6 +216,10 @@ export class TileRenderer {
   private active: PageTiles | null = null;
   private viewport: Rect = { x: 0, y: 0, width: 1, height: 1 };
   private density = 1;
+  /** Diagnostics: current backing density vs the dpr x zoom target, so a
+   *  stuck-low density (blurry zoomed page) is visible in the dev panel. */
+  get currentDensity(): number { return this.density; }
+  get currentDisplayScale(): number { return this.displayScale; }
   private visible = new Set<string>();
   private jobs: Job[] = [];
   private frame: number | null = null;

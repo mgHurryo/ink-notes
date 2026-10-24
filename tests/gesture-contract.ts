@@ -230,7 +230,7 @@ export function gestureContract(create: () => Promise<any>): void {
       vi.useFakeTimers();
       try {
         wheel(140, 0, { timeStamp: 100 });
-        for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [20, 140], [40, 150], [70, 160]]) {
+        for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [20, 140], [18, 150], [15, 160]]) {
           wheel(delta, 0, { timeStamp: time });
         }
         expect(settle).toHaveBeenCalledTimes(1);
@@ -238,6 +238,29 @@ export function gestureContract(create: () => Promise<any>): void {
         wheel(140, 0, { timeStamp: 340 });
         expect(settle).toHaveBeenCalledTimes(2);
       } finally { vi.useRealTimers(); }
+    });
+
+    it("rearms a constant-velocity flick that lands inside the inertia tail", async () => {
+      const { wheel, settle } = await desktopSetup();
+      // A Windows precision trackpad bridges human re-flick cadence with a
+      // 1-2s inertia tail, and a fresh flick's fast-phase deltas hold nearly
+      // constant instead of compounding - the jump itself must re-arm.
+      wheel(140, 0, { timeStamp: 100 });
+      for (const [delta, timeStamp] of [[90, 110], [60, 120], [35, 130], [25, 140]]) {
+        wheel(delta, 0, { timeStamp });
+      }
+      expect(settle).toHaveBeenCalledTimes(1);
+      for (const timeStamp of [150, 160, 170]) wheel(60, 0, { timeStamp });
+      expect(settle).toHaveBeenCalledTimes(2);
+    });
+
+    it("does not rearm while the same tail decays smoothly", async () => {
+      const { wheel, settle } = await desktopSetup();
+      for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [40, 130], [30, 140],
+        [25, 150], [20, 160], [15, 170], [12, 180], [10, 190]]) {
+        wheel(delta, 0, { timeStamp: time });
+      }
+      expect(settle).toHaveBeenCalledTimes(1);
     });
 
     it("rearms a horizontal trackpad flick after a short pause and a renewed swipe", async () => {
@@ -261,11 +284,25 @@ export function gestureContract(create: () => Promise<any>): void {
         wheel(delta, 0, { timeStamp: time });
       }
       expect(settle).toHaveBeenCalledTimes(1);
-      // A new flick ramps up before the old burst reaches its idle timeout.
-      for (const [delta, time] of [[8, 154], [20, 164], [35, 174]]) wheel(delta, 0, { timeStamp: time });
+      // A new flick ramps up before the old burst reaches its idle timeout; the
+      // re-armed gesture flips once its own travel crosses the page threshold.
+      for (const [delta, time] of [[8, 154], [20, 164], [35, 174], [70, 184]]) wheel(delta, 0, { timeStamp: time });
       expect(settle).toHaveBeenCalledTimes(2);
-      wheel(-60, 0, { timeStamp: 184 });
+      wheel(-60, 0, { timeStamp: 194 });
       expect(settle).toHaveBeenLastCalledWith(-1, 0, undefined);
+      expect(settle).toHaveBeenCalledTimes(3);
+    });
+
+    it("rearms an aggressively stronger flick while the previous renewal is still blocked", async () => {
+      const { wheel, settle } = await desktopSetup();
+      for (const [delta, timeStamp] of [[140, 100], [90, 110], [60, 120], [40, 130], [26, 140],
+        [60, 150], [60, 160], [40, 170], [55, 180]]) {
+        wheel(delta, 0, { timeStamp });
+      }
+      expect(settle).toHaveBeenCalledTimes(2);
+      // Blocked after the mid-tail renewal: the same flick's continuation stays
+      // suppressed, but a jump 3x over the decayed envelope re-arms.
+      wheel(200, 0, { timeStamp: 190 });
       expect(settle).toHaveBeenCalledTimes(3);
     });
 
