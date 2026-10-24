@@ -48,6 +48,12 @@ export const VIEW_TYPE_INK = "ink-notes-view";
 const SAVE_CONFLICT_RETRIES = 3;
 
 const OVERLAY_RESIZE_BUDGET = 4_000_000;
+/** Swipe previews must match live tile density (dpr x zoom): the 4M overlay
+ *  budget downsamples Retina iPad pages (980px x dpr2 = ~5.4M pixels), so the
+ *  incoming page reads blurry for the whole flip and only sharpens when the
+ *  real tiles replace it. 16M is the WebKit-safe ceiling canvasResolution
+ *  defaults to. */
+const SWIPE_PREVIEW_RESIZE_BUDGET = 16_000_000;
 
 /** Rail width persistence. localStorage (not the plugin data file) is enough
  *  here: the width is per-device window chrome, not notebook content. */
@@ -813,7 +819,7 @@ export class InkView extends InkWritingView {
     this.swipeStage = stage;
     if (insert) { this.showPageInsertPreview(stage, side); return; }
     const canvas = stage.createEl("canvas", { cls: "ink-swipe-canvas" });
-    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, window.devicePixelRatio || 1, previewZoom, OVERLAY_RESIZE_BUDGET);
+    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, window.devicePixelRatio || 1, previewZoom, SWIPE_PREVIEW_RESIZE_BUDGET);
     canvas.width = resolution.width;
     canvas.height = resolution.height;
     const ctx = canvas.getContext("2d");

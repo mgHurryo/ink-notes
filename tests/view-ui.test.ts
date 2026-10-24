@@ -368,12 +368,23 @@ describe("reference-style editor", () => {
 
     host.canvasLogicalWidth = 1000;
     host.canvasLogicalHeight = 1400;
-    vi.mocked(drawInkStroke).mockClear();
-    host.ensureSwipeStage(-24);
+    // A Retina iPad page (1000x1400 @2 = 5.6M pixels) must render the swipe
+    // preview at full tile density: the old 4M overlay budget downscaled it
+    // ~15% and the incoming page stayed blurry until the tiles replaced it.
+    const originalDpr = window.devicePixelRatio;
+    Object.defineProperty(window, "devicePixelRatio", { value: 2, configurable: true, writable: true });
+    try {
+      vi.mocked(drawInkStroke).mockClear();
+      host.ensureSwipeStage(-24);
 
-    const stage = document.querySelector<HTMLCanvasElement>(".ink-swipe-stage .ink-swipe-canvas")!;
-    expect(stage.width).toBeGreaterThan(preview.width);
-    expect(drawInkStroke).toHaveBeenCalled();
+      const stage = document.querySelector<HTMLCanvasElement>(".ink-swipe-stage .ink-swipe-canvas")!;
+      expect(stage.width).toBe(2000);
+      expect(stage.height).toBe(2800);
+      expect(stage.width).toBeGreaterThan(preview.width);
+      expect(drawInkStroke).toHaveBeenCalled();
+    } finally {
+      Object.defineProperty(window, "devicePixelRatio", { value: originalDpr, configurable: true, writable: true });
+    }
     host.destroySwipeStage();
   });
 
