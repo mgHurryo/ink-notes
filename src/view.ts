@@ -1017,7 +1017,7 @@ export class InkView extends InkWritingView {
     const rate = intervalStats(this.penSampleIntervals);
     const lines: string[] = [];
     lines.push(`Ink Notes dev — build ${this.devVersion()}`);
-    lines.push(`ENV pointer=${this.devLastPointerType ?? "-"} coalesced=${this.hasPointerApi("getCoalescedEvents") ? "yes" : "no"} rawupdate=${"onpointerrawupdate" in window ? "yes" : "no"} predicted=${this.hasPointerApi("getPredictedEvents") ? "yes" : "no"} touch=${navigator.maxTouchPoints ?? 0} dpr=${(window.devicePixelRatio || 1).toFixed(2)} zoom=${this.zoom.toFixed(2)}`);
+    lines.push(`ENV pointer=${this.devLastPointerType ?? "-"} coalesced=${this.hasPointerApi("getCoalescedEvents") ? "yes" : "no"} rawupdate=${"onpointerrawupdate" in window ? "yes" : "no"} predicted=${this.hasPointerApi("getPredictedEvents") ? "yes" : "no"} touch=${navigator.maxTouchPoints ?? 0} dpr=${(window.devicePixelRatio || 1).toFixed(2)} zoom=${this.zoom.toFixed(2)} pinch=${this.pinchRenderZoom?.toFixed(2) ?? "-"} tileDensity=${this.tiles?.currentDensity?.toFixed(2) ?? "-"} tileScale=${this.tiles?.currentDisplayScale?.toFixed(2) ?? "-"}`);
     lines.push(`INPUT events=${this.devPointerEvents} rawupdates=${this.devRawUpdates} coalescedPts=${this.devCoalescedSamples} samplesFed=${this.devSamplesFed} predicted=${this.devPredictedSamples}`);
     lines.push(`RATE n=${rate.count}${rate.min !== null ? ` min=${rate.min.toFixed(1)}ms median=${rate.median?.toFixed(1)}ms mean=${rate.mean?.toFixed(1)}ms max=${rate.max?.toFixed(1)}ms` : ""}${rate.mean !== null && rate.mean > 0 ? ` (~${(1000 / rate.mean).toFixed(0)} Hz)` : ""}`);
     lines.push(`SPARSE threshold=${SPARSE_SAMPLE_INTERVAL_MS}ms flagged=${this.penInputSparse() ? "YES" : "no"}`);
@@ -1045,6 +1045,9 @@ export class InkView extends InkWritingView {
       maxTouchPoints: navigator.maxTouchPoints ?? 0,
       devicePixelRatio: window.devicePixelRatio || 1,
       zoom: this.zoom,
+      pinchRenderZoom: this.pinchRenderZoom ?? null,
+      tileDensity: this.tiles?.currentDensity ?? null,
+      tileDisplayScale: this.tiles?.currentDisplayScale ?? null,
     };
     const report = {
       format: "ink-notes-diagnostics",

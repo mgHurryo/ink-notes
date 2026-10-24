@@ -24148,6 +24148,8 @@ function defaultReadingMode(platform, device) {
 var GESTURE_IDLE_MS = 180;
 var RENEWED_FLICK_GAP_MS = 55;
 var RENEWED_FLICK_RELEASE_PX = 4;
+var RENEWED_FLICK_JUMP_PX = 24;
+var RENEWED_FLICK_JUMP_RATIO = 2.2;
 var PAGE_TRAVEL_PX = 100;
 var HORIZONTAL_PAGE_TRAVEL_PX = 48;
 var MAX_TRACKPAD_PAGES_PER_GESTURE = 2;
@@ -24166,6 +24168,10 @@ var DesktopWheelGesture = class {
     this.mode = 0;
     this.lastAt = null;
     this.lastDelta = 0;
+    /** Raw magnitude of the previous sample (unlike the decayed lastDelta
+     *  envelope), so a blocked renewal can demand a single-step jump: momentum
+     *  continuation ramps up sample over sample, a fresh flick does not. */
+    this.lastMagnitude = 0;
     this.travel = 0;
     this.flipped = false;
     this.notchCredit = 0;
@@ -24184,7 +24190,7 @@ var DesktopWheelGesture = class {
     this.gestureId += 1;
     this.axis = null;
     this.lastAt = null;
-    this.lastDelta = this.travel = this.notchCredit = 0;
+    this.lastDelta = this.lastMagnitude = this.travel = this.notchCredit = 0;
     this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     this.renewalBlocked = false;
     this.trackpadPages = 0;
@@ -24218,30 +24224,22 @@ var DesktopWheelGesture = class {
     this.lastAt = at;
     let renewedTravel;
     if (this.flipped && !this.discrete && axis === "x") {
+      const jump = magnitude >= Math.max(RENEWED_FLICK_JUMP_PX, Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO);
       if (this.renewalBlocked) {
         if (magnitude <= RENEWED_FLICK_RELEASE_PX) this.renewalBlocked = false;
-      } else if (this.renewedPeak === 0) {
-        if (magnitude >= Math.max(2, Math.abs(this.lastDelta) * 1.2)) {
-          this.renewedTravel = magnitude;
-          this.renewedPeak = magnitude;
-          this.renewedIncreases = 0;
-        }
-      } else if (magnitude >= this.renewedPeak * 1.2) {
-        this.renewedPeak = magnitude;
-        this.renewedTravel += magnitude;
-        this.renewedIncreases += 1;
-        if (this.renewedIncreases >= 2 && this.renewedTravel >= HORIZONTAL_PAGE_TRAVEL_PX) {
-          renewedTravel = Math.sign(movement) * (this.renewedTravel - magnitude);
+        else if (jump && magnitude > this.lastMagnitude * RENEWED_FLICK_JUMP_RATIO) {
           this.beginRenewedGesture();
           this.flipped = false;
           this.travel = 0;
           this.renewalBlocked = true;
           this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
         }
-      } else if (magnitude < this.renewedPeak * 0.7) {
+      } else if (jump) {
+        this.beginRenewedGesture();
+        this.flipped = false;
+        this.travel = 0;
+        this.renewalBlocked = true;
         this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
-      } else {
-        this.renewedTravel += magnitude;
       }
     } else if (this.flipped && !this.discrete && axis === "y") {
       if (gap >= RENEWED_FLICK_GAP_MS) {
@@ -24268,6 +24266,7 @@ var DesktopWheelGesture = class {
       this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     }
     this.lastDelta = this.flipped && !this.discrete ? Math.sign(movement) * Math.min(Math.abs(this.lastDelta), magnitude) : movement;
+    this.lastMagnitude = magnitude;
     return {
       axis,
       movement,
@@ -31196,6 +31195,14 @@ var TileRenderer = class {
     this.pendingTiles = /* @__PURE__ */ new Map();
     this.displayScale = 1;
   }
+  /** Diagnostics: current backing density vs the dpr x zoom target, so a
+   *  stuck-low density (blurry zoomed page) is visible in the dev panel. */
+  get currentDensity() {
+    return this.density;
+  }
+  get currentDisplayScale() {
+    return this.displayScale;
+  }
   setBackend(backend, onError) {
     var _a, _b;
     this.renderGeneration += 1;
@@ -32155,6 +32162,7 @@ function unexpected(response) {
 var VIEW_TYPE_INK = "ink-notes-view";
 var SAVE_CONFLICT_RETRIES = 3;
 var OVERLAY_RESIZE_BUDGET = 4e6;
+var SWIPE_PREVIEW_RESIZE_BUDGET = 16e6;
 var RAIL_WIDTH_STORAGE_KEY = "ink-notes-page-rail-width";
 var RAIL_MIN_WIDTH = 150;
 var RAIL_MAX_WIDTH = 420;
@@ -32904,7 +32912,7 @@ var InkView = class extends InkWritingView {
       return;
     }
     const canvas = stage.createEl("canvas", { cls: "ink-swipe-canvas" });
-    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, window.devicePixelRatio || 1, previewZoom, OVERLAY_RESIZE_BUDGET);
+    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, window.devicePixelRatio || 1, previewZoom, SWIPE_PREVIEW_RESIZE_BUDGET);
     canvas.width = resolution.width;
     canvas.height = resolution.height;
     const ctx = canvas.getContext("2d");
@@ -33107,31 +33115,31 @@ var InkView = class extends InkWritingView {
     return typeof PointerEvent !== "undefined" && typeof PointerEvent.prototype[name] === "function";
   }
   refreshDevPanel() {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n, _o, _p, _q, _r, _s;
     const output = (_a = this.devPanel) == null ? void 0 : _a.querySelector(".ink-dev-panel-output");
     if (!output) return;
     const rate = intervalStats(this.penSampleIntervals);
     const lines = [];
     lines.push(`Ink Notes dev \u2014 build ${this.devVersion()}`);
-    lines.push(`ENV pointer=${(_b = this.devLastPointerType) != null ? _b : "-"} coalesced=${this.hasPointerApi("getCoalescedEvents") ? "yes" : "no"} rawupdate=${"onpointerrawupdate" in window ? "yes" : "no"} predicted=${this.hasPointerApi("getPredictedEvents") ? "yes" : "no"} touch=${(_c = navigator.maxTouchPoints) != null ? _c : 0} dpr=${(window.devicePixelRatio || 1).toFixed(2)} zoom=${this.zoom.toFixed(2)}`);
+    lines.push(`ENV pointer=${(_b = this.devLastPointerType) != null ? _b : "-"} coalesced=${this.hasPointerApi("getCoalescedEvents") ? "yes" : "no"} rawupdate=${"onpointerrawupdate" in window ? "yes" : "no"} predicted=${this.hasPointerApi("getPredictedEvents") ? "yes" : "no"} touch=${(_c = navigator.maxTouchPoints) != null ? _c : 0} dpr=${(window.devicePixelRatio || 1).toFixed(2)} zoom=${this.zoom.toFixed(2)} pinch=${(_e = (_d = this.pinchRenderZoom) == null ? void 0 : _d.toFixed(2)) != null ? _e : "-"} tileDensity=${(_h = (_g = (_f = this.tiles) == null ? void 0 : _f.currentDensity) == null ? void 0 : _g.toFixed(2)) != null ? _h : "-"} tileScale=${(_k = (_j = (_i = this.tiles) == null ? void 0 : _i.currentDisplayScale) == null ? void 0 : _j.toFixed(2)) != null ? _k : "-"}`);
     lines.push(`INPUT events=${this.devPointerEvents} rawupdates=${this.devRawUpdates} coalescedPts=${this.devCoalescedSamples} samplesFed=${this.devSamplesFed} predicted=${this.devPredictedSamples}`);
-    lines.push(`RATE n=${rate.count}${rate.min !== null ? ` min=${rate.min.toFixed(1)}ms median=${(_d = rate.median) == null ? void 0 : _d.toFixed(1)}ms mean=${(_e = rate.mean) == null ? void 0 : _e.toFixed(1)}ms max=${(_f = rate.max) == null ? void 0 : _f.toFixed(1)}ms` : ""}${rate.mean !== null && rate.mean > 0 ? ` (~${(1e3 / rate.mean).toFixed(0)} Hz)` : ""}`);
+    lines.push(`RATE n=${rate.count}${rate.min !== null ? ` min=${rate.min.toFixed(1)}ms median=${(_l = rate.median) == null ? void 0 : _l.toFixed(1)}ms mean=${(_m = rate.mean) == null ? void 0 : _m.toFixed(1)}ms max=${(_n = rate.max) == null ? void 0 : _n.toFixed(1)}ms` : ""}${rate.mean !== null && rate.mean > 0 ? ` (~${(1e3 / rate.mean).toFixed(0)} Hz)` : ""}`);
     lines.push(`SPARSE threshold=${SPARSE_SAMPLE_INTERVAL_MS}ms flagged=${this.penInputSparse() ? "YES" : "no"}`);
-    lines.push(`MODE tool=${this.state.tool} smooth=${(_g = this.state.pen.smooth) != null ? _g : 0} (${((_h = this.state.pen.smooth) != null ? _h : 0) === 0 ? "Direct" : "modeler strength"})`);
+    lines.push(`MODE tool=${this.state.tool} smooth=${(_o = this.state.pen.smooth) != null ? _o : 0} (${((_p = this.state.pen.smooth) != null ? _p : 0) === 0 ? "Direct" : "modeler strength"})`);
     const current = this.currentStrokeRecord;
     if (current) {
-      lines.push(`ACTIVE #${current.index} engaged=${current.engaged ? current.reason : "no"} raw=${current.rawSamples} stored=${(_j = (_i = this.activeStroke) == null ? void 0 : _i.points.length) != null ? _j : 0} fallback=${current.fallback ? "YES" : "no"}`);
+      lines.push(`ACTIVE #${current.index} engaged=${current.engaged ? current.reason : "no"} raw=${current.rawSamples} stored=${(_r = (_q = this.activeStroke) == null ? void 0 : _q.points.length) != null ? _r : 0} fallback=${current.fallback ? "YES" : "no"}`);
     }
     if (this.strokeRecords.length > 0) lines.push("STROKES (most recent last):");
     for (const record of this.strokeRecords) {
       const intervals = record.intervals.median !== null ? ` median=${record.intervals.median.toFixed(1)}ms` : "";
       const lift = record.liftDistancePx !== null ? ` lift\u0394=${record.liftDistancePx.toFixed(2)}px` : "";
-      lines.push(`#${record.index} ${record.engaged ? record.reason : "direct"} raw=${record.rawSamples} stored=${record.pointsStored} ${(_k = record.durationMs) != null ? _k : "-"}ms fallback=${record.fallback ? "YES" : "no"}${intervals}${lift}${record.smooth > 0 ? ` smooth=${record.smooth}` : ""}`);
+      lines.push(`#${record.index} ${record.engaged ? record.reason : "direct"} raw=${record.rawSamples} stored=${record.pointsStored} ${(_s = record.durationMs) != null ? _s : "-"}ms fallback=${record.fallback ? "YES" : "no"}${intervals}${lift}${record.smooth > 0 ? ` smooth=${record.smooth}` : ""}`);
     }
     output.setText(lines.join("\n"));
   }
   exportDiagnosticsJson(toClipboard) {
-    var _a, _b;
+    var _a, _b, _c, _d, _e, _f, _g;
     const environment = {
       version: this.devVersion(),
       lastPointerType: this.devLastPointerType,
@@ -33140,7 +33148,10 @@ var InkView = class extends InkWritingView {
       predictedApi: this.hasPointerApi("getPredictedEvents"),
       maxTouchPoints: (_a = navigator.maxTouchPoints) != null ? _a : 0,
       devicePixelRatio: window.devicePixelRatio || 1,
-      zoom: this.zoom
+      zoom: this.zoom,
+      pinchRenderZoom: (_b = this.pinchRenderZoom) != null ? _b : null,
+      tileDensity: (_d = (_c = this.tiles) == null ? void 0 : _c.currentDensity) != null ? _d : null,
+      tileDisplayScale: (_f = (_e = this.tiles) == null ? void 0 : _e.currentDisplayScale) != null ? _f : null
     };
     const report = {
       format: "ink-notes-diagnostics",
@@ -33156,7 +33167,7 @@ var InkView = class extends InkWritingView {
       sampleIntervals: intervalStats(this.penSampleIntervals),
       sampleIntervalsRaw: [...this.penSampleIntervals],
       sparse: { thresholdMs: SPARSE_SAMPLE_INTERVAL_MS, flagged: this.penInputSparse() },
-      mode: { tool: this.state.tool, smooth: (_b = this.state.pen.smooth) != null ? _b : 0 },
+      mode: { tool: this.state.tool, smooth: (_g = this.state.pen.smooth) != null ? _g : 0 },
       strokes: this.strokeRecords
     };
     const text = JSON.stringify(report, null, 2);
