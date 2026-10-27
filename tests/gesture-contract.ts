@@ -254,11 +254,33 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(2);
     });
 
+    it("rearms a constant-velocity vertical flick that lands inside the inertia tail", async () => {
+      const { scroller, wheel, settle } = await desktopSetup();
+      scroller.scrollTop = 600;
+      wheel(0, 140, { timeStamp: 100 });
+      for (const [delta, timeStamp] of [[90, 110], [60, 120], [30, 130], [10, 140], [4, 150]]) {
+        wheel(0, delta, { timeStamp });
+      }
+      expect(settle).toHaveBeenCalledTimes(1);
+      for (const timeStamp of [210, 220, 230, 240]) wheel(0, 60, { timeStamp });
+      expect(settle).toHaveBeenCalledTimes(2);
+    });
+
     it("does not rearm while the same tail decays smoothly", async () => {
       const { wheel, settle } = await desktopSetup();
       for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [40, 130], [30, 140],
         [25, 150], [20, 160], [15, 170], [12, 180], [10, 190]]) {
         wheel(delta, 0, { timeStamp: time });
+      }
+      expect(settle).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not rearm while the same vertical tail decays smoothly", async () => {
+      const { scroller, wheel, settle } = await desktopSetup();
+      scroller.scrollTop = 600;
+      for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [40, 130], [30, 140],
+        [25, 150], [20, 160], [15, 170], [12, 180], [10, 190]]) {
+        wheel(0, delta, { timeStamp: time });
       }
       expect(settle).toHaveBeenCalledTimes(1);
     });
