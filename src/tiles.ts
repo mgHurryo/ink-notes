@@ -392,7 +392,9 @@ export class TileRenderer {
   }
 
   beginInput(): void {
-    this.droppedRefine ||= this.jobs.length > 0 || this.pendingTiles.size > 0;
+    // Interactive commits park their jobs on the commit itself, not on the
+    // ordinary queue below, so a live commit counts as dropped refine work.
+    this.droppedRefine ||= this.jobs.length > 0 || this.pendingTiles.size > 0 || !!this.inkCommit;
     this.renderGeneration += 1;
     this.backend?.cancelGeneration?.(this.renderGeneration);
     if (this.frame !== null) cancelAnimationFrame(this.frame);

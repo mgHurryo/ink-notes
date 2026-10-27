@@ -31363,7 +31363,7 @@ var TileRenderer = class {
   }
   beginInput() {
     var _a, _b;
-    this.droppedRefine || (this.droppedRefine = this.jobs.length > 0 || this.pendingTiles.size > 0);
+    this.droppedRefine || (this.droppedRefine = this.jobs.length > 0 || this.pendingTiles.size > 0 || !!this.inkCommit);
     this.renderGeneration += 1;
     (_b = (_a = this.backend) == null ? void 0 : _a.cancelGeneration) == null ? void 0 : _b.call(_a, this.renderGeneration);
     if (this.frame !== null) cancelAnimationFrame(this.frame);
