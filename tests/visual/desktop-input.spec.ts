@@ -45,8 +45,20 @@ for (const mode of ["ink", "pdf"] as const) {
     await page.setViewportSize({ width: 1280, height: 800 });
     await page.goto("/");
     await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+    // Empty visible cells skip rasterization, so the blank PDF fixture mounts
+    // no tiles on its own; draw ink first to exercise real mounted tiles.
+    if (mode === "pdf") {
+      await page.evaluate(() => (window as any).__inkNotesPreview.openPdf());
+      await page.evaluate(() => { (window as any).__inkNotesPreview.view.state.tool = "pen"; });
+      const page0 = await page.locator(".ink-page").boundingBox();
+      if (!page0) throw new Error("Ink page has no layout box");
+      await page.mouse.move(page0.x + page0.width * 0.25, page0.y + page0.height * 0.4);
+      await page.mouse.down();
+      await page.mouse.move(page0.x + page0.width * 0.7, page0.y + page0.height * 0.45, { steps: 10 });
+      await page.mouse.up();
+      await expect.poll(() => page.evaluate(() => (window as any).__inkNotesPreview.view.pendingInkStrokes.length)).toBe(0);
+    }
     const result = await page.evaluate(async (mode) => {
-      if (mode === "pdf") await (window as any).__inkNotesPreview.openPdf();
       const view = (window as any).__inkNotesPreview.view;
       const scroller = document.querySelector<HTMLElement>(mode === "ink" ? ".ink-page-scroller" : ".ink-pdf-scroller")!;
       const layer = document.querySelector<HTMLElement>(".ink-tile-layer")!;

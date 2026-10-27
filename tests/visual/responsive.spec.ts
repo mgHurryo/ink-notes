@@ -763,25 +763,42 @@ test("stroke eraser updates mounted tiles before pointerup", async ({ page }) =>
   await page.setViewportSize({ width: 720, height: 900 });
   await page.goto("/");
   await expect.poll(() => page.locator(".ink-tile-layer canvas").count()).toBeGreaterThan(0);
-  await page.getByRole("button", { name: "Erase", exact: true }).click();
-  const box = await page.locator(".ink-page").boundingBox();
-  if (!box) throw new Error("Ink page has no layout box");
-  await page.mouse.move(box.x + box.width * 0.49, box.y + box.height * 0.31);
-  await page.mouse.down();
-  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
-  const liveTiles = await page.locator(".ink-tile-layer canvas").evaluateAll((canvases: HTMLCanvasElement[]) => {
+  const tileProbe = () => page.locator(".ink-tile-layer").evaluate(async (layer) => {
     let count = 0, alpha = 0;
-    for (const canvas of canvases) {
-      const context = canvas.getContext("2d");
-      if (!context) continue;
+    for (const canvas of Array.from(layer.querySelectorAll("canvas"))) {
+      // Worker tiles use bitmaprenderer, so inspect a copy through 2D.
+      const copy = document.createElement("canvas");
+      copy.width = canvas.width; copy.height = canvas.height;
+      const context = copy.getContext("2d")!;
+      context.drawImage(canvas, 0, 0);
       count++;
-      const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data;
+      const pixels = context.getImageData(0, 0, copy.width, copy.height).data;
       for (let index = 3; index < pixels.length; index += 4) alpha += pixels[index];
     }
     return { count, alpha };
   });
+  const before = await tileProbe();
+  expect(before.count).toBeGreaterThan(0);
+  expect(before.alpha).toBeGreaterThan(0);
+  // Keep a second stroke inside the preview stroke's tile row but left of the
+  // erase point: erased cells re-render with the keeper ink only, because
+  // cells whose last stroke disappears drop their tiles entirely.
+  await page.evaluate(() => { (window as any).__inkNotesPreview.view.state.tool = "pen"; });
+  const box = await page.locator(".ink-page").boundingBox();
+  if (!box) throw new Error("Ink page has no layout box");
+  await page.mouse.move(box.x + box.width * 0.1, box.y + box.height * 0.35);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.37, { steps: 6 });
+  await page.mouse.up();
+  let kept = { count: 0, alpha: 0 };
+  await expect.poll(async () => (kept = await tileProbe()).alpha).toBeGreaterThan(before.alpha);
+  await page.getByRole("button", { name: "Erase", exact: true }).click();
+  await page.mouse.move(box.x + box.width * 0.49, box.y + box.height * 0.31);
+  await page.mouse.down();
+  let liveTiles = { count: 0, alpha: 0 };
+  await expect.poll(async () => (liveTiles = await tileProbe()).alpha, { timeout: 5000 }).toBeLessThan(kept.alpha);
   expect(liveTiles.count).toBeGreaterThan(0);
-  expect(liveTiles.alpha).toBe(0);
+  expect(liveTiles.alpha).toBeGreaterThan(0);
   await page.mouse.up();
 });
 
