@@ -431,6 +431,68 @@ describe("interactive tile commits", () => {
     expect(renderer.inkCommitPaused).toBe(true);
   });
 
+  it("requeues a dropped full-density refine once the ink input ends", () => {
+    const host = { children: [] };
+    const state = { id: 1, index: { width: 256, height: 256, revisions: new Map([["0:0", 4]]), hasCell: () => true } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, {
+      active: state, disposed: false, host, density: 2, visible: new Set(["0:0"]),
+      viewport: { x: 0, y: 0, width: 100, height: 100 }, jobs: [], heldCells: new Set(),
+      cache: new Map(), get: vi.fn(() => undefined), schedule: vi.fn(), scheduleInkCommit: vi.fn(),
+      backend: null, renderGeneration: 0, frame: null, pendingTiles: new Map([["stale", 0]]),
+      inkCommit: null, inkCommitPaused: false, droppedRefine: false,
+    });
+
+    renderer.update({ x: 0, y: 0, width: 100, height: 100 }, 2, true);
+    expect(renderer.jobs).toEqual([expect.objectContaining({ cell: "0:0", density: 2, priority: "visible" })]);
+
+    renderer.beginInput();
+    expect(renderer.jobs).toEqual([]);
+
+    renderer.resumeInkCommit();
+    expect(renderer.jobs).toEqual([expect.objectContaining({ cell: "0:0", density: 2, priority: "visible" })]);
+  });
+
+  it("does not compensate when input began with no queued tile work", () => {
+    const state = { id: 1, index: { width: 256, height: 256, revisions: new Map([["0:0", 4]]), hasCell: () => true } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, {
+      active: state, disposed: false, host: { children: [] }, density: 2, visible: new Set(["0:0"]),
+      viewport: { x: 0, y: 0, width: 100, height: 100 }, jobs: [], heldCells: new Set(), cache: new Map(),
+      get: vi.fn(() => undefined), schedule: vi.fn(), scheduleInkCommit: vi.fn(),
+      backend: null, renderGeneration: 0, frame: null, pendingTiles: new Map(),
+      inkCommit: null, inkCommitPaused: false, droppedRefine: false,
+    });
+
+    renderer.beginInput();
+    renderer.resumeInkCommit();
+
+    expect(renderer.jobs).toEqual([]);
+  });
+
+  it("skips the compensation refine when every visible cell holds its exact raster", () => {
+    const host = { children: [] };
+    const state = { id: 1, index: { width: 256, height: 256, revisions: new Map([["0:0", 3]]), hasCell: () => true } };
+    const tile = { node: { parentElement: host }, revision: 3 };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, {
+      active: state, disposed: false, host, density: 2, visible: new Set(["0:0"]),
+      viewport: { x: 0, y: 0, width: 100, height: 100 },
+      jobs: [{ cell: "9:9", priority: "prewarm" }], heldCells: new Set(), cache: new Map(),
+      get: vi.fn(() => tile), attach: vi.fn(), schedule: vi.fn(), scheduleInkCommit: vi.fn(),
+      backend: null, renderGeneration: 0, frame: null, pendingTiles: new Map([["stale", 0]]),
+      inkCommit: null, inkCommitPaused: false, droppedRefine: false,
+    });
+
+    renderer.beginInput();
+    expect(renderer.jobs).toEqual([]);
+
+    renderer.resumeInkCommit();
+
+    expect(renderer.jobs).toEqual([]);
+    expect(renderer.attach).not.toHaveBeenCalled();
+  });
+
   it("evicts least-recently-used tile canvases beyond the pixel budget", () => {
     const renderer = Object.create(TileRenderer.prototype) as any;
     const firstCanvas = { width: 4_000, height: 2_500 };

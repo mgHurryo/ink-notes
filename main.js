@@ -31185,6 +31185,11 @@ var TileRenderer = class {
     this.inkFrame = null;
     this.inkCommit = null;
     this.inkCommitPaused = false;
+    // beginInput() cancels queued full-density refine jobs so tiles never race
+    // the pointer; remember that drop so resumeInkCommit() can rebuild them,
+    // otherwise a page zoomed in right before a stroke stays blurry until the
+    // next scroll, zoom, or page turn.
+    this.droppedRefine = false;
     this.heldCells = /* @__PURE__ */ new Set();
     this.sequence = 0;
     this.pixels = 0;
@@ -31218,6 +31223,7 @@ var TileRenderer = class {
     (_b = (_a = this.backend) == null ? void 0 : _a.cancelGeneration) == null ? void 0 : _b.call(_a, this.renderGeneration);
     const state = this.state(page, width, height);
     this.pendingTiles.clear();
+    this.droppedRefine = false;
     if (state !== this.active) {
       this.cancelInkCommit();
       this.host.replaceChildren();
@@ -31357,6 +31363,7 @@ var TileRenderer = class {
   }
   beginInput() {
     var _a, _b;
+    this.droppedRefine || (this.droppedRefine = this.jobs.length > 0 || this.pendingTiles.size > 0);
     this.renderGeneration += 1;
     (_b = (_a = this.backend) == null ? void 0 : _a.cancelGeneration) == null ? void 0 : _b.call(_a, this.renderGeneration);
     if (this.frame !== null) cancelAnimationFrame(this.frame);
@@ -31366,6 +31373,10 @@ var TileRenderer = class {
   }
   resumeInkCommit() {
     this.inkCommitPaused = false;
+    if (this.droppedRefine) {
+      this.droppedRefine = false;
+      if (this.active && !this.disposed && !this.inkCommit) this.update(this.viewport, this.density, true);
+    }
     this.scheduleInkCommit();
     this.schedule();
   }
