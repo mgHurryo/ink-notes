@@ -307,7 +307,10 @@ test("a trackpad flick advances one page and fast mouse-wheel notches are dampen
     await view.navigateToPage(view.notebook.pages[0].id);
     const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
     scroller.scrollLeft = scroller.scrollWidth;
-    for (const deltaX of [140, 90, 60, 30, 20, 40, 70]) scroller.dispatchEvent(new WheelEvent("wheel", {
+    // The tail must decay monotonically: since #264 a mid-tail sample jumping
+    // over the decayed envelope is contracted as a renewed flick and flips a
+    // second page, so a rising tail would make this burst two gestures.
+    for (const deltaX of [140, 90, 60, 30, 20, 14, 10]) scroller.dispatchEvent(new WheelEvent("wheel", {
       bubbles: true, cancelable: true, deltaX,
     }));
   });
