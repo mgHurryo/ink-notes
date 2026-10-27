@@ -266,6 +266,22 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(2);
     });
 
+    it("rearms a constant-velocity vertical flick landing inside the inertia tail without a quiet gap", async () => {
+      const { scroller, wheel, settle } = await desktopSetup();
+      // A real Windows precision trackpad bridges a human re-flick with a
+      // 1-2s inertia tail, so every gap stays under the quiet-gap threshold
+      // and the jump itself must re-arm - the vertical mirror of the
+      // horizontal constant-velocity rearm above.
+      scroller.scrollTop = 600;
+      wheel(0, 140, { timeStamp: 100 });
+      for (const [delta, timeStamp] of [[90, 110], [60, 120], [30, 130], [20, 140], [14, 150]]) {
+        wheel(0, delta, { timeStamp });
+      }
+      expect(settle).toHaveBeenCalledTimes(1);
+      for (const timeStamp of [160, 170, 180, 190]) wheel(0, 60, { timeStamp });
+      expect(settle).toHaveBeenCalledTimes(2);
+    });
+
     it("does not rearm while the same tail decays smoothly", async () => {
       const { wheel, settle } = await desktopSetup();
       for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [40, 130], [30, 140],
@@ -295,6 +311,19 @@ export function gestureContract(create: () => Promise<any>): void {
       for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [30, 130], [20, 140],
         [14, 150], [10, 160]]) {
         wheel(delta, 0, { timeStamp: time });
+      }
+      expect(settle).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the same decaying burst to one page on the vertical axis", async () => {
+      const { scroller, wheel, settle } = await desktopSetup();
+      // The vertical mirror of the fixture burst above: sharing the jump
+      // re-arm with the x axis must not let a monotonically decaying y burst
+      // clear the 2.2x envelope and flip a second page.
+      scroller.scrollTop = 600;
+      for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [30, 130], [20, 140],
+        [14, 150], [10, 160]]) {
+        wheel(0, delta, { timeStamp: time });
       }
       expect(settle).toHaveBeenCalledTimes(1);
     });
