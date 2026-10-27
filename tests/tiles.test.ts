@@ -536,6 +536,33 @@ describe("interactive tile commits", () => {
     expect(renderer.jobs).toEqual([]);
   });
 
+  it("requeues refine work dropped with an aborted in-flight ink commit", () => {
+    const host = { children: [] };
+    const state = { id: 1, index: { width: 256, height: 256, revisions: new Map([["0:0", 4]]), hasCell: () => true } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    // An interactive commit parks its tile jobs on the commit itself, not on
+    // the ordinary queue, so beginInput() must consult the live commit too.
+    Object.assign(renderer, {
+      active: state, disposed: false, host, density: 2, visible: new Set(["0:0"]),
+      viewport: { x: 0, y: 0, width: 100, height: 100 }, jobs: [], heldCells: new Set(),
+      cache: new Map(), get: vi.fn(() => undefined), schedule: vi.fn(), scheduleInkCommit: vi.fn(),
+      backend: null, renderGeneration: 0, frame: null, pendingTiles: new Map(),
+      inkCommit: { state, strokes: [], cells: ["0:0"], clearCells: [],
+        jobs: [{ state, cell: "0:0", density: 2, priority: "visible" }], tiles: [],
+        onComplete: vi.fn(), invalid: false, generation: 0 },
+      inkCommitPaused: false, droppedRefine: false,
+    });
+
+    renderer.beginInput();
+    expect(renderer.droppedRefine).toBe(true);
+
+    // pauseInkCommit() aborts the commit; resumeInkCommit() must settle the
+    // orphaned cells instead of leaving stale rasters mounted.
+    renderer.inkCommit = null;
+    renderer.resumeInkCommit();
+    expect(renderer.jobs).toEqual([expect.objectContaining({ cell: "0:0", density: 2, priority: "visible" })]);
+  });
+
   it("skips the compensation refine when every visible cell holds its exact raster", () => {
     const host = { children: [] };
     const state = { id: 1, index: { width: 256, height: 256, revisions: new Map([["0:0", 3]]), hasCell: () => true } };
