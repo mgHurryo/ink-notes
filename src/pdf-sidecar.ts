@@ -366,6 +366,11 @@ export function moveBlankNotePage(sidecar: PdfSidecar, id: string, toIndex: numb
   if (clamped === from) return false;
   const [entry] = sidecar.notePages.splice(from, 1);
   sidecar.notePages.splice(clamped, 0, entry);
+  // Keep the notebook's page sequence aligned with the note sequence: views
+  // index notebook.pages by notePages position, so a stale order makes strokes
+  // land on the wrong page. Same id-alignment mergeSidecars uses.
+  const pagesById = new Map(sidecar.notebook.pages.map((page) => [page.id, page]));
+  sidecar.notebook.pages = sidecar.notePages.map((entry) => pagesById.get(entry.id) ?? pageForNotePage(entry, "blank"));
   sidecar.notebook.pageOrder = sidecar.notePages.map((entry) => entry.id);
   sidecar.notebook.pageOrderUpdatedAt = Date.now();
   touchNoteOrder(sidecar);

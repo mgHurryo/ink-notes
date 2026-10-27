@@ -34327,6 +34327,11 @@ function moveBlankNotePage(sidecar, id, toIndex) {
   if (clamped === from) return false;
   const [entry] = sidecar.notePages.splice(from, 1);
   sidecar.notePages.splice(clamped, 0, entry);
+  const pagesById = new Map(sidecar.notebook.pages.map((page) => [page.id, page]));
+  sidecar.notebook.pages = sidecar.notePages.map((entry2) => {
+    var _a;
+    return (_a = pagesById.get(entry2.id)) != null ? _a : pageForNotePage(entry2, "blank");
+  });
   sidecar.notebook.pageOrder = sidecar.notePages.map((entry2) => entry2.id);
   sidecar.notebook.pageOrderUpdatedAt = Date.now();
   touchNoteOrder(sidecar);

@@ -203,5 +203,17 @@ describe("note page operations", () => {
     expect(moveBlankNotePage(sidecar, id, 0)).toBe(true);
     expect(sidecar.notePages[0].id).toBe(id);
     expect(moveBlankNotePage(sidecar, sourcePageId(0), 2)).toBe(false);
+    expect(sidecar.notebook.pages.map((page) => page.id)).toEqual(sidecar.notePages.map((page) => page.id));
+  });
+
+  it("keeps a stroke written after a move on its sequence position through a round-trip", () => {
+    const sidecar = makeSidecar();
+    const id = insertBlankNotePage(sidecar, null);
+    moveBlankNotePage(sidecar, id, 0);
+    const target = sidecar.notebook.pages[1];
+    target.strokes.push(stroke(target.id, "stroke-after-move"));
+    const parsed = normalizeSidecar(JSON.parse(JSON.stringify(sidecar)));
+    expect(parsed.notebook.pages.map((page) => page.id)).toEqual(parsed.notePages.map((page) => page.id));
+    expect(parsed.notebook.pages[1].strokes.map((entry) => entry.id)).toContain("stroke-after-move");
   });
 });
