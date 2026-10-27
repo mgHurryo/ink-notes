@@ -31544,8 +31544,13 @@ var TileRenderer = class {
           (_b = job.priority) != null ? _b : "visible"
         ).then((result) => {
           var _a2;
-          if (this.inkCommit !== commit || commit.generation !== this.renderGeneration || result.renderGeneration !== generation || result.pageId !== job.state.page.id || result.cell !== job.cell || this.disposed) {
+          if (this.inkCommit !== commit) {
             result.bitmap.close();
+            return;
+          }
+          if (commit.generation !== this.renderGeneration || result.renderGeneration !== generation || result.pageId !== job.state.page.id || result.cell !== job.cell || this.disposed) {
+            result.bitmap.close();
+            this.finishInkCommit(false);
             return;
           }
           if (result.revision === ((_a2 = job.state.index.revisions.get(job.cell)) != null ? _a2 : 0)) commit.tiles.push(this.tileFromBitmap(job, result));

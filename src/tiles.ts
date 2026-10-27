@@ -571,8 +571,21 @@ export class TileRenderer {
         this.backend.renderTile(job.state.page.id, job.cell, job.density, job.state.index.revisions.get(job.cell) ?? 0,
           job.state.index.width, job.state.index.height, generation, job.priority ?? "visible")
           .then((result) => {
-            if (this.inkCommit !== commit || commit.generation !== this.renderGeneration || result.renderGeneration !== generation
-              || result.pageId !== job.state.page.id || result.cell !== job.cell || this.disposed) { result.bitmap.close(); return; }
+            // The commit was aborted or replaced: finishing it here would
+            // release holds or fire the replacement's callback, so only the
+            // stale bitmap may be closed.
+            if (this.inkCommit !== commit) { result.bitmap.close(); return; }
+            // Still the live commit, but beginInput()/setPage()/dispose()
+            // advanced the generation while the request was in flight (the
+            // worker cannot abort it). Settle as an invalid commit so
+            // onComplete(false) fires, holds release, and schedule() unblocks
+            // instead of stranding the commit loop until the next gesture.
+            if (commit.generation !== this.renderGeneration || result.renderGeneration !== generation
+              || result.pageId !== job.state.page.id || result.cell !== job.cell || this.disposed) {
+              result.bitmap.close();
+              this.finishInkCommit(false);
+              return;
+            }
             if (result.revision === (job.state.index.revisions.get(job.cell) ?? 0)) commit.tiles.push(this.tileFromBitmap(job, result));
             else commit.invalid = true;
             if (commit.jobs.length > 0) this.scheduleInkCommit();
