@@ -25,7 +25,9 @@ for (const mode of ["ink", "pdf"] as const) {
     const b = (await board.boundingBox())!;
     await page.keyboard.down("Alt"); await drag(page, b.x + 200, b.y + 170, -45, -30); await page.keyboard.up("Alt");
     const panned = await note(page); expect(panned.x).toBe(moved.x); expect(panned.scrollX).toBeGreaterThan(0);
-    await page.getByRole("button", { name: "Add text box", exact: true }).click();
+    // The toolbar gained its own "Add text box" (page text); the sticky note
+    // button is the one that adds a box to this note.
+    await page.locator(".ink-sticky-header").getByRole("button", { name: "Add text box", exact: true }).click();
     const input = page.getByRole("textbox", { name: "Sticky Markdown", exact: true }); await input.fill("Movable text"); await input.press("Control+Enter");
     const box = page.locator(".ink-sticky-text-box"), r = (await box.boundingBox())!;
     const original = await note(page); await drag(page, r.x + 8, r.y + 8, 40, 30);
@@ -64,7 +66,7 @@ for (const mode of ["ink", "pdf"] as const) {
   });
   test(`${mode}: Pointer native Pencil handoff moves a box once without writing or moving the card`, async ({ page }) => {
     await ready(page, mode);
-    await page.getByRole("button", { name: "Add text box", exact: true }).click();
+    await page.locator(".ink-sticky-header").getByRole("button", { name: "Add text box", exact: true }).click();
     const input = page.getByRole("textbox", { name: "Sticky Markdown", exact: true }); await input.fill("Pencil object"); await input.press("Control+Enter");
     await page.getByRole("button", { name: "Pointer", exact: true }).click();
     const before = await note(page), frame = page.locator(".ink-sticky-text-box");
