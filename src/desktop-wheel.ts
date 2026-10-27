@@ -95,7 +95,7 @@ export class DesktopWheelGesture {
     const reversed = this.lastDelta !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta);
     // Some devices omit the inertia tail entirely, so a quiet interval is
     // itself a gesture boundary; do not infer it from the next delta's size.
-    const renewed = !this.discrete && this.flipped && axis === "x" && gap >= RENEWED_FLICK_GAP_MS;
+    const renewed = !this.discrete && this.flipped && gap >= RENEWED_FLICK_GAP_MS;
     if (axis !== this.axis || delta.mode !== this.mode || reversed) { this.reset(); gap = 0; }
     else if (renewed) {
       this.reset();
