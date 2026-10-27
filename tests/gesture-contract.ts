@@ -285,6 +285,20 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(1);
     });
 
+    it("keeps the visual single-flick fixture burst to one page", async () => {
+      const { wheel, settle } = await desktopSetup();
+      // tests/visual/desktop-input.spec.ts "a trackpad flick advances one page"
+      // dispatches this exact burst with real ~0ms gaps. The deltas must decay
+      // monotonically: a mid-tail rise over the decayed envelope (>= 2.2x) is
+      // contracted as a renewed flick and would flip a second page, so the
+      // fixture and this burst must evolve together.
+      for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [30, 130], [20, 140],
+        [14, 150], [10, 160]]) {
+        wheel(delta, 0, { timeStamp: time });
+      }
+      expect(settle).toHaveBeenCalledTimes(1);
+    });
+
     it("rearms a horizontal trackpad flick after a short pause and a renewed swipe", async () => {
       const { wheel, settle } = await desktopSetup();
       vi.useFakeTimers();
