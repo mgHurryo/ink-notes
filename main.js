@@ -24231,7 +24231,11 @@ var DesktopWheelGesture = class {
     this.lastAt = at;
     let renewedTravel;
     if (this.flipped && !this.discrete) {
-      const jump = magnitude >= Math.max(RENEWED_FLICK_JUMP_PX, Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO);
+      const settledRise = this.lastMagnitude <= RENEWED_FLICK_RELEASE_PX && magnitude > this.lastMagnitude && magnitude >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO;
+      const jump = magnitude >= Math.max(
+        settledRise ? RENEWED_FLICK_JUMP_PX / 2 : RENEWED_FLICK_JUMP_PX,
+        Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO
+      );
       if (this.renewalBlocked) {
         if (magnitude <= RENEWED_FLICK_RELEASE_PX) this.renewalBlocked = false;
         else if (jump && magnitude > this.lastMagnitude) {

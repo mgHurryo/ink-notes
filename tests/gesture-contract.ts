@@ -288,6 +288,39 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(2);
     });
 
+    it("rearms a moderate same-direction re-swipe over a settled tail without a quiet gap", async () => {
+      const { wheel, settle } = await desktopSetup();
+      // A Windows precision trackpad bridges a human re-flick with an inertia
+      // tail whose gaps all stay under the quiet-gap threshold, and a moderate
+      // re-swipe rises 4-6x off the settled (<=4px) tail while every sample
+      // stays under the 24px jump floor. The re-arm must not depend on
+      // reporting cadence: the identical stream with a single 60ms gap already
+      // re-arms through the quiet-gap path.
+      wheel(140, 0, { timeStamp: 100 });
+      for (const [delta, timeStamp] of [[90, 110], [60, 120], [30, 130], [20, 140], [14, 150],
+        [10, 160], [8, 170], [6, 180], [4, 190], [3, 200], [3, 210], [2, 220]]) {
+        wheel(delta, 0, { timeStamp });
+      }
+      expect(settle).toHaveBeenCalledTimes(1);
+      for (let i = 0; i < 30; i++) wheel(13 + (i % 5) * 2, 0, { timeStamp: 230 + i * 10 });
+      expect(settle).toHaveBeenCalledTimes(2);
+    });
+
+    it("rearms a moderate vertical re-swipe over a settled tail without a quiet gap", async () => {
+      const { scroller, wheel, settle } = await desktopSetup();
+      // The vertical mirror: same settled-tail moderate re-swipe, same
+      // sub-55ms reporting cadence, one renewed page expected.
+      scroller.scrollTop = 600;
+      wheel(0, 140, { timeStamp: 100 });
+      for (const [delta, timeStamp] of [[90, 110], [60, 120], [30, 130], [20, 140], [14, 150],
+        [10, 160], [8, 170], [6, 180], [4, 190], [3, 200], [3, 210], [2, 220]]) {
+        wheel(0, delta, { timeStamp });
+      }
+      expect(settle).toHaveBeenCalledTimes(1);
+      for (let i = 0; i < 30; i++) wheel(0, 13 + (i % 5) * 2, { timeStamp: 230 + i * 10 });
+      expect(settle).toHaveBeenCalledTimes(2);
+    });
+
     it("does not rearm while the same tail decays smoothly", async () => {
       const { wheel, settle } = await desktopSetup();
       for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [40, 130], [30, 140],
