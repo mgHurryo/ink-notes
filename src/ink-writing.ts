@@ -2005,6 +2005,9 @@ export abstract class InkWritingView extends FileView {
     const samples = this.pointerSamples(event);
     if (interaction.tool === "lasso") {
       this.pendingLassoPoint = this.toPoint(samples[samples.length - 1], rect);
+      // Lasso sampling returns before the shared refresh paths below; without
+      // this touchstart heals an in-progress drag as a stale pointer.
+      this.lastPointerActivityAt = Date.now();
       this.requestRender();
       return;
     }

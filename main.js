@@ -28873,6 +28873,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     const samples = this.pointerSamples(event);
     if (interaction.tool === "lasso") {
       this.pendingLassoPoint = this.toPoint(samples[samples.length - 1], rect);
+      this.lastPointerActivityAt = Date.now();
       this.requestRender();
       return;
     }
