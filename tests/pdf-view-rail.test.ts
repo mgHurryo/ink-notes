@@ -673,7 +673,7 @@ describe("pdf page preview rail", () => {
     }
   });
 
-  it.each([[1318, 1, 1, 1270], [1318, 2, 1, 2540], [390, 3, 1, 1026], [800, 2, 2, 3008]])(
+  it.each([[1318, 1, 1, 1270], [1318, 2, 1, 2540], [390, 3, 1, 1026], [800, 2, 2, 3008], [2548, 2, 1, 5000]])(
     "renders the visible PDF at display density (pane %ipx, DPR %i, zoom %i)",
     async (width, dpr, zoom, expectedWidth) => {
       const { view, host, viewports } = await rasterSetup(width, 928, dpr, zoom);
@@ -718,15 +718,31 @@ describe("pdf page preview rail", () => {
     await view.onClose();
   });
 
-  it("keeps high zoom and DPR PDF allocations within the existing canvas limits", async () => {
+  it("keeps high zoom and DPR PDF allocations within the raster budget and edge cap", async () => {
     const { view, host, viewports } = await rasterSetup(2000, 1200, 3, 3);
     await host.renderPdfPage();
-    expect(host.pdfCanvas.width * host.pdfCanvas.height).toBeLessThanOrEqual(16_010_000);
+    expect(host.pdfCanvas.width * host.pdfCanvas.height).toBeLessThanOrEqual(64_010_000);
     expect(Math.max(host.pdfCanvas.width, host.pdfCanvas.height)).toBeLessThanOrEqual(8192);
     expect(viewports[0].width).toBeCloseTo(host.pdfCanvas.width);
     // Width and height are independently rounded to integer backing pixels.
     expect(Math.abs(viewports[0].height - host.pdfCanvas.height)).toBeLessThanOrEqual(1);
     await view.onClose();
+  });
+
+  it("keeps the iOS WebKit ceiling on the settled-page raster", async () => {
+    const { Platform } = await import("../dev/obsidian");
+    Platform.isIosApp = true;
+    try {
+      const { view, host } = await rasterSetup(2548, 928, 2);
+      await host.renderPdfPage();
+      // The platform narrowing withholds the desktop budget raise on iOS:
+      // the same config stays clamped to the 16M WebKit-safe default.
+      expect(host.pdfCanvas.width).toBe(3364);
+      expect(host.pdfCanvas.width * host.pdfCanvas.height).toBeLessThanOrEqual(16_010_000);
+      await view.onClose();
+    } finally {
+      Platform.isIosApp = false;
+    }
   });
 
   it("does not enlarge a cached swipe raster from an old pane size", async () => {
