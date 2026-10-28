@@ -322,15 +322,16 @@ test("a trackpad flick advances one page and fast mouse-wheel notches are dampen
     const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
     scroller.scrollTop = scroller.scrollHeight;
     // One synchronous task hands all five notches the same real Event.timeStamp;
-    // a colliding 0ms gap keeps notch sensitivity at 1.0 and flips five pages
-    // instead of the damped four, so pin the 40ms cadence the damping expects.
+    // a colliding 0ms gap keeps notch sensitivity at 1.0, so pin the 40ms
+    // cadence the 0.8 damping expects. The sub-180ms stream stays one gesture,
+    // so the discrete per-gesture page budget caps the burst at two pages.
     for (let index = 0; index < 5; index++) {
       const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 100 });
       Object.defineProperty(event, "timeStamp", { configurable: true, value: 10000 + index * 40 });
       scroller.dispatchEvent(event);
     }
   });
-  await expect(page.locator(".ink-page-status")).toHaveText("5 / 6");
+  await expect(page.locator(".ink-page-status")).toHaveText("3 / 6");
 });
 
 test("repeated horizontal trackpad swipes rearm and queued wheel pages each animate", async ({ page }) => {
@@ -374,11 +375,15 @@ test("repeated horizontal trackpad swipes rearm and queued wheel pages each anim
       scroller.dispatchEvent(event);
     }
   });
-  await expect(page.locator(".ink-page-status")).toHaveText("8 / 8");
-  await expect.poll(() => page.evaluate(() => (window as any).pageSwipeAnimationCount)).toBe(5);
+  // The 100ms cadence stays one gesture (the idle boundary is 180ms), so the
+  // discrete per-gesture page budget queues two page swipes; each still
+  // animates, the first at its travel-derived duration, the follow-up at the
+  // 64ms floor.
+  await expect(page.locator(".ink-page-status")).toHaveText("5 / 8");
+  await expect.poll(() => page.evaluate(() => (window as any).pageSwipeAnimationCount)).toBe(2);
   const durations = await page.evaluate(() => (window as any).pageSwipeAnimationDurations as number[]);
   expect(durations[0]).toBeGreaterThan(64);
-  expect(durations.slice(1)).toEqual([64, 64, 64, 64]);
+  expect(durations.slice(1)).toEqual([64]);
 });
 
 test("separate renewed trackpad swipes each get a fresh two-page limit", async ({ page }) => {
