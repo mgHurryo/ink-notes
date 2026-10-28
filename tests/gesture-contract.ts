@@ -476,7 +476,22 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(desktop.pageSwipeRequest.target).toBe(4);
     });
 
-    it("does not page again on repeated momentum peaks until the next idle gesture", async () => {
+    it("never pages again on decaying or constant momentum continuation", async () => {
+      const { wheel, settle } = await desktopSetup();
+      wheel(140, 0, { timeStamp: 100 });
+      // A tail that only decays or holds constant is what momentum looks like
+      // on supported trackpads (#264); it must stay suppressed, ripples below
+      // the 24px re-arm floor included.
+      for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [20, 140], [20, 150],
+        [20, 160], [12, 170], [12, 180], [6, 190], [5, 200]]) {
+        wheel(delta, 0, { timeStamp: time });
+      }
+      expect(settle).toHaveBeenCalledTimes(1);
+      wheel(140, 0, { timeStamp: 500 });
+      expect(settle).toHaveBeenCalledTimes(2);
+    });
+
+    it("re-arms a rising sequence after the tail as a fresh flick", async () => {
       const { wheel, settle } = await desktopSetup();
       wheel(140, 0, { timeStamp: 100 });
       for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [10, 140], [4, 150],
@@ -485,8 +500,28 @@ export function gestureContract(create: () => Promise<any>): void {
       }
       expect(settle).toHaveBeenCalledTimes(2);
 
+      // A second sustained rise (8 -> 70 within 30ms, 8.75x) cannot be
+      // momentum: supported-trackpad tails hold constant or decay (#264), so
+      // it is a new finger contact and the blocked window re-arms on it. This
+      // rise used to be swallowed here.
       for (const [delta, time] of [[8, 234], [20, 244], [35, 254], [70, 264]]) wheel(delta, 0, { timeStamp: time });
+      expect(settle).toHaveBeenCalledTimes(3);
+    });
+
+    it("keeps a single contact with one momentum tail to at most two pages", async () => {
+      const { wheel, settle } = await desktopSetup();
+      wheel(140, 0, { timeStamp: 100 });
+      for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [10, 140], [4, 150]]) {
+        wheel(delta, 0, { timeStamp: time });
+      }
+      expect(settle).toHaveBeenCalledTimes(1);
+      // One mid-tail flick may land (initial + at most one continuation); the
+      // tail decaying afterwards must not add a page.
+      for (const [delta, time] of [[50, 160], [55, 170], [60, 180], [30, 190], [20, 200], [12, 210], [25, 220]]) {
+        wheel(delta, 0, { timeStamp: time });
+      }
       expect(settle).toHaveBeenCalledTimes(2);
+      // Only a new finger contact after an idle gap produces a third page.
       wheel(140, 0, { timeStamp: 500 });
       expect(settle).toHaveBeenCalledTimes(3);
     });

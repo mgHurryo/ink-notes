@@ -46,8 +46,9 @@ export class DesktopWheelGesture {
   private lastAt: number | null = null;
   private lastDelta = 0;
   /** Raw magnitude of the previous sample (unlike the decayed lastDelta
-   *  envelope), so a blocked renewal can demand a single-step jump: momentum
-   *  continuation ramps up sample over sample, a fresh flick does not. */
+   *  envelope), so a blocked renewal can demand one strictly ascending step:
+   *  momentum continuation only decays, a fresh flick rises over the settled
+   *  tail without needing an implausible single-step ratio. */
   private lastMagnitude = 0;
   private travel = 0;
   private flipped = false;
@@ -110,10 +111,13 @@ export class DesktopWheelGesture {
       const jump = magnitude >= Math.max(RENEWED_FLICK_JUMP_PX, Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO);
       if (this.renewalBlocked) {
         // Ignore the momentum continuation after a renewed gesture until its
-        // tail settles; momentum ramps up sample over sample, so a re-arm
-        // inside the block must be a single-step jump from a low level.
+        // tail settles: a tail only decays, so a re-arm inside the block must
+        // be the envelope jump above plus one strictly ascending step - a
+        // fresh flick rises over the settled raw level, momentum never does.
+        // Demanding a fixed step ratio here would also reject real flicks
+        // whose first sample rises only 1.5-3x over the settled level.
         if (magnitude <= RENEWED_FLICK_RELEASE_PX) this.renewalBlocked = false;
-        else if (jump && magnitude > this.lastMagnitude * RENEWED_FLICK_JUMP_RATIO) {
+        else if (jump && magnitude > this.lastMagnitude) {
           this.beginRenewedGesture();
           this.flipped = false;
           this.travel = 0;
