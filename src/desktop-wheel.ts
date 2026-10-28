@@ -141,7 +141,18 @@ export class DesktopWheelGesture {
     this.lastAt = at;
     let renewedTravel: number | undefined;
     if (this.flipped && !this.discrete) {
-      const jump = magnitude >= Math.max(RENEWED_FLICK_JUMP_PX, Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO);
+      // A moderate re-swipe rising straight off a settled tail is a fresh
+      // flick even below the absolute floor: with the previous raw sample at
+      // the release level the 2.2x ratio already demands several times that
+      // level, so noise cannot clear it, while the 24px floor swallowed real
+      // sub-24px re-swipes whole (the envelope tracks the raw sample there:
+      // the decayed lastDelta is its min chain). A stream that has already
+      // risen past the release level is mid-ramp, not settled, and keeps the
+      // original floor so a single ramp cannot re-arm twice per gesture.
+      const settledRise = this.lastMagnitude <= RENEWED_FLICK_RELEASE_PX && magnitude > this.lastMagnitude
+        && magnitude >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO;
+      const jump = magnitude >= Math.max(settledRise ? RENEWED_FLICK_JUMP_PX / 2 : RENEWED_FLICK_JUMP_PX,
+        Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO);
       if (this.renewalBlocked) {
         // Ignore the momentum continuation after a renewed gesture until its
         // tail settles: a tail only decays, so a re-arm inside the block must

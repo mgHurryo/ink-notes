@@ -24231,7 +24231,11 @@ var DesktopWheelGesture = class {
     this.lastAt = at;
     let renewedTravel;
     if (this.flipped && !this.discrete) {
-      const jump = magnitude >= Math.max(RENEWED_FLICK_JUMP_PX, Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO);
+      const settledRise = this.lastMagnitude <= RENEWED_FLICK_RELEASE_PX && magnitude > this.lastMagnitude && magnitude >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO;
+      const jump = magnitude >= Math.max(
+        settledRise ? RENEWED_FLICK_JUMP_PX / 2 : RENEWED_FLICK_JUMP_PX,
+        Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO
+      );
       if (this.renewalBlocked) {
         if (magnitude <= RENEWED_FLICK_RELEASE_PX) this.renewalBlocked = false;
         else if (jump && magnitude > this.lastMagnitude) {
@@ -34779,7 +34783,9 @@ var PDF_ZOOM_MAX = 3;
 var PDF_ZOOM_STEP = 1.2;
 var PDF_PAGE_PADDING = 24;
 var SELECTION_OVERLAY_BUDGET = 4e6;
-var PDF_NEIGHBOUR_CACHE_BUDGET = 8e6;
+var PDF_PAGE_RASTER_BUDGET = 64e6;
+var SWIPE_PREVIEW_BUDGET = 16e6;
+var PDF_NEIGHBOUR_CACHE_BUDGET = SWIPE_PREVIEW_BUDGET * 2;
 var SWIPE_PREVIEW_IDLE_DELAY_MS2 = 120;
 var SWIPE_PREVIEW_RETRY_MS2 = 50;
 var RAIL_THUMB_WIDTH = 120;
@@ -36141,12 +36147,11 @@ var PdfInkView = class extends InkWritingView {
       canvas.width = preview.width;
       canvas.height = preview.height;
       (_h = canvas.getContext("2d")) == null ? void 0 : _h.drawImage(preview, 0, 0);
-      return;
     }
     void this.renderSwipeStagePage(stage, neighborIndex);
     const ink = stage.createEl("canvas", { cls: "ink-swipe-canvas" });
     const logicalHeight = baseWidth * display.height / display.width;
-    const resolution = canvasResolution(baseWidth, logicalHeight, window.devicePixelRatio || 1, zoom, SELECTION_OVERLAY_BUDGET);
+    const resolution = canvasResolution(baseWidth, logicalHeight, window.devicePixelRatio || 1, zoom, SWIPE_PREVIEW_BUDGET);
     ink.width = resolution.width;
     ink.height = resolution.height;
     const ctx = ink.getContext("2d");
@@ -36171,7 +36176,7 @@ var PdfInkView = class extends InkWritingView {
       parseFloat(stage.style.height),
       window.devicePixelRatio || 1,
       1,
-      PDF_NEIGHBOUR_CACHE_BUDGET / 2
+      SWIPE_PREVIEW_BUDGET
     );
     const pending = this.pendingNeighbourRenders.get(index);
     if ((pending == null ? void 0 : pending.token) === this.prewarmToken) await pending.promise;
@@ -36239,7 +36244,7 @@ var PdfInkView = class extends InkWritingView {
         size.height,
         window.devicePixelRatio || 1,
         1,
-        PDF_NEIGHBOUR_CACHE_BUDGET / 2
+        SWIPE_PREVIEW_BUDGET
       );
       const scale = resolution.width / page.getViewport({ scale: 1 }).width;
       buffer = document.createElement("canvas");
@@ -36421,7 +36426,8 @@ var PdfInkView = class extends InkWritingView {
       this.pageBaseWidth,
       this.pageBaseHeight,
       window.devicePixelRatio || 1,
-      this.zoom
+      this.zoom,
+      import_obsidian12.Platform.isIosApp ? void 0 : PDF_PAGE_RASTER_BUDGET
     );
     canvas.setCssStyles({ width: "100%", height: "100%" });
     if (!notePage || notePage.sourceIndex === void 0 || !this.pdfDoc) {

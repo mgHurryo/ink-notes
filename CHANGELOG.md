@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5-beta.20 - 2026-10-29
+
+- Rasterize the PDF swipe preview at page density (#299): a ready rail thumbnail now only seeds the first frame while the full-density raster paints on top, so the drag, animation and settle handoff no longer shows a ~120px thumbnail stretched 4-10x across the page. Lift the settled-page raster budget to 64M pixels on desktop (#300): width-filled pages at high device pixel ratios render at full density instead of being permanently clamped by the 16M WebKit-safe default, removing the persistent whole-page blur that worsened with zoom; iOS keeps the 16M ceiling. Halve the renewed-flick jump floor to 12px off a settled tail (#301): a moderate re-swipe (13-21px samples) rising straight off a settled inertia tail flips its page again instead of being swallowed whole, so paging depends on the physical gesture rather than the reporting cadence.
+
 ## 0.1.5-beta.19 - 2026-10-28
 
 - Clear the interaction state when the stroked page vanishes (#294): lifting the pen after the page holding the active stroke is removed no longer leaves a ghost stroke behind, because the pending stroke and its interaction state are reset together with the page. Keep momentum suppression across a soft axis switch on the wheel gesture tail (#295): the tail of a trackpad sweep that drifts past the axis-retention ratio, or re-targets via Shift mid-flight, no longer re-arms into a second page flip, while discrete-notch streams and not-yet-flipped gestures keep their hard reset. Backfill the missing beta.16-18 changelog and versions.json entries (#296) and pin the convention with a release-metadata consistency test; no app behavior change.

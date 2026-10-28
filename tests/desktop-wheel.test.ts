@@ -47,6 +47,39 @@ describe("DesktopWheelGesture blocked-window re-arm", () => {
   });
 });
 
+describe("DesktopWheelGesture moderate re-swipe over a settled tail", () => {
+  // A Windows precision trackpad inertia tail keeps every gap under the 55ms
+  // quiet-gap threshold, so a mid-stream re-swipe can only re-arm through the
+  // jump predicate. A moderate re-swipe rises 4-6x off the settled (<=4px)
+  // tail yet stays under the 24px absolute floor in every sample: the floor
+  // must not swallow it, while a stream that already rose past the release
+  // level keeps the original floor so one ramp cannot re-arm twice.
+  function pagesAcrossModerateReswipe(quietGapMs: number): number {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 0;
+    const feed = (magnitudes: number[], stepMs: number) => {
+      for (const magnitude of magnitudes) {
+        pages += gesture.pageDelta(gesture.begin({ x: magnitude, y: 0, mode: 0 }, false, at), false);
+        at += stepMs;
+      }
+    };
+    feed([140, 90, 60, 30, 20, 14], 10); // fast phase: one page
+    feed([10, 8, 6, 4, 3, 3, 2], 10); // inertia tail settles at the release level
+    at += quietGapMs; // >= 55ms exits through the quiet-gap path (control)
+    feed(Array.from({ length: 30 }, (_, i) => 13 + (i % 5) * 2), 10);
+    return pages;
+  }
+
+  it("rearms a moderate re-swipe rising straight off the settled tail", () => {
+    expect(pagesAcrossModerateReswipe(0)).toBe(2);
+  });
+
+  it("keeps the identical re-swipe with a 60ms quiet gap at two pages", () => {
+    expect(pagesAcrossModerateReswipe(60)).toBe(2);
+  });
+});
+
 describe("DesktopWheelGesture gesture boundaries", () => {
   it("keeps a decaying flick to a single page (no momentum continuation)", () => {
     expect(flipCount([140, 90, 60, 30, 20, 14, 10])).toBe(1);

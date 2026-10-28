@@ -673,7 +673,7 @@ describe("pdf page preview rail", () => {
     }
   });
 
-  it.each([[1318, 1, 1, 1270], [1318, 2, 1, 2540], [390, 3, 1, 1026], [800, 2, 2, 3008]])(
+  it.each([[1318, 1, 1, 1270], [1318, 2, 1, 2540], [390, 3, 1, 1026], [800, 2, 2, 3008], [2548, 2, 1, 5000]])(
     "renders the visible PDF at display density (pane %ipx, DPR %i, zoom %i)",
     async (width, dpr, zoom, expectedWidth) => {
       const { view, host, viewports } = await rasterSetup(width, 928, dpr, zoom);
@@ -718,15 +718,31 @@ describe("pdf page preview rail", () => {
     await view.onClose();
   });
 
-  it("keeps high zoom and DPR PDF allocations within the existing canvas limits", async () => {
+  it("keeps high zoom and DPR PDF allocations within the raster budget and edge cap", async () => {
     const { view, host, viewports } = await rasterSetup(2000, 1200, 3, 3);
     await host.renderPdfPage();
-    expect(host.pdfCanvas.width * host.pdfCanvas.height).toBeLessThanOrEqual(16_010_000);
+    expect(host.pdfCanvas.width * host.pdfCanvas.height).toBeLessThanOrEqual(64_010_000);
     expect(Math.max(host.pdfCanvas.width, host.pdfCanvas.height)).toBeLessThanOrEqual(8192);
     expect(viewports[0].width).toBeCloseTo(host.pdfCanvas.width);
     // Width and height are independently rounded to integer backing pixels.
     expect(Math.abs(viewports[0].height - host.pdfCanvas.height)).toBeLessThanOrEqual(1);
     await view.onClose();
+  });
+
+  it("keeps the iOS WebKit ceiling on the settled-page raster", async () => {
+    const { Platform } = await import("../dev/obsidian");
+    Platform.isIosApp = true;
+    try {
+      const { view, host } = await rasterSetup(2548, 928, 2);
+      await host.renderPdfPage();
+      // The platform narrowing withholds the desktop budget raise on iOS:
+      // the same config stays clamped to the 16M WebKit-safe default.
+      expect(host.pdfCanvas.width).toBe(3364);
+      expect(host.pdfCanvas.width * host.pdfCanvas.height).toBeLessThanOrEqual(16_010_000);
+      await view.onClose();
+    } finally {
+      Platform.isIosApp = false;
+    }
   });
 
   it("does not enlarge a cached swipe raster from an old pane size", async () => {
@@ -835,7 +851,7 @@ describe("pdf page preview rail", () => {
     await view.onClose();
   });
 
-  it("reuses a ready page thumbnail for the swipe stage", async () => {
+  it("renders the swipe stage at page resolution even when the rail thumbnail is ready", async () => {
     const { view, host } = await rasterSetup(800, 600, 1);
     const editor = host as any;
     editor.refreshPageRail();
@@ -847,10 +863,69 @@ describe("pdf page preview rail", () => {
 
     editor.ensureSwipeStage(-24);
 
-    const stageCanvas = host.scroller.querySelector<HTMLCanvasElement>(".ink-swipe-stage .ink-swipe-canvas");
-    expect(stageCanvas).not.toBeNull();
-    expect(stageCanvas).toMatchObject({ width: 120, height: 170 });
-    expect(render).not.toHaveBeenCalled();
+    const stage = host.scroller.querySelector<HTMLElement>(".ink-swipe-stage")!;
+    // The thumbnail stays as the first frame under the real raster.
+    const thumb = stage.querySelector<HTMLCanvasElement>(".ink-swipe-canvas")!;
+    expect(thumb).toMatchObject({ width: 120, height: 170 });
+    // renderSwipeStagePage paints the full page raster on top of it.
+    expect(render).toHaveBeenCalled();
+    const raster = stage.querySelector<HTMLCanvasElement>("canvas:not(.ink-swipe-canvas)")!;
+    await vi.waitFor(() => expect(raster.width).toBeGreaterThan(120));
+    const pageFitWidth = Math.min(800 - 48, (600 - 48) / (841.89 / 595.28));
+    expect(raster.width).toBe(Math.round(pageFitWidth * 1));
+    const inkLayer = stage.querySelectorAll<HTMLCanvasElement>(".ink-swipe-canvas")[1]!;
+    expect(inkLayer.width).toBeGreaterThan(120);
+    await view.onClose();
+  });
+
+  it("rasterizes the swipe stage at full Retina density when the rail thumbnail is ready", async () => {
+    const { view, host } = await rasterSetup(1032, 1376, 2);
+    const editor = host as any;
+    editor.refreshPageRail();
+    const preview = editor.thumbButtons.get(1)!.querySelector("canvas") as HTMLCanvasElement;
+    preview.width = 240;
+    preview.height = 340;
+    preview.dataset.previewReady = "true";
+
+    editor.ensureSwipeStage(-24);
+
+    const stage = host.scroller.querySelector<HTMLElement>(".ink-swipe-stage")!;
+    const raster = stage.querySelector<HTMLCanvasElement>("canvas:not(.ink-swipe-canvas)")!;
+    const pageFitWidth = Math.min(1032 - 48, (1376 - 48) / (841.89 / 595.28));
+    // Full dpr density: distinct from the thumbnail copy (240) and from the
+    // old 4M-budget clamp (~1682), so only the 16M budget satisfies this.
+    await vi.waitFor(() => expect(raster.width).toBe(Math.round(pageFitWidth * 2)));
+    await view.onClose();
+  });
+
+  it("keeps portrait swipe rasters above the old 4M preview budget", async () => {
+    const { view, host } = await rasterSetup(1318, 928, 3, 2);
+    const editor = host as any;
+    editor.ensureSwipeStage(-24);
+
+    const stage = host.scroller.querySelector<HTMLElement>(".ink-swipe-stage")!;
+    await host.renderSwipeStagePage(stage, 1);
+    const raster = stage.querySelector<HTMLCanvasElement>("canvas:not(.ink-swipe-canvas)")!;
+    const pageFitWidth = Math.min(1318 - 48, (928 - 48) / (841.89 / 595.28));
+    // 622x880 at dpr 3 is ~4.9M pixels: the old 4M clamp downscaled this to
+    // ~1682 wide, the swipe budget renders it at full display density.
+    expect(raster.width).toBe(Math.round(pageFitWidth * 3));
+    await view.onClose();
+  });
+
+  it("holds both prewarmed neighbours at full density without evicting them", async () => {
+    const { view, host } = await rasterSetup(1318, 928, 4);
+    await host.prewarmNeighbour(0, host.prewarmToken);
+    await host.prewarmNeighbour(2, host.prewarmToken);
+    const pageFitWidth = Math.min(1318 - 48, (928 - 48) / (841.89 / 595.28));
+    // Two dpr-4 rasters (~8.8M pixels each, ~17.5M together) fit the cache:
+    // the old 8M total also capped each page at 4M (~1682 wide), and a 16M
+    // total without this 2x raise still evicted the first neighbour as the
+    // second landed.
+    expect(host.neighbourCache.size).toBe(2);
+    for (const canvas of host.neighbourCache.values()) {
+      expect(canvas.width).toBe(Math.round(pageFitWidth * 4));
+    }
     await view.onClose();
   });
 
