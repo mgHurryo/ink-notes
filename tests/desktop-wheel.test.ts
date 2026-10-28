@@ -148,4 +148,50 @@ describe("DesktopWheelGesture diagonal zero-component samples", () => {
   it("applies the same zero-component tolerance on the y axis", () => {
     expect(flipCount([[0, 30], [1, 40], [3, 0], [0, 40]])).toBe(1);
   });
+
+  it("still keeps a diagonal scroll across two consecutive zero-axis samples to one page", () => {
+    // Two paused samples stay inside the diagonal tolerance; only a sustained
+    // run may re-classify the axis.
+    expect(flipCount([[8, 1], [10, 1], [0, 3], [0, 3], [9, 1], [9, 1], [9, 1], [9, 1], [8, 1]])).toBe(1);
+  });
+});
+
+describe("DesktopWheelGesture sustained perpendicular stream", () => {
+  // A mouse wheel emits deltaX=0 on every sample, so a vertical burst that
+  // follows a horizontal gesture inside the idle window must re-classify onto
+  // the y axis; unconditional zero-component retention pins movement to 0
+  // forever and the burst never flips a page (the desktop-input visual spec
+  // queues two more pages there, "5 / 8").
+  function pagesAcrossPerpendicularBurst(): number {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    const flick = [140, 90, 60, 30, 10, 4];
+    flick.forEach((magnitude, i) => {
+      pages += gesture.pageDelta(gesture.begin({ x: magnitude, y: 0, mode: 0 }, false, 110 + i * 10), false);
+    });
+    pages += gesture.pageDelta(gesture.begin({ x: 140, y: 0, mode: 0 }, false, 220), false);
+    for (let i = 0; i < 8; i++) {
+      pages += gesture.pageDelta(gesture.begin({ x: 0, y: 100, mode: 0 }, false, 300 + i * 100), false);
+    }
+    return pages;
+  }
+
+  it("re-arms a sustained vertical wheel burst after a horizontal gesture", () => {
+    // Two pages from the horizontal flick plus the budgeted two notch pages
+    // from the re-armed burst.
+    expect(pagesAcrossPerpendicularBurst()).toBe(4);
+  });
+
+  it("re-arms the same way after a vertical gesture", () => {
+    const gesture = new DesktopWheelGesture();
+    const flick = [140, 90, 60, 30, 10, 4];
+    flick.forEach((magnitude, i) => {
+      gesture.pageDelta(gesture.begin({ x: 0, y: magnitude, mode: 0 }, false, 110 + i * 10), false);
+    });
+    gesture.pageDelta(gesture.begin({ x: 0, y: 140, mode: 0 }, false, 220), false);
+    // Sustained horizontal samples (deltaY exactly 0) must re-classify onto x.
+    const axes: Array<"x" | "y"> = [];
+    for (let i = 0; i < 5; i++) axes.push(gesture.begin({ x: 100, y: 0, mode: 0 }, false, 300 + i * 100).axis);
+    expect(axes).toContain("x");
+  });
 });

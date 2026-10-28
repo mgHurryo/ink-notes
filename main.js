@@ -24154,6 +24154,7 @@ var PAGE_TRAVEL_PX = 100;
 var HORIZONTAL_PAGE_TRAVEL_PX = 48;
 var MAX_TRACKPAD_PAGES_PER_GESTURE = 2;
 var AXIS_RETENTION_RATIO = 0.65;
+var ZERO_AXIS_PAUSES_TO_SWITCH = 2;
 function normalizeWheel(event, viewport) {
   const { deltaX, deltaY, deltaMode } = event;
   if (![deltaX, deltaY].every(Number.isFinite) || ![0, 1, 2].includes(deltaMode)) return null;
@@ -24181,6 +24182,7 @@ var DesktopWheelGesture = class {
     this.renewedIncreases = 0;
     this.renewalBlocked = false;
     this.trackpadPages = 0;
+    this.zeroAxisPauses = 0;
     this.gestureId = 0;
   }
   beginRenewedGesture() {
@@ -24194,7 +24196,7 @@ var DesktopWheelGesture = class {
     this.lastDelta = this.lastMagnitude = this.travel = this.notchCredit = 0;
     this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     this.renewalBlocked = false;
-    this.trackpadPages = 0;
+    this.trackpadPages = this.zeroAxisPauses = 0;
     this.flipped = this.discrete = false;
     this.mode = 0;
   }
@@ -24205,7 +24207,7 @@ var DesktopWheelGesture = class {
       gap = 0;
     }
     const horizontal = Math.abs(delta.x), vertical = Math.abs(delta.y);
-    const axis = shift ? "x" : this.axis === "x" && (horizontal === 0 || horizontal >= vertical * AXIS_RETENTION_RATIO) ? "x" : this.axis === "y" && (vertical === 0 || vertical >= horizontal * AXIS_RETENTION_RATIO) ? "y" : horizontal >= vertical ? "x" : "y";
+    const axis = shift ? "x" : this.axis === "x" && (horizontal === 0 && this.zeroAxisPauses < ZERO_AXIS_PAUSES_TO_SWITCH || horizontal >= vertical * AXIS_RETENTION_RATIO) ? "x" : this.axis === "y" && (vertical === 0 && this.zeroAxisPauses < ZERO_AXIS_PAUSES_TO_SWITCH || vertical >= horizontal * AXIS_RETENTION_RATIO) ? "y" : horizontal >= vertical ? "x" : "y";
     const movement = axis === "x" ? delta.x || (shift ? delta.y : 0) : delta.y;
     const magnitude = Math.abs(movement);
     const pixelNotch = delta.x === 0 && (axis === "y" || shift) && magnitude >= 80 && (magnitude % 100 === 0 || magnitude % 120 === 0);
@@ -24219,6 +24221,7 @@ var DesktopWheelGesture = class {
       this.reset();
       gap = 0;
     }
+    this.zeroAxisPauses = movement === 0 && axis === this.axis ? this.zeroAxisPauses + 1 : 0;
     this.discrete = this.axis === null ? discrete : this.discrete && discrete;
     this.axis = axis;
     this.mode = delta.mode;
