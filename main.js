@@ -24205,12 +24205,12 @@ var DesktopWheelGesture = class {
       gap = 0;
     }
     const horizontal = Math.abs(delta.x), vertical = Math.abs(delta.y);
-    const axis = shift ? "x" : this.axis === "x" && horizontal >= vertical * AXIS_RETENTION_RATIO ? "x" : this.axis === "y" && vertical >= horizontal * AXIS_RETENTION_RATIO ? "y" : horizontal >= vertical ? "x" : "y";
+    const axis = shift ? "x" : this.axis === "x" && (horizontal === 0 || horizontal >= vertical * AXIS_RETENTION_RATIO) ? "x" : this.axis === "y" && (vertical === 0 || vertical >= horizontal * AXIS_RETENTION_RATIO) ? "y" : horizontal >= vertical ? "x" : "y";
     const movement = axis === "x" ? delta.x || (shift ? delta.y : 0) : delta.y;
     const magnitude = Math.abs(movement);
     const pixelNotch = delta.x === 0 && (axis === "y" || shift) && magnitude >= 80 && (magnitude % 100 === 0 || magnitude % 120 === 0);
     const discrete = delta.mode !== 0 || pixelNotch;
-    const reversed = this.lastDelta !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta);
+    const reversed = this.lastDelta !== 0 && movement !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta);
     const renewed = !this.discrete && this.flipped && gap >= RENEWED_FLICK_GAP_MS;
     if (axis !== this.axis || delta.mode !== this.mode || reversed) {
       this.reset();

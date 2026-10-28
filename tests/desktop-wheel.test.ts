@@ -4,14 +4,14 @@ import { DesktopWheelGesture, type WheelDelta } from "../src/desktop-wheel";
 
 // Drive the pure gesture logic directly: one trackpad sample per 16ms frame,
 // never natively scrolled, so accumulated page travel is what flips pages.
-function flipCount(deltas: number[], axis: "x" | "y" = "x"): number {
+function flipCount(deltas: Array<number | readonly [number, number]>, axis: "x" | "y" = "x"): number {
   const gesture = new DesktopWheelGesture();
   let pages = 0;
-  deltas.forEach((magnitude, i) => {
-    const delta: WheelDelta = axis === "x"
-      ? { x: magnitude, y: 0, mode: 0 }
-      : { x: 0, y: magnitude, mode: 0 };
-    pages += gesture.pageDelta(gesture.begin(delta, false, i * 16), false);
+  deltas.forEach((delta, i) => {
+    const [x, y] = Array.isArray(delta)
+      ? delta
+      : axis === "x" ? [delta, 0] as const : [0, delta] as const;
+    pages += gesture.pageDelta(gesture.begin({ x, y, mode: 0 }, false, i * 16), false);
   });
   return pages;
 }
@@ -105,5 +105,34 @@ describe("DesktopWheelGesture discrete notch budget", () => {
     // so only the budgeted two pages queue, matching the "5 / 8" the
     // desktop-input visual spec asserts.
     expect(notchStreamCount(100, 8, 100)).toBe(2);
+  });
+});
+
+describe("DesktopWheelGesture diagonal zero-component samples", () => {
+  // Diagonal trackpad streams contain samples whose held-axis component is
+  // exactly 0; they pause the stream instead of switching the axis, so they
+  // must not reset the travel the gesture already accumulated.
+  it("keeps a slow diagonal scroll across a zero-axis sample to one page", () => {
+    expect(flipCount([[8, 1], [10, 1], [0, 3], [9, 1], [9, 0], [9, 1], [9, 1], [8, 1]])).toBe(1);
+  });
+
+  it("stays at one page when the crossing sample keeps both components", () => {
+    expect(flipCount([[8, 1], [10, 1], [3, 3], [9, 1], [9, 0], [9, 1], [9, 1], [8, 1]])).toBe(1);
+  });
+
+  it("budgets a genuine axis switch after a zero-axis sample from zero travel", () => {
+    // 5x8px stays under the 48px horizontal threshold; the switch to y must
+    // settle pages from zero y-travel, not inherit the x-axis travel (a leak
+    // would flip twice across these samples).
+    expect(flipCount([
+      [8, 1], [8, 1], [8, 1], [8, 1], [8, 1],
+      [0, 9],
+      [1, 9], [1, 9], [1, 9], [1, 9], [1, 9], [1, 9],
+      [1, 9], [1, 9], [1, 9], [1, 9], [1, 9], [1, 9],
+    ])).toBe(1);
+  });
+
+  it("applies the same zero-component tolerance on the y axis", () => {
+    expect(flipCount([[0, 30], [1, 40], [3, 0], [0, 40]])).toBe(1);
   });
 });
