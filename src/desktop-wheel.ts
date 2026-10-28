@@ -81,9 +81,12 @@ export class DesktopWheelGesture {
     let gap = this.lastAt === null ? 0 : at - this.lastAt;
     if (gap < 0 || gap >= GESTURE_IDLE_MS) { this.reset(); gap = 0; }
     const horizontal = Math.abs(delta.x), vertical = Math.abs(delta.y);
+    // A zero component on the held axis pauses a diagonal stream instead of
+    // switching the axis; without the tolerance the axis flips and the reset
+    // below wipes the travel the gesture already accumulated.
     const axis = shift ? "x"
-      : this.axis === "x" && horizontal >= vertical * AXIS_RETENTION_RATIO ? "x"
-        : this.axis === "y" && vertical >= horizontal * AXIS_RETENTION_RATIO ? "y"
+      : this.axis === "x" && (horizontal === 0 || horizontal >= vertical * AXIS_RETENTION_RATIO) ? "x"
+        : this.axis === "y" && (vertical === 0 || vertical >= horizontal * AXIS_RETENTION_RATIO) ? "y"
           : horizontal >= vertical ? "x" : "y";
     const movement = axis === "x" ? (delta.x || (shift ? delta.y : 0)) : delta.y;
     const magnitude = Math.abs(movement);
@@ -93,7 +96,11 @@ export class DesktopWheelGesture {
     const pixelNotch = delta.x === 0 && (axis === "y" || shift)
       && magnitude >= 80 && (magnitude % 100 === 0 || magnitude % 120 === 0);
     const discrete = delta.mode !== 0 || pixelNotch;
-    const reversed = this.lastDelta !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta);
+    // A zero-movement sample (paused held axis) and the sample right after it
+    // (lastDelta decayed to 0) carry no direction; only two opposed real
+    // movements reverse a gesture.
+    const reversed = this.lastDelta !== 0 && movement !== 0
+      && Math.sign(movement) !== Math.sign(this.lastDelta);
     // Some devices omit the inertia tail entirely, so a quiet interval is
     // itself a gesture boundary; do not infer it from the next delta's size.
     const renewed = !this.discrete && this.flipped && gap >= RENEWED_FLICK_GAP_MS;
