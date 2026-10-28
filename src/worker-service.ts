@@ -298,13 +298,14 @@ export class InkWorkerSession {
   }
 
   async renderTile(pageId: string, cell: string, density: number, revision: number, width: number, height: number,
-    renderGeneration = 0, priority: "visible" | "prewarm" = "visible"): Promise<RenderTileResult> {
+    renderGeneration = 0, priority: "visible" | "prewarm" = "visible",
+    excludedStrokeIds?: readonly string[]): Promise<RenderTileResult> {
     await this.operationTail;
     const response = await this.service.send({
       type: "render-tile", sessionId: this.id, generation: this.generation,
       notebookRevision: this.mirroredRevision,
       pageId,
-      cell, density, revision, renderGeneration, priority, width, height,
+      cell, density, revision, renderGeneration, priority, width, height, excludedStrokeIds,
     });
     if (response.type !== "tile-rendered") throw unexpected(response);
     return response;

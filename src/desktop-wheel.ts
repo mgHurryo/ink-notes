@@ -11,6 +11,12 @@ const PAGE_TRAVEL_PX = 100;
 const HORIZONTAL_PAGE_TRAVEL_PX = 48;
 const MAX_TRACKPAD_PAGES_PER_GESTURE = 2;
 const AXIS_RETENTION_RATIO = 0.65;
+/** A zero held-axis component pauses a diagonal stream, but a sustained run
+ *  of such samples is a genuine perpendicular stream (a mouse wheel emits
+ *  deltaX=0 on every sample): past this many consecutive pauses the axis must
+ *  re-classify, or the gesture locks onto the held axis with movement 0
+ *  forever and the perpendicular stream never flips a page. */
+const ZERO_AXIS_PAUSES_TO_SWITCH = 2;
 
 export interface WheelDelta {
   x: number;
@@ -58,6 +64,7 @@ export class DesktopWheelGesture {
   private renewedIncreases = 0;
   private renewalBlocked = false;
   private trackpadPages = 0;
+  private zeroAxisPauses = 0;
   private gestureId = 0;
 
   private beginRenewedGesture(): void {
@@ -72,7 +79,7 @@ export class DesktopWheelGesture {
     this.lastDelta = this.lastMagnitude = this.travel = this.notchCredit = 0;
     this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     this.renewalBlocked = false;
-    this.trackpadPages = 0;
+    this.trackpadPages = this.zeroAxisPauses = 0;
     this.flipped = this.discrete = false;
     this.mode = 0;
   }
@@ -81,9 +88,16 @@ export class DesktopWheelGesture {
     let gap = this.lastAt === null ? 0 : at - this.lastAt;
     if (gap < 0 || gap >= GESTURE_IDLE_MS) { this.reset(); gap = 0; }
     const horizontal = Math.abs(delta.x), vertical = Math.abs(delta.y);
+    // A zero component on the held axis pauses a diagonal stream instead of
+    // switching the axis; without the tolerance the axis flips and the reset
+    // below wipes the travel the gesture already accumulated. The pause is
+    // bounded (ZERO_AXIS_PAUSES_TO_SWITCH): a sustained run is a perpendicular
+    // stream, not a pause.
     const axis = shift ? "x"
-      : this.axis === "x" && horizontal >= vertical * AXIS_RETENTION_RATIO ? "x"
-        : this.axis === "y" && vertical >= horizontal * AXIS_RETENTION_RATIO ? "y"
+      : this.axis === "x" && ((horizontal === 0 && this.zeroAxisPauses < ZERO_AXIS_PAUSES_TO_SWITCH)
+        || horizontal >= vertical * AXIS_RETENTION_RATIO) ? "x"
+        : this.axis === "y" && ((vertical === 0 && this.zeroAxisPauses < ZERO_AXIS_PAUSES_TO_SWITCH)
+          || vertical >= horizontal * AXIS_RETENTION_RATIO) ? "y"
           : horizontal >= vertical ? "x" : "y";
     const movement = axis === "x" ? (delta.x || (shift ? delta.y : 0)) : delta.y;
     const magnitude = Math.abs(movement);
@@ -93,15 +107,34 @@ export class DesktopWheelGesture {
     const pixelNotch = delta.x === 0 && (axis === "y" || shift)
       && magnitude >= 80 && (magnitude % 100 === 0 || magnitude % 120 === 0);
     const discrete = delta.mode !== 0 || pixelNotch;
-    const reversed = this.lastDelta !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta);
+    // A zero-movement sample (paused held axis) and the sample right after it
+    // (lastDelta decayed to 0) carry no direction; only two opposed real
+    // movements reverse a gesture.
+    const reversed = this.lastDelta !== 0 && movement !== 0
+      && Math.sign(movement) !== Math.sign(this.lastDelta);
     // Some devices omit the inertia tail entirely, so a quiet interval is
     // itself a gesture boundary; do not infer it from the next delta's size.
     const renewed = !this.discrete && this.flipped && gap >= RENEWED_FLICK_GAP_MS;
-    if (axis !== this.axis || delta.mode !== this.mode || reversed) { this.reset(); gap = 0; }
-    else if (renewed) {
+    // A continuous stream drifting across the axis retention boundary (or
+    // re-targeted by Shift) is still the same physical flick: re-classify the
+    // axis but keep the suppression state - flipped, page budget, gesture id -
+    // or the momentum tail re-arms under the new axis threshold and pages
+    // again. Only the per-axis travel and ramp state go; discrete streams
+    // (deliberate notches) keep their hard reset and fresh budget.
+    if (axis !== this.axis && this.flipped && !this.discrete && !discrete) {
+      this.travel = 0;
+      this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+    } else if (axis !== this.axis || delta.mode !== this.mode || reversed) {
+      this.reset();
+      gap = 0;
+    } else if (renewed) {
       this.reset();
       gap = 0;
     }
+    // Count retained samples that moved nothing: isolated ones are the
+    // diagonal pauses above, a sustained run re-classifies on the next
+    // sample. A boundary reset already cleared the count.
+    this.zeroAxisPauses = movement === 0 && axis === this.axis ? this.zeroAxisPauses + 1 : 0;
     this.discrete = this.axis === null ? discrete : this.discrete && discrete;
     this.axis = axis;
     this.mode = delta.mode;
@@ -183,11 +216,16 @@ export class DesktopWheelGesture {
       const notches = motion.mode === 1 ? Math.max(1, Math.round(Math.abs(motion.movement) / 48)) : 1;
       const sensitivity = motion.mode === 0 && motion.gap > 0 && motion.gap < 80 ? 0.8 : 1;
       this.notchCredit += notches * sensitivity;
-      const pages = Math.floor(this.notchCredit + 1e-8);
+      // Line mode (deltaMode=1) merges several notches into one event, so the
+      // budget caps pages per event, not events: a merged event can only spend
+      // what remains of the per-gesture budget (leftover credit stays parked,
+      // unreachable once the gate above sees the budget as spent).
+      const pages = Math.min(Math.floor(this.notchCredit + 1e-8),
+        MAX_TRACKPAD_PAGES_PER_GESTURE - this.trackpadPages);
       this.notchCredit -= pages;
       if (pages > 0) {
         this.flipped = true;
-        this.trackpadPages += 1;
+        this.trackpadPages += pages;
       }
       return Math.sign(motion.movement) * pages;
     }

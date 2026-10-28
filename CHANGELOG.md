@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.1.5-beta.19 - 2026-10-28
+
+- Clear the interaction state when the stroked page vanishes (#294): lifting the pen after the page holding the active stroke is removed no longer leaves a ghost stroke behind, because the pending stroke and its interaction state are reset together with the page. Keep momentum suppression across a soft axis switch on the wheel gesture tail (#295): the tail of a trackpad sweep that drifts past the axis-retention ratio, or re-targets via Shift mid-flight, no longer re-arms into a second page flip, while discrete-notch streams and not-yet-flipped gestures keep their hard reset. Backfill the missing beta.16-18 changelog and versions.json entries (#296) and pin the convention with a release-metadata consistency test; no app behavior change.
+
+## 0.1.5-beta.18 - 2026-10-28
+
+- Refresh the activity timestamp during pointer lasso drags (#283): a lasso drag longer than the 2.5s silence window no longer gets healed mid-drag, so a landing finger cannot commit the partial selection as an undoable command and start a pan. Let a stylus touch take over before the page-flip rebound (#284): a Pencil landing mid-flip now owns input first and is no longer swallowed by the flipSettling latch, so the user can write immediately without re-landing the pen. Cap discrete notch pages by the per-gesture budget (#285): fast quantized touchpad streams and a held mouse wheel now flip at most two pages per gesture instead of racing through a dozen. Fix visual regression (#286): the visual specs assert the new budgeted paging contract and the responsive rail assertion polls past the 200ms expansion transition, no app behavior change.
+
+## 0.1.5-beta.17 - 2026-10-28
+
+- Rebound a page drag when a Pencil lands mid-flip (#278): a stylus touch during a finger page-flip drag now settles the flip instead of leaving the page stranded at an offset. Rearm constant-magnitude flicks in the blocked window (#279): a third fast flick with constant velocity pages again instead of being swallowed by the renewal-blocked branch. Pin vertical notch timestamps against sync dispatch collisions (#280): the visual fixture no longer flakes when quantized event timestamps collide and collapse the damping gap.
+
+## 0.1.5-beta.16 - 2026-10-28
+
+- Settle an ink commit stranded by a mid-flight generation bump (#273): a stale render result no longer leaves the commit loop permanently stalled with held cells never released. Compensate refines dropped by an aborted ink commit (#274): pen-down during an in-flight interactive commit no longer loses the full-density refine work, so ghost strokes do not linger. Rearm vertical flicks landing in the inertia tail (#275): mid-tail re-scans on the vertical axis flip pages again, matching the horizontal axis.
+
 ## 0.1.5-beta.15 - 2026-10-25
 
 - Render page-flip previews at the same density as live tiles (16M-pixel budget instead of the 4M overlay budget), so Retina iPads no longer show a blurry incoming page for the whole flip that only sharpens once the real tiles replace it. Recognize a renewed horizontal trackpad gesture when a wheel sample jumps clear of the decaying inertia envelope in a single step (>= max(24px, 2.2x the decayed level), with the previous sample held low inside the post-renewal block window) instead of requiring two compound 1.2x growth spikes that real precision-trackpad fast phases never produce; flicks landing inside the previous 1-2s Windows inertia tail now page immediately, while momentum peaks, the two-page gesture cap and the 55ms quiet-gap rearm remain. Expose pinchRenderZoom, tileDensity and tileDisplayScale in the dev panel and diagnostics JSON to pin down the intermittent fully-zoomed blur on Retina iPads (not yet root-caused). Patch dev-only vite and moment to clear the npm-audit high gate. Typecheck, 886 unit tests, WebKit swipe regression (2 tests including a new iPad-sized viewport), Chromium desktop-input (18) and full visual suite (174) pass; physical iPad and precision-trackpad behavior remains unverified.

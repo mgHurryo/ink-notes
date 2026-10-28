@@ -3067,6 +3067,10 @@ export abstract class InkWritingView extends FileView {
     if (this.pendingInkPageId && this.pendingInkPageId !== page.id) this.discardPendingInkPreview();
     this.pendingInkPageId = page.id;
     if (!this.pendingInkStrokes.includes(this.activeStroke)) this.pendingInkStrokes.push(this.activeStroke);
+    // Per-frame tiles.sync pauses while pending ink owns the render loop, so
+    // the renderer's worker-exclusion snapshot would go stale exactly during
+    // the commit window; refresh it at the transition into pending.
+    this.tiles?.setWorkerExclusion?.(this.tileExclusion());
   }
 
   protected hasInkPreview(): boolean { return this.activeStroke !== null || this.pendingInkStrokes.length > 0; }
@@ -3093,6 +3097,7 @@ export abstract class InkWritingView extends FileView {
         // the completed strokes on the sharp overlay and retry them with the
         // next idle batch instead of synchronously replaying the whole page.
         this.tiles?.removeStrokes(batch.map((stroke) => stroke.id));
+        this.tiles?.setWorkerExclusion?.(this.tileExclusion());
         if (this.viewReady && page === this.currentPage()) this.drawPreview();
         if (this.activePointerId === null) this.schedulePendingInkCommit(page);
         return;
@@ -3136,6 +3141,8 @@ export abstract class InkWritingView extends FileView {
     this.pendingInkPageId = null;
     this.confirmedStrokeOutlines.clear();
     this.tiles?.cancelInkCommit();
+    // No pending ink remains to keep off the worker's tile renders.
+    this.tiles?.setWorkerExclusion?.(undefined);
     if (this.confirmedPreviewCanvas) {
       this.confirmedPreviewCanvas.width = this.confirmedPreviewCanvas.height = 1;
       this.confirmedPreviewCanvas.classList.remove("is-highlighter-preview");
@@ -3516,6 +3523,28 @@ export abstract class InkWritingView extends FileView {
     });
   }
 
+  /** Shared post-interaction reset for the live stroke, the lasso drag and
+   *  eraser bookkeeping. The orphan-page path in finishPointerInput needs the
+   *  same clearing as the main path: state left behind by a page that vanished
+   *  mid-stroke keeps repainting ghost previews on every later render. */
+  private resetInteractionState(): void {
+    this.activeStroke = null;
+    this.geometricStroke = null;
+    this.scribbleGesturePoints = [];
+    this.workerStrokePointIndex = 0;
+    this.lastPoint = null;
+    this.pendingLassoPoint = null;
+    this.lassoPath = [];
+    this.lassoDrag = null;
+    this.hideLassoPreview();
+    this.erasedStrokeIds.clear();
+    this.erasedCandidateIds.clear();
+    this.erasedStrokes = [];
+    this.eraserReplacementIds.clear();
+    this.eraserReplacements = [];
+    this.eraserPreviewCells.clear();
+  }
+
   protected finishPointerInput(completed = false): void {
     this.cancelLineHold();
     this.flushPenModeler();
@@ -3532,6 +3561,10 @@ export abstract class InkWritingView extends FileView {
       this.penModeler = null;
       this.rawUpdateCapture = null;
       this.predictedTip = null;
+      this.resetInteractionState();
+      // The vanished page's stroke already painted the preview layer; with
+      // activeStroke gone this redraw falls into its empty path and clears it.
+      this.drawPreview();
       this.tiles?.resumeInkCommit();
       return;
     }
@@ -3584,16 +3617,10 @@ export abstract class InkWritingView extends FileView {
     }
     this.finishStickyInput();
     this.activePointerId = null;
-    this.activeStroke = null;
-    this.geometricStroke = null;
-    this.scribbleGesturePoints = [];
-    this.workerStrokePointIndex = 0;
-    this.lastPoint = null;
     this.penModeler = null;
     this.rawUpdateCapture = null;
     this.predictedTip = null;
-    this.pendingLassoPoint = null;
-    this.eraserPreviewCells.clear();
+    this.resetInteractionState();
     if (interaction.tool === "pen" || interaction.tool === "highlighter" || interaction.tool === "shape") {
       this.resizePreview();
       this.drawPreview();
