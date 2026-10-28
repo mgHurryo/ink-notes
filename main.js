@@ -29253,8 +29253,6 @@ var InkWritingView = class extends import_obsidian6.FileView {
     const touch = Array.from((_a = event.changedTouches) != null ? _a : []).find((candidate) => candidate.touchType === "stylus" && host.contains(candidate.target));
     if (!touch) return false;
     if (event.cancelable) event.preventDefault();
-    this.cancelPageFlip();
-    this.touchGesture = null;
     const sample = stylusTouchSample(touch, event.timeStamp);
     const interaction = this.interaction;
     if (event.type === "touchstart") {
@@ -29268,6 +29266,8 @@ var InkWritingView = class extends import_obsidian6.FileView {
       } else {
         this.onPointerDown(sample, "stylus-touch");
       }
+      this.cancelPageFlip();
+      this.touchGesture = null;
     } else if ((interaction == null ? void 0 : interaction.source) === "stylus-touch" && interaction.pointerId === touch.identifier) {
       if (event.type === "touchmove") this.onPointerMove(sample, "stylus-touch");
       else if (event.type === "touchend") {
