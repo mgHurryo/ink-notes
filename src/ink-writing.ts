@@ -2417,6 +2417,10 @@ export abstract class InkWritingView extends FileView {
       candidate.touchType === "stylus" && host.contains(candidate.target as Node));
     if (!touch) return false;
     if (event.cancelable) event.preventDefault();
+    // A Pencil landing mid page-flip drag must spring the page back before the
+    // gesture state goes away, or the drag translateX is never settled and the
+    // page stays stranded (same contract as onTouchCancel / two-finger takeover).
+    this.cancelPageFlip();
     this.touchGesture = null;
     const sample = stylusTouchSample(touch, event.timeStamp);
     const interaction = this.interaction;
@@ -2601,6 +2605,10 @@ export abstract class InkWritingView extends FileView {
       this.finishFingerInput(true); this.onTouchStart(event); return;
     }
     if (this.activePointerId !== null) {
+      // Same stranded-page hazard as onStylusTouch: a pen taking over mid
+      // page-flip drag (Pointer-only platforms never classify a stylus Touch)
+      // must spring the page back, not silently drop the gesture.
+      this.cancelPageFlip();
       this.touchGesture = null;
       return;
     }

@@ -24169,8 +24169,9 @@ var DesktopWheelGesture = class {
     this.lastAt = null;
     this.lastDelta = 0;
     /** Raw magnitude of the previous sample (unlike the decayed lastDelta
-     *  envelope), so a blocked renewal can demand a single-step jump: momentum
-     *  continuation ramps up sample over sample, a fresh flick does not. */
+     *  envelope), so a blocked renewal can demand one strictly ascending step:
+     *  momentum continuation only decays, a fresh flick rises over the settled
+     *  tail without needing an implausible single-step ratio. */
     this.lastMagnitude = 0;
     this.travel = 0;
     this.flipped = false;
@@ -24227,7 +24228,7 @@ var DesktopWheelGesture = class {
       const jump = magnitude >= Math.max(RENEWED_FLICK_JUMP_PX, Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO);
       if (this.renewalBlocked) {
         if (magnitude <= RENEWED_FLICK_RELEASE_PX) this.renewalBlocked = false;
-        else if (jump && magnitude > this.lastMagnitude * RENEWED_FLICK_JUMP_RATIO) {
+        else if (jump && magnitude > this.lastMagnitude) {
           this.beginRenewedGesture();
           this.flipped = false;
           this.travel = 0;
@@ -29251,6 +29252,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     const touch = Array.from((_a = event.changedTouches) != null ? _a : []).find((candidate) => candidate.touchType === "stylus" && host.contains(candidate.target));
     if (!touch) return false;
     if (event.cancelable) event.preventDefault();
+    this.cancelPageFlip();
     this.touchGesture = null;
     const sample = stylusTouchSample(touch, event.timeStamp);
     const interaction = this.interaction;
@@ -29431,6 +29433,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
       return;
     }
     if (this.activePointerId !== null) {
+      this.cancelPageFlip();
       this.touchGesture = null;
       return;
     }

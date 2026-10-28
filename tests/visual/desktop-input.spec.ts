@@ -321,9 +321,14 @@ test("a trackpad flick advances one page and fast mouse-wheel notches are dampen
     await view.navigateToPage(view.notebook.pages[0].id);
     const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
     scroller.scrollTop = scroller.scrollHeight;
-    for (let index = 0; index < 5; index++) scroller.dispatchEvent(new WheelEvent("wheel", {
-      bubbles: true, cancelable: true, deltaY: 100,
-    }));
+    // One synchronous task hands all five notches the same real Event.timeStamp;
+    // a colliding 0ms gap keeps notch sensitivity at 1.0 and flips five pages
+    // instead of the damped four, so pin the 40ms cadence the damping expects.
+    for (let index = 0; index < 5; index++) {
+      const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 100 });
+      Object.defineProperty(event, "timeStamp", { configurable: true, value: 10000 + index * 40 });
+      scroller.dispatchEvent(event);
+    }
   });
   await expect(page.locator(".ink-page-status")).toHaveText("5 / 6");
 });
