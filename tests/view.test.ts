@@ -13,6 +13,18 @@ interface ViewInternals {
   confirmedPreviewCtx: CanvasRenderingContext2D;
   activeStroke: InkStroke | null;
   activePointerId: number | null;
+  lassoDrag: {
+    start: InkPoint;
+    pageId: string;
+    bounds: { minX: number; minY: number; maxX: number; maxY: number } | null;
+    strokes: InkStroke[];
+    before: Map<string, InkPoint[]>;
+    dx: number;
+    dy: number;
+  } | null;
+  lastPoint: InkPoint | null;
+  selectedStrokeIds: Set<string>;
+  hasInkPreview(): boolean;
   confirmedStrokeOutlines: Map<string, { points: Float32Array; sampleCount: number; mode: "pen" | "highlighter" }>;
   pageIndex: number;
   onPointerDown(event: PointerEvent): void;
@@ -1490,5 +1502,54 @@ describe("lift pressure artifact", () => {
 
     const points = lastStroke(internal).points;
     expect(points[points.length - 1].pressure).toBeCloseTo(0.2, 2);
+  });
+});
+
+describe("orphan page interaction cleanup", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", globalThis);
+  });
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+  });
+
+  it("clears the live pen stroke when its page disappears mid-stroke", () => {
+    const { internal } = setup();
+    internal.queueWorkerOperation = vi.fn();
+    internal.onPointerDown(pointer(10));
+    internal.onPointerMove(pointer(30));
+    expect(internal.activeStroke).not.toBeNull();
+    // Remote sync (or the other pane) deletes the page while the pen is down.
+    internal.notebook.pages.splice(0, 1);
+    internal.onPointerUp(pointer(40));
+
+    // Stale state here used to keep hasInkPreview() true, so every later
+    // render repainted the vanished page's stroke onto the current preview.
+    expect(internal.activeStroke).toBeNull();
+    expect(internal.lastPoint).toBeNull();
+    expect(internal.hasInkPreview()).toBe(false);
+  });
+
+  it("clears a lasso drag when its page disappears mid-gesture", () => {
+    const { internal } = setup();
+    internal.queueWorkerOperation = vi.fn();
+    internal.state.pen.smooth = 0;
+    internal.onPointerDown(pointer(10));
+    internal.onPointerMove(pointer(30));
+    internal.onPointerUp(pointer(30));
+    const stroke = internal.notebook.pages[0].strokes[0];
+    internal.state.tool = "lasso";
+    internal.selectedStrokeIds = new Set([stroke.id]);
+    internal.onPointerDown(pointer(30));
+    expect(internal.lassoDrag).not.toBeNull();
+    internal.notebook.pages.splice(0, 1);
+    internal.onPointerUp(pointer(40));
+
+    // A surviving drag used to repaint the old selection box every frame.
+    expect(internal.lassoDrag).toBeNull();
+    expect(internal.hasInkPreview()).toBe(false);
   });
 });
