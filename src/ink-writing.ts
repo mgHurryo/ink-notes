@@ -3523,6 +3523,28 @@ export abstract class InkWritingView extends FileView {
     });
   }
 
+  /** Shared post-interaction reset for the live stroke, the lasso drag and
+   *  eraser bookkeeping. The orphan-page path in finishPointerInput needs the
+   *  same clearing as the main path: state left behind by a page that vanished
+   *  mid-stroke keeps repainting ghost previews on every later render. */
+  private resetInteractionState(): void {
+    this.activeStroke = null;
+    this.geometricStroke = null;
+    this.scribbleGesturePoints = [];
+    this.workerStrokePointIndex = 0;
+    this.lastPoint = null;
+    this.pendingLassoPoint = null;
+    this.lassoPath = [];
+    this.lassoDrag = null;
+    this.hideLassoPreview();
+    this.erasedStrokeIds.clear();
+    this.erasedCandidateIds.clear();
+    this.erasedStrokes = [];
+    this.eraserReplacementIds.clear();
+    this.eraserReplacements = [];
+    this.eraserPreviewCells.clear();
+  }
+
   protected finishPointerInput(completed = false): void {
     this.cancelLineHold();
     this.flushPenModeler();
@@ -3539,6 +3561,10 @@ export abstract class InkWritingView extends FileView {
       this.penModeler = null;
       this.rawUpdateCapture = null;
       this.predictedTip = null;
+      this.resetInteractionState();
+      // The vanished page's stroke already painted the preview layer; with
+      // activeStroke gone this redraw falls into its empty path and clears it.
+      this.drawPreview();
       this.tiles?.resumeInkCommit();
       return;
     }
@@ -3591,16 +3617,10 @@ export abstract class InkWritingView extends FileView {
     }
     this.finishStickyInput();
     this.activePointerId = null;
-    this.activeStroke = null;
-    this.geometricStroke = null;
-    this.scribbleGesturePoints = [];
-    this.workerStrokePointIndex = 0;
-    this.lastPoint = null;
     this.penModeler = null;
     this.rawUpdateCapture = null;
     this.predictedTip = null;
-    this.pendingLassoPoint = null;
-    this.eraserPreviewCells.clear();
+    this.resetInteractionState();
     if (interaction.tool === "pen" || interaction.tool === "highlighter" || interaction.tool === "shape") {
       this.resizePreview();
       this.drawPreview();

@@ -30364,6 +30364,27 @@ var InkWritingView = class extends import_obsidian6.FileView {
       else this.renderInteractionFrame();
     });
   }
+  /** Shared post-interaction reset for the live stroke, the lasso drag and
+   *  eraser bookkeeping. The orphan-page path in finishPointerInput needs the
+   *  same clearing as the main path: state left behind by a page that vanished
+   *  mid-stroke keeps repainting ghost previews on every later render. */
+  resetInteractionState() {
+    this.activeStroke = null;
+    this.geometricStroke = null;
+    this.scribbleGesturePoints = [];
+    this.workerStrokePointIndex = 0;
+    this.lastPoint = null;
+    this.pendingLassoPoint = null;
+    this.lassoPath = [];
+    this.lassoDrag = null;
+    this.hideLassoPreview();
+    this.erasedStrokeIds.clear();
+    this.erasedCandidateIds.clear();
+    this.erasedStrokes = [];
+    this.eraserReplacementIds.clear();
+    this.eraserReplacements = [];
+    this.eraserPreviewCells.clear();
+  }
   finishPointerInput(completed = false) {
     var _a, _b, _c;
     this.cancelLineHold();
@@ -30382,6 +30403,8 @@ var InkWritingView = class extends import_obsidian6.FileView {
       this.penModeler = null;
       this.rawUpdateCapture = null;
       this.predictedTip = null;
+      this.resetInteractionState();
+      this.drawPreview();
       (_a = this.tiles) == null ? void 0 : _a.resumeInkCommit();
       return;
     }
@@ -30442,16 +30465,10 @@ var InkWritingView = class extends import_obsidian6.FileView {
     }
     this.finishStickyInput();
     this.activePointerId = null;
-    this.activeStroke = null;
-    this.geometricStroke = null;
-    this.scribbleGesturePoints = [];
-    this.workerStrokePointIndex = 0;
-    this.lastPoint = null;
     this.penModeler = null;
     this.rawUpdateCapture = null;
     this.predictedTip = null;
-    this.pendingLassoPoint = null;
-    this.eraserPreviewCells.clear();
+    this.resetInteractionState();
     if (interaction.tool === "pen" || interaction.tool === "highlighter" || interaction.tool === "shape") {
       this.resizePreview();
       this.drawPreview();
