@@ -35,7 +35,14 @@ const PDF_ZOOM_MAX = 3;
 const PDF_ZOOM_STEP = 1.2;
 const PDF_PAGE_PADDING = 24;
 const SELECTION_OVERLAY_BUDGET = 4_000_000;
-const PDF_NEIGHBOUR_CACHE_BUDGET = 8_000_000;
+/** Swipe rasters must match live page density (dpr): a 4M per-page budget
+ *  downsamples Retina pages, so the dragged-in page reads blurry for the
+ *  whole flip and only sharpens at settle. 16M is the WebKit-safe ceiling
+ *  canvasResolution defaults to. */
+const SWIPE_PREVIEW_BUDGET = 16_000_000;
+/** Holds both neighbours at SWIPE_PREVIEW_BUDGET each without churn: the
+ *  cache evicts past this budget or more than two entries. */
+const PDF_NEIGHBOUR_CACHE_BUDGET = SWIPE_PREVIEW_BUDGET * 2;
 const SWIPE_PREVIEW_IDLE_DELAY_MS = 120;
 const SWIPE_PREVIEW_RETRY_MS = 50;
 /** Thumbnail bitmap width in CSS pixels; on a portrait A4 page the pdf.js
@@ -1539,18 +1546,23 @@ export class PdfInkView extends InkWritingView {
     });
     this.swipeStage = stage;
     if (insert) { this.showPageInsertPreview(stage, side); return; }
+    // A rail thumbnail is only a first frame: copying it alone stretched a
+    // ~120px bitmap over the whole stage, so the flip stayed pixelated until
+    // settle. Keep it as the placeholder under the full-density raster that
+    // renderSwipeStagePage paints on top (pdf.js fills an opaque background);
+    // when that render fails its catch leaves the raster blank and this
+    // thumbnail keeps the stage from flashing white.
     const preview = this.thumbButtons.get(neighborIndex)?.querySelector<HTMLCanvasElement>("canvas");
     if (preview?.dataset.previewReady === "true") {
       const canvas = stage.createEl("canvas", { cls: "ink-swipe-canvas" });
       canvas.width = preview.width;
       canvas.height = preview.height;
       canvas.getContext("2d")?.drawImage(preview, 0, 0);
-      return;
     }
     void this.renderSwipeStagePage(stage, neighborIndex);
     const ink = stage.createEl("canvas", { cls: "ink-swipe-canvas" });
     const logicalHeight = baseWidth * display.height / display.width;
-    const resolution = canvasResolution(baseWidth, logicalHeight, window.devicePixelRatio || 1, zoom, SELECTION_OVERLAY_BUDGET);
+    const resolution = canvasResolution(baseWidth, logicalHeight, window.devicePixelRatio || 1, zoom, SWIPE_PREVIEW_BUDGET);
     ink.width = resolution.width; ink.height = resolution.height;
     const ctx = ink.getContext("2d");
     if (ctx) {
@@ -1571,7 +1583,7 @@ export class PdfInkView extends InkWritingView {
     if (!notePage || notePage.sourceIndex === undefined || !this.pdfDoc) return;
     // The prewarm cache makes the flip instant when it holds the page.
     const resolution = canvasResolution(parseFloat(stage.style.width), parseFloat(stage.style.height),
-      window.devicePixelRatio || 1, 1, PDF_NEIGHBOUR_CACHE_BUDGET / 2);
+      window.devicePixelRatio || 1, 1, SWIPE_PREVIEW_BUDGET);
     const pending = this.pendingNeighbourRenders.get(index);
     if (pending?.token === this.prewarmToken) await pending.promise;
     if (!stage.isConnected) return;
@@ -1636,7 +1648,7 @@ export class PdfInkView extends InkWritingView {
       if (token !== this.prewarmToken || this.neighbourCache.has(index)) return this.neighbourCache.get(index) ?? null;
       const size = this.swipePageSize(notePage);
       const resolution = canvasResolution(size.width, size.height, window.devicePixelRatio || 1, 1,
-        PDF_NEIGHBOUR_CACHE_BUDGET / 2);
+        SWIPE_PREVIEW_BUDGET);
       const scale = resolution.width / page.getViewport({ scale: 1 }).width;
       buffer = document.createElement("canvas");
       buffer.width = resolution.width;

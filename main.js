@@ -34779,7 +34779,8 @@ var PDF_ZOOM_MAX = 3;
 var PDF_ZOOM_STEP = 1.2;
 var PDF_PAGE_PADDING = 24;
 var SELECTION_OVERLAY_BUDGET = 4e6;
-var PDF_NEIGHBOUR_CACHE_BUDGET = 8e6;
+var SWIPE_PREVIEW_BUDGET = 16e6;
+var PDF_NEIGHBOUR_CACHE_BUDGET = SWIPE_PREVIEW_BUDGET * 2;
 var SWIPE_PREVIEW_IDLE_DELAY_MS2 = 120;
 var SWIPE_PREVIEW_RETRY_MS2 = 50;
 var RAIL_THUMB_WIDTH = 120;
@@ -36141,12 +36142,11 @@ var PdfInkView = class extends InkWritingView {
       canvas.width = preview.width;
       canvas.height = preview.height;
       (_h = canvas.getContext("2d")) == null ? void 0 : _h.drawImage(preview, 0, 0);
-      return;
     }
     void this.renderSwipeStagePage(stage, neighborIndex);
     const ink = stage.createEl("canvas", { cls: "ink-swipe-canvas" });
     const logicalHeight = baseWidth * display.height / display.width;
-    const resolution = canvasResolution(baseWidth, logicalHeight, window.devicePixelRatio || 1, zoom, SELECTION_OVERLAY_BUDGET);
+    const resolution = canvasResolution(baseWidth, logicalHeight, window.devicePixelRatio || 1, zoom, SWIPE_PREVIEW_BUDGET);
     ink.width = resolution.width;
     ink.height = resolution.height;
     const ctx = ink.getContext("2d");
@@ -36171,7 +36171,7 @@ var PdfInkView = class extends InkWritingView {
       parseFloat(stage.style.height),
       window.devicePixelRatio || 1,
       1,
-      PDF_NEIGHBOUR_CACHE_BUDGET / 2
+      SWIPE_PREVIEW_BUDGET
     );
     const pending = this.pendingNeighbourRenders.get(index);
     if ((pending == null ? void 0 : pending.token) === this.prewarmToken) await pending.promise;
@@ -36239,7 +36239,7 @@ var PdfInkView = class extends InkWritingView {
         size.height,
         window.devicePixelRatio || 1,
         1,
-        PDF_NEIGHBOUR_CACHE_BUDGET / 2
+        SWIPE_PREVIEW_BUDGET
       );
       const scale = resolution.width / page.getViewport({ scale: 1 }).width;
       buffer = document.createElement("canvas");
