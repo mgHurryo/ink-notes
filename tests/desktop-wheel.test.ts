@@ -68,11 +68,11 @@ describe("DesktopWheelGesture discrete notch budget", () => {
   // Wheel-emulation / quantized touchpads emit pixel deltas that pixelNotch
   // classifies as wheel notches; the discrete path must honor the same
   // single-gesture page budget as the continuous path.
-  function notchStreamCount(stepMs: number, count: number, deltaY = 120): number {
+  function notchStreamCount(stepMs: number, count: number, deltaY = 120, mode = 0): number {
     const gesture = new DesktopWheelGesture();
     let pages = 0;
     for (let i = 0; i < count; i++) {
-      const motion = gesture.begin({ x: 0, y: deltaY, mode: 0 }, false, i * stepMs);
+      const motion = gesture.begin({ x: 0, y: deltaY, mode }, false, i * stepMs);
       pages += gesture.pageDelta(motion, false);
     }
     return pages;
@@ -105,6 +105,19 @@ describe("DesktopWheelGesture discrete notch budget", () => {
     // so only the budgeted two pages queue, matching the "5 / 8" the
     // desktop-input visual spec asserts.
     expect(notchStreamCount(100, 8, 100)).toBe(2);
+  });
+
+  it("caps a line-mode merged-notch stream (deltaMode=1) at the page budget", () => {
+    // Firefox line mode merges several notches into one event: 96 lines round
+    // to 2 notches, so counting events instead of pages let the first two
+    // events flip 2 pages each (4 total) inside a single gesture.
+    expect(notchStreamCount(60, 4, 96, 1)).toBeLessThanOrEqual(2);
+  });
+
+  it("still flips one page per line-mode notch (deltaY=3 -> 48px)", () => {
+    // Anti-over-clamp control: each 3-line event is a single notch worth one
+    // page, so the stream still queues exactly the budgeted two pages.
+    expect(notchStreamCount(60, 6, 3, 1)).toBe(2);
   });
 });
 
