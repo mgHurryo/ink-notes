@@ -63,3 +63,47 @@ describe("DesktopWheelGesture gesture boundaries", () => {
     expect(feed(0) + feed(140)).toBe(2);
   });
 });
+
+describe("DesktopWheelGesture discrete notch budget", () => {
+  // Wheel-emulation / quantized touchpads emit pixel deltas that pixelNotch
+  // classifies as wheel notches; the discrete path must honor the same
+  // single-gesture page budget as the continuous path.
+  function notchStreamCount(stepMs: number, count: number, deltaY = 120): number {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    for (let i = 0; i < count; i++) {
+      const motion = gesture.begin({ x: 0, y: deltaY, mode: 0 }, false, i * stepMs);
+      pages += gesture.pageDelta(motion, false);
+    }
+    return pages;
+  }
+
+  it("caps a fast quantized pixel-notch stream at the per-gesture page budget", () => {
+    // MAX_TRACKPAD_PAGES_PER_GESTURE: an unbounded stream flipped 16 pages before the budget.
+    expect(notchStreamCount(8, 20)).toBeLessThanOrEqual(2);
+  });
+
+  it("caps a sparser quantized stream too (40ms steps still one gesture)", () => {
+    expect(notchStreamCount(40, 20)).toBeLessThanOrEqual(2);
+  });
+
+  it("still flips every deliberate wheel notch spaced beyond the gesture gap", () => {
+    // Each notch lands >=180ms after the previous one, so every step resets
+    // the gesture: deliberate wheel-by-wheel scrolling stays one page per notch.
+    expect(notchStreamCount(200, 6)).toBe(6);
+  });
+
+  it("caps the 40ms damped cadence the visual spec pins (deltaY=100)", () => {
+    // deltaY=100 quantizes too (multiple of 100), and the 0.8 damping delays
+    // the second page by one notch; the burst still stops at the budgeted two
+    // pages, matching the "3 / 6" the desktop-input visual spec asserts.
+    expect(notchStreamCount(40, 5, 100)).toBe(2);
+  });
+
+  it("caps the 100ms queued cadence the visual spec pins (deltaY=100)", () => {
+    // 100ms gaps keep all eight notches in one gesture (idle boundary 180ms),
+    // so only the budgeted two pages queue, matching the "5 / 8" the
+    // desktop-input visual spec asserts.
+    expect(notchStreamCount(100, 8, 100)).toBe(2);
+  });
+});

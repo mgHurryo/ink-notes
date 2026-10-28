@@ -14,6 +14,7 @@ interface DrawingView {
   activeStroke: InkStroke | null;
   interaction: { source: "pointer" | "stylus-touch"; pointerType: string; tool: string } | null;
   touchGesture: unknown;
+  lassoDrag: { dx: number; dy: number } | null;
   selectedStrokeIds: Set<string>;
   cleanups: (() => void)[];
   currentPage(): InkPage;
@@ -547,6 +548,59 @@ describe("stylus touch input ownership", () => {
     expect(drawing.currentPage().strokes).toEqual([stroke]);
     expect(stroke.points.length).toBeGreaterThanOrEqual(2);
     expect(stroke.points.at(-1)?.x).toBeCloseTo(0.4);
+    expect(drawing.activePointerId).toBeNull();
+  });
+
+  // Regression: lasso sampling returns from applyPointerSamples before the
+  // shared lastPointerActivityAt refresh, so a drag longer than 2.5 s looked
+  // stale and the next finger touchstart healed it away, committing the drag
+  // and starting a pan gesture with the same contact.
+  it("keeps a sampled pointer lasso drag alive when a finger lands mid-drag", () => {
+    dispatchPointer("pointerdown");
+    dispatchPointer("pointermove", { clientX: 380 });
+    dispatchPointer("pointerup", { clientX: 420 });
+    const stroke = drawing.currentPage().strokes[0];
+    clickButton("Select");
+    dispatchPointer("pointerdown");
+    expect(drawing.lassoDrag).not.toBeNull();
+    dispatchPointer("pointermove", { clientX: 360 });
+    vi.advanceTimersByTime(1300);
+    dispatchPointer("pointermove", { clientX: 460 });
+    vi.advanceTimersByTime(1300);
+    dispatchTouch("touchstart", [touch(91, { touchType: "direct", clientX: 660, clientY: 650 })]);
+    expect(drawing.interaction).toMatchObject({ source: "pointer", tool: "lasso" });
+    expect(drawing.activePointerId).not.toBeNull();
+    expect(drawing.lassoDrag).not.toBeNull();
+    expect(drawing.touchGesture).toBeNull();
+    expect(stroke.points[0].x).toBeCloseTo(0.25);
+    dispatchPointer("pointerup", { clientX: 460 });
+    expect(stroke.points[0].x).toBeCloseTo(0.45);
+    expect(drawing.activePointerId).toBeNull();
+  });
+
+  // Protective: a stylus Touch interaction heals through the alive branch
+  // (identifier still on screen), never through the 2.5 s silence heuristic.
+  it("does not heal a stylus Touch lasso drag when a finger joins", () => {
+    dispatchTouch("touchstart", [touch()]);
+    dispatchTouch("touchmove", [touch(7, { clientX: 380 })]);
+    dispatchTouch("touchend", [touch(7, { clientX: 420 })], []);
+    const stroke = drawing.currentPage().strokes[0];
+    clickButton("Select");
+    dispatchTouch("touchstart", [touch(8)]);
+    expect(drawing.interaction).toMatchObject({ source: "stylus-touch", tool: "lasso" });
+    expect(drawing.lassoDrag).not.toBeNull();
+    dispatchTouch("touchmove", [touch(8, { clientX: 360 })]);
+    vi.advanceTimersByTime(2600);
+    const stylus = touch(8, { clientX: 360 });
+    const finger = touch(91, { touchType: "direct", clientX: 660, clientY: 650 });
+    dispatchTouch("touchstart", [finger], [stylus, finger]);
+    expect(drawing.interaction).toMatchObject({ source: "stylus-touch", tool: "lasso" });
+    expect(drawing.activePointerId).toBe(8);
+    expect(drawing.lassoDrag).not.toBeNull();
+    expect(drawing.touchGesture).toBeNull();
+    dispatchTouch("touchmove", [touch(8, { clientX: 460 })], [stylus, finger]);
+    dispatchTouch("touchend", [touch(8, { clientX: 460 })], [finger]);
+    expect(stroke.points[0].x).toBeCloseTo(0.45);
     expect(drawing.activePointerId).toBeNull();
   });
 });

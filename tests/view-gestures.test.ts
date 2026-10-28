@@ -276,25 +276,63 @@ describe("page touch navigation", () => {
   });
 
   it("rebounds a page drag when a stylus touch lands mid-flip", () => {
-    const { view } = setup();
-    view.swipeSettle = vi.fn();
-    view.onPointerDown = vi.fn();
-    view.pageElement.contains = () => true;
-    view.state = { tool: "pen" };
-    view.touchGesture = { ids: [1], axis: "x", dragX: -60 };
-    const stylus = { identifier: 9, clientX: 400, clientY: 400, force: 0.35, touchType: "stylus", target: view.pageElement };
-    view.onTouchStart({ ...touchEvent([[1, 300, 400]]), type: "touchstart", timeStamp: 100, changedTouches: [stylus] });
-    expect(view.swipeSettle).toHaveBeenCalledWith(0);
-    expect(view.touchGesture).toBeNull();
-    // The Pencil still takes over input for its own contact.
-    expect(view.onPointerDown).toHaveBeenCalledTimes(1);
-    expect(view.onPointerDown).toHaveBeenCalledWith(
-      expect.objectContaining({ pointerId: 9, pointerType: "pen" }), "stylus-touch");
-    // Lifting the dragging finger afterwards settles nothing twice: the
-    // gesture is gone, so settlePageFlip returns without deciding a flip.
-    view.onTouchStart({ ...touchEvent([]), type: "touchend",
-      changedTouches: [{ identifier: 1, clientX: 300, clientY: 400, touchType: "direct" }] });
-    expect(view.swipeSettle).toHaveBeenCalledTimes(1);
+    // Real settle path (no swipeSettle stub): the spring-back animation
+    // latches flipSettling, so this also proves the latch no longer swallows
+    // the landing contact — inputLocked() used to reject it for the whole
+    // animation when the flip was cancelled before the takeover.
+    vi.stubGlobal("window", { setTimeout: () => 0, clearTimeout: () => {} });
+    vi.stubGlobal("document", {});
+    try {
+      const { view } = setup();
+      const settle = vi.spyOn(view, "swipeSettle");
+      const down = vi.spyOn(view, "onPointerDown");
+      const move = vi.spyOn(view, "onPointerMove");
+      Object.assign(view, {
+        state: { tool: "pen", pen: { color: "#1a1a1a", width: 2, opacity: 1, taper: 0, pressureGain: 100, speedGain: 0, pressureCurve: null, smooth: 0 } },
+        notebook: { pages: [{ id: "p1", strokes: [], updatedAt: 1 }], updatedAt: 1 },
+        pageIndex: 0,
+        interaction: null,
+        pageExtent: { style: {}, setCssStyles: vi.fn() },
+        pageSwipeAnimations: [],
+        swipeDragOffset: -60,
+        flipSettling: false,
+        erasedStrokeIds: new Set(),
+        erasedCandidateIds: new Set(),
+        erasedStrokes: [],
+        eraserReplacementIds: new Set(),
+        eraserReplacements: [],
+        eraserPreviewCells: new Set(),
+        penSampleIntervals: [],
+        tiles: { setDisplayScale: vi.fn(), pauseInkCommit: vi.fn() },
+      });
+      view.pageElement.contains = () => true;
+      const stylus = { identifier: 9, clientX: 400, clientY: 400, force: 0.35, touchType: "stylus", target: view.pageElement };
+      view.touchGesture = { ids: [1], axis: "x", dragX: -60 };
+      view.onTouchStart({ ...touchEvent([[1, 300, 400]]), type: "touchstart", timeStamp: 100, changedTouches: [stylus] });
+      // The real settle ran: the page springs back and the gesture is gone.
+      expect(view.flipSettling).toBe(true);
+      expect(view.touchGesture).toBeNull();
+      expect(settle).toHaveBeenCalledWith(0);
+      // The landing contact itself took over input instead of being eaten by
+      // the settle latch.
+      expect(view.interaction).toEqual(expect.objectContaining({ source: "stylus-touch", pointerId: 9 }));
+      expect(down).toHaveBeenCalledTimes(1);
+      expect(down).toHaveBeenCalledWith(
+        expect.objectContaining({ pointerId: 9, pointerType: "pen" }), "stylus-touch");
+      // The same contact keeps streaming: its next touchmove reaches onPointerMove.
+      view.onTouchMove({ touches: [stylus], changedTouches: [stylus], cancelable: true,
+        preventDefault: vi.fn(), stopPropagation: vi.fn(), type: "touchmove", timeStamp: 140 });
+      expect(move).toHaveBeenCalledTimes(1);
+      // Lifting the dragging finger afterwards settles nothing twice: the
+      // gesture is gone, so settlePageFlip returns without deciding a flip.
+      // The Pencil (id 9) stays in the touch list, so the live interaction is
+      // not healed away as stale.
+      view.onTouchStart({ ...touchEvent([[9, 400, 400]]), type: "touchend",
+        changedTouches: [{ identifier: 1, clientX: 300, clientY: 400, touchType: "direct" }] });
+      expect(settle).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("rebounds a page drag when a pen pointer takes over mid-flip", () => {

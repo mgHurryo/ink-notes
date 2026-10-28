@@ -24288,12 +24288,16 @@ var DesktopWheelGesture = class {
     if (motion.suppressed) return 0;
     if (motion.renewedTravel !== void 0) this.travel = motion.renewedTravel;
     if (motion.discrete) {
+      if (this.trackpadPages >= MAX_TRACKPAD_PAGES_PER_GESTURE) return 0;
       const notches = motion.mode === 1 ? Math.max(1, Math.round(Math.abs(motion.movement) / 48)) : 1;
       const sensitivity = motion.mode === 0 && motion.gap > 0 && motion.gap < 80 ? 0.8 : 1;
       this.notchCredit += notches * sensitivity;
       const pages = Math.floor(this.notchCredit + 1e-8);
       this.notchCredit -= pages;
-      if (pages > 0) this.flipped = true;
+      if (pages > 0) {
+        this.flipped = true;
+        this.trackpadPages += 1;
+      }
       return Math.sign(motion.movement) * pages;
     }
     this.travel += motion.movement;
@@ -28873,6 +28877,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     const samples = this.pointerSamples(event);
     if (interaction.tool === "lasso") {
       this.pendingLassoPoint = this.toPoint(samples[samples.length - 1], rect);
+      this.lastPointerActivityAt = Date.now();
       this.requestRender();
       return;
     }
@@ -29252,8 +29257,6 @@ var InkWritingView = class extends import_obsidian6.FileView {
     const touch = Array.from((_a = event.changedTouches) != null ? _a : []).find((candidate) => candidate.touchType === "stylus" && host.contains(candidate.target));
     if (!touch) return false;
     if (event.cancelable) event.preventDefault();
-    this.cancelPageFlip();
-    this.touchGesture = null;
     const sample = stylusTouchSample(touch, event.timeStamp);
     const interaction = this.interaction;
     if (event.type === "touchstart") {
@@ -29267,6 +29270,8 @@ var InkWritingView = class extends import_obsidian6.FileView {
       } else {
         this.onPointerDown(sample, "stylus-touch");
       }
+      this.cancelPageFlip();
+      this.touchGesture = null;
     } else if ((interaction == null ? void 0 : interaction.source) === "stylus-touch" && interaction.pointerId === touch.identifier) {
       if (event.type === "touchmove") this.onPointerMove(sample, "stylus-touch");
       else if (event.type === "touchend") {
