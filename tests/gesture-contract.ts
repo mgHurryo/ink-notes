@@ -328,6 +328,22 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(1);
     });
 
+    it("keeps the visual vertical five-notch dampened burst to four pages", async () => {
+      const { scroller, wheel, settle } = await desktopSetup();
+      // The same visual test fires five deltaY=100 notches in one synchronous
+      // task right after the horizontal burst above. Synchronous dispatch
+      // collides real Event.timeStamps, and a 0ms gap keeps notch sensitivity
+      // at 1.0, flipping five pages instead of four - so the fixture must pin
+      // a 40ms cadence and this contract keeps that shape: 1 + 4 settles.
+      for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [30, 130], [20, 140],
+        [14, 150], [10, 160]]) {
+        wheel(delta, 0, { timeStamp: time });
+      }
+      scroller.scrollTop = 600;
+      for (const timeStamp of [340, 380, 420, 460, 500]) wheel(0, 100, { timeStamp });
+      expect(settle).toHaveBeenCalledTimes(5);
+    });
+
     it("rearms a horizontal trackpad flick after a short pause and a renewed swipe", async () => {
       const { wheel, settle } = await desktopSetup();
       vi.useFakeTimers();
