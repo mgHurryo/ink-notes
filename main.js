@@ -24210,7 +24210,7 @@ var DesktopWheelGesture = class {
     const pixelNotch = delta.x === 0 && (axis === "y" || shift) && magnitude >= 80 && (magnitude % 100 === 0 || magnitude % 120 === 0);
     const discrete = delta.mode !== 0 || pixelNotch;
     const reversed = this.lastDelta !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta);
-    const renewed = !this.discrete && this.flipped && axis === "x" && gap >= RENEWED_FLICK_GAP_MS;
+    const renewed = !this.discrete && this.flipped && gap >= RENEWED_FLICK_GAP_MS;
     if (axis !== this.axis || delta.mode !== this.mode || reversed) {
       this.reset();
       gap = 0;
@@ -24223,7 +24223,7 @@ var DesktopWheelGesture = class {
     this.mode = delta.mode;
     this.lastAt = at;
     let renewedTravel;
-    if (this.flipped && !this.discrete && axis === "x") {
+    if (this.flipped && !this.discrete) {
       const jump = magnitude >= Math.max(RENEWED_FLICK_JUMP_PX, Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO);
       if (this.renewalBlocked) {
         if (magnitude <= RENEWED_FLICK_RELEASE_PX) this.renewalBlocked = false;
@@ -24240,26 +24240,26 @@ var DesktopWheelGesture = class {
         this.travel = 0;
         this.renewalBlocked = true;
         this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
-      }
-    } else if (this.flipped && !this.discrete && axis === "y") {
-      if (gap >= RENEWED_FLICK_GAP_MS) {
-        this.renewedTravel = magnitude;
-        this.renewedPeak = magnitude;
-        this.renewedIncreases = 0;
-      } else if (this.renewedPeak > 0) {
-        if (magnitude >= this.renewedPeak * 1.2) {
+      } else if (axis === "y") {
+        if (gap >= RENEWED_FLICK_GAP_MS) {
+          this.renewedTravel = magnitude;
           this.renewedPeak = magnitude;
-          this.renewedTravel += magnitude;
-          this.renewedIncreases += 1;
-          if (this.renewedIncreases >= 2 && this.renewedTravel >= PAGE_TRAVEL_PX) {
-            renewedTravel = Math.sign(movement) * this.renewedTravel;
-            this.beginRenewedGesture();
-            this.flipped = false;
-            this.travel = 0;
+          this.renewedIncreases = 0;
+        } else if (this.renewedPeak > 0) {
+          if (magnitude >= this.renewedPeak * 1.2) {
+            this.renewedPeak = magnitude;
+            this.renewedTravel += magnitude;
+            this.renewedIncreases += 1;
+            if (this.renewedIncreases >= 2 && this.renewedTravel >= PAGE_TRAVEL_PX) {
+              renewedTravel = Math.sign(movement) * this.renewedTravel;
+              this.beginRenewedGesture();
+              this.flipped = false;
+              this.travel = 0;
+              this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+            }
+          } else if (magnitude < this.renewedPeak * 0.7) {
             this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
           }
-        } else if (magnitude < this.renewedPeak * 0.7) {
-          this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
         }
       }
     } else {
@@ -31185,6 +31185,11 @@ var TileRenderer = class {
     this.inkFrame = null;
     this.inkCommit = null;
     this.inkCommitPaused = false;
+    // beginInput() cancels queued full-density refine jobs so tiles never race
+    // the pointer; remember that drop so resumeInkCommit() can rebuild them,
+    // otherwise a page zoomed in right before a stroke stays blurry until the
+    // next scroll, zoom, or page turn.
+    this.droppedRefine = false;
     this.heldCells = /* @__PURE__ */ new Set();
     this.sequence = 0;
     this.pixels = 0;
@@ -31218,6 +31223,7 @@ var TileRenderer = class {
     (_b = (_a = this.backend) == null ? void 0 : _a.cancelGeneration) == null ? void 0 : _b.call(_a, this.renderGeneration);
     const state = this.state(page, width, height);
     this.pendingTiles.clear();
+    this.droppedRefine = false;
     if (state !== this.active) {
       this.cancelInkCommit();
       this.host.replaceChildren();
@@ -31357,6 +31363,7 @@ var TileRenderer = class {
   }
   beginInput() {
     var _a, _b;
+    this.droppedRefine || (this.droppedRefine = this.jobs.length > 0 || this.pendingTiles.size > 0 || !!this.inkCommit);
     this.renderGeneration += 1;
     (_b = (_a = this.backend) == null ? void 0 : _a.cancelGeneration) == null ? void 0 : _b.call(_a, this.renderGeneration);
     if (this.frame !== null) cancelAnimationFrame(this.frame);
@@ -31366,6 +31373,10 @@ var TileRenderer = class {
   }
   resumeInkCommit() {
     this.inkCommitPaused = false;
+    if (this.droppedRefine) {
+      this.droppedRefine = false;
+      if (this.active && !this.disposed && !this.inkCommit) this.update(this.viewport, this.density, true);
+    }
     this.scheduleInkCommit();
     this.schedule();
   }
@@ -31533,8 +31544,13 @@ var TileRenderer = class {
           (_b = job.priority) != null ? _b : "visible"
         ).then((result) => {
           var _a2;
-          if (this.inkCommit !== commit || commit.generation !== this.renderGeneration || result.renderGeneration !== generation || result.pageId !== job.state.page.id || result.cell !== job.cell || this.disposed) {
+          if (this.inkCommit !== commit) {
             result.bitmap.close();
+            return;
+          }
+          if (commit.generation !== this.renderGeneration || result.renderGeneration !== generation || result.pageId !== job.state.page.id || result.cell !== job.cell || this.disposed) {
+            result.bitmap.close();
+            this.finishInkCommit(false);
             return;
           }
           if (result.revision === ((_a2 = job.state.index.revisions.get(job.cell)) != null ? _a2 : 0)) commit.tiles.push(this.tileFromBitmap(job, result));
@@ -34327,6 +34343,11 @@ function moveBlankNotePage(sidecar, id, toIndex) {
   if (clamped === from) return false;
   const [entry] = sidecar.notePages.splice(from, 1);
   sidecar.notePages.splice(clamped, 0, entry);
+  const pagesById = new Map(sidecar.notebook.pages.map((page) => [page.id, page]));
+  sidecar.notebook.pages = sidecar.notePages.map((entry2) => {
+    var _a;
+    return (_a = pagesById.get(entry2.id)) != null ? _a : pageForNotePage(entry2, "blank");
+  });
   sidecar.notebook.pageOrder = sidecar.notePages.map((entry2) => entry2.id);
   sidecar.notebook.pageOrderUpdatedAt = Date.now();
   touchNoteOrder(sidecar);

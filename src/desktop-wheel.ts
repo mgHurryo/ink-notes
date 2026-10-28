@@ -95,7 +95,7 @@ export class DesktopWheelGesture {
     const reversed = this.lastDelta !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta);
     // Some devices omit the inertia tail entirely, so a quiet interval is
     // itself a gesture boundary; do not infer it from the next delta's size.
-    const renewed = !this.discrete && this.flipped && axis === "x" && gap >= RENEWED_FLICK_GAP_MS;
+    const renewed = !this.discrete && this.flipped && gap >= RENEWED_FLICK_GAP_MS;
     if (axis !== this.axis || delta.mode !== this.mode || reversed) { this.reset(); gap = 0; }
     else if (renewed) {
       this.reset();
@@ -106,7 +106,7 @@ export class DesktopWheelGesture {
     this.mode = delta.mode;
     this.lastAt = at;
     let renewedTravel: number | undefined;
-    if (this.flipped && !this.discrete && axis === "x") {
+    if (this.flipped && !this.discrete) {
       const jump = magnitude >= Math.max(RENEWED_FLICK_JUMP_PX, Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO);
       if (this.renewalBlocked) {
         // Ignore the momentum continuation after a renewed gesture until its
@@ -126,26 +126,31 @@ export class DesktopWheelGesture {
         this.travel = 0;
         this.renewalBlocked = true;
         this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
-      }
-    } else if (this.flipped && !this.discrete && axis === "y") {
-      if (gap >= RENEWED_FLICK_GAP_MS) {
-        this.renewedTravel = magnitude;
-        this.renewedPeak = magnitude;
-        this.renewedIncreases = 0;
-      } else if (this.renewedPeak > 0) {
-        if (magnitude >= this.renewedPeak * 1.2) {
+      } else if (axis === "y") {
+        // Not the quiet-gap path: in a pure trackpad stream a >=55ms gap
+        // resets above before reaching this block. This seeds only the mixed
+        // discrete->continuous flow (mouse notch -> silent gap -> trackpad
+        // tail), where the stale discrete flag blocks that reset and the
+        // tail still needs a ramp detector.
+        if (gap >= RENEWED_FLICK_GAP_MS) {
+          this.renewedTravel = magnitude;
           this.renewedPeak = magnitude;
-          this.renewedTravel += magnitude;
-          this.renewedIncreases += 1;
-          if (this.renewedIncreases >= 2 && this.renewedTravel >= PAGE_TRAVEL_PX) {
-            renewedTravel = Math.sign(movement) * this.renewedTravel;
-            this.beginRenewedGesture();
-            this.flipped = false;
-            this.travel = 0;
+          this.renewedIncreases = 0;
+        } else if (this.renewedPeak > 0) {
+          if (magnitude >= this.renewedPeak * 1.2) {
+            this.renewedPeak = magnitude;
+            this.renewedTravel += magnitude;
+            this.renewedIncreases += 1;
+            if (this.renewedIncreases >= 2 && this.renewedTravel >= PAGE_TRAVEL_PX) {
+              renewedTravel = Math.sign(movement) * this.renewedTravel;
+              this.beginRenewedGesture();
+              this.flipped = false;
+              this.travel = 0;
+              this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+            }
+          } else if (magnitude < this.renewedPeak * 0.7) {
             this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
           }
-        } else if (magnitude < this.renewedPeak * 0.7) {
-          this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
         }
       }
     } else {

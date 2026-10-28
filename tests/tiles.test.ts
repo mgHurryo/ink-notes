@@ -431,6 +431,161 @@ describe("interactive tile commits", () => {
     expect(renderer.inkCommitPaused).toBe(true);
   });
 
+  it("aborts an ink commit stranded by beginInput when its stale result returns", async () => {
+    const proto = TileRenderer.prototype as any;
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => { frames.push(callback); return frames.length; }));
+    const requests: Array<{ resolve: (value: any) => void }> = [];
+    const backend = { renderTile: vi.fn(() => new Promise((resolve) => requests.push({ resolve }))), cancelGeneration: vi.fn() };
+    const state = { id: 1, page: { id: "page" }, index: { width: 128, height: 128, revisions: new Map([["0:0", 1]]), hasCell: () => true } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    const onComplete = vi.fn();
+    Object.assign(renderer, { backend, disposed: false, inkCommitPaused: false, inkCommit: null, inkFrame: null,
+      frame: null, active: state, renderGeneration: 0, pendingTiles: new Map(), cache: new Map(), jobs: [],
+      heldCells: new Set(), droppedRefine: false, host: { children: [] },
+      schedule: vi.fn(function(this: any) { proto.schedule.call(this); }) });
+    const viewport = { x: 0, y: 0, width: 128, height: 128 };
+    renderer.commitInteractive(viewport, 3, true, onComplete);
+    frames.shift()!(0);
+
+    // The worker cannot abort an in-flight render, so beginInput() leaves the
+    // result to return later echoing its request-time generation.
+    const staleBitmap = { close: vi.fn() };
+    renderer.beginInput();
+    requests[0].resolve({ pageId: "page", cell: "0:0", density: 3, revision: 1, renderGeneration: 1,
+      x: 0, y: 0, width: 128, height: 128, canvasWidth: 264, canvasHeight: 264, bitmap: staleBitmap });
+    await Promise.resolve();
+
+    expect(staleBitmap.close).toHaveBeenCalledOnce();
+    expect(onComplete).toHaveBeenCalledWith(false);
+    expect(renderer.inkCommit).toBeNull();
+    expect(renderer.heldCells.has("1/0:0")).toBe(false);
+    expect(renderer.schedule).toHaveBeenCalledOnce();
+    vi.unstubAllGlobals();
+  });
+
+  it("closes only the stale bitmap when an aborted commit's result returns after a replacement", async () => {
+    const proto = TileRenderer.prototype as any;
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => { frames.push(callback); return frames.length; }));
+    const requests: Array<{ resolve: (value: any) => void }> = [];
+    const backend = { renderTile: vi.fn(() => new Promise((resolve) => requests.push({ resolve }))), cancelGeneration: vi.fn() };
+    const state = { id: 1, page: { id: "page" }, index: { width: 128, height: 128, revisions: new Map([["0:0", 1]]), hasCell: () => true } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    const firstComplete = vi.fn(), secondComplete = vi.fn();
+    Object.assign(renderer, { backend, disposed: false, inkCommitPaused: false, inkCommit: null, inkFrame: null,
+      frame: null, active: state, renderGeneration: 0, pendingTiles: new Map(), cache: new Map(), jobs: [],
+      heldCells: new Set(), droppedRefine: false, host: { children: [] },
+      schedule: vi.fn(function(this: any) { proto.schedule.call(this); }) });
+    const viewport = { x: 0, y: 0, width: 128, height: 128 };
+    renderer.commitInteractive(viewport, 3, true, firstComplete);
+    frames.shift()!(0);
+
+    renderer.cancelInkCommit();
+    expect(firstComplete).toHaveBeenCalledWith(false);
+    renderer.commitInteractive(viewport, 3, true, secondComplete);
+    frames.shift()!(0);
+    const replacement = renderer.inkCommit;
+    const staleBitmap = { close: vi.fn() };
+    requests[0].resolve({ pageId: "page", cell: "0:0", density: 3, revision: 1, renderGeneration: 1,
+      x: 0, y: 0, width: 128, height: 128, canvasWidth: 264, canvasHeight: 264, bitmap: staleBitmap });
+    await Promise.resolve();
+
+    expect(staleBitmap.close).toHaveBeenCalledOnce();
+    expect(secondComplete).not.toHaveBeenCalled();
+    expect(renderer.inkCommit).toBe(replacement);
+    vi.unstubAllGlobals();
+  });
+
+  it("requeues a dropped full-density refine once the ink input ends", () => {
+    const host = { children: [] };
+    const state = { id: 1, index: { width: 256, height: 256, revisions: new Map([["0:0", 4]]), hasCell: () => true } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, {
+      active: state, disposed: false, host, density: 2, visible: new Set(["0:0"]),
+      viewport: { x: 0, y: 0, width: 100, height: 100 }, jobs: [], heldCells: new Set(),
+      cache: new Map(), get: vi.fn(() => undefined), schedule: vi.fn(), scheduleInkCommit: vi.fn(),
+      backend: null, renderGeneration: 0, frame: null, pendingTiles: new Map([["stale", 0]]),
+      inkCommit: null, inkCommitPaused: false, droppedRefine: false,
+    });
+
+    renderer.update({ x: 0, y: 0, width: 100, height: 100 }, 2, true);
+    expect(renderer.jobs).toEqual([expect.objectContaining({ cell: "0:0", density: 2, priority: "visible" })]);
+
+    renderer.beginInput();
+    expect(renderer.jobs).toEqual([]);
+
+    renderer.resumeInkCommit();
+    expect(renderer.jobs).toEqual([expect.objectContaining({ cell: "0:0", density: 2, priority: "visible" })]);
+  });
+
+  it("does not compensate when input began with no queued tile work", () => {
+    const state = { id: 1, index: { width: 256, height: 256, revisions: new Map([["0:0", 4]]), hasCell: () => true } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, {
+      active: state, disposed: false, host: { children: [] }, density: 2, visible: new Set(["0:0"]),
+      viewport: { x: 0, y: 0, width: 100, height: 100 }, jobs: [], heldCells: new Set(), cache: new Map(),
+      get: vi.fn(() => undefined), schedule: vi.fn(), scheduleInkCommit: vi.fn(),
+      backend: null, renderGeneration: 0, frame: null, pendingTiles: new Map(),
+      inkCommit: null, inkCommitPaused: false, droppedRefine: false,
+    });
+
+    renderer.beginInput();
+    renderer.resumeInkCommit();
+
+    expect(renderer.jobs).toEqual([]);
+  });
+
+  it("requeues refine work dropped with an aborted in-flight ink commit", () => {
+    const host = { children: [] };
+    const state = { id: 1, index: { width: 256, height: 256, revisions: new Map([["0:0", 4]]), hasCell: () => true } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    // An interactive commit parks its tile jobs on the commit itself, not on
+    // the ordinary queue, so beginInput() must consult the live commit too.
+    Object.assign(renderer, {
+      active: state, disposed: false, host, density: 2, visible: new Set(["0:0"]),
+      viewport: { x: 0, y: 0, width: 100, height: 100 }, jobs: [], heldCells: new Set(),
+      cache: new Map(), get: vi.fn(() => undefined), schedule: vi.fn(), scheduleInkCommit: vi.fn(),
+      backend: null, renderGeneration: 0, frame: null, pendingTiles: new Map(),
+      inkCommit: { state, strokes: [], cells: ["0:0"], clearCells: [],
+        jobs: [{ state, cell: "0:0", density: 2, priority: "visible" }], tiles: [],
+        onComplete: vi.fn(), invalid: false, generation: 0 },
+      inkCommitPaused: false, droppedRefine: false,
+    });
+
+    renderer.beginInput();
+    expect(renderer.droppedRefine).toBe(true);
+
+    // pauseInkCommit() aborts the commit; resumeInkCommit() must settle the
+    // orphaned cells instead of leaving stale rasters mounted.
+    renderer.inkCommit = null;
+    renderer.resumeInkCommit();
+    expect(renderer.jobs).toEqual([expect.objectContaining({ cell: "0:0", density: 2, priority: "visible" })]);
+  });
+
+  it("skips the compensation refine when every visible cell holds its exact raster", () => {
+    const host = { children: [] };
+    const state = { id: 1, index: { width: 256, height: 256, revisions: new Map([["0:0", 3]]), hasCell: () => true } };
+    const tile = { node: { parentElement: host }, revision: 3 };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, {
+      active: state, disposed: false, host, density: 2, visible: new Set(["0:0"]),
+      viewport: { x: 0, y: 0, width: 100, height: 100 },
+      jobs: [{ cell: "9:9", priority: "prewarm" }], heldCells: new Set(), cache: new Map(),
+      get: vi.fn(() => tile), attach: vi.fn(), schedule: vi.fn(), scheduleInkCommit: vi.fn(),
+      backend: null, renderGeneration: 0, frame: null, pendingTiles: new Map([["stale", 0]]),
+      inkCommit: null, inkCommitPaused: false, droppedRefine: false,
+    });
+
+    renderer.beginInput();
+    expect(renderer.jobs).toEqual([]);
+
+    renderer.resumeInkCommit();
+
+    expect(renderer.jobs).toEqual([]);
+    expect(renderer.attach).not.toHaveBeenCalled();
+  });
+
   it("evicts least-recently-used tile canvases beyond the pixel budget", () => {
     const renderer = Object.create(TileRenderer.prototype) as any;
     const firstCanvas = { width: 4_000, height: 2_500 };

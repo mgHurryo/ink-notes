@@ -879,12 +879,20 @@
   .ink-toolbar-section,
   .ink-toolbar-section + .ink-toolbar-section { margin: 0; padding: 0; border-left: 0; }
   .ink-toolbar-section-controls { gap: 0; }
+  :is(.ink-toolbar, .ink-pdf-toolbar) > .ink-toolbar-section-draw .ink-toolbar-section-controls {
+    /* Nine 44px draw tools exceed a 360px row: flow onto another control
+       line instead of centring an oversized section off both screen edges. */
+    flex-wrap: wrap;
+  }
   .ink-page-scroller { padding: 8px 12px 28px; }
   .ink-page-rail { width: 128px; flex-basis: 128px; padding: 10px 8px 20px; }
 }
 
 @container ink-editor (max-width: 390px) {
-  .ink-toolbar { justify-content: flex-start; padding-inline: 4px; }
+  .ink-toolbar { justify-content: flex-start; padding-inline: 4px;
+    /* The wrapped third tool row must keep the workspace at 80% of a
+       720px-tall viewport for the responsive usability contract. */
+    padding-block: 3px; }
   .ink-notes-view :is(.ink-icon-button, .ink-tool-button) { width: 44px; min-width: 44px; flex-basis: 44px; }
   .ink-page-scroller { padding-inline: 8px; }
 }
