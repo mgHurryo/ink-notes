@@ -171,11 +171,18 @@ test("page rail and brush popover are keyboard dismissible", async ({ page }) =>
     const rail = workspace.querySelector(".ink-page-rail")!.getBoundingClientRect();
     const scroller = workspace.querySelector(".ink-page-scroller")!.getBoundingClientRect();
     const paper = workspace.querySelector(".ink-page")!.getBoundingClientRect();
-    return { railRight: rail.right, scrollerLeft: scroller.left, paperLeft: paper.left, paperRight: paper.right, scrollerRight: scroller.right };
+    return { railRight: rail.right, scrollerLeft: scroller.left, paperLeft: paper.left };
   });
   expect(layout.railRight).toBeLessThanOrEqual(layout.scrollerLeft + 1);
   expect(layout.paperLeft).toBeGreaterThanOrEqual(layout.scrollerLeft);
-  expect(layout.paperRight).toBeLessThanOrEqual(layout.scrollerRight + 1);
+  // The rail expands over a 200ms transition while the paper's resize-driven
+  // re-layout trails it by a frame, so one mid-transition snapshot can measure
+  // an overflowing paper; poll for the settled layout the contract describes.
+  await expect.poll(async () => page.locator(".ink-workspace").evaluate((workspace) => {
+    const paper = workspace.querySelector(".ink-page")!.getBoundingClientRect();
+    const scroller = workspace.querySelector(".ink-page-scroller")!.getBoundingClientRect();
+    return paper.right - scroller.right;
+  })).toBeLessThanOrEqual(1);
   for (const label of ["Move current page up", "Move current page down", "Duplicate current page", "Delete current page"]) {
     const action = page.getByRole("button", { name: label, exact: true });
     await expect(action).toBeVisible();
