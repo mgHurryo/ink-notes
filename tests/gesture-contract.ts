@@ -210,19 +210,25 @@ export function gestureContract(create: () => Promise<any>): void {
     it("turns one page for each standard vertical mouse-wheel notch", async () => {
       const { scroller, settle, wheel } = await desktopSetup();
       scroller.scrollTop = 600;
-      for (let index = 0; index < 5; index++) wheel(0, 100, { timeStamp: 100 + index * 100 });
+      // Notches land 200ms apart so each is its own gesture: deliberate
+      // wheel-by-wheel scrolling stays one page per notch. A sub-180ms burst
+      // is one gesture and stops at the per-gesture page budget instead.
+      for (let index = 0; index < 5; index++) wheel(0, 100, { timeStamp: 100 + index * 200 });
       expect(settle).toHaveBeenCalledTimes(5);
       expect(settle).toHaveBeenNthCalledWith(1, 1, 0, "top");
     });
 
-    it("counts one high-speed pixel wheel event as one page and slightly dampens rapid notches", async () => {
+    it("counts one high-speed pixel wheel event as one page and caps the dampened burst at the per-gesture budget", async () => {
       const { scroller, settle, wheel } = await desktopSetup();
       scroller.scrollTop = 600;
       wheel(0, 1200, { timeStamp: 100 });
       expect(settle).toHaveBeenCalledTimes(1);
 
+      // The 0.8 damping still spreads credit (the second page lands on the
+      // third notch), but a sub-180ms notch stream is one gesture, so the
+      // burst stops at MAX_TRACKPAD_PAGES_PER_GESTURE (2) pages in total.
       for (const timeStamp of [140, 180, 220, 260]) wheel(0, 100, { timeStamp });
-      expect(settle).toHaveBeenCalledTimes(4);
+      expect(settle).toHaveBeenCalledTimes(2);
     });
 
     it("waits for a quiet gap before rearming a same-direction trackpad flick", async () => {
@@ -328,20 +334,21 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(1);
     });
 
-    it("keeps the visual vertical five-notch dampened burst to four pages", async () => {
+    it("caps the visual vertical five-notch dampened burst at the per-gesture budget", async () => {
       const { scroller, wheel, settle } = await desktopSetup();
       // The same visual test fires five deltaY=100 notches in one synchronous
       // task right after the horizontal burst above. Synchronous dispatch
       // collides real Event.timeStamps, and a 0ms gap keeps notch sensitivity
-      // at 1.0, flipping five pages instead of four - so the fixture must pin
-      // a 40ms cadence and this contract keeps that shape: 1 + 4 settles.
+      // at 1.0, so the fixture must pin a 40ms cadence. That 40ms stream is
+      // one gesture, so the damped burst now flips the budgeted two pages
+      // instead of four: 1 + 2 settles.
       for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [30, 130], [20, 140],
         [14, 150], [10, 160]]) {
         wheel(delta, 0, { timeStamp: time });
       }
       scroller.scrollTop = 600;
       for (const timeStamp of [340, 380, 420, 460, 500]) wheel(0, 100, { timeStamp });
-      expect(settle).toHaveBeenCalledTimes(5);
+      expect(settle).toHaveBeenCalledTimes(3);
     });
 
     it("rearms a horizontal trackpad flick after a short pause and a renewed swipe", async () => {
@@ -488,7 +495,10 @@ export function gestureContract(create: () => Promise<any>): void {
       const desktop = editor as any;
       desktop.flipSettling = true;
       desktop.beginPageSwipe(1, 6, 0);
-      for (const timeStamp of [100, 200, 300]) wheel(0, 100, { timeStamp });
+      // 200ms gaps keep every notch its own gesture, so each deliberate notch
+      // still queues onto the in-flight swipe; a sub-180ms burst would stop
+      // at the per-gesture page budget.
+      for (const timeStamp of [100, 300, 500]) wheel(0, 100, { timeStamp });
       expect(desktop.pageSwipeRequest.target).toBe(4);
     });
 
