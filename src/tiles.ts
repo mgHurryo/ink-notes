@@ -18,7 +18,7 @@ export interface RenderTileResult {
 
 export interface RenderBackend {
   renderTile(pageId: string, cell: string, density: number, revision: number, width: number, height: number,
-    renderGeneration?: number, priority?: "visible" | "prewarm"): Promise<RenderTileResult>;
+    renderGeneration?: number, priority?: "visible" | "prewarm", excludedStrokeIds?: readonly string[]): Promise<RenderTileResult>;
   cancelGeneration?(renderGeneration: number): void;
   dispose(): void;
 }
@@ -199,6 +199,10 @@ interface InkCommit {
   onComplete: (committed: boolean) => void;
   invalid: boolean;
   generation: number;
+  // Snapshot of workerExclude at commit start: worker-rendered commit tiles
+  // must skip still-pending strokes (the overlay draws them), while strokes
+  // patched into the index for this commit have already left the set.
+  excluded: readonly string[] | undefined;
 }
 
 export function tileDensity(viewport: Rect, density: number): number {
@@ -240,6 +244,11 @@ export class TileRenderer {
   private backendError: ((error: unknown) => void) | null = null;
   private pendingTiles = new Map<string, number>();
   private displayScale = 1;
+  // Strokes the latest sync/setPage excluded from the main-thread index are
+  // already in the worker index (complete-stroke fires at pen-up), so worker
+  // tile renders must skip them too or they composite twice under the
+  // retained preview overlay.
+  private workerExclude: ReadonlySet<string> | undefined;
 
   constructor(private host: HTMLElement) {}
 
@@ -267,6 +276,7 @@ export class TileRenderer {
       this.jobs = [];
     }
     state.index.sync(page.strokes, exclude);
+    this.workerExclude = this.exclusionIds(exclude);
   }
 
   setDisplayScale(scale: number): void {
@@ -276,6 +286,25 @@ export class TileRenderer {
 
   sync(strokes: InkStroke[], exclude?: StrokeExclusion): void {
     this.active?.index.sync(strokes, exclude);
+    this.workerExclude = this.exclusionIds(exclude);
+  }
+
+  /** Refreshes the worker-render exclusion without reconciling the index.
+   *  Ink flows call it at pending-set transitions (stroke becomes preview,
+   *  preview discarded, commit retried) because the per-frame sync pauses
+   *  while pending ink owns the render loop. */
+  setWorkerExclusion(exclude?: StrokeExclusion): void {
+    this.workerExclude = this.exclusionIds(exclude);
+  }
+
+  private exclusionIds(exclude: StrokeExclusion): ReadonlySet<string> | undefined {
+    if (!exclude) return undefined;
+    if (isStrokeSet(exclude)) return exclude;
+    return new Set([exclude.id]);
+  }
+
+  private workerExclusionSnapshot(): readonly string[] | undefined {
+    return this.workerExclude ? [...this.workerExclude] : undefined;
   }
 
   acknowledgeStrokeMetadata(stroke: InkStroke, previousUpdatedAt: number): void {
@@ -283,7 +312,16 @@ export class TileRenderer {
   }
 
   patchStrokes(upsert: readonly InkStroke[], remove: readonly string[], order: readonly InkStroke[]): string[] {
-    return this.active?.index.patch(upsert, remove, order) ?? [];
+    const changed = this.active?.index.patch(upsert, remove, order) ?? [];
+    // Patched strokes just entered the main-thread index, so tiles must now
+    // include them; keeping them in the worker exclusion would commit tiles
+    // that omit the very strokes being committed.
+    if (this.workerExclude && upsert.length > 0) {
+      const next = new Set(this.workerExclude);
+      for (const stroke of upsert) next.delete(stroke.id);
+      this.workerExclude = next.size > 0 ? next : undefined;
+    }
+    return changed;
   }
 
   removeStrokes(ids: readonly string[]): void {
@@ -357,7 +395,7 @@ export class TileRenderer {
     for (const cell of cells) this.heldCells.add(this.holdKey(this.active, cell));
     this.jobs = this.jobs.filter(job => !this.isHeld(job));
     this.inkCommit = { state: this.active, strokes: [], cells, clearCells, jobs, tiles: [], onComplete,
-      invalid: false, generation: this.renderGeneration };
+      invalid: false, generation: this.renderGeneration, excluded: this.workerExclusionSnapshot() };
     this.scheduleInkCommit();
   }
 
@@ -376,7 +414,8 @@ export class TileRenderer {
       else jobs.push({ state: this.active, cell, density: this.density });
     }
     this.jobs = this.jobs.filter(job => !this.isHeld(job));
-    this.inkCommit = { state: this.active, strokes, cells, clearCells: [], jobs, tiles, onComplete, invalid: false, generation: this.renderGeneration };
+    this.inkCommit = { state: this.active, strokes, cells, clearCells: [], jobs, tiles, onComplete, invalid: false,
+      generation: this.renderGeneration, excluded: this.workerExclusionSnapshot() };
     if (jobs.length === 0) this.finishInkCommit(true);
     else this.scheduleInkCommit();
   }
@@ -571,7 +610,7 @@ export class TileRenderer {
       if (this.backend) {
         const generation = this.renderGeneration;
         this.backend.renderTile(job.state.page.id, job.cell, job.density, job.state.index.revisions.get(job.cell) ?? 0,
-          job.state.index.width, job.state.index.height, generation, job.priority ?? "visible")
+          job.state.index.width, job.state.index.height, generation, job.priority ?? "visible", commit.excluded)
           .then((result) => {
             // The commit was aborted or replaced: finishing it here would
             // release holds or fire the replacement's callback, so only the
@@ -663,7 +702,7 @@ export class TileRenderer {
     const generation = this.renderGeneration;
     this.pendingTiles.set(key, generation);
     this.backend.renderTile(job.state.page.id, job.cell, job.density, revision, job.state.index.width, job.state.index.height,
-      generation, job.priority ?? "visible")
+      generation, job.priority ?? "visible", this.workerExclusionSnapshot())
       .then((result) => {
         if (this.pendingTiles.get(key) === generation) this.pendingTiles.delete(key);
         if (this.disposed || generation !== this.renderGeneration || result.pageId !== job.state.page.id || result.cell !== job.cell) {

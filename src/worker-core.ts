@@ -255,7 +255,8 @@ export class InkWorkerCore {
     }
     if (request.type === "render-tile") {
       const rendered = renderTile(session.notebook, session.indexes.get(request.pageId), session.outlineCache,
-        request.pageId, request.cell, request.density, request.revision, request.renderGeneration, request.width, request.height);
+        request.pageId, request.cell, request.density, request.revision, request.renderGeneration, request.width, request.height,
+        request.excludedStrokeIds);
       return this.response(request, { type: "tile-rendered", ...rendered });
     }
     if (request.type === "cancel-render-generation") {
@@ -333,7 +334,8 @@ interface RenderedTile {
 }
 
 function renderTile(notebook: InkNotebook, index: WorkerPageIndex | undefined, outlineCache: OutlineCache,
-  pageId: string, cell: string, density: number, revision: number, renderGeneration: number, pageWidth: number, pageHeight: number): RenderedTile {
+  pageId: string, cell: string, density: number, revision: number, renderGeneration: number, pageWidth: number, pageHeight: number,
+  excludedStrokeIds?: readonly string[]): RenderedTile {
   const page = notebook.pages.find((candidate) => candidate.id === pageId);
   if (!page) throw new Error(`Ink worker page is unavailable: ${pageId}`);
   const Canvas = (globalThis as unknown as { OffscreenCanvas?: RasterCanvasConstructor }).OffscreenCanvas;
@@ -353,7 +355,14 @@ function renderTile(notebook: InkNotebook, index: WorkerPageIndex | undefined, o
   if (!ctx) throw new Error("Ink worker could not create a 2D tile context");
   ctx.setTransform(safeDensity, 0, 0, safeDensity, bleedPixels - x * safeDensity, bleedPixels - y * safeDensity);
   const candidates = index?.query(cell, pageWidth, pageHeight) ?? [];
-  for (const stroke of candidates) drawWorkerStroke(ctx, stroke, pageWidth, pageHeight, outlineCache);
+  for (const stroke of candidates) {
+    // The mirror received these strokes via complete-stroke while the main
+    // thread still renders them from its preview layer; skipping them here
+    // keeps the tile free of that ink until the commit lands and revisions
+    // move the tile over.
+    if (excludedStrokeIds?.includes(stroke.id)) continue;
+    drawWorkerStroke(ctx, stroke, pageWidth, pageHeight, outlineCache);
+  }
   return {
     pageId, cell, density: safeDensity, revision, renderGeneration, x, y, width, height,
     canvasWidth, canvasHeight, bitmap: canvas.transferToImageBitmap(),

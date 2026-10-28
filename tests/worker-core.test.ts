@@ -285,4 +285,46 @@ describe("InkWorkerCore persistence mirror", () => {
       vi.unstubAllGlobals();
     }
   });
+
+  it("keeps main-thread-excluded pending strokes out of worker tiles", async () => {
+    const stroke = vi.fn(), fill = vi.fn();
+    class FakeOffscreenCanvas {
+      constructor(public width: number, public height: number) {}
+      getContext() {
+        return { setTransform: vi.fn(), save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), moveTo: vi.fn(),
+          quadraticCurveTo: vi.fn(), lineTo: vi.fn(), stroke, fill, arc: vi.fn(), closePath: vi.fn() };
+      }
+      transferToImageBitmap() { return { close: vi.fn() } as unknown as ImageBitmap; }
+    }
+    vi.stubGlobal("OffscreenCanvas", FakeOffscreenCanvas);
+    try {
+      const core = new InkWorkerCore({ offscreenCanvas: true, imageBitmap: true });
+      const notebook = createNotebook();
+      const page = notebook.pages[0];
+      page.strokes.push({
+        id: "pending", pageId: page.id, tool: "pen", color: "#000", width: 3, opacity: 1,
+        points: [{ x: 0.05, y: 0.05, pressure: 0.5, t: 1 }, { x: 0.06, y: 0.06, pressure: 0.5, t: 2 }],
+        createdAt: 1, updatedAt: 1,
+      });
+      await response(core, request({ type: "initialize-notebook", notebook, revision: 0 }));
+      // Pen-up: the main thread still renders the stroke from its preview
+      // overlay while the worker mirror already received the complete stroke.
+      await response(core, request({ type: "apply-operation", revision: 1, operation: {
+        type: "complete-stroke", pageId: page.id, strokeId: "pending", pageUpdatedAt: 2, notebookUpdatedAt: 2 } }, 2));
+      const tile = (renderGeneration: number, excludedStrokeIds?: readonly string[]) => request({
+        type: "render-tile", pageId: page.id, cell: "0:0", density: 1, revision: 1, renderGeneration,
+        priority: "visible", width: notebook.pageWidth, height: notebook.pageHeight, excludedStrokeIds,
+      }, renderGeneration + 2, 1);
+      expect(await response(core, tile(1))).toMatchObject({ type: "tile-rendered", cell: "0:0" });
+      expect(stroke.mock.calls.length + fill.mock.calls.length).toBeGreaterThan(0);
+
+      stroke.mockClear();
+      fill.mockClear();
+      expect(await response(core, tile(2, ["pending"]))).toMatchObject({ type: "tile-rendered", cell: "0:0" });
+      expect(stroke).not.toHaveBeenCalled();
+      expect(fill).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
 });

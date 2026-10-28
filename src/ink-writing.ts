@@ -3067,6 +3067,10 @@ export abstract class InkWritingView extends FileView {
     if (this.pendingInkPageId && this.pendingInkPageId !== page.id) this.discardPendingInkPreview();
     this.pendingInkPageId = page.id;
     if (!this.pendingInkStrokes.includes(this.activeStroke)) this.pendingInkStrokes.push(this.activeStroke);
+    // Per-frame tiles.sync pauses while pending ink owns the render loop, so
+    // the renderer's worker-exclusion snapshot would go stale exactly during
+    // the commit window; refresh it at the transition into pending.
+    this.tiles?.setWorkerExclusion?.(this.tileExclusion());
   }
 
   protected hasInkPreview(): boolean { return this.activeStroke !== null || this.pendingInkStrokes.length > 0; }
@@ -3093,6 +3097,7 @@ export abstract class InkWritingView extends FileView {
         // the completed strokes on the sharp overlay and retry them with the
         // next idle batch instead of synchronously replaying the whole page.
         this.tiles?.removeStrokes(batch.map((stroke) => stroke.id));
+        this.tiles?.setWorkerExclusion?.(this.tileExclusion());
         if (this.viewReady && page === this.currentPage()) this.drawPreview();
         if (this.activePointerId === null) this.schedulePendingInkCommit(page);
         return;
@@ -3136,6 +3141,8 @@ export abstract class InkWritingView extends FileView {
     this.pendingInkPageId = null;
     this.confirmedStrokeOutlines.clear();
     this.tiles?.cancelInkCommit();
+    // No pending ink remains to keep off the worker's tile renders.
+    this.tiles?.setWorkerExclusion?.(undefined);
     if (this.confirmedPreviewCanvas) {
       this.confirmedPreviewCanvas.width = this.confirmedPreviewCanvas.height = 1;
       this.confirmedPreviewCanvas.classList.remove("is-highlighter-preview");
