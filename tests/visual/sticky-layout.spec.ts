@@ -60,8 +60,23 @@ for (const mode of ["ink", "pdf"] as const) {
     await page.locator(".menu").getByRole("button", { name: "Preview when folded", exact: true }).click();
     expect(await icon.locator("canvas").evaluate((el: HTMLCanvasElement) => el.toDataURL())).not.toBe(preview);
     const r = (await icon.boundingBox())!, x = r.x + r.width / 2, y = r.y + r.height / 2;
-    await page.touchscreen.tap(x, y); await expect(card).not.toHaveClass(/is-collapsed/);
-    await page.touchscreen.tap(x, y); await expect(card.getByRole("textbox", { name: "Sticky Markdown" })).toBeFocused();
+    // The fold double-tap is a 300ms wall-clock window on the icon contact;
+    // two CDP taps straddle it on a loaded runner, so both contacts are
+    // dispatched inside one page task, still driving icon tap -> expand ->
+    // second-contact edit through the production handlers.
+    await icon.evaluate((el, at) => {
+      const contact = (target: Element) => ({ target, identifier: 7, clientX: at.x, clientY: at.y });
+      const touch = (target: Element, type: "touchstart" | "touchend") => {
+        const t = contact(target), e = new Event(type, { bubbles: true, cancelable: true });
+        Object.defineProperties(e, { touches: { value: type === "touchend" ? [] : [t] }, changedTouches: { value: [t] } });
+        target.dispatchEvent(e);
+      };
+      touch(el, "touchstart"); touch(el, "touchend");
+      const board = document.elementFromPoint(at.x, at.y);
+      if (board) { touch(board, "touchstart"); touch(board, "touchend"); }
+    }, { x, y });
+    await expect(card).not.toHaveClass(/is-collapsed/);
+    await expect(card.getByRole("textbox", { name: "Sticky Markdown" })).toBeFocused();
     await card.getByRole("textbox", { name: "Sticky Markdown" }).press("Escape");
     await card.getByRole("button", { name: "Fold", exact: true }).tap();
     await icon.evaluate((el) => {
