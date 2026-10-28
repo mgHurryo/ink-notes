@@ -2420,11 +2420,6 @@ export abstract class InkWritingView extends FileView {
       candidate.touchType === "stylus" && host.contains(candidate.target as Node));
     if (!touch) return false;
     if (event.cancelable) event.preventDefault();
-    // A Pencil landing mid page-flip drag must spring the page back before the
-    // gesture state goes away, or the drag translateX is never settled and the
-    // page stays stranded (same contract as onTouchCancel / two-finger takeover).
-    this.cancelPageFlip();
-    this.touchGesture = null;
     const sample = stylusTouchSample(touch, event.timeStamp);
     const interaction = this.interaction;
     if (event.type === "touchstart") {
@@ -2440,6 +2435,14 @@ export abstract class InkWritingView extends FileView {
       } else {
         this.onPointerDown(sample, "stylus-touch");
       }
+      // A Pencil landing mid page-flip drag must spring the page back before
+      // the gesture state goes away, or the drag translateX is never settled
+      // and the page stays stranded (same contract as onTouchCancel /
+      // two-finger takeover). Settle only after this contact owns input: the
+      // settle latches flipSettling for the bounce animation, and that latch
+      // (inputLocked()) must not swallow the very contact that triggered it.
+      this.cancelPageFlip();
+      this.touchGesture = null;
     } else if (interaction?.source === "stylus-touch" && interaction.pointerId === touch.identifier) {
       if (event.type === "touchmove") this.onPointerMove(sample, "stylus-touch");
       else if (event.type === "touchend") {
