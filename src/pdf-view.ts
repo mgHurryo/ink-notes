@@ -1,4 +1,4 @@
-import { App, Notice, Scope, SuggestModal, TFile, WorkspaceLeaf, loadPdfJs, setIcon } from "obsidian";
+import { App, Notice, Platform, Scope, SuggestModal, TFile, WorkspaceLeaf, loadPdfJs, setIcon } from "obsidian";
 import { InkNotebook, InkPage, InkTool, createNotebook } from "./model";
 import { canvasResolution, drawInkStroke, scaledStroke } from "./rendering";
 import { registerDocumentPointerEndEvents } from "./ink-input";
@@ -35,6 +35,14 @@ const PDF_ZOOM_MAX = 3;
 const PDF_ZOOM_STEP = 1.2;
 const PDF_PAGE_PADDING = 24;
 const SELECTION_OVERLAY_BUDGET = 4_000_000;
+/** Settled-page raster: one full-resolution render per page, so the 16M
+ *  WebKit-safe default permanently downsamples width-filled pages at high
+ *  DPR (a 2500px page box at dpr2 needs ~35M) instead of blurring only a
+ *  transient swipe preview. 64M covers desktop width-fill panes up to
+ *  ~3400px at dpr2; canvasResolution's 8192 edge cap still bounds each
+ *  side. iOS keeps the default - its WebKit canvas allocation past 16M is
+ *  unverified, and zoom 1 there never hits 16M anyway. */
+const PDF_PAGE_RASTER_BUDGET = 64_000_000;
 /** Swipe rasters must match live page density (dpr): a 4M per-page budget
  *  downsamples Retina pages, so the dragged-in page reads blurry for the
  *  whole flip and only sharpens at settle. 16M is the WebKit-safe ceiling
@@ -1808,7 +1816,8 @@ export class PdfInkView extends InkWritingView {
     // Layout's 100% is the pane-wide page box, not a PDF point. Rasterize at
     // its actual screen density instead of enlarging a point-sized bitmap.
     const { width: targetWidth, height: targetHeight } = canvasResolution(
-      this.pageBaseWidth, this.pageBaseHeight, window.devicePixelRatio || 1, this.zoom);
+      this.pageBaseWidth, this.pageBaseHeight, window.devicePixelRatio || 1, this.zoom,
+      Platform.isIosApp ? undefined : PDF_PAGE_RASTER_BUDGET);
     canvas.setCssStyles({ width: "100%", height: "100%" });
     if (!notePage || notePage.sourceIndex === undefined || !this.pdfDoc) {
       // A blank note page: plain paper, ink only.
