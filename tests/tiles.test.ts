@@ -617,4 +617,50 @@ describe("interactive tile commits", () => {
     expect(renderer.jobs).toHaveLength(1);
     expect(renderer.jobs[0]).toMatchObject({ cell: "0:0", priority: "prewarm" });
   });
+
+  it("passes the pending-stroke sync exclusion to worker tile requests", () => {
+    const renderTile = vi.fn((_pageId: string, _cell: string, _density: number, _revision: number,
+      _width: number, _height: number, _renderGeneration: number, _priority: "visible" | "prewarm",
+      _excludedStrokeIds?: readonly string[]) => new Promise<never>(() => {}));
+    const backend = { renderTile };
+    const state = { id: 9, page: { id: "page" }, index: { width: 128, height: 128,
+      revisions: new Map([["0:0", 1]]), sync: vi.fn() } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, { backend, disposed: false, renderGeneration: 1, pendingTiles: new Map(),
+      cache: new Map(), visible: new Set(["0:0"]), active: state, schedule: vi.fn(), backendError: vi.fn() });
+    const pending = stroke("pending", 0.1, 0.1);
+    renderer.sync([pending], new Set([pending.id]));
+
+    renderer.requestWorkerTile({ state, cell: "0:0", density: 2, priority: "visible" });
+
+    expect(renderTile).toHaveBeenCalledOnce();
+    expect(renderTile.mock.calls[0][8]).toEqual(["pending"]);
+  });
+
+  it("drops the worker exclusion for strokes patched into the main index", () => {
+    const renderTile = vi.fn((_pageId: string, _cell: string, _density: number, _revision: number,
+      _width: number, _height: number, _renderGeneration: number, _priority: "visible" | "prewarm",
+      _excludedStrokeIds?: readonly string[]) => new Promise<never>(() => {}));
+    const backend = { renderTile };
+    const state = { id: 9, page: { id: "page" }, index: { width: 128, height: 128,
+      revisions: new Map([["0:0", 1]]), sync: vi.fn(), patch: vi.fn(() => []) } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, { backend, disposed: false, renderGeneration: 1, pendingTiles: new Map(),
+      cache: new Map(), visible: new Set(["0:0"]), active: state, schedule: vi.fn(), backendError: vi.fn() });
+    const pending = stroke("pending", 0.1, 0.1);
+    renderer.sync([pending], new Set([pending.id]));
+    renderer.requestWorkerTile({ state, cell: "0:0", density: 2, priority: "visible" });
+    expect(renderTile.mock.calls[0][8]).toEqual(["pending"]);
+
+    // startPendingInkCommit patches the committing batch into the main index
+    // before its tiles render; the exclusion must forget it or the committed
+    // tiles would omit the very strokes they are committing.
+    renderer.patchStrokes([pending], [], [pending]);
+    renderer.renderGeneration = 2;
+    renderer.pendingTiles.clear();
+    renderer.requestWorkerTile({ state, cell: "0:0", density: 2, priority: "visible" });
+
+    expect(renderTile).toHaveBeenCalledTimes(2);
+    expect(renderTile.mock.calls[1][8]).toBeUndefined();
+  });
 });

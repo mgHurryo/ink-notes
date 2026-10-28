@@ -112,6 +112,11 @@ export type InkWorkerRequest =
     priority: "visible" | "prewarm";
     width: number;
     height: number;
+    // Stroke ids the main thread keeps out of its tile index while their ink
+    // is still owned by the preview overlay. The worker mirror already
+    // received them via complete-stroke, so tile renders must skip them to
+    // avoid compositing the same stroke twice.
+    excludedStrokeIds?: readonly string[];
   }
   | RequestBase & { type: "cancel-render-generation"; renderGeneration: number }
   | RequestBase & { type: "commit-save"; token: string }
