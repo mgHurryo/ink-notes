@@ -24214,7 +24214,10 @@ var DesktopWheelGesture = class {
     const discrete = delta.mode !== 0 || pixelNotch;
     const reversed = this.lastDelta !== 0 && movement !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta);
     const renewed = !this.discrete && this.flipped && gap >= RENEWED_FLICK_GAP_MS;
-    if (axis !== this.axis || delta.mode !== this.mode || reversed) {
+    if (axis !== this.axis && this.flipped && !this.discrete && !discrete) {
+      this.travel = 0;
+      this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+    } else if (axis !== this.axis || delta.mode !== this.mode || reversed) {
       this.reset();
       gap = 0;
     } else if (renewed) {

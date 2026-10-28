@@ -115,8 +115,19 @@ export class DesktopWheelGesture {
     // Some devices omit the inertia tail entirely, so a quiet interval is
     // itself a gesture boundary; do not infer it from the next delta's size.
     const renewed = !this.discrete && this.flipped && gap >= RENEWED_FLICK_GAP_MS;
-    if (axis !== this.axis || delta.mode !== this.mode || reversed) { this.reset(); gap = 0; }
-    else if (renewed) {
+    // A continuous stream drifting across the axis retention boundary (or
+    // re-targeted by Shift) is still the same physical flick: re-classify the
+    // axis but keep the suppression state - flipped, page budget, gesture id -
+    // or the momentum tail re-arms under the new axis threshold and pages
+    // again. Only the per-axis travel and ramp state go; discrete streams
+    // (deliberate notches) keep their hard reset and fresh budget.
+    if (axis !== this.axis && this.flipped && !this.discrete && !discrete) {
+      this.travel = 0;
+      this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+    } else if (axis !== this.axis || delta.mode !== this.mode || reversed) {
+      this.reset();
+      gap = 0;
+    } else if (renewed) {
       this.reset();
       gap = 0;
     }

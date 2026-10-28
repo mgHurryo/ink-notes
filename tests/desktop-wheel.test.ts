@@ -64,6 +64,32 @@ describe("DesktopWheelGesture gesture boundaries", () => {
   });
 });
 
+describe("DesktopWheelGesture axis switch on the momentum tail", () => {
+  // An axis re-classification mid-tail is still the same physical flick: the
+  // tail must stay suppressed instead of re-arming under the new (smaller)
+  // axis threshold and spending a fresh page budget.
+  it("keeps the tail suppressed across a natural drift past the retention ratio", () => {
+    expect(flipCount([[0, 140], [0, 90], [10, 60], [15, 30], [25, 18], [30, 10], [40, 6]])).toBe(1);
+  });
+
+  it("keeps the tail suppressed when Shift re-targets the axis mid-flight", () => {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    // Vertical flick flips one page (movement is negative, so the page is -1);
+    // the tail is still hot when Shift is pressed 10ms into it.
+    [140, 90, 60].forEach((magnitude, i) => {
+      pages += gesture.pageDelta(gesture.begin({ x: 0, y: -magnitude, mode: 0 }, false, 100 + i * 10), false);
+    });
+    // Shift-held wheel events keep reporting deltaY: the gesture re-classifies
+    // onto x while the same stream continues decaying, so suppression and the
+    // page budget must survive the switch.
+    for (let i = 0; i < 8; i++) {
+      pages += gesture.pageDelta(gesture.begin({ x: 0, y: -30, mode: 0 }, true, 130 + i * 10), false);
+    }
+    expect(pages).toBe(-1);
+  });
+});
+
 describe("DesktopWheelGesture discrete notch budget", () => {
   // Wheel-emulation / quantized touchpads emit pixel deltas that pixelNotch
   // classifies as wheel notches; the discrete path must honor the same
