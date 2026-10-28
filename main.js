@@ -24292,11 +24292,14 @@ var DesktopWheelGesture = class {
       const notches = motion.mode === 1 ? Math.max(1, Math.round(Math.abs(motion.movement) / 48)) : 1;
       const sensitivity = motion.mode === 0 && motion.gap > 0 && motion.gap < 80 ? 0.8 : 1;
       this.notchCredit += notches * sensitivity;
-      const pages = Math.floor(this.notchCredit + 1e-8);
+      const pages = Math.min(
+        Math.floor(this.notchCredit + 1e-8),
+        MAX_TRACKPAD_PAGES_PER_GESTURE - this.trackpadPages
+      );
       this.notchCredit -= pages;
       if (pages > 0) {
         this.flipped = true;
-        this.trackpadPages += 1;
+        this.trackpadPages += pages;
       }
       return Math.sign(motion.movement) * pages;
     }
