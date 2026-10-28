@@ -275,6 +275,41 @@ describe("page touch navigation", () => {
     expect(view.touchGesture).toBeNull();
   });
 
+  it("rebounds a page drag when a stylus touch lands mid-flip", () => {
+    const { view } = setup();
+    view.swipeSettle = vi.fn();
+    view.onPointerDown = vi.fn();
+    view.pageElement.contains = () => true;
+    view.state = { tool: "pen" };
+    view.touchGesture = { ids: [1], axis: "x", dragX: -60 };
+    const stylus = { identifier: 9, clientX: 400, clientY: 400, force: 0.35, touchType: "stylus", target: view.pageElement };
+    view.onTouchStart({ ...touchEvent([[1, 300, 400]]), type: "touchstart", timeStamp: 100, changedTouches: [stylus] });
+    expect(view.swipeSettle).toHaveBeenCalledWith(0);
+    expect(view.touchGesture).toBeNull();
+    // The Pencil still takes over input for its own contact.
+    expect(view.onPointerDown).toHaveBeenCalledTimes(1);
+    expect(view.onPointerDown).toHaveBeenCalledWith(
+      expect.objectContaining({ pointerId: 9, pointerType: "pen" }), "stylus-touch");
+    // Lifting the dragging finger afterwards settles nothing twice: the
+    // gesture is gone, so settlePageFlip returns without deciding a flip.
+    view.onTouchStart({ ...touchEvent([]), type: "touchend",
+      changedTouches: [{ identifier: 1, clientX: 300, clientY: 400, touchType: "direct" }] });
+    expect(view.swipeSettle).toHaveBeenCalledTimes(1);
+  });
+
+  it("rebounds a page drag when a pen pointer takes over mid-flip", () => {
+    // Pointer-only platforms never classify a stylus Touch, so the takeover
+    // surfaces as an active pointer during onTouchMove; the page must still
+    // spring back instead of stranding the drag translateX.
+    const { view } = setup();
+    view.swipeSettle = vi.fn();
+    view.touchGesture = { ids: [1], axis: "x", dragX: -60 };
+    view.activePointerId = 9;
+    view.onTouchMove(touchEvent([[1, 300, 400]]));
+    expect(view.swipeSettle).toHaveBeenCalledWith(0);
+    expect(view.touchGesture).toBeNull();
+  });
+
   it("allows a zoomed flip drag only from the scroll edge the drag heads for", () => {
     const { view } = setup();
     const scroller = view.pageScroller;
