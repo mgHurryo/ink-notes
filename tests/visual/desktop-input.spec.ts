@@ -442,27 +442,32 @@ test("desktop wheel zoom keeps mounted ink stable until the burst ends", async (
   await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
   await expect.poll(() => page.locator(".ink-tile-layer canvas").count()).toBeGreaterThan(0);
   await page.waitForTimeout(400);
+  // The whole burst and its stability sample are scheduled inside the page:
+  // a Node-side per-notch loop adds an unbounded Playwright round trip to
+  // every inter-notch gap, so under full-suite load one gap crossed the
+  // product's 180ms gesture idle window, the burst legitimately ended, and
+  // the post-burst re-render was misread as mid-burst tile replacement.
+  // In-page timers fire in deadline order, so the 50ms notch cadence cannot
+  // be torn open by a stalled main thread, and the sample at last-notch+150
+  // always runs before the idle timer (last-notch+180) can end the gesture.
   await page.evaluate(() => {
     const scope = window as any;
     const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
-    scope.wheelTiles = new Map(Array.from(document.querySelectorAll<HTMLElement>(".ink-tile-layer [data-cell]"))
+    const initial = new Map(Array.from(document.querySelectorAll<HTMLElement>(".ink-tile-layer [data-cell]"))
       .map(tile => [tile.dataset.cell, tile]));
-    scope.sendDesktopZoom = () => {
+    scope.burstReplaced = null;
+    const sendDesktopZoom = () => {
       const rect = scroller.getBoundingClientRect();
       scroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true,
         ctrlKey: true, deltaY: -20, clientX: rect.left + rect.width / 2, clientY: rect.top + rect.height / 2 }));
     };
-  });
-  for (let i = 0; i < 5; i++) {
-    await page.evaluate(() => (window as any).sendDesktopZoom());
-    await page.waitForTimeout(70);
-    const replaced = await page.evaluate(() => {
-      const initial = (window as any).wheelTiles as Map<string, Element>;
-      return Array.from(document.querySelectorAll<HTMLElement>(".ink-tile-layer [data-cell]"))
+    for (let i = 0; i < 5; i++) window.setTimeout(sendDesktopZoom, i * 50);
+    window.setTimeout(() => {
+      scope.burstReplaced = Array.from(document.querySelectorAll<HTMLElement>(".ink-tile-layer [data-cell]"))
         .filter(tile => initial.has(tile.dataset.cell!) && initial.get(tile.dataset.cell!) !== tile).length;
-    });
-    expect(replaced).toBe(0);
-  }
+    }, 5 * 50 + 100);
+  });
+  await expect.poll(() => page.evaluate(() => (window as any).burstReplaced)).toBe(0);
   await expect(page.locator(".ink-page-extent > .ink-page")).toHaveCSS("transform", "none");
   const inkPixels = await page.locator(".ink-tile-layer canvas").evaluateAll((canvases: HTMLCanvasElement[]) => {
     let pixels = 0;
