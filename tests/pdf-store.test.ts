@@ -234,6 +234,38 @@ describe("migrateForRename", () => {
     // old sidecar missing -> false
     expect(await store.migrateForRename(targetPdf, PDF_PATH)).toBe(false);
   });
+
+  it("migrates the renamed case twin's own disambiguated sidecar, not its twin's legacy one", async () => {
+    const { vault, store } = setup();
+    const fingerprintA = { sha256: "a".repeat(64), byteLength: 4096 };
+    const fingerprintB = { sha256: "b".repeat(64), byteLength: 4096 };
+    // Both spellings fold into one lowercased legacy slot; after #316 the
+    // second opener (B) keeps its sidecar in the disambiguated slot.
+    expect(sidecarPathFor("docs/lecture.pdf")).toBe(sidecarPathFor("docs/Lecture.pdf"));
+    vault.put(sidecarPathFor("docs/lecture.pdf"), serializeSidecar(createSidecar("docs/lecture.pdf", fingerprintA, SOURCE_PAGES)));
+    vault.put(disambiguatedSidecarPathFor("docs/Lecture.pdf"), serializeSidecar(createSidecar("docs/Lecture.pdf", fingerprintB, SOURCE_PAGES)));
+    expect(await store.migrateForRename("docs/paper.pdf", "docs/Lecture.pdf")).toBe(true);
+    // The renamed twin's own sidecar moved and follows the new PDF path...
+    const migrated = await store.read(store.sidecarFileFor("docs/paper.pdf") as TFile);
+    expect(migrated.source.sha256).toBe(fingerprintB.sha256);
+    expect(migrated.source.path).toBe("docs/paper.pdf");
+    expect(vault.getAbstractFileByPath(disambiguatedSidecarPathFor("docs/Lecture.pdf"))).toBeNull();
+    // ...while the first twin's legacy sidecar stays untouched.
+    const untouched = await store.read(store.sidecarFileFor("docs/lecture.pdf") as TFile);
+    expect(untouched.source.sha256).toBe(fingerprintA.sha256);
+    expect(untouched.source.path).toBe("docs/lecture.pdf");
+  });
+
+  it("leaves a foreign legacy sidecar alone when the rename has no exact-case owner", async () => {
+    const { vault, store } = setup();
+    const fingerprintA = { sha256: "a".repeat(64), byteLength: 4096 };
+    vault.put(sidecarPathFor("docs/lecture.pdf"), serializeSidecar(createSidecar("docs/lecture.pdf", fingerprintA, SOURCE_PAGES)));
+    expect(await store.migrateForRename("docs/paper.pdf", "docs/Lecture.pdf")).toBe(false);
+    const untouched = await store.read(store.sidecarFileFor("docs/lecture.pdf") as TFile);
+    expect(untouched.source.sha256).toBe(fingerprintA.sha256);
+    expect(untouched.source.path).toBe("docs/lecture.pdf");
+    expect(store.sidecarFileFor("docs/paper.pdf")).toBeNull();
+  });
 });
 
 describe("format error propagation", () => {
