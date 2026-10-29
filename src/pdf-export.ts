@@ -1,7 +1,7 @@
 import { PDFDocument, PDFImage, PDFPage, degrees, rgb } from "pdf-lib";
 import { InkImage, InkNotebook, InkStroke } from "./model";
 import { PdfSidecar, PdfSidecarNotePage } from "./pdf-sidecar";
-import { penOutlineRings } from "./rendering";
+import { penOutlineRings, STROKE_WIDTH_REFERENCE } from "./rendering";
 import { stickyFrameHeight, stickyFrameWidth, stickyPng, StickyMarkdownContext } from "./sticky-rendering";
 import { stickyPosition, type StickyNote } from "./sticky-model";
 
@@ -46,9 +46,12 @@ export function looksDigitallySigned(bytes: ArrayBuffer): boolean {
 }
 
 /**
- * Stroke widths are authored in PDF points: the PDF ink view uses the page's
- * point size as its logical canvas size, so a stored width of 3 renders as
- * 3/595 of an A4 page width on screen and exports as exactly 3 pt.
+ * Stroke widths are canonical page widths (see STROKE_WIDTH_REFERENCE): a
+ * stored width of 3 fills 3/980 of the page on screen, and the outline
+ * geometry already scales itself by its logical canvas, so after the
+ * normalize-and-map below the exported width is always
+ * width / 980 of the page in points — independent of which device
+ * (renderWidth) produced the export.
  */
 export function inkToSvgPath(stroke: InkStroke, page: PdfSidecarNotePage): string {
   const points = stroke.points.map((point) => displayToPdfPoint(point.x, point.y, page));
@@ -216,9 +219,12 @@ function drawStroke(page: PDFPage, stroke: InkStroke, notePage: PdfSidecarNotePa
   const color = rgb(red, green, blue);
   const rotated = notePage.rotation === 90 || notePage.rotation === 270;
   const displayWidth = rotated ? notePage.height : notePage.width;
-  const logicalWidth = renderWidth && Number.isFinite(renderWidth) && renderWidth > 0 ? renderWidth : displayWidth;
-  const widthScale = displayWidth / logicalWidth;
+  // The pen outline scales itself by its logical canvas and is normalized
+  // before mapping, so its exported width is already canonical; the
+  // highlighter needs the same conversion explicitly.
+  const widthScale = displayWidth / STROKE_WIDTH_REFERENCE;
   if (stroke.tool !== "highlighter") {
+    const logicalWidth = renderWidth && Number.isFinite(renderWidth) && renderWidth > 0 ? renderWidth : displayWidth;
     page.drawSvgPath(inkToSvgOutlinePath(stroke, notePage, logicalWidth), {
       color,
       opacity: stroke.opacity,

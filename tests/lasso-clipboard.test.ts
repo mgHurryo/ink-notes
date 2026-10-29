@@ -14,7 +14,9 @@ describe("ink clipboard geometry", () => {
     const ink = pasted[0];
     expect(ink.id).not.toBe(stroke.id);
     expect(ink.pageId).toBe("target");
-    expect(ink.width).toBe(8);
+    // Widths are canonical page widths: they travel unchanged (fit shrink
+    // only), whatever the source and target canvas sizes are.
+    expect(ink.width).toBe(4);
     const originalRatio = (0.2 * 100) / (0.2 * 200);
     expect((ink.points[1].x - ink.points[0].x) * 200 / ((ink.points[1].y - ink.points[0].y) * 100)).toBeCloseTo(originalRatio);
     expect(ink.points.map((point) => point.pressure)).toEqual([0.4, 0.8]);

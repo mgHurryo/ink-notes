@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 vi.mock("obsidian", () => ({ Modal: class {}, FileView: class {}, Scope: class {}, TFile: class {} }));
-vi.mock("../src/rendering", () => ({ canvasResolution: vi.fn(), drawInkStroke: vi.fn(), drawInkStrokeTail: vi.fn() }));
+vi.mock("../src/rendering", () => ({ canvasResolution: vi.fn(), drawInkStroke: vi.fn(), drawInkStrokeTail: vi.fn(), STROKE_WIDTH_REFERENCE: 980 }));
 import { InkView } from "../src/view";
 import { canvasResolution, drawInkStroke, drawInkStrokeTail } from "../src/rendering";
 

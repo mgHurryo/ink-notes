@@ -45,7 +45,7 @@ import { Rect, TileRenderer } from "./tiles";
 import { StrokeModeler, StrokeModelInput, StrokeModelResult, StrokeModelParams, DEFAULT_STROKE_MODEL_PARAMS, strokeModelParamsForSmoothStrength } from "./stroke-modeler";
 import type { InkWorkerResponse, NotebookOperation } from "./worker-protocol";
 import { InkWorkerService, InkWorkerSession } from "./worker-service";
-import { canvasResolution, clampPercent, drawInkStroke, drawInkStrokeTail, normalizePressureCurve, samplePressureCurve } from "./rendering";
+import { canvasResolution, clampPercent, drawInkStroke, drawInkStrokeTail, normalizePressureCurve, samplePressureCurve, STROKE_WIDTH_REFERENCE } from "./rendering";
 import { defaultToolState, type SharedToolState } from "./tool-state";
 import { InkClipboard, pasteClipboardStrokes } from "./lasso-clipboard";
 
@@ -2149,7 +2149,10 @@ export abstract class InkWritingView extends FileView {
     if (!tail) return;
     const gain = clampPercent(stroke.dynamics?.pressure, 100) / 100;
     const mapped = samplePressureCurve(tail.pressure, normalizePressureCurve(stroke.dynamics?.pressureCurve));
-    const baseHalf = Math.max(0.6, (stroke.width * (0.55 + 0.75 * (0.5 + (mapped - 0.5) * gain))) / 2);
+    // Same conversion the renderer applies (canvasWidth / reference): the
+    // ghost tip must sit on the committed nib, not on the raw slider number.
+    const widthScale = this.canvasLogicalWidth / STROKE_WIDTH_REFERENCE;
+    const baseHalf = Math.max(0.6 * widthScale, (stroke.width * widthScale * (0.55 + 0.75 * (0.5 + (mapped - 0.5) * gain))) / 2);
     let previous = { x: tail.x * this.canvasLogicalWidth, y: tail.y * this.canvasLogicalHeight };
     const segments = this.predictedTip.length;
     for (let index = 0; index < segments; index++) {
@@ -2157,7 +2160,7 @@ export abstract class InkWritingView extends FileView {
       const progress = (index + 1) / segments;
       // Deep at the junction (continuous ink) fading to faint at the tip.
       ctx.globalAlpha = stroke.opacity * (0.6 - 0.45 * progress);
-      ctx.lineWidth = Math.max(0.5, baseHalf * 2 * (1 - 0.45 * progress));
+      ctx.lineWidth = Math.max(0.5 * widthScale, baseHalf * 2 * (1 - 0.45 * progress));
       ctx.strokeStyle = stroke.color;
       ctx.lineCap = "round";
       ctx.beginPath();
@@ -3321,7 +3324,9 @@ export abstract class InkWritingView extends FileView {
     ctx.lineJoin = "round";
     if (mode === "highlighter") {
       ctx.globalCompositeOperation = "multiply";
-      ctx.lineWidth = width;
+      // The retained preview must match the tiles that replace it: the Worker
+      // tiles draw this width through the renderer's canonical conversion.
+      ctx.lineWidth = width * this.canvasLogicalWidth / STROKE_WIDTH_REFERENCE;
       ctx.stroke(cached.path);
     } else {
       ctx.globalCompositeOperation = "source-over";
