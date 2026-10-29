@@ -24276,8 +24276,9 @@ var DesktopWheelGesture = class {
     } else {
       this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     }
-    this.lastDelta = this.flipped && !this.discrete ? Math.sign(movement) * Math.min(Math.abs(this.lastDelta), magnitude) : movement;
-    this.lastMagnitude = magnitude;
+    const pausedTail = movement === 0 && this.flipped && !this.discrete;
+    this.lastDelta = pausedTail ? this.lastDelta : this.flipped && !this.discrete ? Math.sign(movement) * Math.min(Math.abs(this.lastDelta), magnitude) : movement;
+    if (!pausedTail) this.lastMagnitude = magnitude;
     return {
       axis,
       movement,
