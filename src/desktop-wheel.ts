@@ -7,6 +7,22 @@ const RENEWED_FLICK_RELEASE_PX = 4;
  *  envelope marks a new gesture - compound acceleration never happens. */
 const RENEWED_FLICK_JUMP_PX = 24;
 const RENEWED_FLICK_JUMP_RATIO = 2.2;
+/** Every renewal heuristic below compares speeds, not per-event amplitudes:
+ *  each sample is normalized to this reference window, the reporting cadence
+ *  the px floors were tuned at. A main-thread stall merges several hardware
+ *  samples into one large event and a high report rate splits the same motion
+ *  into small ones - raw-px comparison reads the merged sample as a new flick
+ *  and starves the fast stream below the floors. Delivery gaps clamp to
+ *  [1, 50]ms: below 1ms the speed estimate would explode on same-tick events,
+ *  above 50ms a slow tail must not shrink below the release floor. */
+const REF_DT_MS = 10;
+/** A jump re-arm while the fast phase is still young is the same physical
+ *  flick re-arming on its own undecayed envelope: a single accelerating swipe
+ *  crosses the page boundary mid-rise, so its first samples after the flip
+ *  satisfy the jump predicate without being a new intent. Demand this many
+ *  flipped samples first - only a rise that persists past the flip, or lands
+ *  after a re-arm's blocked window, may open a fresh page budget. */
+const RENEW_MIN_FLIPPED = 3;
 const PAGE_TRAVEL_PX = 100;
 const HORIZONTAL_PAGE_TRAVEL_PX = 48;
 const MAX_TRACKPAD_PAGES_PER_GESTURE = 2;
@@ -66,10 +82,17 @@ export class DesktopWheelGesture {
   private trackpadPages = 0;
   private zeroAxisPauses = 0;
   private gestureId = 0;
+  /** Consecutive samples seen while the gesture is flipped, counted from the
+   *  latest flip (pageDelta) or re-arm; guards the jump re-arm above. */
+  private flippedRun = 0;
+  /** this.flipped as of the end of the previous begin(), so a pageDelta flip
+   *  that landed in between can restart flippedRun. */
+  private flippedPreviously = false;
 
   private beginRenewedGesture(): void {
     this.gestureId += 1;
     this.trackpadPages = 0;
+    this.flippedRun = 0;
   }
 
   reset(): void {
@@ -80,6 +103,7 @@ export class DesktopWheelGesture {
     this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     this.renewalBlocked = false;
     this.trackpadPages = this.zeroAxisPauses = 0;
+    this.flippedRun = 0;
     this.flipped = this.discrete = false;
     this.mode = 0;
   }
@@ -101,6 +125,11 @@ export class DesktopWheelGesture {
           : horizontal >= vertical ? "x" : "y";
     const movement = axis === "x" ? (delta.x || (shift ? delta.y : 0)) : delta.y;
     const magnitude = Math.abs(movement);
+    // Computed from the arrival gap before any boundary reset zeroes it: the
+    // delivery interval is what the speed estimate means. Only the flipped
+    // continuous path below consumes it, so the zeroed-gap reset paths (which
+    // clear flipped) never compare against it.
+    const normalized = magnitude * (REF_DT_MS / Math.min(Math.max(gap, 1), REF_DT_MS * 5));
     // A large pixel delta alone is not a notch: fast touchpad flicks also
     // exceed 80px. Recognize conventional wheel steps conservatively; once
     // continuous motion appears, keep its inertia in the same gesture.
@@ -113,7 +142,8 @@ export class DesktopWheelGesture {
     const reversed = this.lastDelta !== 0 && movement !== 0
       && Math.sign(movement) !== Math.sign(this.lastDelta);
     // Some devices omit the inertia tail entirely, so a quiet interval is
-    // itself a gesture boundary; do not infer it from the next delta's size.
+    // itself a gesture boundary; whether the stream resumed as a new intent
+    // is decided below from the resumed sample's normalized speed.
     const renewed = !this.discrete && this.flipped && gap >= RENEWED_FLICK_GAP_MS;
     // A continuous stream drifting across the axis retention boundary (or
     // re-targeted by Shift) is still the same physical flick: re-classify the
@@ -128,8 +158,14 @@ export class DesktopWheelGesture {
       this.reset();
       gap = 0;
     } else if (renewed) {
-      this.reset();
-      gap = 0;
+      // A quiet interval marks a new intent only when the stream resumes
+      // RISING over the settled envelope; resuming at or below it is the same
+      // physical flick delivered late - keep the gesture, its suppression and
+      // the page budget, and let the ramp detector below re-seed instead.
+      if (normalized > Math.abs(this.lastDelta)) {
+        this.reset();
+        gap = 0;
+      }
     }
     // Count retained samples that moved nothing: isolated ones are the
     // diagonal pauses above, a sustained run re-classifies on the next
@@ -139,6 +175,11 @@ export class DesktopWheelGesture {
     this.axis = axis;
     this.mode = delta.mode;
     this.lastAt = at;
+    // A pageDelta flip lands between two begin() calls; the ascent guard
+    // below counts flipped samples from that flip, not from the previous
+    // re-arm.
+    if (this.flipped && !this.flippedPreviously) this.flippedRun = 0;
+    const priorFlippedRun = this.flippedRun;
     let renewedTravel: number | undefined;
     if (this.flipped && !this.discrete) {
       // A moderate re-swipe rising straight off a settled tail is a fresh
@@ -149,9 +190,10 @@ export class DesktopWheelGesture {
       // the decayed lastDelta is its min chain). A stream that has already
       // risen past the release level is mid-ramp, not settled, and keeps the
       // original floor so a single ramp cannot re-arm twice per gesture.
-      const settledRise = this.lastMagnitude <= RENEWED_FLICK_RELEASE_PX && magnitude > this.lastMagnitude
-        && magnitude >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO;
-      const jump = magnitude >= Math.max(settledRise ? RENEWED_FLICK_JUMP_PX / 2 : RENEWED_FLICK_JUMP_PX,
+      // Every comparison runs on normalized speeds (px per REF_DT_MS).
+      const settledRise = this.lastMagnitude <= RENEWED_FLICK_RELEASE_PX && normalized > this.lastMagnitude
+        && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO;
+      const jump = normalized >= Math.max(settledRise ? RENEWED_FLICK_JUMP_PX / 2 : RENEWED_FLICK_JUMP_PX,
         Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO);
       if (this.renewalBlocked) {
         // Ignore the momentum continuation after a renewed gesture until its
@@ -160,50 +202,52 @@ export class DesktopWheelGesture {
         // fresh flick rises over the settled raw level, momentum never does.
         // Demanding a fixed step ratio here would also reject real flicks
         // whose first sample rises only 1.5-3x over the settled level.
-        if (magnitude <= RENEWED_FLICK_RELEASE_PX) this.renewalBlocked = false;
-        else if (jump && magnitude > this.lastMagnitude) {
+        if (normalized <= RENEWED_FLICK_RELEASE_PX) this.renewalBlocked = false;
+        else if (jump && normalized > this.lastMagnitude && priorFlippedRun >= RENEW_MIN_FLIPPED) {
           this.beginRenewedGesture();
           this.flipped = false;
           this.travel = 0;
           this.renewalBlocked = true;
           this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
         }
-      } else if (jump) {
-        this.beginRenewedGesture();
-        this.flipped = false;
-        this.travel = 0;
-        this.renewalBlocked = true;
-        this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
-      } else if (axis === "y") {
-        // Not the quiet-gap path: in a pure trackpad stream a >=55ms gap
-        // resets above before reaching this block. This seeds only the mixed
-        // discrete->continuous flow (mouse notch -> silent gap -> trackpad
-        // tail), where the stale discrete flag blocks that reset and the
-        // tail still needs a ramp detector.
+      } else if (this.renewedPeak > 0 || gap >= RENEWED_FLICK_GAP_MS) {
+        // Not the plain quiet-gap path (a pure continuous stream resets above
+        // when its resumed sample rises): this seeds stalled-delivery
+        // continuations and the mixed discrete->continuous flow, whose tails
+        // still need a ramp detector. Both axes re-arm through it; the re-arm
+        // travel threshold follows the axis.
         if (gap >= RENEWED_FLICK_GAP_MS) {
-          this.renewedTravel = magnitude;
-          this.renewedPeak = magnitude;
+          this.renewedTravel = this.renewedPeak = normalized;
           this.renewedIncreases = 0;
         } else if (this.renewedPeak > 0) {
-          if (magnitude >= this.renewedPeak * 1.2) {
-            this.renewedPeak = magnitude;
-            this.renewedTravel += magnitude;
+          if (normalized >= this.renewedPeak * 1.2) {
+            this.renewedPeak = normalized;
+            this.renewedTravel += normalized;
             this.renewedIncreases += 1;
-            if (this.renewedIncreases >= 2 && this.renewedTravel >= PAGE_TRAVEL_PX) {
+            if (this.renewedIncreases >= 2 && this.renewedTravel
+              >= (axis === "x" ? HORIZONTAL_PAGE_TRAVEL_PX : PAGE_TRAVEL_PX)) {
               renewedTravel = Math.sign(movement) * this.renewedTravel;
               this.beginRenewedGesture();
               this.flipped = false;
               this.travel = 0;
               this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
             }
-          } else if (magnitude < this.renewedPeak * 0.7) {
+          } else if (normalized < this.renewedPeak * 0.7) {
             this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
           }
         }
+      } else if (jump && priorFlippedRun >= RENEW_MIN_FLIPPED) {
+        this.beginRenewedGesture();
+        this.flipped = false;
+        this.travel = 0;
+        this.renewalBlocked = true;
+        this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
       }
     } else {
       this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     }
+    this.flippedRun = this.flipped ? priorFlippedRun + 1 : 0;
+    this.flippedPreviously = this.flipped;
     // A zero movement inside a flipped continuous stream is a diagonal stream
     // reporting a pause, not a settled tail: writing it through would zero the
     // envelope (sign(0) min-chain, magnitude 0), letting the very next sample
@@ -211,12 +255,14 @@ export class DesktopWheelGesture {
     // true) and re-open the page budget mid-gesture. Keep the envelope across
     // the pause; a genuine settle still decays through non-zero samples to the
     // release level (or exits via the >= 55ms quiet gap), and a sustained zero
-    // run still re-classifies through ZERO_AXIS_PAUSES_TO_SWITCH.
+    // run still re-classifies through ZERO_AXIS_PAUSES_TO_SWITCH. The envelope
+    // stores normalized speeds, so every comparison below shares one unit.
     const pausedTail = movement === 0 && this.flipped && !this.discrete;
     this.lastDelta = pausedTail ? this.lastDelta
       : this.flipped && !this.discrete
-        ? Math.sign(movement) * Math.min(Math.abs(this.lastDelta), magnitude) : movement;
-    if (!pausedTail) this.lastMagnitude = magnitude;
+        ? Math.sign(movement) * Math.min(Math.abs(this.lastDelta), normalized)
+        : Math.sign(movement) * normalized;
+    if (!pausedTail) this.lastMagnitude = normalized;
     return { axis, movement, discrete: this.discrete, mode: delta.mode, gap, gestureId: this.gestureId,
       suppressed: !this.discrete && this.flipped, renewedTravel };
   }

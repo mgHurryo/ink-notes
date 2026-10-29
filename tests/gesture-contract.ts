@@ -585,6 +585,125 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(3);
     });
 
+    it("keeps one stalled merged sample from posing as a renewed flick", async () => {
+      const { wheel, settle } = await desktopSetup();
+      // A main-thread stall merges several hardware samples into one event:
+      // 30px after a 30ms gap carries the same ~1px/ms speed as the tail it
+      // continues, but the raw-px jump floor saw 30 >= 24 and minted a fresh
+      // gesture id and page budget mid-flick.
+      for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [30, 130], [20, 140],
+        [16, 150], [12, 160], [10, 170]]) {
+        wheel(delta, 0, { timeStamp: time });
+      }
+      expect(settle).toHaveBeenCalledTimes(1);
+      wheel(30, 0, { timeStamp: 200 });
+      for (const [delta, time] of [[10, 210], [8, 220], [6, 230]]) wheel(delta, 0, { timeStamp: time });
+      expect(settle).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps a single accelerating flick to one page across the flip boundary", async () => {
+      const { wheel, settle } = await desktopSetup();
+      // One contact whose fast phase crosses the page threshold must not
+      // re-arm on its own still-undecayed envelope two samples later: the
+      // rise past the flip is the same flick, not a new intent.
+      for (const [delta, time] of [[10, 100], [20, 110], [35, 120], [70, 130], [90, 140], [60, 150], [30, 160]]) {
+        wheel(delta, 0, { timeStamp: time });
+      }
+      expect(settle).toHaveBeenCalledTimes(1);
+      // A second contact (past the idle boundary) with the same shape.
+      for (const [delta, time] of [[20, 400], [45, 410], [80, 420], [120, 430], [90, 440], [60, 450]]) {
+        wheel(delta, 0, { timeStamp: time });
+      }
+      expect(settle).toHaveBeenCalledTimes(2);
+    });
+
+    it("keeps stalled tail delivery from reopening the page budget", async () => {
+      const { wheel, settle } = await desktopSetup();
+      // 55-179ms delivery stalls used to reset the gesture unconditionally,
+      // lifting the suppression and letting the resumed tail's travel flip
+      // another page: the stall is a delivery artifact, not a gesture border.
+      for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [30, 130], [25, 140], [20, 150]]) {
+        wheel(delta, 0, { timeStamp: time });
+      }
+      expect(settle).toHaveBeenCalledTimes(1);
+      for (const [delta, time] of [[18, 280], [15, 290], [13, 300]]) wheel(delta, 0, { timeStamp: time });
+      for (const [delta, time] of [[12, 420], [10, 430], [9, 440]]) wheel(delta, 0, { timeStamp: time });
+      expect(settle).toHaveBeenCalledTimes(1);
+    });
+
+    it("re-arms the same moderate re-swipe speed at every report cadence", async () => {
+      const { wheel, settle } = await desktopSetup();
+      // The re-arm floors are speeds (px per 10ms reference window), not
+      // per-event amplitudes: the same ~1.2px/ms re-swipe must re-arm whether
+      // the trackpad reports it in 8ms or 16ms slices. Raw-px floors swallow
+      // the fast-cadence slices whole.
+      for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [30, 130], [20, 140],
+        [14, 150], [10, 160], [8, 170], [6, 180], [4, 190], [3, 200]]) {
+        wheel(delta, 0, { timeStamp: time });
+      }
+      expect(settle).toHaveBeenCalledTimes(1);
+      for (let i = 0; i < 30; i++) wheel(9.6, 0, { timeStamp: 208 + i * 8 });
+      expect(settle).toHaveBeenCalledTimes(2);
+      // The same speed on a slower cadence, one contact later.
+      for (const [delta, time] of [[140, 700], [90, 710], [60, 720], [30, 730], [20, 740],
+        [14, 750], [10, 760], [8, 770], [6, 780], [4, 790], [3, 800]]) {
+        wheel(delta, 0, { timeStamp: time });
+      }
+      for (let i = 0; i < 30; i++) wheel(20, 0, { timeStamp: 816 + i * 16 });
+      expect(settle).toHaveBeenCalledTimes(4);
+    });
+
+    it("pins the visual fixture burst and notch cadence at three pages", async () => {
+      const { scroller, wheel, settle } = await desktopSetup();
+      // tests/visual/desktop-input.spec.ts "a trackpad flick advances one page
+      // and fast mouse-wheel notches are dampened" dispatches exactly these
+      // streams: the burst pinned at 9000+i*10 and the notch baseline at
+      // 10000+i*40. The fixture and this lock must evolve together.
+      scroller.scrollTop = 600;
+      for (const [delta, time] of [[140, 9000], [90, 9010], [60, 9020], [30, 9030], [20, 9040], [14, 9050], [10, 9060]]) {
+        wheel(delta, 0, { timeStamp: time });
+      }
+      expect(settle).toHaveBeenCalledTimes(1);
+      for (let i = 0; i < 5; i++) wheel(0, 100, { timeStamp: 10000 + i * 40 });
+      expect(settle).toHaveBeenCalledTimes(3);
+    });
+
+    it("hands the notch stream to a fresh gesture exactly at the idle boundary", async () => {
+      const { scroller, wheel, settle } = await desktopSetup();
+      // Characterization for the fixture's burst/notch distance: a first
+      // notch landing GESTURE_IDLE_MS after the burst's last sample starts a
+      // fresh gesture and flips immediately; sync with the visual fixture
+      // before changing GESTURE_IDLE_MS or the notch sensitivity window.
+      scroller.scrollTop = 600;
+      for (const [delta, time] of [[140, 9000], [90, 9010], [60, 9020], [30, 9030], [20, 9040], [14, 9050], [10, 9060]]) {
+        wheel(delta, 0, { timeStamp: time });
+      }
+      expect(settle).toHaveBeenCalledTimes(1);
+      wheel(0, 100, { timeStamp: 9240 });
+      expect(settle).toHaveBeenCalledTimes(2);
+      for (let i = 1; i < 5; i++) wheel(0, 100, { timeStamp: 9240 + i * 40 });
+      expect(settle).toHaveBeenCalledTimes(3);
+    });
+
+    it("rides a sub-idle notch stream through the burst gesture's page budget", async () => {
+      const { scroller, wheel, settle } = await desktopSetup();
+      // Inside the idle boundary a notch stream whose x component is exactly
+      // zero pauses the held axis instead of resetting: the first notches are
+      // diagonal pauses (no page), the sustained run re-classifies onto y and
+      // the per-gesture budget still caps the total. Sync with the visual
+      // fixture before changing GESTURE_IDLE_MS / RENEWED_FLICK_GAP_MS or the
+      // axis retention logic.
+      scroller.scrollTop = 600;
+      for (const [delta, time] of [[140, 9000], [90, 9010], [60, 9020], [30, 9030], [20, 9040], [14, 9050], [10, 9060]]) {
+        wheel(delta, 0, { timeStamp: time });
+      }
+      expect(settle).toHaveBeenCalledTimes(1);
+      wheel(0, 100, { timeStamp: 9230 });
+      expect(settle).toHaveBeenCalledTimes(1);
+      for (let i = 1; i < 5; i++) wheel(0, 100, { timeStamp: 9230 + i * 40 });
+      expect(settle).toHaveBeenCalledTimes(3);
+    });
+
     it("keeps nested editing and scroll surfaces independent from document navigation", async () => {
       const { wheel, settle, scroller } = await desktopSetup();
       const textarea = document.createElement("textarea"); scroller.append(textarea);

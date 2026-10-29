@@ -310,9 +310,15 @@ test("a trackpad flick advances one page and fast mouse-wheel notches are dampen
     // The tail must decay monotonically: since #264 a mid-tail sample jumping
     // over the decayed envelope is contracted as a renewed flick and flips a
     // second page, so a rising tail would make this burst two gestures.
-    for (const deltaX of [140, 90, 60, 30, 20, 14, 10]) scroller.dispatchEvent(new WheelEvent("wheel", {
-      bubbles: true, cancelable: true, deltaX,
-    }));
+    // The burst timeStamps are pinned 10ms apart: one synchronous task hands
+    // real Events colliding timeStamps, and a last burst sample landing in
+    // (9820, 9945) would sit inside the renewed-flick gap band of the pinned
+    // 10000ms notch baseline below, making the page count flake.
+    for (const [index, deltaX] of [140, 90, 60, 30, 20, 14, 10].entries()) {
+      const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX });
+      Object.defineProperty(event, "timeStamp", { configurable: true, value: 9000 + index * 10 });
+      scroller.dispatchEvent(event);
+    }
   });
   await expect(page.locator(".ink-page-status")).toHaveText("2 / 6");
 
@@ -323,8 +329,10 @@ test("a trackpad flick advances one page and fast mouse-wheel notches are dampen
     scroller.scrollTop = scroller.scrollHeight;
     // One synchronous task hands all five notches the same real Event.timeStamp;
     // a colliding 0ms gap keeps notch sensitivity at 1.0, so pin the 40ms
-    // cadence the 0.8 damping expects. The sub-180ms stream stays one gesture,
-    // so the discrete per-gesture page budget caps the burst at two pages.
+    // cadence the 0.8 damping expects. The baseline sits 940ms past the pinned
+    // burst above (>= the 180ms idle boundary), so the notch stream always
+    // starts a fresh gesture. That sub-180ms stream stays one gesture, so the
+    // discrete per-gesture page budget caps the burst at two pages.
     for (let index = 0; index < 5; index++) {
       const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 100 });
       Object.defineProperty(event, "timeStamp", { configurable: true, value: 10000 + index * 40 });
