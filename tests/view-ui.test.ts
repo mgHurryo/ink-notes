@@ -940,13 +940,15 @@ describe("page rail thumbnails and resizing", () => {
       expect(canvases[0].width).toBe(Math.round(152 * dpr));
       expect(canvases[1].height).toBe(Math.round(208 * dpr));
       const drawn = vi.mocked(drawInkStroke).mock.calls;
-      // Thumbs draw scaled CLONES of the strokes (nib width relative to the
-      // page), so match on id, then assert the miniature scaling itself.
+      // Thumbs draw stable CLONES of the strokes (the clone keeps the
+      // renderer's Path2D cache warm); the nib width stays canonical and the
+      // miniature scaling happens inside the renderer (draw width / reference),
+      // so match on id and assert the clone carries the stored width.
       expect(drawn.some((call) => (call[1] as InkStroke).id === "s1" && call[2] === 152 && call[3] === 208)).toBe(true);
       expect(drawn.some((call) => (call[1] as InkStroke).id === "s2" && call[2] === 152 && call[3] === 208)).toBe(true);
       const scale = 152 / (internal as unknown as { pageBaseWidth: number }).pageBaseWidth;
       const thumbnailStroke = drawn.find((call) => (call[1] as InkStroke).id === "s1" && call[2] === 152 && call[3] === 208)![1] as InkStroke;
-      expect(thumbnailStroke.width).toBeCloseTo(3 * scale, 6);
+      expect(thumbnailStroke.width).toBe(3);
       // The paper ruling follows the page's real line count (cells scaled to
       // the thumbnail), not a sparse re-flow.
       const paper = canvases[0].closest(".ink-page-thumb")?.querySelector<HTMLElement>(".ink-page-thumb-paper");

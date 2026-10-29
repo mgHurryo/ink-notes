@@ -39,7 +39,11 @@ export function pasteClipboardStrokes(content: InkClipboardContent, pageId: stri
   const top = Math.max(0, Math.min(1 - spanY * fit, target.y - spanY * fit / 2));
   const now = Date.now();
   return content.strokes.map((stroke) => ({ ...copyStroke(stroke), id: newId("stroke"), pageId,
-    width: stroke.width * width / content.width * fit, createdAt: now, updatedAt: now,
+    // Widths are canonical page widths (STROKE_WIDTH_REFERENCE), so they
+    // survive the paste unchanged — only the fit factor travels, exactly like
+    // the normalized points. The old width × target/source conversion belonged
+    // to the device-pixel width era and made the paste device-dependent.
+    width: stroke.width * fit, createdAt: now, updatedAt: now,
     points: stroke.points.map((point) => ({ ...point,
       x: left + (point.x - minX) * fit, y: top + (point.y - minY) * yScale * fit })) }));
 }

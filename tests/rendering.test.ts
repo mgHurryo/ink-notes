@@ -28,7 +28,11 @@ describe("outline centerline smoothing", () => {
     return penOutline({
       ...stroke(), width: 12,
       points: points.map(([x, y], i) => ({ x: x / 100, y: y / 100, pressure: 0.5, t: i })),
-    }, 100, 100);
+    }, 100, 100,
+    // These tests exercise the geometry engine at 1:1 nib scale in a 100px
+    // canvas; pin the reference to the canvas so the canonical width
+    // conversion stays out of the way.
+    100);
   }
 
   it("keeps a deliberate long-segment corner sharp", () => {
@@ -81,7 +85,7 @@ describe("pen dynamics", () => {
     return penOutline({
       ...stroke(), width: 12, points: points.map(([x, y, p, t]) => ({ x: x / 100, y: y / 100, pressure: p, t })),
       dynamics,
-    }, 100, 100);
+    }, 100, 100, 100);
   }
 
   function thicknessAt(outline: number[][], xLow: number, xHigh: number): number {
@@ -149,7 +153,7 @@ describe("dynamics refinement", () => {
     return penOutline({
       ...stroke(), width: 12, points: points.map(([x, y, p, t]) => ({ x: x / 100, y: y / 100, pressure: p, t })),
       dynamics,
-    }, 100, 100);
+    }, 100, 100, 100);
   }
 
   function endCapRadius(outline: number[][], endX: number, endY: number): number {
@@ -312,7 +316,8 @@ describe("continuous pen rendering", () => {
     expect(vi.mocked(ctx.fill).mock.calls[1][0]).not.toBe(path);
   });
   it.each([0, 0.5, 1])("preserves pressure diameter at %s", (pressure) => {
-    const outline = penOutline(stroke(pressure), 800, 1000);
+    // 1:1 nib scale for this canvas, like the live editor reference width.
+    const outline = penOutline(stroke(pressure), 800, 1000, 800);
     const middle = outline.filter(p => p[0] > 200 && p[0] < 600);
     const ys = middle.map(p => p[1]);
     expect(Math.max(...ys) - Math.min(...ys)).toBeCloseTo(3 * (0.55 + pressure * 0.75), 2);

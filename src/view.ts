@@ -36,7 +36,7 @@ export {
   constrainDelta,
   distance,
 } from "./ink-writing";
-import { canvasResolution, drawInkStroke, scaledStroke } from "./rendering";
+import { canvasResolution, drawInkStroke, scaledStroke, STROKE_WIDTH_REFERENCE } from "./rendering";
 import { cloneSticky } from "./sticky-model";
 import { BrushPopoverController, BrushSettings } from "./brush-popover";
 import { TileRenderer, cellKeys } from "./tiles";
@@ -1398,7 +1398,10 @@ export class InkView extends InkWritingView {
     const paddingLeft = parseFloat(style.paddingLeft) || 0;
     const paddingRight = parseFloat(style.paddingRight) || 0;
     const availableWidth = Math.max(1, this.pageScroller.clientWidth - paddingLeft - paddingRight);
-    const width = Math.min(980, availableWidth);
+    // The page box cap IS the stroke-width reference: brush sizes are authored
+    // against this canvas width (STROKE_WIDTH_REFERENCE), so changing one
+    // changes the on-screen meaning of a stored nib. Keep them one constant.
+    const width = Math.min(STROKE_WIDTH_REFERENCE, availableWidth);
     const horizontalGutter = Math.max(0, (availableWidth - width) / 2);
     const height = width * this.notebook.pageHeight / this.notebook.pageWidth;
     this.pageBaseWidth = width;
