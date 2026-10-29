@@ -22,7 +22,7 @@ function view(): any {
     viewport: { x: 0, y: 0, width: 800, height: 1000 }, zoom: 1,
     tiles: { sync: vi.fn(), patchStrokes: vi.fn(), update: vi.fn(), flushVisible: vi.fn(), commitInteractive: vi.fn(), commitInk: vi.fn(),
       removeStrokes: vi.fn(), previewInteractiveCells: vi.fn(), pauseInkCommit: vi.fn(), resumeInkCommit: vi.fn(), cancelInkCommit: vi.fn(),
-      setDisplayScale: vi.fn() },
+      setDisplayScale: vi.fn(), setWorkerExclusion: vi.fn() },
   });
   return v;
 }
@@ -310,6 +310,38 @@ it("moves a cached lasso preview without rebuilding stroke geometry", () => {
   expect(v.lassoDrag.dy).toBeCloseTo(0.05);
   expect(v.lassoCanvas.style.transform).toContain("translate(");
   expect(v.tiles.sync).not.toHaveBeenCalled();
+});
+
+it("excludes lasso-selected strokes from worker-rendered tiles while the drag preview lives", () => {
+  const v = view();
+  v.stickyInput = null;
+  v.lassoCanvas = { style: {}, setCssStyles };
+  v.lassoCtx = { setTransform: vi.fn(), clearRect: vi.fn() };
+  vi.mocked(canvasResolution).mockReturnValue({ width: 1600, height: 2000 });
+  v.lassoDrag = {
+    start: { x: 0.2, y: 0.2 }, pageId: "page", bounds: { minX: 0.2, minY: 0.2, maxX: 0.4, maxY: 0.4 },
+    strokes: [{ id: "sel-a", points: [] }, { id: "sel-b", points: [] }], before: new Map(), dx: 0, dy: 0,
+  };
+
+  v.beginLassoPreview(v.currentPage());
+
+  // The replacement tiles must drop the selection before the commit snapshots
+  // the exclusion, or the Worker redraws it as a static ghost under the moving
+  // lassoCanvas preview.
+  expect(v.tiles.setWorkerExclusion).toHaveBeenCalledOnce();
+  expect([...v.tiles.setWorkerExclusion.mock.calls[0][0]].sort()).toEqual(["sel-a", "sel-b"]);
+  expect(v.tiles.setWorkerExclusion.mock.invocationCallOrder[0])
+    .toBeLessThan(v.tiles.commitInteractive.mock.invocationCallOrder[0]);
+});
+
+it("restores the worker exclusion baseline when the lasso preview is hidden", () => {
+  const v = view();
+  v.stickyInput = null;
+  v.lassoCanvas = { style: {}, setCssStyles };
+
+  v.hideLassoPreview();
+
+  expect(v.tiles.setWorkerExclusion).toHaveBeenCalledWith(undefined);
 });
 
 it("debounces expensive zoom rasterization while updating the displayed scale immediately", () => {

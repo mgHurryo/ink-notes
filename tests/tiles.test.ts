@@ -663,4 +663,20 @@ describe("interactive tile commits", () => {
     expect(renderTile).toHaveBeenCalledTimes(2);
     expect(renderTile.mock.calls[1][8]).toBeUndefined();
   });
+
+  it("carries a setWorkerExclusion set into the commit's worker tile snapshot", () => {
+    const active = { id: 1, index: { width: 400, height: 600, revisions: new Map(), hasCell: () => true } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, { active, disposed: false, inkCommit: null, inkFrame: null, renderGeneration: 0,
+      backend: null, host: { children: [] }, cache: new Map(), heldCells: new Set(), jobs: [],
+      get: vi.fn(() => undefined), scheduleInkCommit: vi.fn() });
+
+    // Lasso transitions refresh the exclusion without a sync; the commit that
+    // follows must snapshot exactly that set or the worker redraws excluded
+    // strokes into the replacement tiles.
+    renderer.setWorkerExclusion(new Set(["sel-a", "sel-b"]));
+    renderer.commitInteractive({ x: 0, y: 0, width: 400, height: 600 }, 3);
+
+    expect([...renderer.inkCommit.excluded].sort()).toEqual(["sel-a", "sel-b"]);
+  });
 });
