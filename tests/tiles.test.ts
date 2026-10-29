@@ -78,6 +78,33 @@ describe("tile spatial index", () => {
     expect(index.revisions.get("6:6")).toBe(laterRevision);
     expect(index.queryNear({ x: 0.81, y: 0.81, pressure: 1, t: 1 }, 30)).toEqual([later]);
   });
+  it("pads registration by the index width so wide-page tiles cover the rendered ink", () => {
+    // Rendered half-width at this index: 0.65 * 24 * (1960/980) = 31.2px, so
+    // ink centered at y ≈ 487 reaches y ≈ 518 across the 512 cell boundary,
+    // while the fixed 24*0.7+4 = 20.8 padding stopped at y ≈ 508 and left
+    // cell 4:4 unregistered (a permanent paint gap on wide PDF panes).
+    const index = new StrokeIndex(1960, 1960);
+    const wide: InkStroke = { id: "wide", pageId: "page", tool: "pen", width: 24, opacity: 1, color: "#111",
+      createdAt: 1, updatedAt: 1,
+      points: [{ x: 0.3, y: 487 / 1960, pressure: 1, t: 0 }, { x: 0.7, y: 487 / 1960, pressure: 1, t: 8 }] };
+    index.sync([wide]);
+    expect(index.query({ x: 512, y: 512, width: 128, height: 128 })).toContain(wide);
+  });
+  it("keeps the reference-width registration identical for capped notebook pages", () => {
+    const index = new StrokeIndex(980, 980);
+    const wide: InkStroke = { id: "wide", pageId: "page", tool: "pen", width: 24, opacity: 1, color: "#111",
+      createdAt: 1, updatedAt: 1,
+      points: [{ x: 0.3, y: 487 / 1960, pressure: 1, t: 0 }, { x: 0.7, y: 487 / 1960, pressure: 1, t: 8 }] };
+    index.sync([wide]);
+    // notebook layout caps the index at STROKE_WIDTH_REFERENCE, where the
+    // width-scaled padding reduces to the historical fixed padding: the
+    // registered cells must not grow or shrink.
+    const padding = 24 * 0.7 + 4;
+    const expected = cellKeys({ x: 0.3 * 980 - padding, y: (487 / 1960) * 980 - padding,
+      width: (0.7 - 0.3) * 980 + padding * 2, height: padding * 2 }, 980, 980);
+    for (const cell of expected) expect(index.hasCell(cell)).toBe(true);
+    expect(index.revisions.size).toBe(expected.length);
+  });
 });
 
 describe("interactive tile commits", () => {
