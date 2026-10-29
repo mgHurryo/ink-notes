@@ -534,10 +534,10 @@ export class PdfInkView extends InkWritingView {
         const sidecar = normalizeSidecar(parseStoredJson(raw));
         if (sidecar.source.sha256 !== fingerprint.sha256 || sidecar.source.byteLength !== fingerprint.byteLength) {
           // A case twin (Docs/Notes.pdf vs docs/notes.pdf) folds into this
-          // lowercased slot on case-sensitive disks. Both spellings resolving
-          // to real files proves the twin rather than a changed revision, so
-          // this PDF resolves against its own exact-case slot instead of
-          // inheriting the twin's ink read-only.
+          // lowercased slot on case-sensitive disks. The vault index holding
+          // both spellings as distinct files proves the twin rather than a
+          // changed revision, so this PDF resolves against its own exact-case
+          // slot instead of inheriting the twin's ink read-only.
           if (await this.isCaseTwinCollision(sidecar, file)) {
             await this.resolveSidecarInSlot(file, fingerprint, generation, disambiguatedSidecarPathFor(file.path));
             return;
@@ -564,17 +564,20 @@ export class PdfInkView extends InkWritingView {
   /**
    * Whether an occupied sidecar slot really belongs to a case twin of this
    * PDF: the recorded path equals this one ignoring case but not exactly, and
-   * vault.adapter.exists confirms both spellings. When the probe cannot
-   * confirm the twin (twin absent, or paths equal — a genuinely replaced
-   * PDF), callers keep the strict changed-revision read-only behavior.
+   * the vault index holds the recorded spelling as a file distinct from this
+   * one. The index — not the filesystem — is the signal: on case-insensitive
+   * disks (NTFS/APFS) both spellings hit the same physical file, so an
+   * adapter.exists probe would "confirm" a twin that does not exist and
+   * wrongly fork the twin's slot. When the probe cannot confirm the twin
+   * (twin absent from the index, or paths equal — a genuinely replaced PDF),
+   * callers keep the strict changed-revision read-only behavior.
    */
   private async isCaseTwinCollision(sidecar: PdfSidecar, file: TFile): Promise<boolean> {
     const recorded = sidecar.source.path.replace(/\\/g, "/");
     if (recorded === file.path || recorded.toLowerCase() !== file.path.toLowerCase()) return false;
-    const adapter = this.app.vault.adapter;
-    if (!adapter) return false;
     try {
-      return await adapter.exists(recorded) && await adapter.exists(file.path);
+      const twin = this.app.vault.getAbstractFileByPath(recorded);
+      return twin instanceof TFile && twin !== file;
     } catch {
       return false;
     }

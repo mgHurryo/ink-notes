@@ -24218,6 +24218,8 @@ var RENEWED_FLICK_GAP_MS = 55;
 var RENEWED_FLICK_RELEASE_PX = 4;
 var RENEWED_FLICK_JUMP_PX = 24;
 var RENEWED_FLICK_JUMP_RATIO = 2.2;
+var REF_DT_MS = 10;
+var RENEW_MIN_FLIPPED = 3;
 var PAGE_TRAVEL_PX = 100;
 var HORIZONTAL_PAGE_TRAVEL_PX = 48;
 var MAX_TRACKPAD_PAGES_PER_GESTURE = 2;
@@ -24252,10 +24254,17 @@ var DesktopWheelGesture = class {
     this.trackpadPages = 0;
     this.zeroAxisPauses = 0;
     this.gestureId = 0;
+    /** Consecutive samples seen while the gesture is flipped, counted from the
+     *  latest flip (pageDelta) or re-arm; guards the jump re-arm above. */
+    this.flippedRun = 0;
+    /** this.flipped as of the end of the previous begin(), so a pageDelta flip
+     *  that landed in between can restart flippedRun. */
+    this.flippedPreviously = false;
   }
   beginRenewedGesture() {
     this.gestureId += 1;
     this.trackpadPages = 0;
+    this.flippedRun = 0;
   }
   reset() {
     this.gestureId += 1;
@@ -24265,6 +24274,7 @@ var DesktopWheelGesture = class {
     this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     this.renewalBlocked = false;
     this.trackpadPages = this.zeroAxisPauses = 0;
+    this.flippedRun = 0;
     this.flipped = this.discrete = false;
     this.mode = 0;
   }
@@ -24278,6 +24288,7 @@ var DesktopWheelGesture = class {
     const axis = shift ? "x" : this.axis === "x" && (horizontal === 0 && this.zeroAxisPauses < ZERO_AXIS_PAUSES_TO_SWITCH || horizontal >= vertical * AXIS_RETENTION_RATIO) ? "x" : this.axis === "y" && (vertical === 0 && this.zeroAxisPauses < ZERO_AXIS_PAUSES_TO_SWITCH || vertical >= horizontal * AXIS_RETENTION_RATIO) ? "y" : horizontal >= vertical ? "x" : "y";
     const movement = axis === "x" ? delta.x || (shift ? delta.y : 0) : delta.y;
     const magnitude = Math.abs(movement);
+    const normalized = magnitude * (REF_DT_MS / Math.min(Math.max(gap, 1), REF_DT_MS * 5));
     const pixelNotch = delta.x === 0 && (axis === "y" || shift) && magnitude >= 80 && (magnitude % 100 === 0 || magnitude % 120 === 0);
     const discrete = delta.mode !== 0 || pixelNotch;
     const reversed = this.lastDelta !== 0 && movement !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta);
@@ -24289,64 +24300,69 @@ var DesktopWheelGesture = class {
       this.reset();
       gap = 0;
     } else if (renewed) {
-      this.reset();
-      gap = 0;
+      if (normalized > Math.abs(this.lastDelta)) {
+        this.reset();
+        gap = 0;
+      }
     }
     this.zeroAxisPauses = movement === 0 && axis === this.axis ? this.zeroAxisPauses + 1 : 0;
     this.discrete = this.axis === null ? discrete : this.discrete && discrete;
     this.axis = axis;
     this.mode = delta.mode;
     this.lastAt = at;
+    if (this.flipped && !this.flippedPreviously) this.flippedRun = 0;
+    const priorFlippedRun = this.flippedRun;
     let renewedTravel;
     if (this.flipped && !this.discrete) {
-      const settledRise = this.lastMagnitude <= RENEWED_FLICK_RELEASE_PX && magnitude > this.lastMagnitude && magnitude >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO;
-      const jump = magnitude >= Math.max(
+      const settledRise = this.lastMagnitude <= RENEWED_FLICK_RELEASE_PX && normalized > this.lastMagnitude && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO;
+      const jump = normalized >= Math.max(
         settledRise ? RENEWED_FLICK_JUMP_PX / 2 : RENEWED_FLICK_JUMP_PX,
         Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO
       );
       if (this.renewalBlocked) {
-        if (magnitude <= RENEWED_FLICK_RELEASE_PX) this.renewalBlocked = false;
-        else if (jump && magnitude > this.lastMagnitude) {
+        if (normalized <= RENEWED_FLICK_RELEASE_PX) this.renewalBlocked = false;
+        else if (jump && normalized > this.lastMagnitude && priorFlippedRun >= RENEW_MIN_FLIPPED) {
           this.beginRenewedGesture();
           this.flipped = false;
           this.travel = 0;
           this.renewalBlocked = true;
           this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
         }
-      } else if (jump) {
-        this.beginRenewedGesture();
-        this.flipped = false;
-        this.travel = 0;
-        this.renewalBlocked = true;
-        this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
-      } else if (axis === "y") {
+      } else if (this.renewedPeak > 0 || gap >= RENEWED_FLICK_GAP_MS) {
         if (gap >= RENEWED_FLICK_GAP_MS) {
-          this.renewedTravel = magnitude;
-          this.renewedPeak = magnitude;
+          this.renewedTravel = this.renewedPeak = normalized;
           this.renewedIncreases = 0;
         } else if (this.renewedPeak > 0) {
-          if (magnitude >= this.renewedPeak * 1.2) {
-            this.renewedPeak = magnitude;
-            this.renewedTravel += magnitude;
+          if (normalized >= this.renewedPeak * 1.2) {
+            this.renewedPeak = normalized;
+            this.renewedTravel += normalized;
             this.renewedIncreases += 1;
-            if (this.renewedIncreases >= 2 && this.renewedTravel >= PAGE_TRAVEL_PX) {
+            if (this.renewedIncreases >= 2 && this.renewedTravel >= (axis === "x" ? HORIZONTAL_PAGE_TRAVEL_PX : PAGE_TRAVEL_PX)) {
               renewedTravel = Math.sign(movement) * this.renewedTravel;
               this.beginRenewedGesture();
               this.flipped = false;
               this.travel = 0;
               this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
             }
-          } else if (magnitude < this.renewedPeak * 0.7) {
+          } else if (normalized < this.renewedPeak * 0.7) {
             this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
           }
         }
+      } else if (jump && priorFlippedRun >= RENEW_MIN_FLIPPED) {
+        this.beginRenewedGesture();
+        this.flipped = false;
+        this.travel = 0;
+        this.renewalBlocked = true;
+        this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
       }
     } else {
       this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     }
+    this.flippedRun = this.flipped ? priorFlippedRun + 1 : 0;
+    this.flippedPreviously = this.flipped;
     const pausedTail = movement === 0 && this.flipped && !this.discrete;
-    this.lastDelta = pausedTail ? this.lastDelta : this.flipped && !this.discrete ? Math.sign(movement) * Math.min(Math.abs(this.lastDelta), magnitude) : movement;
-    if (!pausedTail) this.lastMagnitude = magnitude;
+    this.lastDelta = pausedTail ? this.lastDelta : this.flipped && !this.discrete ? Math.sign(movement) * Math.min(Math.abs(this.lastDelta), normalized) : Math.sign(movement) * normalized;
+    if (!pausedTail) this.lastMagnitude = normalized;
     return {
       axis,
       movement,
@@ -34661,15 +34677,36 @@ var PdfSidecarStore = class {
    * already exists both files are kept and the recovery scan resolves it.
    */
   async migrateForRename(pdfPath, oldPdfPath) {
-    const source = this.sidecarFileFor(oldPdfPath);
+    var _a;
     const destinationPath = sidecarPathFor(pdfPath);
     const destination = this.vault.getAbstractFileByPath(destinationPath);
-    if (!source) return false;
     if (destination) return false;
+    const source = (_a = await this.ownedSidecarFor(oldPdfPath, sidecarPathFor(oldPdfPath))) != null ? _a : await this.ownedSidecarFor(oldPdfPath, disambiguatedSidecarPathFor(oldPdfPath));
+    if (!source) return false;
     await this.ensureFolder();
     await this.vault.rename(source, destinationPath);
     await this.recordSourcePath(source, pdfPath);
     return true;
+  }
+  /**
+   * The sidecar in a slot may belong to a case twin instead: sidecarPathFor
+   * lowercases the whole path, so Docs/Lecture.pdf and docs/lecture.pdf share
+   * the legacy slot while the second opener keeps its notes in the exact-case
+   * disambiguated slot (pdf-view.ts resolveSidecar). Only a sidecar recording
+   * the renamed PDF's exact-case path may be moved and re-pointed — migrating
+   * the twin's sidecar would strand both owners on the recovery scan. Corrupt
+   * slots are skipped (not migrated) so the recovery scan keeps resolving them.
+   */
+  async ownedSidecarFor(pdfPath, slotPath) {
+    const file = this.sidecarFileFor(pdfPath, slotPath);
+    if (!file) return null;
+    try {
+      const sidecar = await this.read(file);
+      return sidecar.source.path === pdfPath.replace(/\\/g, "/") ? file : null;
+    } catch (error) {
+      if (error instanceof PdfSidecarFormatError || error instanceof SyntaxError) return null;
+      throw error;
+    }
   }
   /** Best-effort metadata refresh so the sidecar records its PDF's path. */
   async recordSourcePath(file, pdfPath) {
@@ -35319,17 +35356,20 @@ var PdfInkView = class extends InkWritingView {
   /**
    * Whether an occupied sidecar slot really belongs to a case twin of this
    * PDF: the recorded path equals this one ignoring case but not exactly, and
-   * vault.adapter.exists confirms both spellings. When the probe cannot
-   * confirm the twin (twin absent, or paths equal — a genuinely replaced
-   * PDF), callers keep the strict changed-revision read-only behavior.
+   * the vault index holds the recorded spelling as a file distinct from this
+   * one. The index — not the filesystem — is the signal: on case-insensitive
+   * disks (NTFS/APFS) both spellings hit the same physical file, so an
+   * adapter.exists probe would "confirm" a twin that does not exist and
+   * wrongly fork the twin's slot. When the probe cannot confirm the twin
+   * (twin absent from the index, or paths equal — a genuinely replaced PDF),
+   * callers keep the strict changed-revision read-only behavior.
    */
   async isCaseTwinCollision(sidecar, file) {
     const recorded = sidecar.source.path.replace(/\\/g, "/");
     if (recorded === file.path || recorded.toLowerCase() !== file.path.toLowerCase()) return false;
-    const adapter = this.app.vault.adapter;
-    if (!adapter) return false;
     try {
-      return await adapter.exists(recorded) && await adapter.exists(file.path);
+      const twin = this.app.vault.getAbstractFileByPath(recorded);
+      return twin instanceof import_obsidian12.TFile && twin !== file;
     } catch (e) {
       return false;
     }
