@@ -30196,7 +30196,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     ctx.restore();
   }
   beginLassoPreview(page) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d, _e;
     const drag = this.lassoDrag;
     if (!drag || !this.lassoCanvas || !this.lassoCtx) return;
     const selected = new Set(drag.strokes.map((stroke) => stroke.id));
@@ -30204,8 +30204,10 @@ var InkWritingView = class extends import_obsidian6.FileView {
       var _a2;
       return !((_a2 = this.stickyInput) == null ? void 0 : _a2.proxies.has(s.id));
     }));
-    if (this.stickyInput) (_b = this.stickies) == null ? void 0 : _b.preview(this.stickyInput.notes.map((n) => ({ ...n, strokes: n.strokes.filter((s) => !selected.has(s.id)) })));
-    (_c = this.tiles) == null ? void 0 : _c.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, false);
+    const base = this.tileExclusion();
+    (_c = (_b = this.tiles) == null ? void 0 : _b.setWorkerExclusion) == null ? void 0 : _c.call(_b, base ? /* @__PURE__ */ new Set([...base, ...selected]) : selected);
+    if (this.stickyInput) (_d = this.stickies) == null ? void 0 : _d.preview(this.stickyInput.notes.map((n) => ({ ...n, strokes: n.strokes.filter((s) => !selected.has(s.id)) })));
+    (_e = this.tiles) == null ? void 0 : _e.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, false);
     const resolution = canvasResolution(
       this.canvasLogicalWidth,
       this.canvasLogicalHeight,
@@ -30266,6 +30268,8 @@ var InkWritingView = class extends import_obsidian6.FileView {
     });
   }
   hideLassoPreview() {
+    var _a, _b;
+    (_b = (_a = this.tiles) == null ? void 0 : _a.setWorkerExclusion) == null ? void 0 : _b.call(_a, this.tileExclusion());
     if (!this.lassoCanvas) return;
     this.lassoCanvas.setCssStyles({ display: "none", transform: "none" });
     this.lassoCanvas.width = this.lassoCanvas.height = 1;

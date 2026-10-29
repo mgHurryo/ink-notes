@@ -3376,6 +3376,12 @@ export abstract class InkWritingView extends FileView {
     if (!drag || !this.lassoCanvas || !this.lassoCtx) return;
     const selected = new Set(drag.strokes.map((stroke) => stroke.id));
     this.tiles?.patchStrokes([], [...selected], page.strokes.filter((s) => !this.stickyInput?.proxies.has(s.id)));
+    // The worker mirror learns about the lasso removal only when the drop
+    // commits, so exclude the selection before commitInteractive snapshots the
+    // exclusion, or replacement tiles redraw it as a static ghost under the
+    // moving preview.
+    const base = this.tileExclusion();
+    this.tiles?.setWorkerExclusion?.(base ? new Set([...base, ...selected]) : selected);
     if (this.stickyInput) this.stickies?.preview(this.stickyInput.notes.map((n) => ({ ...n, strokes: n.strokes.filter((s) => !selected.has(s.id)) })));
     this.tiles?.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, false);
     const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight,
@@ -3431,6 +3437,9 @@ export abstract class InkWritingView extends FileView {
   }
 
   private hideLassoPreview(): void {
+    // Common teardown sink for every lasso exit path: restore the pending-ink
+    // exclusion baseline so the selection rejoins worker-rendered tiles.
+    this.tiles?.setWorkerExclusion?.(this.tileExclusion());
     if (!this.lassoCanvas) return;
     this.lassoCanvas.setCssStyles({ display: "none", transform: "none" });
     this.lassoCanvas.width = this.lassoCanvas.height = 1;
