@@ -1,9 +1,9 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
 vi.mock("obsidian", () => ({ Modal: class {}, FileView: class {}, Scope: class {}, TFile: class {} }));
-vi.mock("../src/rendering", () => ({ canvasResolution: vi.fn(), drawInkStroke: vi.fn() }));
+vi.mock("../src/rendering", () => ({ canvasResolution: vi.fn(), drawInkStroke: vi.fn(), drawInkStrokeTail: vi.fn() }));
 import { InkView } from "../src/view";
-import { canvasResolution, drawInkStroke } from "../src/rendering";
+import { canvasResolution, drawInkStroke, drawInkStrokeTail } from "../src/rendering";
 
 // Exercise rendering coordination without needing an Obsidian workspace.
 function view(): any {
@@ -229,10 +229,16 @@ it("redraws Worker-confirmed geometry separately from the incremental input tail
   });
 
   v.drawPreview();
-  expect(drawInkStroke).toHaveBeenCalledWith(tail, expect.objectContaining({
+  expect(drawInkStrokeTail).toHaveBeenCalledWith(tail, expect.objectContaining({
     id: stroke.id,
-    points: stroke.points.slice(1),
-  }), 800, 1000);
+  }), 800, 1000, 1);
+  // The tail view shares the live points array; the unconfirmed window is
+  // carried by the start sample (worker outline owns [0, 2), tail redraws
+  // sample 1 as seam context plus sample 2).
+  const tailView = vi.mocked(drawInkStrokeTail).mock.calls.at(-1)?.[1] as typeof stroke;
+  expect(tailView.points).toBe(stroke.points);
+  expect(tailView.points.slice(1)).toEqual(stroke.points.slice(1));
+  expect(drawInkStroke).not.toHaveBeenCalled();
   expect(confirmed.fill).not.toHaveBeenCalled();
 
   v.commitPreview();
@@ -261,11 +267,42 @@ it.each([0, 8, 72, 96])("keeps every unconfirmed live sample when the Worker has
   v.drawPreview();
 
   if (sampleCount === stroke.points.length) {
-    expect(drawInkStroke).not.toHaveBeenCalled();
+    expect(drawInkStrokeTail).not.toHaveBeenCalled();
   } else {
-    const rendered = vi.mocked(drawInkStroke).mock.calls.at(-1)?.[1];
-    expect(rendered?.points).toEqual(stroke.points.slice(Math.max(0, sampleCount - 1)));
+    const call = vi.mocked(drawInkStrokeTail).mock.calls.at(-1)!;
+    // The tail view shares the live array and re-renders the unconfirmed
+    // samples plus one retained seam sample: window content = slice(start).
+    expect((call[1] as typeof stroke).points).toBe(stroke.points);
+    expect((call[1] as typeof stroke).points.slice(call[4] as number))
+      .toEqual(stroke.points.slice(Math.max(0, sampleCount - 1)));
   }
+});
+
+it("reuses one stable tail view across preview frames without new samples", () => {
+  const v = view();
+  const stroke = {
+    id: "stable-tail", pageId: "page", tool: "pen", color: "#000", opacity: 1, width: 4,
+    points: Array.from({ length: 96 }, (_, index) => ({
+      x: 0.1 + index / 160, y: 0.2 + Math.sin(index / 10) / 20, pressure: 0.5, t: index,
+    })),
+  };
+  Object.assign(v, {
+    previewCtx: drawingContext(),
+    activeStroke: stroke,
+    confirmedStrokeOutlines: new Map(),
+  });
+
+  v.drawPreview();
+  v.drawPreview();
+  expect(drawInkStrokeTail).toHaveBeenCalledTimes(2);
+  const first = vi.mocked(drawInkStrokeTail).mock.calls[0][1] as typeof stroke;
+  const second = vi.mocked(drawInkStrokeTail).mock.calls[1][1] as typeof stroke;
+  // One cloned view for the stroke's lifetime, sharing the growing points
+  // array: fresh per-frame clones would defeat the renderer's path cache.
+  expect(first).toBeTruthy();
+  expect(second).toBe(first);
+  expect(second.points).toBe(stroke.points);
+  expect(second).toEqual(stroke);
 });
 
 it("allocates overlays with the mobile high-density pixel budget", () => {

@@ -52,13 +52,30 @@ export function penOutline(stroke: InkStroke, width: number, height: number): nu
  * (deliberate, area-level) overlaps that make the joins seamless.
  */
 export function penOutlineRings(stroke: InkStroke, width: number, height: number): number[][][] {
+  const geometry = penStampGeometry(stroke, width, height);
+  if (geometry.count === 0) return [];
+  return geometry.ringsFor(0, geometry.count, false);
+}
+
+interface PenStampGeometry {
+  count: number;
+  /**
+   * Rings for discs [from, to) plus segment links joining i→i+1 while both
+   * endpoints are inside the range. `linkAcrossEnd` extends the links one
+   * sample past `to` so a settled range can anchor into the tip's first
+   * sample and keep the two stamps seamless.
+   */
+  ringsFor(from: number, to: number, linkAcrossEnd: boolean): number[][][];
+}
+
+function penStampGeometry(stroke: InkStroke, width: number, height: number): PenStampGeometry {
   const pressures = smoothPenPressures(stroke.points);
   const centerline = smoothOutlineCenterline(
     stroke.points.map((point, index) => [point.x * width, point.y * height, pressures[index], point.t]),
     stroke.width * 0.925,
   );
   const count = centerline.length;
-  if (count === 0) return [];
+  if (count === 0) return { count, ringsFor: () => [] };
   // Per-point travel speed (page px/s), smoothed over the immediate
   // neighbors to reject sample jitter.
   const speeds: number[] = new Array(count);
@@ -124,59 +141,47 @@ export function penOutlineRings(stroke: InkStroke, width: number, height: number
     normals[index] = [-dy / length, dx / length];
   }
   const discSegments = 12;
-  // Single-point strokes are a lone disc; the normals below need a neighbor.
-  if (count === 1) {
-    const point = centerline[0];
-    const radius = halfWidthAt(0);
-    const ring: number[][] = [];
-    for (let index = 0; index < discSegments; index++) {
-      const angle = (index / discSegments) * Math.PI * 2;
-      ring.push([point[0] + Math.cos(angle) * radius, point[1] + Math.sin(angle) * radius]);
+  const ringsFor = (from: number, to: number, linkAcrossEnd: boolean): number[][][] => {
+    const rings: number[][][] = [];
+    const emitRing = (ring: number[][]): void => {
+      if (ring.length < 3) return;
+      // Winding normalization: every ring must share one orientation so the
+      // nonzero fill of the combined path ADDS overlaps instead of cancelling
+      // them - this is what makes retraces and loops hole-free.
+      let area = 0;
+      for (let index = 0; index < ring.length; index++) {
+        const a = ring[index];
+        const b = ring[(index + 1) % ring.length];
+        area += a[0] * b[1] - b[0] * a[1];
+      }
+      rings.push(area < 0 ? ring.slice().reverse() : ring);
+    };
+    // A lone sample is a lone disc; the trapezoid normals need a neighbor.
+    const lastLink = linkAcrossEnd ? to : to - 1;
+    for (let index = from; index < to; index++) {
+      const point = centerline[index];
+      const radius = halfWidthAt(index);
+      const [nx, ny] = normals[index];
+      const ring: number[][] = [];
+      for (let sample = 0; sample < discSegments; sample++) {
+        const angle = (sample / discSegments) * Math.PI * 2;
+        ring.push([point[0] + Math.cos(angle) * radius, point[1] + Math.sin(angle) * radius]);
+      }
+      emitRing(ring);
+      if (index >= lastLink) continue;
+      const following = centerline[index + 1];
+      const followingRadius = halfWidthAt(index + 1);
+      const [fnx, fny] = normals[index + 1];
+      emitRing([
+        [point[0] + nx * radius, point[1] + ny * radius],
+        [following[0] + fnx * followingRadius, following[1] + fny * followingRadius],
+        [following[0] - fnx * followingRadius, following[1] - fny * followingRadius],
+        [point[0] - nx * radius, point[1] - ny * radius],
+      ]);
     }
-    let area = 0;
-    for (let index = 0; index < ring.length; index++) {
-      const a = ring[index];
-      const b = ring[(index + 1) % ring.length];
-      area += a[0] * b[1] - b[0] * a[1];
-    }
-    return [area < 0 ? ring.slice().reverse() : ring];
-  }
-  const rings: number[][][] = [];
-  const emitRing = (ring: number[][]): void => {
-    if (ring.length < 3) return;
-    // Winding normalization: every ring must share one orientation so the
-    // nonzero fill of the combined path ADDS overlaps instead of cancelling
-    // them - this is what makes retraces and loops hole-free.
-    let area = 0;
-    for (let index = 0; index < ring.length; index++) {
-      const a = ring[index];
-      const b = ring[(index + 1) % ring.length];
-      area += a[0] * b[1] - b[0] * a[1];
-    }
-    rings.push(area < 0 ? ring.slice().reverse() : ring);
+    return rings;
   };
-  for (let index = 0; index < count; index++) {
-    const point = centerline[index];
-    const radius = halfWidthAt(index);
-    const [nx, ny] = normals[index];
-    const ring: number[][] = [];
-    for (let sample = 0; sample < discSegments; sample++) {
-      const angle = (sample / discSegments) * Math.PI * 2;
-      ring.push([point[0] + Math.cos(angle) * radius, point[1] + Math.sin(angle) * radius]);
-    }
-    emitRing(ring);
-    if (index === count - 1) continue;
-    const following = centerline[index + 1];
-    const followingRadius = halfWidthAt(index + 1);
-    const [fnx, fny] = normals[index + 1];
-    emitRing([
-      [point[0] + nx * radius, point[1] + ny * radius],
-      [following[0] + fnx * followingRadius, following[1] + fny * followingRadius],
-      [following[0] - fnx * followingRadius, following[1] - fny * followingRadius],
-      [point[0] - nx * radius, point[1] - ny * radius],
-    ]);
-  }
-  return rings;
+  return { count, ringsFor };
 }
 
 
@@ -279,23 +284,31 @@ function median3(a: number, b: number, c: number): number {
   return Math.max(Math.min(a, b), Math.min(Math.max(a, b), c));
 }
 
-export function drawInkStroke(ctx: CanvasRenderingContext2D, stroke: InkStroke, width: number, height: number): void {
-  if (stroke.points.length === 0) return;
-  ctx.save();
+function applyStrokeStyle(ctx: CanvasRenderingContext2D, stroke: InkStroke): void {
   ctx.globalAlpha = stroke.opacity;
   ctx.fillStyle = stroke.color;
   ctx.strokeStyle = stroke.color;
   ctx.lineCap = "round";
   ctx.lineJoin = "round";
   ctx.globalCompositeOperation = stroke.tool === "highlighter" ? "multiply" : "source-over";
+}
+
+function drawSampleDot(ctx: CanvasRenderingContext2D, stroke: InkStroke, width: number, height: number): void {
+  const point = stroke.points[0];
+  const gain = clampPercent(stroke.dynamics?.pressure, 100) / 100;
+  const effectivePressure = 0.5 + (point.pressure - 0.5) * gain;
+  const diameter = stroke.tool === "highlighter" ? stroke.width : stroke.width * (0.55 + effectivePressure * 0.75);
+  ctx.beginPath();
+  ctx.arc(point.x * width, point.y * height, diameter / 2, 0, Math.PI * 2);
+  ctx.fill();
+}
+
+export function drawInkStroke(ctx: CanvasRenderingContext2D, stroke: InkStroke, width: number, height: number): void {
+  if (stroke.points.length === 0) return;
+  ctx.save();
+  applyStrokeStyle(ctx, stroke);
   if (stroke.points.length === 1) {
-    const point = stroke.points[0];
-    const gain = clampPercent(stroke.dynamics?.pressure, 100) / 100;
-    const effectivePressure = 0.5 + (point.pressure - 0.5) * gain;
-    const diameter = stroke.tool === "highlighter" ? stroke.width : stroke.width * (0.55 + effectivePressure * 0.75);
-    ctx.beginPath();
-    ctx.arc(point.x * width, point.y * height, diameter / 2, 0, Math.PI * 2);
-    ctx.fill();
+    drawSampleDot(ctx, stroke, width, height);
   } else if (stroke.tool === "highlighter") {
     ctx.lineWidth = stroke.width;
     drawSmoothPath(ctx, stroke.points, width, height);
@@ -316,25 +329,110 @@ export function drawInkStroke(ctx: CanvasRenderingContext2D, stroke: InkStroke, 
   ctx.restore();
 }
 
-function createPenPath(stroke: InkStroke, width: number, height: number): Path2D {
-  const path = new Path2D();
-  for (const ring of penOutlineRings(stroke, width, height)) {
+/** Samples a settled ring depends on beyond itself: two centerline smoothing
+ *  passes (±2) plus the segment/normal neighbor (±1). */
+const TIP_SAMPLE_WINDOW = 3;
+
+interface CachedTailPath {
+  points: InkPoint[];
+  startSample: number;
+  /** First sample owned by the tip path; the settled path covers [startSample, settledCount). */
+  settledCount: number;
+  settledPath: Path2D;
+  tipPath: Path2D;
+  tipCount: number;
+  size: number;
+  width: number;
+  height: number;
+}
+
+const tailPaths = new WeakMap<InkStroke, CachedTailPath>();
+
+/**
+ * Live-tail variant of drawInkStroke for the active stroke. The caller passes
+ * a stable per-stroke view that SHARES the growing points array, plus the
+ * first sample not covered by the Worker outline. The stamp is split into a
+ * settled path covering [startSample, end-K) and a tip path covering the last
+ * K samples: settled rings grow incrementally as samples arrive (a sample only
+ * settles once its whole smoothing neighborhood exists), so a frame costs
+ * O(window + new samples) instead of re-stamping the whole stroke. The
+ * settled/tip junction overlaps in area like the Worker seam sample below —
+ * two fills composite that small region twice, which is the live preview's
+ * deliberate transparency seam; the startSample advance (per Worker reply)
+ * and a wholesale points replacement rebuild once per event, not per frame.
+ */
+export function drawInkStrokeTail(ctx: CanvasRenderingContext2D, stroke: InkStroke, width: number, height: number, startSample: number): void {
+  if (!Array.isArray(stroke.points) || stroke.points.length === 0) return;
+  ctx.save();
+  applyStrokeStyle(ctx, stroke);
+  const count = stroke.points.length;
+  if (count === 1) {
+    drawSampleDot(ctx, stroke, width, height);
+    ctx.restore();
+    return;
+  }
+  if (stroke.tool === "highlighter") {
+    ctx.lineWidth = stroke.width;
+    drawSmoothPath(ctx, stroke.points, width, height, startSample, count);
+    ctx.stroke();
+    ctx.restore();
+    return;
+  }
+  let cached = tailPaths.get(stroke);
+  if (!cached || cached.points !== stroke.points || cached.startSample !== startSample
+    || cached.size !== stroke.width || cached.width !== width || cached.height !== height) {
+    const geometry = penStampGeometry(stroke, width, height);
+    const settledCount = Math.max(startSample, count - TIP_SAMPLE_WINDOW);
+    const settledPath = new Path2D();
+    traceRings(settledPath, geometry.ringsFor(startSample, settledCount, true));
+    const tipPath = new Path2D();
+    traceRings(tipPath, geometry.ringsFor(settledCount, count, false));
+    cached = { points: stroke.points, startSample, settledCount, settledPath, tipPath, tipCount: count,
+      size: stroke.width, width, height };
+    tailPaths.set(stroke, cached);
+  } else if (cached.tipCount !== count) {
+    // Fresh input samples only: bake the newly settled rings into the settled
+    // path, then re-stamp just the tip window. The junction trapezoid anchors
+    // into the tip's first sample, whose residual drift stays hidden under
+    // that sample's tip disc until it settles.
+    const geometry = penStampGeometry(stroke, width, height);
+    const settledTarget = Math.max(startSample, count - TIP_SAMPLE_WINDOW);
+    if (settledTarget > cached.settledCount) {
+      traceRings(cached.settledPath, geometry.ringsFor(cached.settledCount, settledTarget, true));
+      cached.settledCount = settledTarget;
+    }
+    cached.tipPath = new Path2D();
+    traceRings(cached.tipPath, geometry.ringsFor(cached.settledCount, count, false));
+    cached.tipCount = count;
+  }
+  ctx.fill(cached.settledPath);
+  ctx.fill(cached.tipPath);
+  ctx.restore();
+}
+
+function traceRings(path: Path2D, rings: number[][][]): void {
+  for (const ring of rings) {
     path.moveTo(ring[0][0], ring[0][1]);
     for (let index = 1; index < ring.length; index++) path.lineTo(ring[index][0], ring[index][1]);
     path.closePath();
   }
+}
+
+function createPenPath(stroke: InkStroke, width: number, height: number): Path2D {
+  const path = new Path2D();
+  traceRings(path, penOutlineRings(stroke, width, height));
   return path;
 }
 
-function drawSmoothPath(ctx: CanvasRenderingContext2D, points: InkPoint[], width: number, height: number): void {
+function drawSmoothPath(ctx: CanvasRenderingContext2D, points: InkPoint[], width: number, height: number, from = 0, to = points.length): void {
   ctx.beginPath();
-  ctx.moveTo(points[0].x * width, points[0].y * height);
-  for (let index = 1; index < points.length; index++) {
+  ctx.moveTo(points[from].x * width, points[from].y * height);
+  for (let index = from + 1; index < to; index++) {
     const previous = points[index - 1];
     const point = points[index];
-    const end = index === points.length - 1 ? point : { x: (previous.x + point.x) / 2, y: (previous.y + point.y) / 2 };
+    const end = index === to - 1 ? point : { x: (previous.x + point.x) / 2, y: (previous.y + point.y) / 2 };
     ctx.quadraticCurveTo(previous.x * width, previous.y * height, end.x * width, end.y * height);
   }
-  const last = points[points.length - 1];
+  const last = points[to - 1];
   ctx.lineTo(last.x * width, last.y * height);
 }
