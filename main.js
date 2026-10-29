@@ -22967,6 +22967,18 @@ function reconcileNotebook(target, incoming, selectedPageId, previousPageIndex) 
     var _a;
     return page.id !== ((_a = pages[index]) == null ? void 0 : _a.id);
   });
+  if (pages.length === 0) {
+    return {
+      pageIndex: Math.max(0, previousPageIndex),
+      pageRailChanged: false,
+      currentPageChanged: false,
+      currentInkChanged: false,
+      currentPaperChanged: false,
+      dimensionsChanged,
+      changedPageIds: [],
+      metadataOnlyChanges
+    };
+  }
   const selectedIndex = pages.findIndex((page) => page.id === selectedPageId);
   const pageIndex = selectedIndex >= 0 ? selectedIndex : Math.min(previousPageIndex, pages.length - 1);
   const currentPage = pages[pageIndex];
@@ -34336,7 +34348,22 @@ function mergeSidecars(base, incoming) {
   for (const notePage of incoming.notePages) {
     if (!byId.has(notePage.id)) byId.set(notePage.id, notePage);
   }
+  const unionById = new Map(byId);
   for (const id of Object.keys(deletedNotePages)) byId.delete(id);
+  if (byId.size === 0) {
+    let revivedId = null;
+    let revivedAt = -Infinity;
+    for (const [id, timestamp] of Object.entries(deletedNotePages)) {
+      if (unionById.has(id) && timestamp > revivedAt) {
+        revivedId = id;
+        revivedAt = timestamp;
+      }
+    }
+    if (revivedId !== null) {
+      byId.set(revivedId, unionById.get(revivedId));
+      delete deletedNotePages[revivedId];
+    }
+  }
   const orderWinner = incoming.noteOrderUpdatedAt > base.noteOrderUpdatedAt || incoming.noteOrderUpdatedAt === base.noteOrderUpdatedAt && compareNotePageOrder(incoming.notePages, base.notePages) >= 0 ? incoming : base;
   const preferred = orderWinner.notePages.filter((notePage) => byId.has(notePage.id)).map((notePage) => notePage.id);
   const additions = [...byId.values()].filter((notePage) => !preferred.includes(notePage.id)).sort((left, right) => {

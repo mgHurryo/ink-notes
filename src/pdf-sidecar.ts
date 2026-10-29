@@ -253,7 +253,24 @@ export function mergeSidecars(base: PdfSidecar, incoming: PdfSidecar): PdfSideca
   for (const notePage of incoming.notePages) {
     if (!byId.has(notePage.id)) byId.set(notePage.id, notePage);
   }
+  const unionById = new Map(byId);
   for (const id of Object.keys(deletedNotePages)) byId.delete(id);
+  if (byId.size === 0) {
+    // Complementary deletions (each side deletes a different page) must not
+    // wipe the whole sequence — that would crash the merged view and, once
+    // saved, lose every stroke. Keep the last-deleted page, mirroring the
+    // at-least-one-page invariant of deleteNotePageAt and normalizeSidecar.
+    // Its tombstone has to go too, or the next merge deletes the page again.
+    let revivedId: string | null = null;
+    let revivedAt = -Infinity;
+    for (const [id, timestamp] of Object.entries(deletedNotePages)) {
+      if (unionById.has(id) && timestamp > revivedAt) { revivedId = id; revivedAt = timestamp; }
+    }
+    if (revivedId !== null) {
+      byId.set(revivedId, unionById.get(revivedId)!);
+      delete deletedNotePages[revivedId];
+    }
+  }
   const orderWinner = incoming.noteOrderUpdatedAt > base.noteOrderUpdatedAt
     || (incoming.noteOrderUpdatedAt === base.noteOrderUpdatedAt && compareNotePageOrder(incoming.notePages, base.notePages) >= 0)
     ? incoming

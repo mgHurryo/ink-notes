@@ -37,6 +37,21 @@ export function reconcileNotebook(target: InkNotebook, incoming: InkNotebook, se
 
   const pageListChanged = previousPages.length !== pages.length
     || previousPages.some((page, index) => page.id !== pages[index]?.id);
+  if (pages.length === 0) {
+    // An empty incoming sequence (a pre-fix merge could write one) has no page
+    // to select; return a neutral result and leave the local notebook alone
+    // instead of crashing on pages[-1].
+    return {
+      pageIndex: Math.max(0, previousPageIndex),
+      pageRailChanged: false,
+      currentPageChanged: false,
+      currentInkChanged: false,
+      currentPaperChanged: false,
+      dimensionsChanged,
+      changedPageIds: [],
+      metadataOnlyChanges,
+    };
+  }
   const selectedIndex = pages.findIndex((page) => page.id === selectedPageId);
   const pageIndex = selectedIndex >= 0 ? selectedIndex : Math.min(previousPageIndex, pages.length - 1);
   const currentPage = pages[pageIndex];
