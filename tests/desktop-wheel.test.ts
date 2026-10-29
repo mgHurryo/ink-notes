@@ -254,3 +254,33 @@ describe("DesktopWheelGesture sustained perpendicular stream", () => {
     expect(axes).toContain("x");
   });
 });
+
+describe("DesktopWheelGesture zero-component pause in the momentum tail", () => {
+  // A transient zero held-axis sample inside a flipped diagonal stream used
+  // to zero the envelope (lastDelta/lastMagnitude), so the next sample posed
+  // as a settledRise (lastMagnitude <= 4 with the ratio term trivially true)
+  // and any >= 12px recovery re-opened the page budget mid-contact: one
+  // physical gesture flipped three pages. The envelope must survive pauses.
+  it("keeps a diagonal flick across zero-component pauses inside the two-page budget", () => {
+    // The 60px recovery stays under the preserved 30px envelope's 2.2x
+    // guardrail and rides out as inertia; the later 90px rise is 3x over that
+    // still-preserved envelope, a genuine re-flick under the rise-means-new-
+    // intent rule, so the contact lands at exactly the budgeted two pages
+    // (three before the pause guard, with two zero-sample re-arms).
+    expect(flipCount([[140, 8], [90, 8], [60, 8], [30, 8], [0, 8], [60, 8], [90, 8], [0, 8], [60, 8], [90, 8]])).toBe(2);
+  });
+
+  it("holds a sub-guardrail recovery after a zero pause as inertia (one page)", () => {
+    // Every recovery sample stays far under 2.2x the preserved envelope, so
+    // no re-arm happens at all (two pages before the pause guard).
+    expect(flipCount([[140, 8], [90, 8], [60, 8], [30, 8], [0, 8], [18, 8], [16, 8], [0, 8], [14, 8], [13, 8], [12, 8], [12, 8], [13, 8], [12, 8]])).toBe(1);
+  });
+
+  it("mirrors the two-page budget across zero pauses onto the y axis", () => {
+    expect(flipCount([[8, 140], [8, 90], [8, 60], [8, 30], [8, 0], [8, 60], [8, 90], [8, 0], [8, 60], [8, 90]], "y")).toBe(2);
+  });
+
+  it("mirrors the sub-guardrail inertia recovery onto the y axis", () => {
+    expect(flipCount([[8, 140], [8, 90], [8, 60], [8, 30], [8, 0], [8, 18], [8, 16], [8, 0], [8, 14], [8, 13], [8, 12], [8, 12], [8, 13], [8, 12]], "y")).toBe(1);
+  });
+});

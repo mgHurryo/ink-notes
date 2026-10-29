@@ -204,9 +204,19 @@ export class DesktopWheelGesture {
     } else {
       this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     }
-    this.lastDelta = this.flipped && !this.discrete
-      ? Math.sign(movement) * Math.min(Math.abs(this.lastDelta), magnitude) : movement;
-    this.lastMagnitude = magnitude;
+    // A zero movement inside a flipped continuous stream is a diagonal stream
+    // reporting a pause, not a settled tail: writing it through would zero the
+    // envelope (sign(0) min-chain, magnitude 0), letting the very next sample
+    // pose as a settledRise (lastMagnitude <= 4 with the ratio term trivially
+    // true) and re-open the page budget mid-gesture. Keep the envelope across
+    // the pause; a genuine settle still decays through non-zero samples to the
+    // release level (or exits via the >= 55ms quiet gap), and a sustained zero
+    // run still re-classifies through ZERO_AXIS_PAUSES_TO_SWITCH.
+    const pausedTail = movement === 0 && this.flipped && !this.discrete;
+    this.lastDelta = pausedTail ? this.lastDelta
+      : this.flipped && !this.discrete
+        ? Math.sign(movement) * Math.min(Math.abs(this.lastDelta), magnitude) : movement;
+    if (!pausedTail) this.lastMagnitude = magnitude;
     return { axis, movement, discrete: this.discrete, mode: delta.mode, gap, gestureId: this.gestureId,
       suppressed: !this.discrete && this.flipped, renewedTravel };
   }
