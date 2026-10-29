@@ -24225,6 +24225,7 @@ var RENEW_MIN_FLIPPED = 3;
 var PAGE_TRAVEL_PX = 100;
 var HORIZONTAL_PAGE_TRAVEL_PX = 48;
 var MAX_TRACKPAD_PAGES_PER_GESTURE = 2;
+var X_PAGES_PER_CONTACT = 1;
 var AXIS_RETENTION_RATIO = 0.65;
 var ZERO_AXIS_PAUSES_TO_SWITCH = 2;
 function normalizeWheel(event, viewport) {
@@ -24254,6 +24255,11 @@ var DesktopWheelGesture = class {
     this.renewedIncreases = 0;
     this.renewalBlocked = false;
     this.trackpadPages = 0;
+    /** Pages already flipped on the x axis during the current contact. Unlike
+     *  trackpadPages it survives beginRenewedGesture: a mid-tail renewal is
+     *  the same physical contact, and the horizontal contract grants it
+     *  nothing further. */
+    this.contactXPages = 0;
     this.zeroAxisPauses = 0;
     this.gestureId = 0;
     /** Consecutive samples seen while the gesture is flipped, counted from the
@@ -24276,6 +24282,7 @@ var DesktopWheelGesture = class {
     this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     this.renewalBlocked = false;
     this.trackpadPages = this.zeroAxisPauses = 0;
+    this.contactXPages = 0;
     this.flippedRun = 0;
     this.flipped = this.discrete = false;
     this.mode = 0;
@@ -24385,6 +24392,7 @@ var DesktopWheelGesture = class {
     if (motion.suppressed) return 0;
     if (motion.renewedTravel !== void 0) this.travel = motion.renewedTravel;
     if (motion.discrete) {
+      if (motion.axis === "x" && this.contactXPages >= X_PAGES_PER_CONTACT) return 0;
       if (this.trackpadPages >= MAX_TRACKPAD_PAGES_PER_GESTURE) return 0;
       const notches = motion.mode === 1 ? Math.max(1, Math.round(Math.abs(motion.movement) / 48)) : 1;
       const sensitivity = motion.mode === 0 && motion.gap > 0 && motion.gap < 80 ? 0.8 : 1;
@@ -24397,20 +24405,51 @@ var DesktopWheelGesture = class {
       if (pages > 0) {
         this.flipped = true;
         this.trackpadPages += pages;
+        if (motion.axis === "x") this.contactXPages += pages;
       }
       return Math.sign(motion.movement) * pages;
     }
     this.travel += motion.movement;
     const travelThreshold = motion.axis === "x" ? HORIZONTAL_PAGE_TRAVEL_PX : PAGE_TRAVEL_PX;
     if (Math.abs(this.travel) < travelThreshold) return 0;
-    if (this.trackpadPages >= MAX_TRACKPAD_PAGES_PER_GESTURE) {
+    const budgetSpent = motion.axis === "x" ? this.contactXPages >= X_PAGES_PER_CONTACT : this.trackpadPages >= MAX_TRACKPAD_PAGES_PER_GESTURE;
+    if (budgetSpent) {
       this.travel = 0;
       return 0;
     }
     this.flipped = true;
     this.trackpadPages += 1;
+    if (motion.axis === "x") this.contactXPages += 1;
     this.travel = 0;
     return Math.sign(motion.movement);
+  }
+};
+var FAST_PAGING_WINDOW_MS = 1e3;
+var FAST_PAGING_PAGES = 3;
+var WheelPagePacer = class {
+  constructor() {
+    this.flips = [];
+    this.engagedState = false;
+  }
+  /** Records |pages| flips and returns whether enough of them fall inside
+   *  the trailing window to keep the fast-paging rail engaged. */
+  record(pages, axis, at) {
+    if (axis === "y" && pages > 0) {
+      for (let page = 0; page < pages; page += 1) this.flips.push(at);
+      const cutoff = at - FAST_PAGING_WINDOW_MS;
+      while (this.flips.length > 0 && this.flips[0] < cutoff) this.flips.shift();
+    }
+    this.engagedState = this.flips.length >= FAST_PAGING_PAGES;
+    return this.engagedState;
+  }
+  /** Clears the window for teardown or a collapse, so a later slow flip
+   *  cannot inherit a stale engagement. */
+  end() {
+    this.flips = [];
+    this.engagedState = false;
+  }
+  get engaged() {
+    return this.engagedState;
   }
 };
 
@@ -27047,6 +27086,7 @@ var PASTE_HOLD_SLOP_PX = 10;
 var MAX_SCRIBBLE_GESTURE_POINTS = 2048;
 var SCRIBBLE_REFERENCE_SIZE = 24;
 var QUEUED_PAGE_SWIPE_DURATION_MS = 64;
+var FAST_PAGING_RAIL_IDLE_MS = 1e3;
 var STROKE_ERASER_HIT_RADIUS = 10;
 var OVERLAY_PIXEL_BUDGET = 12e6;
 var SAVE_IDLE_DELAY = 1500;
@@ -27494,6 +27534,13 @@ var InkWritingView = class extends import_obsidian6.FileView {
     this.desktopPan = null;
     this.desktopSpaceDown = false;
     this.desktopWheel = new DesktopWheelGesture();
+    /** Sliding-window page rate behind the fast-paging rail. */
+    this.wheelPacer = new WheelPagePacer();
+    /** True while a fast paging burst holds the rail open. */
+    this.fastPagingRail = false;
+    /** Whether the burst borrowed a collapsed rail: only a borrowed rail goes
+     *  back to hidden when the burst ends, a user-expanded rail stays. */
+    this.fastPagingRailBorrowed = false;
   }
   disposeStickyNotes() {
     var _a;
@@ -28736,7 +28783,10 @@ var InkWritingView = class extends import_obsidian6.FileView {
       scrolled = Math.abs(scroller[property] - before) > 0.5;
     }
     const pages = this.desktopWheel.pageDelta(motion, scrolled);
-    if (pages !== 0) this.navigateWheelPages(pages, motion.axis, motion.discrete, motion.gestureId);
+    if (pages !== 0) {
+      this.noteWheelPages(Math.abs(pages), motion.axis, event.timeStamp);
+      this.navigateWheelPages(pages, motion.axis, motion.discrete, motion.gestureId);
+    }
   }
   navigateWheelPages(pages, axis, discrete, gestureId) {
     const direction = Math.sign(pages);
@@ -28749,6 +28799,58 @@ var InkWritingView = class extends import_obsidian6.FileView {
       if (discrete) this.queuePageSwipeDelta(pages - direction, scrollEdge);
       else this.queueTrackpadPageSwipeDelta(pages - direction, gestureId, scrollEdge);
     }
+  }
+  /** View hook: a fast paging burst expanded the page rail. */
+  onFastPagingRailExpanded() {
+  }
+  /** View hook: the burst's quiet timer handed the rail back. */
+  onFastPagingRailCollapsed() {
+  }
+  /** True while a fast paging burst holds the rail open. */
+  isFastPagingRailOpen() {
+    return this.fastPagingRail;
+  }
+  /** Feeds wheel-driven page flips into the fast-paging detector. Only a
+   *  flip that keeps the window engaged re-arms the collapse timer, so once
+   *  the rate drops below the threshold the rail comes back one quiet second
+   *  after the last fast flip - continued slow paging never extends it. */
+  noteWheelPages(pages, axis, at) {
+    if (!this.wheelPacer.record(pages, axis, at)) return;
+    if (!this.fastPagingRail) {
+      this.fastPagingRail = true;
+      this.onFastPagingRailExpanded();
+    }
+    if (this.fastPagingRailTimer !== void 0) window.clearTimeout(this.fastPagingRailTimer);
+    this.fastPagingRailTimer = window.setTimeout(() => {
+      this.fastPagingRailTimer = void 0;
+      if (!this.fastPagingRail) return;
+      this.fastPagingRail = false;
+      this.wheelPacer.end();
+      this.onFastPagingRailCollapsed();
+    }, FAST_PAGING_RAIL_IDLE_MS);
+  }
+  /** View teardown: drop the burst state and its pending collapse timer. */
+  clearFastPagingRail() {
+    if (this.fastPagingRailTimer !== void 0) window.clearTimeout(this.fastPagingRailTimer);
+    this.fastPagingRailTimer = void 0;
+    this.fastPagingRail = false;
+    this.fastPagingRailBorrowed = false;
+    this.wheelPacer.end();
+  }
+  /** Keeps the active thumbnail vertically centered in the rail while fast
+   *  paging. The relative-rect delta moves only the rail's own scroll box
+   *  (unlike scrollIntoView, which may drag outer containers along), and
+   *  scrollTop clamps at both ends, so first and last pages settle at their
+   *  natural edge instead of forcing a center that does not exist. */
+  followWheelPageThumb() {
+    var _a, _b;
+    const rail = (_b = (_a = this.containerEl) == null ? void 0 : _a.querySelector) == null ? void 0 : _b.call(_a, ".ink-page-rail");
+    const thumb = rail == null ? void 0 : rail.querySelector(".ink-page-thumb.is-active");
+    if (!rail || !thumb) return;
+    const box = rail.getBoundingClientRect();
+    const rect = thumb.getBoundingClientRect();
+    if (box.height <= 0 || rect.height <= 0) return;
+    rail.scrollTop += rect.top + rect.height / 2 - (box.top + box.height / 2);
   }
   onPointerDown(event, source = "pointer") {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i;
@@ -32460,6 +32562,7 @@ var InkView = class extends InkWritingView {
     this.closePageOptionsMenu();
     this.pageNavigationGeneration += 1;
     this.closeDevPanel();
+    this.clearFastPagingRail();
     if (this.railRevealTimer !== void 0) window.clearTimeout(this.railRevealTimer);
     this.railRevealTimer = void 0;
     if (this.thumbnailRefreshFrame !== null) window.cancelAnimationFrame(this.thumbnailRefreshFrame);
@@ -32693,7 +32796,8 @@ var InkView = class extends InkWritingView {
     });
     this.mountRailResizer(rail);
     this.scheduleSwipePreviewPaint();
-    (_b = (_a = rail.querySelector(".ink-page-thumb.is-active")) == null ? void 0 : _a.scrollIntoView) == null ? void 0 : _b.call(_a, { block: "nearest" });
+    if (this.isFastPagingRailOpen()) this.followWheelPageThumb();
+    else (_b = (_a = rail.querySelector(".ink-page-thumb.is-active")) == null ? void 0 : _a.scrollIntoView) == null ? void 0 : _b.call(_a, { block: "nearest" });
   }
   scheduleSwipePreviewPaint() {
     const rail = this.root.querySelector(".ink-page-rail");
@@ -32814,6 +32918,22 @@ var InkView = class extends InkWritingView {
       this.railRevealTimer = void 0;
       if (this.viewReady && !this.root.hasClass("ink-rail-hidden")) this.redrawPageThumbnails();
     }, RAIL_TRANSITION_MS + 30);
+  }
+  /** Fast paging borrows a collapsed rail: expand with the same side effects
+   *  as the toolbar toggle, remembering to hand it back afterwards. A rail
+   *  the user already expanded stays open after the burst. */
+  onFastPagingRailExpanded() {
+    if (!this.viewReady || !this.root.hasClass("ink-rail-hidden")) return;
+    this.fastPagingRailBorrowed = true;
+    this.root.removeClass("ink-rail-hidden");
+    this.resizeCanvas();
+    this.scheduleRailThumbnailRefresh();
+  }
+  onFastPagingRailCollapsed() {
+    if (!this.fastPagingRailBorrowed) return;
+    this.fastPagingRailBorrowed = false;
+    this.root.addClass("ink-rail-hidden");
+    this.resizeCanvas();
   }
   /** Applies the persisted rail width as a CSS variable so the stylesheet
    *  keeps owning width/flex-basis (the container-query narrow width still
@@ -35075,6 +35195,7 @@ var PdfInkView = class extends InkWritingView {
     var _a, _b, _c;
     this.disposeZoomHud();
     this.closePageOptionsMenu();
+    this.clearFastPagingRail();
     this.finishPointerInput(false);
     this.clearSelection();
     this.closeLassoSettings();
@@ -35640,7 +35761,8 @@ var PdfInkView = class extends InkWritingView {
       button3.setAttribute("aria-disabled", String(!pages || this.editingLocked()));
     });
     if (this.railCount) this.railCount.textContent = this.pageManagement ? `${this.selectedPageIds.size} selected` : `${this.noteIndex + 1} / ${count}`;
-    (_g = (_f = this.thumbButtons.get(this.noteIndex)) == null ? void 0 : _f.scrollIntoView) == null ? void 0 : _g.call(_f, { block: "nearest" });
+    if (this.isFastPagingRailOpen()) this.followWheelPageThumb();
+    else (_g = (_f = this.thumbButtons.get(this.noteIndex)) == null ? void 0 : _f.scrollIntoView) == null ? void 0 : _g.call(_f, { block: "nearest" });
     this.evictDistantThumbnails();
     this.paintVisibleThumbnails();
     this.scheduleSwipeThumbnailPaint();
@@ -35659,6 +35781,22 @@ var PdfInkView = class extends InkWritingView {
       }
     };
     window.setTimeout(paint, SWIPE_PREVIEW_IDLE_DELAY_MS2);
+  }
+  /** Fast paging borrows a collapsed rail: expand like the toolbar toggle
+   *  (repaint the revealed range after the transition), remembering to hand
+   *  it back afterwards. A rail the user already expanded stays open. */
+  onFastPagingRailExpanded() {
+    var _a;
+    if (!((_a = this.root) == null ? void 0 : _a.hasClass("ink-rail-hidden"))) return;
+    this.fastPagingRailBorrowed = true;
+    this.root.removeClass("ink-rail-hidden");
+    window.setTimeout(() => this.paintVisibleThumbnails(), RAIL_REVEAL_DELAY_MS);
+  }
+  onFastPagingRailCollapsed() {
+    var _a;
+    if (!this.fastPagingRailBorrowed) return;
+    this.fastPagingRailBorrowed = false;
+    (_a = this.root) == null ? void 0 : _a.addClass("ink-rail-hidden");
   }
   rebuildRailButtons(count) {
     var _a, _b, _c;

@@ -149,6 +149,7 @@ export class InkView extends InkWritingView {
     this.closePageOptionsMenu();
     this.pageNavigationGeneration += 1;
     this.closeDevPanel();
+    this.clearFastPagingRail();
     if (this.railRevealTimer !== undefined) window.clearTimeout(this.railRevealTimer);
     this.railRevealTimer = undefined;
     if (this.thumbnailRefreshFrame !== null) window.cancelAnimationFrame(this.thumbnailRefreshFrame);
@@ -382,7 +383,10 @@ export class InkView extends InkWritingView {
     });
     this.mountRailResizer(rail);
     this.scheduleSwipePreviewPaint();
-    rail.querySelector<HTMLElement>(".ink-page-thumb.is-active")?.scrollIntoView?.({ block: "nearest" });
+    // Fast paging keeps the current page under the user's eye: center the
+    // active thumb instead of the usual nearest-visibility nudge.
+    if (this.isFastPagingRailOpen()) this.followWheelPageThumb();
+    else rail.querySelector<HTMLElement>(".ink-page-thumb.is-active")?.scrollIntoView?.({ block: "nearest" });
   }
 
   private scheduleSwipePreviewPaint(): void {
@@ -510,6 +514,24 @@ export class InkView extends InkWritingView {
       this.railRevealTimer = undefined;
       if (this.viewReady && !this.root.hasClass("ink-rail-hidden")) this.redrawPageThumbnails();
     }, RAIL_TRANSITION_MS + 30);
+  }
+
+  /** Fast paging borrows a collapsed rail: expand with the same side effects
+   *  as the toolbar toggle, remembering to hand it back afterwards. A rail
+   *  the user already expanded stays open after the burst. */
+  protected onFastPagingRailExpanded(): void {
+    if (!this.viewReady || !this.root.hasClass("ink-rail-hidden")) return;
+    this.fastPagingRailBorrowed = true;
+    this.root.removeClass("ink-rail-hidden");
+    this.resizeCanvas();
+    this.scheduleRailThumbnailRefresh();
+  }
+
+  protected onFastPagingRailCollapsed(): void {
+    if (!this.fastPagingRailBorrowed) return;
+    this.fastPagingRailBorrowed = false;
+    this.root.addClass("ink-rail-hidden");
+    this.resizeCanvas();
   }
 
   /** Applies the persisted rail width as a CSS variable so the stylesheet

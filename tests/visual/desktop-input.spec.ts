@@ -493,6 +493,48 @@ test("desktop wheel zoom keeps mounted ink stable until the burst ends", async (
   await page.screenshot({ path: "test-results/desktop-wheel-zoom.png" });
 });
 
+for (const mode of ["ink", "pdf"] as const) {
+  test(`${mode}: fast vertical paging pops the page rail, follows the current page and collapses after a second`, async ({ page }) => {
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto("/");
+    await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+    await page.evaluate(async (mode) => {
+      if (mode === "pdf") await (window as any).__inkNotesPreview.openPdf();
+      const view = (window as any).__inkNotesPreview.view;
+      for (let index = 1; index < 9; index++) {
+        if (mode === "ink") view.duplicateCurrentPage();
+        else view.addBlankPage(index);
+      }
+      if (mode === "ink") await view.navigateToPage(view.notebook.pages[0].id);
+      else await view.navigatePages(-view.noteIndex);
+      const scroller = document.querySelector<HTMLElement>(
+        mode === "ink" ? ".ink-page-scroller" : ".ink-pdf-scroller")!;
+      scroller.scrollTop = scroller.scrollHeight;
+      // Six notches at a pinned 200ms cadence: each is its own gesture (one
+      // page), and six vertical pages inside the one-second window engage
+      // the fast-paging rail from the third flip on.
+      for (let index = 0; index < 6; index++) {
+        const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaY: 100 });
+        Object.defineProperty(event, "timeStamp", { configurable: true, value: 200 + index * 200 });
+        scroller.dispatchEvent(event);
+      }
+    }, mode);
+    const root = page.locator(mode === "ink" ? ".ink-notes-view" : ".ink-pdf-view");
+    await expect(root).not.toHaveClass(/ink-rail-hidden/, { timeout: 10_000 });
+    // The current page's thumbnail follows the flips, vertically centered in
+    // the rail (both boxes settle at real layout once the burst is live).
+    await expect.poll(async () => {
+      const rail = await page.locator(".ink-page-rail").boundingBox();
+      const thumb = await page.locator(".ink-page-thumb.is-active").boundingBox();
+      if (!rail || !thumb) return Number.POSITIVE_INFINITY;
+      return Math.abs(thumb.y + thumb.height / 2 - (rail.y + rail.height / 2));
+    }, { timeout: 10_000 }).toBeLessThan(60);
+    // The quiet timer hands the rail back a second after the burst stops.
+    await page.waitForTimeout(1200);
+    await expect(root).toHaveClass(/ink-rail-hidden/);
+  });
+}
+
 test("a zoomed mouse pan continues into a page swipe at the edge and cancellation rebounds", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
