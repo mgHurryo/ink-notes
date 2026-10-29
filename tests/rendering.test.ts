@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { canvasResolution, drawInkStroke, normalizePressureCurve, penOutline, smoothOutlineCenterline, smoothPenPressures } from "../src/rendering";
+import { canvasResolution, drawInkStroke, drawInkStrokeTail, normalizePressureCurve, penOutline, smoothOutlineCenterline, smoothPenPressures } from "../src/rendering";
 import type { InkStroke } from "../src/model";
 
 function stroke(pressure = 0.5): InkStroke {
@@ -333,5 +333,81 @@ describe("continuous pen rendering", () => {
     const before = JSON.stringify(ink);
     penOutline(ink, 800, 1000);
     expect(JSON.stringify(ink)).toBe(before);
+  });
+});
+
+describe("live stroke tail rendering", () => {
+  function fillCalls(ctx: CanvasRenderingContext2D): Array<[unknown, unknown]> {
+    return vi.mocked(ctx.fill).mock.calls as Array<[unknown, unknown]>;
+  }
+
+  it("grows the settled path incrementally instead of restamping on every frame", () => {
+    const ctx = context();
+    const ink = stroke();
+    drawInkStrokeTail(ctx, ink, 800, 1000, 0);
+    // Per draw the settled path is filled first, then the tip path.
+    const settled = fillCalls(ctx)[0][0] as { lineTo: ReturnType<typeof vi.fn> };
+    const stampedLineTos = vi.mocked(settled.lineTo).mock.calls.length;
+    expect(stampedLineTos).toBeGreaterThan(0);
+
+    ink.points.push({ x: 0.95, y: 0.5, pressure: 0.5, t: 101 });
+    drawInkStrokeTail(ctx, ink, 800, 1000, 0);
+    expect(fillCalls(ctx)[2][0]).toBe(settled);
+    const grownLineTos = vi.mocked(settled.lineTo).mock.calls.length;
+    expect(grownLineTos).toBeGreaterThan(stampedLineTos);
+
+    // A frame without new samples must not restamp a single ring.
+    drawInkStrokeTail(ctx, ink, 800, 1000, 0);
+    expect(fillCalls(ctx)[4][0]).toBe(settled);
+    expect(vi.mocked(settled.lineTo).mock.calls.length).toBe(grownLineTos);
+  });
+
+  it("rebuilds the whole tail once when the confirmed start advances", () => {
+    const ctx = context();
+    const ink = stroke();
+    drawInkStrokeTail(ctx, ink, 800, 1000, 0);
+    const settled = fillCalls(ctx)[0][0];
+    drawInkStrokeTail(ctx, ink, 800, 1000, 40);
+    expect(fillCalls(ctx).length).toBe(4);
+    expect(fillCalls(ctx)[2][0]).not.toBe(settled);
+  });
+
+  it("replaces the whole tail when the points array is replaced wholesale", () => {
+    const ctx = context();
+    const ink = stroke();
+    drawInkStrokeTail(ctx, ink, 800, 1000, 0);
+    const settled = fillCalls(ctx)[0][0];
+    ink.points = ink.points.map((point) => ({ ...point, y: 0.6 }));
+    drawInkStrokeTail(ctx, ink, 800, 1000, 0);
+    expect(fillCalls(ctx)[2][0]).not.toBe(settled);
+  });
+
+  it("keeps the worker seam: the tail covers unconfirmed samples plus one context sample", () => {
+    const ctx = context();
+    const ink = stroke();
+    drawInkStrokeTail(ctx, ink, 800, 1000, 41);
+    drawInkStrokeTail(ctx, ink, 800, 1000, 41);
+    // Same start on both frames: one settled path identity survives, matching
+    // the drawInkStroke cache contract (identical Path2D across redraws).
+    expect(fillCalls(ctx)[2][0]).toBe(fillCalls(ctx)[0][0]);
+  });
+
+  it("renders a one-sample live tail as the same dot drawInkStroke uses", () => {
+    const ctx = context();
+    const ink = stroke();
+    ink.points = ink.points.slice(0, 1);
+    drawInkStrokeTail(ctx, ink, 800, 1000, 0);
+    expect(ctx.arc).toHaveBeenCalledOnce();
+    expect(ctx.fill).toHaveBeenCalledOnce();
+    expect(fillCalls(ctx)[0][0]).toBeUndefined();
+  });
+
+  it("strokes a highlighter tail as a smoothed path over the unconfirmed window", () => {
+    const ctx = context();
+    const ink = { ...stroke(), tool: "highlighter" as const };
+    drawInkStrokeTail(ctx, ink, 800, 1000, 41);
+    expect(ctx.stroke).toHaveBeenCalledOnce();
+    expect(ctx.fill).not.toHaveBeenCalled();
+    expect(ctx.quadraticCurveTo).toHaveBeenCalled();
   });
 });

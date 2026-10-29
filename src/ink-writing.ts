@@ -45,7 +45,7 @@ import { Rect, TileRenderer } from "./tiles";
 import { StrokeModeler, StrokeModelInput, StrokeModelResult, StrokeModelParams, DEFAULT_STROKE_MODEL_PARAMS, strokeModelParamsForSmoothStrength } from "./stroke-modeler";
 import type { InkWorkerResponse, NotebookOperation } from "./worker-protocol";
 import { InkWorkerService, InkWorkerSession } from "./worker-service";
-import { canvasResolution, clampPercent, drawInkStroke, normalizePressureCurve, samplePressureCurve } from "./rendering";
+import { canvasResolution, clampPercent, drawInkStroke, drawInkStrokeTail, normalizePressureCurve, samplePressureCurve } from "./rendering";
 import { defaultToolState, type SharedToolState } from "./tool-state";
 import { InkClipboard, pasteClipboardStrokes } from "./lasso-clipboard";
 
@@ -435,6 +435,11 @@ export function packStrokePoints(points: readonly InkPoint[], start: number): Fl
   return packed;
 }
 
+// Stable per-stroke views handed to drawInkStrokeTail. Cloning per frame (the
+// old tail slice) changed object AND array identity on every rAF, which
+// defeated the renderer's path cache and re-stamped the whole tail each frame.
+const strokeTailViews = new WeakMap<InkStroke, InkStroke>();
+
 function drawImmediateStrokeTail(ctx: CanvasRenderingContext2D, stroke: InkStroke, width: number, height: number, confirmedSamples: number): void {
   // Keep lightweight test doubles and legacy snapshots readable. Real strokes
   // always carry a point array and use the incremental pressure-line path.
@@ -446,9 +451,21 @@ function drawImmediateStrokeTail(ctx: CanvasRenderingContext2D, stroke: InkStrok
   // The canvas is cleared each frame, so every sample not covered by the
   // Worker outline must be redrawn. Truncating this tail erases live ink when
   // fast input outruns the Worker or the host has no Worker support.
-  // Retain one confirmed sample as seam context for the uncovered geometry.
+  // Retain one confirmed sample as seam context for the uncovered geometry —
+  // the deliberate transparency seam, mirrored inside drawInkStrokeTail by
+  // its settled/tip junction overlap.
   const start = Math.max(0, confirmedSamples - 1);
-  drawInkStroke(ctx, { ...stroke, points: stroke.points.slice(start) }, width, height);
+  let view = strokeTailViews.get(stroke);
+  if (!view) {
+    view = { ...stroke };
+    strokeTailViews.set(stroke, view);
+  } else {
+    // Refresh the scalars in place so the view keeps its identity (the
+    // renderer's cache key) while tracking mid-stroke edits like line-hold
+    // straightening, and keep sharing the live points array reference.
+    Object.assign(view, stroke);
+  }
+  drawInkStrokeTail(ctx, view, width, height, start);
 }
 
 function boundedPreviewStroke(stroke: InkStroke): InkStroke {
