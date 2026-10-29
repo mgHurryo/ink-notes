@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { TFile } from "obsidian";
 import type { App, Vault } from "obsidian";
-import { PdfSidecarFormatError, createSidecar } from "../src/pdf-sidecar";
+import { PdfSidecarFormatError, createSidecar, disambiguatedSidecarPathFor, sidecarPathFor } from "../src/pdf-sidecar";
 import { PdfSidecarStore, serializeSidecar } from "../src/pdf-store";
 import { parseStoredJson } from "../src/storage-codec";
 
@@ -154,6 +154,24 @@ describe("read + CAS writes", () => {
     expect(vault.rawOf(created.path)).toBe("next");
     expect(await store.writeIfUnchanged(created, raw, "again")).toBe(false);
     expect(vault.rawOf(created.path)).toBe("next");
+  });
+});
+
+describe("explicit disambiguated slot", () => {
+  it("resolves and creates in the given slot without touching the legacy slot", async () => {
+    const { vault, store } = setup();
+    const pdfFile = vault.put(PDF_PATH, "%PDF");
+    const slot = disambiguatedSidecarPathFor(PDF_PATH);
+    expect(slot).not.toBe(sidecarPathFor(PDF_PATH));
+    expect(store.sidecarFileFor(PDF_PATH, slot)).toBeNull();
+    const created = await store.createFor(pdfFile, FINGERPRINT, SOURCE_PAGES, slot);
+    expect(created.path).toBe(slot);
+    expect(store.sidecarFileFor(PDF_PATH, slot)).toBe(created);
+    // The derived (legacy) slot stays empty: a case twin sharing it is unaffected.
+    expect(store.sidecarFileFor(PDF_PATH)).toBeNull();
+    const again = await store.createFor(pdfFile, FINGERPRINT, SOURCE_PAGES, slot);
+    expect(again.path).toBe(slot);
+    expect(vault.getFiles().filter((file) => file.name.endsWith(".pdfink.json"))).toHaveLength(1);
   });
 });
 

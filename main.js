@@ -34212,28 +34212,39 @@ function sourcePageId(index) {
 function isSourcePageId(id) {
   return id.startsWith("pdfp-");
 }
-function sidecarFileNameFor(pdfPath) {
+function sidecarFileName(pdfPath, hashSuffix) {
   const normalized = pdfPath.replace(/\\/g, "/");
   const dot = normalized.lastIndexOf("/");
   const file = dot >= 0 ? normalized.slice(dot + 1) : normalized;
   const stem = file.includes(".") ? file.slice(0, file.lastIndexOf(".")) : file;
   const safe = stem.trim().toLowerCase().replace(/[\\/:*?"<>|#^[\]]/g, "-").slice(0, 80) || "pdf";
-  return `${safe}--${pathHash(normalized)}.pdfink.json`;
+  return `${safe}--${pathHash(normalized)}${hashSuffix}.pdfink.json`;
+}
+function sidecarFileNameFor(pdfPath) {
+  return sidecarFileName(pdfPath, "");
 }
 function sidecarPathFor(pdfPath) {
   return `${PDF_INK_FOLDER}/${sidecarFileNameFor(pdfPath)}`;
 }
-function pathHash(pdfPath) {
-  const normalized = pdfPath.replace(/[\\]+/g, "/").toLowerCase();
+function disambiguatedSidecarPathFor(pdfPath) {
+  return `${PDF_INK_FOLDER}/${sidecarFileName(pdfPath, `--${exactCaseHash(pdfPath)}`)}`;
+}
+function fnv1aHash12(text) {
   const fnv1a = (seed) => {
     let hash = seed | 0;
-    for (let index = 0; index < normalized.length; index++) {
-      hash ^= normalized.charCodeAt(index);
+    for (let index = 0; index < text.length; index++) {
+      hash ^= text.charCodeAt(index);
       hash = Math.imul(hash, 16777619);
     }
     return hash >>> 0;
   };
   return (fnv1a(2166136261).toString(16).padStart(8, "0") + fnv1a(461845907).toString(16).padStart(8, "0")).slice(0, 12);
+}
+function pathHash(pdfPath) {
+  return fnv1aHash12(pdfPath.replace(/[\\]+/g, "/").toLowerCase());
+}
+function exactCaseHash(pdfPath) {
+  return fnv1aHash12(pdfPath.replace(/[\\]+/g, "/"));
 }
 function createSidecar(sourcePath, fingerprint, sourcePages) {
   const now = Date.now();
@@ -34506,24 +34517,26 @@ var PdfSidecarStore = class {
   constructor(app) {
     this.vault = app.vault;
   }
-  sidecarFileFor(pdfPath) {
-    const file = this.vault.getAbstractFileByPath(sidecarPathFor(pdfPath));
+  /** `slotPath` overrides the derived slot for case-twin disambiguation. */
+  sidecarFileFor(pdfPath, slotPath = sidecarPathFor(pdfPath)) {
+    const file = this.vault.getAbstractFileByPath(slotPath);
     return file instanceof import_obsidian10.TFile && file.name.endsWith(`.${PDF_SIDECAR_EXTENSION}`) ? file : null;
   }
   /**
    * Create the empty sidecar for a PDF if it does not exist yet. Opening a
    * PDF must never overwrite an existing sidecar — if one is already present
    * (for instance restored by the recovery scan) it is returned as-is.
+   * `slotPath` overrides the derived slot for case-twin disambiguation.
    */
-  async createFor(pdf, fingerprint, sourcePages) {
+  async createFor(pdf, fingerprint, sourcePages, slotPath = sidecarPathFor(pdf.path)) {
     await this.ensureFolder();
-    const existing = this.sidecarFileFor(pdf.path);
+    const existing = this.sidecarFileFor(pdf.path, slotPath);
     if (existing) return existing;
     const sidecar = createSidecar(pdf.path, fingerprint, sourcePages);
     try {
-      return await this.vault.create(sidecarPathFor(pdf.path), serializeSidecar(sidecar));
+      return await this.vault.create(slotPath, serializeSidecar(sidecar));
     } catch (error) {
-      const created = this.sidecarFileFor(pdf.path);
+      const created = this.sidecarFileFor(pdf.path, slotPath);
       if (created) return created;
       throw error;
     }
@@ -35217,6 +35230,60 @@ var PdfInkView = class extends InkWritingView {
         if (generation !== this.loadGeneration) return;
         const sidecar = normalizeSidecar(parseStoredJson(raw));
         if (sidecar.source.sha256 !== fingerprint.sha256 || sidecar.source.byteLength !== fingerprint.byteLength) {
+          if (await this.isCaseTwinCollision(sidecar, file)) {
+            await this.resolveSidecarInSlot(file, fingerprint, generation, disambiguatedSidecarPathFor(file.path));
+            return;
+          }
+          this.writeBlockedReason = "This PDF changed since these notes were created; handwriting is read-only for this copy";
+        } else if (sidecar.source.path !== file.path) {
+          sidecar.source.path = file.path;
+          await this.writeSidecar(existing, raw, sidecar);
+        }
+        this.attachSidecar(sidecar, raw, existing);
+      } catch (error) {
+        if (error instanceof PdfSidecarFormatError || error instanceof SyntaxError) {
+          this.writeBlockedReason = `The notes file for this PDF is corrupt or uses an unknown format; handwriting is disabled to protect it (${existing.path})`;
+          this.setStatus(this.writeBlockedReason, true);
+        } else {
+          this.setStatus(`Could not read the notes file: ${messageOf(error)}`, true);
+        }
+      }
+      return;
+    }
+    await this.resolveSidecarInSlot(file, fingerprint, generation, sidecarPathFor(file.path));
+  }
+  /**
+   * Whether an occupied sidecar slot really belongs to a case twin of this
+   * PDF: the recorded path equals this one ignoring case but not exactly, and
+   * vault.adapter.exists confirms both spellings. When the probe cannot
+   * confirm the twin (twin absent, or paths equal — a genuinely replaced
+   * PDF), callers keep the strict changed-revision read-only behavior.
+   */
+  async isCaseTwinCollision(sidecar, file) {
+    const recorded = sidecar.source.path.replace(/\\/g, "/");
+    if (recorded === file.path || recorded.toLowerCase() !== file.path.toLowerCase()) return false;
+    const adapter = this.app.vault.adapter;
+    if (!adapter) return false;
+    try {
+      return await adapter.exists(recorded) && await adapter.exists(file.path);
+    } catch (e) {
+      return false;
+    }
+  }
+  /**
+   * Resolve against one concrete sidecar slot: reuse a sidecar already there,
+   * recover after a move (unique fingerprint match only), or create empty.
+   * A normal open derives the slot from the lowercased path hash; a case-twin
+   * collision re-enters here with the exact-case disambiguated slot instead.
+   */
+  async resolveSidecarInSlot(file, fingerprint, generation, slotPath) {
+    const existing = this.store.sidecarFileFor(file.path, slotPath);
+    if (existing) {
+      try {
+        const raw = await this.store.readRaw(existing);
+        if (generation !== this.loadGeneration) return;
+        const sidecar = normalizeSidecar(parseStoredJson(raw));
+        if (sidecar.source.sha256 !== fingerprint.sha256 || sidecar.source.byteLength !== fingerprint.byteLength) {
           this.writeBlockedReason = "This PDF changed since these notes were created; handwriting is read-only for this copy";
         } else if (sidecar.source.path !== file.path) {
           sidecar.source.path = file.path;
@@ -35239,9 +35306,9 @@ var PdfInkView = class extends InkWritingView {
       const { file: recovered, sidecar } = candidates[0];
       sidecar.source.path = file.path;
       try {
-        if (!this.store.sidecarFileFor(file.path)) {
-          await this.app.vault.rename(recovered, sidecarPathFor(file.path));
-          const migrated = this.store.sidecarFileFor(file.path);
+        if (!this.store.sidecarFileFor(file.path, slotPath)) {
+          await this.app.vault.rename(recovered, slotPath);
+          const migrated = this.store.sidecarFileFor(file.path, slotPath);
           if (migrated) await this.writeSidecar(migrated, serializeSidecar(sidecar), sidecar);
           this.attachSidecar(sidecar, serializeSidecar(sidecar), migrated != null ? migrated : recovered);
           new import_obsidian12.Notice(`Restored handwriting notes from ${recovered.name}`);
@@ -35261,7 +35328,7 @@ var PdfInkView = class extends InkWritingView {
       return;
     }
     try {
-      const created = await this.store.createFor(file, fingerprint, this.sourcePages);
+      const created = await this.store.createFor(file, fingerprint, this.sourcePages, slotPath);
       const raw = await this.store.readRaw(created);
       if (generation !== this.loadGeneration) return;
       this.attachSidecar(normalizeSidecar(parseStoredJson(raw)), raw, created);
