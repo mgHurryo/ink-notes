@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5-beta.25 - 2026-10-30
+
+- Scale the stroke tile index padding by index width (#328): ink drawn with wide pens or highlighters on wide PDF panes no longer leaves persistent unpainted gaps on the main-thread fallback path, because registered index cells now cover the same scaled band the renderers stamp. Keep sample timestamps when lasso-translating strokes (#329): moving a selection no longer flattens every sample to one instant, so speed-based width dynamics survive the move instead of the moved strokes rendering fatter with their fast-thinned tail lost, and the corrupted timing is no longer persisted and synced. Let the Pages toggle reclaim the rail from fast paging (#330): re-expanding the page rail with the Pages switch during a fast-paging burst now sticks after the burst's silent collapse, instead of the timer overriding the user's last explicit action and hiding the rail again.
+
 ## 0.1.5-beta.24 - 2026-10-30
 
 - Normalize the trackpad-wheel renewal heuristics to a 10ms reference window (#320): flick detection now compares speeds normalized by each sample's delivery gap instead of raw per-event amplitudes, so one light sweep on a desktop trackpad no longer flips several pages with visible back-and-forth flicker when a main-thread stall merges samples or the report rate changes. Check the sidecar slot owner before twin rename migration (#321): renaming one case twin of a PDF pair no longer moves the other twin's sidecar, so the renamed PDF opens its own ink instead of showing the twin's strokes under a misleading "This PDF changed" banner. Probe case twins through the vault index instead of adapter.exists (#322): on case-insensitive disks a PDF replaced after a case-only rename keeps its recorded ink visible instead of silently forking new strokes into an empty disambiguated slot.
