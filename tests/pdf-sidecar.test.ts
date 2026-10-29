@@ -1,11 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { InkStroke, createNotebook } from "../src/model";
+import { parseStoredJson, serializeStoredJson } from "../src/storage-codec";
 import {
   PdfSidecar,
   PdfSidecarConflictError,
   PdfSidecarFormatError,
   createSidecar,
   deleteBlankNotePage,
+  deleteNotePage,
   insertBlankNotePage,
   insertBlankNotePageAt,
   isSourcePageId,
@@ -147,6 +149,29 @@ describe("merge", () => {
     const merged = mergeSidecars(base, incoming);
     expect(merged.deletedNotePages[blankId]).toBe(500);
     expect(merged.notePages.some((page) => page.id === blankId)).toBe(false);
+  });
+
+  it("complementary page deletions keep the sequence non-empty", () => {
+    const base = makeSidecar();
+    const incoming = JSON.parse(JSON.stringify(base)) as PdfSidecar;
+    expect(deleteNotePage(base, sourcePageId(0))).toBe(true);
+    expect(deleteNotePage(incoming, sourcePageId(1))).toBe(true);
+    base.deletedNotePages[sourcePageId(0)] = 100;
+    incoming.deletedNotePages[sourcePageId(1)] = 200; // device B deleted last
+    // Each device keeps writing on the page it still has.
+    base.notebook.pages[0].strokes.push(stroke(sourcePageId(1), "stroke-b"));
+    incoming.notebook.pages[0].strokes.push(stroke(sourcePageId(0), "stroke-a"));
+
+    const merged = mergeSidecars(base, incoming);
+    expect(merged.notePages.map((page) => page.id)).toEqual([sourcePageId(1)]);
+    expect(merged.notebook.pages.map((page) => page.id)).toEqual([sourcePageId(1)]);
+    expect(merged.notebook.pageOrder).toEqual([sourcePageId(1)]);
+    expect(merged.deletedNotePages[sourcePageId(0)]).toBeGreaterThan(0);
+    expect(merged.deletedNotePages[sourcePageId(1)]).toBeUndefined();
+
+    // The saved sidecar must still carry the surviving page's ink on reload.
+    const reparsed = normalizeSidecar(parseStoredJson(serializeStoredJson(merged)));
+    expect(reparsed.notebook.pages[0].strokes.map((entry) => entry.id)).toContain("stroke-b");
   });
 
   it("throws when the two sides describe different source PDFs", () => {

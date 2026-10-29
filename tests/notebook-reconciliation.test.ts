@@ -53,4 +53,16 @@ describe("shared notebook reconciliation", () => {
     expect(result.currentInkChanged).toBe(true); expect(page.strokes).toHaveLength(0);
     expect(page.deletedStrokeIds).toContain(stroke.id);
   });
+
+  it("returns a neutral result instead of throwing when the incoming page sequence is empty", () => {
+    const { book, page } = fixture();
+    const empty = structuredClone(book);
+    empty.pages = []; empty.pageOrder = [];
+    const result = reconcileNotebook(book, empty, page.id, 0);
+    expect(result.pageIndex).toBe(0);
+    expect(result.currentPageChanged).toBe(false);
+    expect(result.currentInkChanged).toBe(false);
+    expect(result.changedPageIds).toEqual([]);
+    expect(book.pages[0]).toBe(page);
+  });
 });
