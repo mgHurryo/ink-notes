@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5-beta.21 - 2026-10-29
+
+- Rebuild session indexes after an identical merge-external (#305): lasso drags, in-progress stroke appends and index-addressed translations now survive the next save even when an external merge produced identical content, instead of silently reverting or truncating strokes on disk. Preserve the momentum-tail envelope across zero-component pauses (#306): a transient zero held-axis sample inside a flipped diagonal stream no longer zeroes the envelope and re-opens the per-gesture budget mid-contact, so one physical gesture cannot flip past the two-page invariant. Dedupe conflict-copy sticky notes in the search index (#307): after a PDF save conflict each sticky note is indexed once (newest updatedAt wins, keyed by path + page + note id) instead of appearing twice in search results pointing at the same note.
+
 ## 0.1.5-beta.20 - 2026-10-29
 
 - Rasterize the PDF swipe preview at page density (#299): a ready rail thumbnail now only seeds the first frame while the full-density raster paints on top, so the drag, animation and settle handoff no longer shows a ~120px thumbnail stretched 4-10x across the page. Lift the settled-page raster budget to 64M pixels on desktop (#300): width-filled pages at high device pixel ratios render at full density instead of being permanently clamped by the 16M WebKit-safe default, removing the persistent whole-page blur that worsened with zoom; iOS keeps the 16M ceiling. Halve the renewed-flick jump floor to 12px off a settled tail (#301): a moderate re-swipe (13-21px samples) rising straight off a settled inertia tail flips its page again instead of being swallowed whole, so paging depends on the physical gesture rather than the reporting cadence.
