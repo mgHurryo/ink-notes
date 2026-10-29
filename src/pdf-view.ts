@@ -15,6 +15,7 @@ import {
   PdfSourcePageGeometry,
   deleteBlankNotePage,
   deleteNotePage,
+  disambiguatedSidecarPathFor,
   insertBlankNotePageAt,
   mergeSidecars,
   moveBlankNotePage,
@@ -532,6 +533,67 @@ export class PdfInkView extends InkWritingView {
         if (generation !== this.loadGeneration) return;
         const sidecar = normalizeSidecar(parseStoredJson(raw));
         if (sidecar.source.sha256 !== fingerprint.sha256 || sidecar.source.byteLength !== fingerprint.byteLength) {
+          // A case twin (Docs/Notes.pdf vs docs/notes.pdf) folds into this
+          // lowercased slot on case-sensitive disks. Both spellings resolving
+          // to real files proves the twin rather than a changed revision, so
+          // this PDF resolves against its own exact-case slot instead of
+          // inheriting the twin's ink read-only.
+          if (await this.isCaseTwinCollision(sidecar, file)) {
+            await this.resolveSidecarInSlot(file, fingerprint, generation, disambiguatedSidecarPathFor(file.path));
+            return;
+          }
+          this.writeBlockedReason = "This PDF changed since these notes were created; handwriting is read-only for this copy";
+        } else if (sidecar.source.path !== file.path) {
+          sidecar.source.path = file.path;
+          await this.writeSidecar(existing, raw, sidecar);
+        }
+        this.attachSidecar(sidecar, raw, existing);
+      } catch (error) {
+        if (error instanceof PdfSidecarFormatError || error instanceof SyntaxError) {
+          this.writeBlockedReason = `The notes file for this PDF is corrupt or uses an unknown format; handwriting is disabled to protect it (${existing.path})`;
+          this.setStatus(this.writeBlockedReason, true);
+        } else {
+          this.setStatus(`Could not read the notes file: ${messageOf(error)}`, true);
+        }
+      }
+      return;
+    }
+    await this.resolveSidecarInSlot(file, fingerprint, generation, sidecarPathFor(file.path));
+  }
+
+  /**
+   * Whether an occupied sidecar slot really belongs to a case twin of this
+   * PDF: the recorded path equals this one ignoring case but not exactly, and
+   * vault.adapter.exists confirms both spellings. When the probe cannot
+   * confirm the twin (twin absent, or paths equal — a genuinely replaced
+   * PDF), callers keep the strict changed-revision read-only behavior.
+   */
+  private async isCaseTwinCollision(sidecar: PdfSidecar, file: TFile): Promise<boolean> {
+    const recorded = sidecar.source.path.replace(/\\/g, "/");
+    if (recorded === file.path || recorded.toLowerCase() !== file.path.toLowerCase()) return false;
+    const adapter = this.app.vault.adapter;
+    if (!adapter) return false;
+    try {
+      return await adapter.exists(recorded) && await adapter.exists(file.path);
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Resolve against one concrete sidecar slot: reuse a sidecar already there,
+   * recover after a move (unique fingerprint match only), or create empty.
+   * A normal open derives the slot from the lowercased path hash; a case-twin
+   * collision re-enters here with the exact-case disambiguated slot instead.
+   */
+  private async resolveSidecarInSlot(file: TFile, fingerprint: { sha256: string; byteLength: number }, generation: number, slotPath: string): Promise<void> {
+    const existing = this.store.sidecarFileFor(file.path, slotPath);
+    if (existing) {
+      try {
+        const raw = await this.store.readRaw(existing);
+        if (generation !== this.loadGeneration) return;
+        const sidecar = normalizeSidecar(parseStoredJson(raw));
+        if (sidecar.source.sha256 !== fingerprint.sha256 || sidecar.source.byteLength !== fingerprint.byteLength) {
           this.writeBlockedReason = "This PDF changed since these notes were created; handwriting is read-only for this copy";
         } else if (sidecar.source.path !== file.path) {
           sidecar.source.path = file.path;
@@ -554,9 +616,9 @@ export class PdfInkView extends InkWritingView {
       const { file: recovered, sidecar } = candidates[0];
       sidecar.source.path = file.path;
       try {
-        if (!this.store.sidecarFileFor(file.path)) {
-          await this.app.vault.rename(recovered, sidecarPathFor(file.path));
-          const migrated = this.store.sidecarFileFor(file.path);
+        if (!this.store.sidecarFileFor(file.path, slotPath)) {
+          await this.app.vault.rename(recovered, slotPath);
+          const migrated = this.store.sidecarFileFor(file.path, slotPath);
           if (migrated) await this.writeSidecar(migrated, serializeSidecar(sidecar), sidecar);
           this.attachSidecar(sidecar, serializeSidecar(sidecar), migrated ?? recovered);
           new Notice(`Restored handwriting notes from ${recovered.name}`);
@@ -576,7 +638,7 @@ export class PdfInkView extends InkWritingView {
       return;
     }
     try {
-      const created = await this.store.createFor(file, fingerprint, this.sourcePages);
+      const created = await this.store.createFor(file, fingerprint, this.sourcePages, slotPath);
       const raw = await this.store.readRaw(created);
       if (generation !== this.loadGeneration) return;
       this.attachSidecar(normalizeSidecar(parseStoredJson(raw)), raw, created);

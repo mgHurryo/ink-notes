@@ -23,8 +23,9 @@ export class PdfSidecarStore {
     this.vault = app.vault;
   }
 
-  sidecarFileFor(pdfPath: string): TFile | null {
-    const file = this.vault.getAbstractFileByPath(sidecarPathFor(pdfPath));
+  /** `slotPath` overrides the derived slot for case-twin disambiguation. */
+  sidecarFileFor(pdfPath: string, slotPath: string = sidecarPathFor(pdfPath)): TFile | null {
+    const file = this.vault.getAbstractFileByPath(slotPath);
     // TFile.extension is "json" for "*.pdfink.json"; check the full suffix.
     return file instanceof TFile && file.name.endsWith(`.${PDF_SIDECAR_EXTENSION}`) ? file : null;
   }
@@ -33,17 +34,18 @@ export class PdfSidecarStore {
    * Create the empty sidecar for a PDF if it does not exist yet. Opening a
    * PDF must never overwrite an existing sidecar — if one is already present
    * (for instance restored by the recovery scan) it is returned as-is.
+   * `slotPath` overrides the derived slot for case-twin disambiguation.
    */
-  async createFor(pdf: TFile, fingerprint: { sha256: string; byteLength: number }, sourcePages: PdfSourcePageGeometry[]): Promise<TFile> {
+  async createFor(pdf: TFile, fingerprint: { sha256: string; byteLength: number }, sourcePages: PdfSourcePageGeometry[], slotPath: string = sidecarPathFor(pdf.path)): Promise<TFile> {
     await this.ensureFolder();
-    const existing = this.sidecarFileFor(pdf.path);
+    const existing = this.sidecarFileFor(pdf.path, slotPath);
     if (existing) return existing;
     const sidecar = createSidecar(pdf.path, fingerprint, sourcePages);
     try {
-      return await this.vault.create(sidecarPathFor(pdf.path), serializeSidecar(sidecar));
+      return await this.vault.create(slotPath, serializeSidecar(sidecar));
     } catch (error) {
       // A split pane may finish creating the same sidecar first.
-      const created = this.sidecarFileFor(pdf.path);
+      const created = this.sidecarFileFor(pdf.path, slotPath);
       if (created) return created;
       throw error;
     }
