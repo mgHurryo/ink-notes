@@ -36,7 +36,8 @@ export {
   constrainDelta,
   distance,
 } from "./ink-writing";
-import { canvasResolution, drawInkStroke, scaledStroke } from "./rendering";
+import { canvasResolution, drawInkStroke, scaledStroke, STROKE_WIDTH_REFERENCE } from "./rendering";
+import { applyStoredRailWidth, mountRailResizer } from "./rail-resizer";
 import { cloneSticky } from "./sticky-model";
 import { BrushPopoverController, BrushSettings } from "./brush-popover";
 import { TileRenderer, cellKeys } from "./tiles";
@@ -58,8 +59,6 @@ const SWIPE_PREVIEW_RESIZE_BUDGET = 16_000_000;
 /** Rail width persistence. localStorage (not the plugin data file) is enough
  *  here: the width is per-device window chrome, not notebook content. */
 const RAIL_WIDTH_STORAGE_KEY = "ink-notes-page-rail-width";
-const RAIL_MIN_WIDTH = 150;
-const RAIL_MAX_WIDTH = 420;
 /** Keep in sync with the 200ms expand/collapse transition on .ink-page-rail. */
 const RAIL_TRANSITION_MS = 200;
 /** Fallback for the CSS aspect-ratio(.73) thumb box when clientHeight is 0. */
@@ -100,8 +99,6 @@ export class InkView extends InkWritingView {
   private pageNavigationGeneration = 0;
   private devPanel: HTMLElement | null = null;
   private devPanelRefreshTimer: number | undefined;
-  /** Live rail drag (pointerdown → pointerup) from the resize handle. */
-  private railResize: { pointerId: number; startWidth: number; startX: number } | null = null;
   /** Deferred thumbnail redraw while the rail's expand transition runs. */
   private railRevealTimer: number | undefined;
   private thumbnailRefreshFrame: number | null = null;
@@ -149,6 +146,7 @@ export class InkView extends InkWritingView {
     this.closePageOptionsMenu();
     this.pageNavigationGeneration += 1;
     this.closeDevPanel();
+    this.clearFastPagingRail();
     if (this.railRevealTimer !== undefined) window.clearTimeout(this.railRevealTimer);
     this.railRevealTimer = undefined;
     if (this.thumbnailRefreshFrame !== null) window.cancelAnimationFrame(this.thumbnailRefreshFrame);
@@ -248,6 +246,9 @@ export class InkView extends InkWritingView {
     const toggle = this.addIconButton(navigation, "panel-left", "Pages", () => {
       const hidden = !this.root.hasClass("ink-rail-hidden");
       this.root.toggleClass("ink-rail-hidden", hidden);
+      // An explicit toggle reclaims the rail, so a pending fast-paging burst
+      // must not hand it back to the state the user just overrode.
+      this.fastPagingRailBorrowed = false;
       toggle.setAttribute("aria-pressed", String(!hidden));
       this.resizeCanvas();
       // Thumbnails skipped painting while the rail was collapsed (zero
@@ -291,7 +292,7 @@ export class InkView extends InkWritingView {
   private renderCanvas(): void {
     const workspace = this.root.createDiv({ cls: "ink-workspace" });
     const rail = workspace.createDiv({ cls: "ink-page-rail", attr: { "aria-label": "Notebook pages" } });
-    this.applyStoredRailWidth(rail);
+    applyStoredRailWidth(rail, RAIL_WIDTH_STORAGE_KEY);
     this.pageScroller = workspace.createDiv({ cls: "ink-page-scroller" });
     this.pageExtent = this.pageScroller.createDiv({ cls: "ink-page-extent" });
     this.pageElement = this.pageExtent.createDiv({ cls: "ink-page" });
@@ -380,9 +381,12 @@ export class InkView extends InkWritingView {
         ? this.togglePageSelection(page.id) : this.navigateToPage(page.id));
       this.scheduleThumbnail(canvas, page);
     });
-    this.mountRailResizer(rail);
+    mountRailResizer(rail, { storageKey: RAIL_WIDTH_STORAGE_KEY, onDragEnd: () => this.redrawPageThumbnails() });
     this.scheduleSwipePreviewPaint();
-    rail.querySelector<HTMLElement>(".ink-page-thumb.is-active")?.scrollIntoView?.({ block: "nearest" });
+    // Fast paging keeps the current page under the user's eye: center the
+    // active thumb instead of the usual nearest-visibility nudge.
+    if (this.isFastPagingRailOpen()) this.followWheelPageThumb();
+    else rail.querySelector<HTMLElement>(".ink-page-thumb.is-active")?.scrollIntoView?.({ block: "nearest" });
   }
 
   private scheduleSwipePreviewPaint(): void {
@@ -512,64 +516,22 @@ export class InkView extends InkWritingView {
     }, RAIL_TRANSITION_MS + 30);
   }
 
-  /** Applies the persisted rail width as a CSS variable so the stylesheet
-   *  keeps owning width/flex-basis (the container-query narrow width still
-   *  wins where it applies). */
-  private applyStoredRailWidth(rail: HTMLElement): void {
-    try {
-      const width = Number(window.localStorage.getItem(RAIL_WIDTH_STORAGE_KEY));
-      if (Number.isFinite(width) && width >= RAIL_MIN_WIDTH && width <= RAIL_MAX_WIDTH) {
-        rail.style.setProperty("--ink-rail-width", `${Math.round(width)}px`);
-      }
-    } catch {
-      // localStorage can be unavailable (privacy modes); the CSS default holds.
-    }
+  /** Fast paging borrows a collapsed rail: expand with the same side effects
+   *  as the toolbar toggle, remembering to hand it back afterwards. A rail
+   *  the user already expanded stays open after the burst. */
+  protected onFastPagingRailExpanded(): void {
+    if (!this.viewReady || !this.root.hasClass("ink-rail-hidden")) return;
+    this.fastPagingRailBorrowed = true;
+    this.root.removeClass("ink-rail-hidden");
+    this.resizeCanvas();
+    this.scheduleRailThumbnailRefresh();
   }
 
-  /** Drag handle on the rail's right edge: horizontal pointer drag widens or
-   *  narrows the rail, the final width persists to localStorage. Pointer
-   *  capture keeps the gesture alive outside the handle's hit box. */
-  private mountRailResizer(rail: HTMLElement): void {
-    const handle = rail.createDiv({ cls: "ink-rail-resizer", attr: { "aria-hidden": "true" } });
-    handle.addEventListener("pointerdown", (event: PointerEvent) => {
-      if (event.button !== 0 || this.railResize) return;
-      event.preventDefault();
-      this.railResize = { pointerId: event.pointerId, startWidth: rail.getBoundingClientRect().width, startX: event.clientX };
-      // The width must track the pointer exactly; the expand/collapse
-      // transition would otherwise lag every drag step by 200ms.
-      rail.classList.add("is-resizing");
-      if (typeof handle.setPointerCapture === "function") handle.setPointerCapture(event.pointerId);
-    });
-    handle.addEventListener("pointermove", (event: PointerEvent) => {
-      const drag = this.railResize;
-      if (!drag || drag.pointerId !== event.pointerId) return;
-      this.applyRailWidth(rail, drag.startWidth + event.clientX - drag.startX);
-    });
-    const finish = (event: PointerEvent) => {
-      const drag = this.railResize;
-      if (!drag || drag.pointerId !== event.pointerId) return;
-      this.railResize = null;
-      rail.classList.remove("is-resizing");
-      if (typeof handle.hasPointerCapture === "function" && handle.hasPointerCapture(event.pointerId)) {
-        handle.releasePointerCapture(event.pointerId);
-      }
-      const width = parseFloat(rail.style.getPropertyValue("--ink-rail-width"));
-      if (Number.isFinite(width)) {
-        try {
-          window.localStorage.setItem(RAIL_WIDTH_STORAGE_KEY, String(width));
-        } catch {
-          // Persistence is best-effort; the drag result still applies live.
-        }
-      }
-      this.redrawPageThumbnails();
-    };
-    handle.addEventListener("pointerup", finish);
-    handle.addEventListener("pointercancel", finish);
-  }
-
-  private applyRailWidth(rail: HTMLElement, width: number): void {
-    const clamped = Math.round(Math.max(RAIL_MIN_WIDTH, Math.min(RAIL_MAX_WIDTH, width)));
-    rail.style.setProperty("--ink-rail-width", `${clamped}px`);
+  protected onFastPagingRailCollapsed(): void {
+    if (!this.fastPagingRailBorrowed) return;
+    this.fastPagingRailBorrowed = false;
+    this.root.addClass("ink-rail-hidden");
+    this.resizeCanvas();
   }
 
   private renderPage(): void {
@@ -1398,7 +1360,10 @@ export class InkView extends InkWritingView {
     const paddingLeft = parseFloat(style.paddingLeft) || 0;
     const paddingRight = parseFloat(style.paddingRight) || 0;
     const availableWidth = Math.max(1, this.pageScroller.clientWidth - paddingLeft - paddingRight);
-    const width = Math.min(980, availableWidth);
+    // The page box cap IS the stroke-width reference: brush sizes are authored
+    // against this canvas width (STROKE_WIDTH_REFERENCE), so changing one
+    // changes the on-screen meaning of a stored nib. Keep them one constant.
+    const width = Math.min(STROKE_WIDTH_REFERENCE, availableWidth);
     const horizontalGutter = Math.max(0, (availableWidth - width) / 2);
     const height = width * this.notebook.pageHeight / this.notebook.pageWidth;
     this.pageBaseWidth = width;

@@ -940,13 +940,15 @@ describe("page rail thumbnails and resizing", () => {
       expect(canvases[0].width).toBe(Math.round(152 * dpr));
       expect(canvases[1].height).toBe(Math.round(208 * dpr));
       const drawn = vi.mocked(drawInkStroke).mock.calls;
-      // Thumbs draw scaled CLONES of the strokes (nib width relative to the
-      // page), so match on id, then assert the miniature scaling itself.
+      // Thumbs draw stable CLONES of the strokes (the clone keeps the
+      // renderer's Path2D cache warm); the nib width stays canonical and the
+      // miniature scaling happens inside the renderer (draw width / reference),
+      // so match on id and assert the clone carries the stored width.
       expect(drawn.some((call) => (call[1] as InkStroke).id === "s1" && call[2] === 152 && call[3] === 208)).toBe(true);
       expect(drawn.some((call) => (call[1] as InkStroke).id === "s2" && call[2] === 152 && call[3] === 208)).toBe(true);
       const scale = 152 / (internal as unknown as { pageBaseWidth: number }).pageBaseWidth;
       const thumbnailStroke = drawn.find((call) => (call[1] as InkStroke).id === "s1" && call[2] === 152 && call[3] === 208)![1] as InkStroke;
-      expect(thumbnailStroke.width).toBeCloseTo(3 * scale, 6);
+      expect(thumbnailStroke.width).toBe(3);
       // The paper ruling follows the page's real line count (cells scaled to
       // the thumbnail), not a sparse re-flow.
       const paper = canvases[0].closest(".ink-page-thumb")?.querySelector<HTMLElement>(".ink-page-thumb-paper");
@@ -1055,6 +1057,60 @@ describe("page rail thumbnails and resizing", () => {
     expect(rail.style.getPropertyValue("--ink-rail-width")).toBe("150px");
     handle.dispatchEvent(pointer("pointercancel", 176 - 900, 9));
     expect(window.localStorage.getItem("ink-notes-page-rail-width")).toBe("150");
+  });
+
+  it("centers the active thumb through rail rebuilds while a fast paging burst holds the rail open", () => {
+    const internal = view as unknown as { addPage(): void; renderPageRail(): void; fastPagingRail: boolean };
+    internal.addPage();
+    button("Pages").click();   // expand so the thumbs exist in a visible rail
+    const rail = document.querySelector<HTMLElement>(".ink-page-rail")!;
+    let railTop = 0;
+    Object.defineProperties(rail, {
+      clientHeight: { configurable: true, value: 600 },
+      scrollHeight: { configurable: true, value: 3000 },
+      scrollTop: { configurable: true, get: () => railTop, set: (value: number) => { railTop = value; } },
+    });
+    // renderPageRail rebuilds the thumbs every time, so the active thumb's
+    // box is pinned at the prototype level; the rail's own rect stays direct.
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      if (this === rail) return new DOMRect(0, 0, 176, 600);
+      if (this.classList.contains("ink-page-thumb") && this.classList.contains("is-active")) return new DOMRect(0, 2400, 150, 120);
+      return originalRect.call(this);
+    };
+    try {
+      // Without the burst the rebuild keeps the usual nearest-visibility
+      // nudge (jsdom has no scrollIntoView: no scroll movement at all).
+      internal.renderPageRail();
+      expect(railTop).toBe(0);
+      // While the burst holds the rail open the rebuild centers the page the
+      // user is flipping through.
+      internal.fastPagingRail = true;
+      internal.renderPageRail();
+      expect(railTop).toBe(2160);
+      internal.fastPagingRail = false;
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalRect;
+    }
+  });
+
+  it("keeps a manually re-expanded rail open when the fast paging burst returns it", () => {
+    const hooks = view as unknown as { onFastPagingRailExpanded(): void; onFastPagingRailCollapsed(): void };
+    const hidden = () => document.querySelector<HTMLElement>(".ink-notes-view")!.classList.contains("ink-rail-hidden");
+    // Contract guard: a borrow the user never touched is still handed back.
+    hooks.onFastPagingRailExpanded();
+    expect(hidden()).toBe(false);
+    hooks.onFastPagingRailCollapsed();
+    expect(hidden()).toBe(true);
+    // During the burst the user toggles the rail closed and open again; the
+    // silent collapse after the burst must honor that last explicit state.
+    hooks.onFastPagingRailExpanded();
+    button("Pages").click();
+    expect(hidden()).toBe(true);
+    button("Pages").click();
+    expect(hidden()).toBe(false);
+    hooks.onFastPagingRailCollapsed();
+    expect(hidden()).toBe(false);
   });
 
   it("applies a stored rail width on open and ignores out-of-range values", async () => {

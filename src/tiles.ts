@@ -1,5 +1,5 @@
 import type { InkPage, InkPoint, InkStroke } from "./model";
-import { drawInkStroke } from "./rendering";
+import { drawInkStroke, STROKE_WIDTH_REFERENCE } from "./rendering";
 
 export interface RenderTileResult {
   pageId: string;
@@ -85,7 +85,12 @@ export class StrokeIndex {
       return [];
     }
     if (previous) this.removeEntry(previous);
-    const padding = stroke.width * 0.7 + BLEED;
+    // Renderers stamp ink at stroke.width * (width / STROKE_WIDTH_REFERENCE)
+    // with a half-width ceiling of 0.65x that scaled width, so the padding
+    // must scale the same way: a fixed padding leaves the rendered ink
+    // overflowing wide-page indexes (uncapped PDF panes) unregistered, and
+    // those cells never repaint the overflow.
+    const padding = stroke.width * (this.width / STROKE_WIDTH_REFERENCE) * 0.7 + BLEED;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const p of stroke.points) {
       minX = Math.min(minX, p.x * this.width); maxX = Math.max(maxX, p.x * this.width);

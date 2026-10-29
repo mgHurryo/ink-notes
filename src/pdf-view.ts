@@ -27,6 +27,7 @@ import { parseStoredJson } from "./storage-codec";
 import { PdfExportError, exportHandwrittenPdf, exportPathFor, sidecarHasInk } from "./pdf-export";
 import { PdfTabTakeover, hasNativeNavigation } from "./pdf-takeover";
 import { paintPageImages } from "./image-library";
+import { applyStoredRailWidth, mountRailResizer } from "./rail-resizer";
 
 export const VIEW_TYPE_PDF_INK = "ink-notes-pdf-view";
 
@@ -62,6 +63,9 @@ const RAIL_SWEEP_THROTTLE_MS = 120;
 /** After the rail's expand transition (200ms), repaint the visible range at
  *  full resolution; thumbnails skip painting while collapsed. */
 const RAIL_REVEAL_DELAY_MS = 230;
+/** Rail width persistence, separate from the notebook editor's key so each
+ *  rail remembers the width its own thumbnails need. */
+const PDF_RAIL_WIDTH_STORAGE_KEY = "ink-pdf-page-rail-width";
 
 export type SaveOutcome = { status: "saved" } | { status: "conflict"; message: string } | { status: "failed"; message: string };
 
@@ -242,6 +246,7 @@ export class PdfInkView extends InkWritingView {
   async onClose(): Promise<void> {
     this.disposeZoomHud();
     this.closePageOptionsMenu();
+    this.clearFastPagingRail();
     this.finishPointerInput(false);
     this.clearSelection();
     this.closeLassoSettings();
@@ -736,6 +741,9 @@ export class PdfInkView extends InkWritingView {
     const toggle = this.addIconButton(pagesGroup, "panel-left", "Pages", () => {
       const hidden = !this.root?.hasClass("ink-rail-hidden");
       this.root?.toggleClass("ink-rail-hidden", hidden);
+      // An explicit toggle reclaims the rail, so a pending fast-paging burst
+      // must not hand it back to the state the user just overrode.
+      this.fastPagingRailBorrowed = false;
       toggle.setAttribute("aria-pressed", String(!hidden));
       // Thumbnails skip painting while the rail is collapsed; repaint the
       // visible range once the expand transition has revealed them.
@@ -795,6 +803,7 @@ export class PdfInkView extends InkWritingView {
   private buildPageRail(body: HTMLElement): void {
     const rail = body.createDiv({ cls: "ink-page-rail", attr: { "aria-label": "PDF pages" } });
     this.pageRail = rail;
+    applyStoredRailWidth(rail, PDF_RAIL_WIDTH_STORAGE_KEY);
     const header = rail.createDiv({ cls: "ink-rail-header" });
     header.createDiv({ cls: "ink-rail-heading", text: "Pages" });
     this.railCount = header.createSpan({ cls: "ink-rail-count" });
@@ -804,6 +813,10 @@ export class PdfInkView extends InkWritingView {
     // Scrolling long documents brings new thumbnails into view; repaint the
     // fresh range (throttled) instead of pre-rendering every page.
     this.registerDomEvent(rail, "scroll", () => this.scheduleRailSweep(), { passive: true });
+    // Parity with the notebook editor's rail: the right edge is draggable and
+    // the final width persists under the PDF-specific key. Thumbnails raster
+    // during the drag at stale widths; repaint the visible range at the end.
+    mountRailResizer(rail, { storageKey: PDF_RAIL_WIDTH_STORAGE_KEY, onDragEnd: () => this.paintVisibleThumbnails() });
   }
 
   /** Re-syncs the rail with the model: rebuilds the buttons when the page
@@ -850,7 +863,10 @@ export class PdfInkView extends InkWritingView {
     });
     if (this.railCount) this.railCount.textContent = this.pageManagement
       ? `${this.selectedPageIds.size} selected` : `${this.noteIndex + 1} / ${count}`;
-    this.thumbButtons.get(this.noteIndex)?.scrollIntoView?.({ block: "nearest" });
+    // Fast paging keeps the current page under the user's eye: center the
+    // active thumb instead of the usual nearest-visibility nudge.
+    if (this.isFastPagingRailOpen()) this.followWheelPageThumb();
+    else this.thumbButtons.get(this.noteIndex)?.scrollIntoView?.({ block: "nearest" });
     this.evictDistantThumbnails();
     this.paintVisibleThumbnails();
     this.scheduleSwipeThumbnailPaint();
@@ -869,6 +885,22 @@ export class PdfInkView extends InkWritingView {
       }
     };
     window.setTimeout(paint, SWIPE_PREVIEW_IDLE_DELAY_MS);
+  }
+
+  /** Fast paging borrows a collapsed rail: expand like the toolbar toggle
+   *  (repaint the revealed range after the transition), remembering to hand
+   *  it back afterwards. A rail the user already expanded stays open. */
+  protected onFastPagingRailExpanded(): void {
+    if (!this.root?.hasClass("ink-rail-hidden")) return;
+    this.fastPagingRailBorrowed = true;
+    this.root.removeClass("ink-rail-hidden");
+    window.setTimeout(() => this.paintVisibleThumbnails(), RAIL_REVEAL_DELAY_MS);
+  }
+
+  protected onFastPagingRailCollapsed(): void {
+    if (!this.fastPagingRailBorrowed) return;
+    this.fastPagingRailBorrowed = false;
+    this.root?.addClass("ink-rail-hidden");
   }
 
   private rebuildRailButtons(count: number): void {

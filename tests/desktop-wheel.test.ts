@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { DesktopWheelGesture, type WheelDelta } from "../src/desktop-wheel";
+import { DesktopWheelGesture, FAST_PAGING_PAGES, FAST_PAGING_WINDOW_MS, WheelPagePacer, type WheelDelta } from "../src/desktop-wheel";
 
 // Drive the pure gesture logic directly: one trackpad sample per 16ms frame,
 // never natively scrolled, so accumulated page travel is what flips pages.
@@ -19,7 +19,9 @@ function flipCount(deltas: Array<number | readonly [number, number]>, axis: "x" 
 describe("DesktopWheelGesture blocked-window re-arm", () => {
   // Fast phase + decay tail, three times: the third flick lands while the
   // block from the second re-arm is still active and rises only ~2x over the
-  // raw tail - the shape real repeat flicks produce.
+  // raw tail - the shape real repeat flicks produce. On the vertical axis
+  // each re-arm re-opens the page budget (three pages); the horizontal
+  // contract is stricter: one page per contact, renewals included.
   const TRIPLE_FLICK = [
     140, 90, 60,
     30, 20, 12, 25,
@@ -28,22 +30,22 @@ describe("DesktopWheelGesture blocked-window re-arm", () => {
     50, 55, 60,
   ];
 
-  it("lets a constant-magnitude flick re-arm inside the blocked window", () => {
-    expect(flipCount(TRIPLE_FLICK)).toBe(3);
+  it("keeps one horizontal contact to a single page across blocked-window re-arms", () => {
+    expect(flipCount(TRIPLE_FLICK)).toBe(1);
   });
 
-  it("re-arms the same way on the y axis", () => {
+  it("lets a constant-magnitude flick re-arm inside the blocked window on the y axis", () => {
     expect(flipCount(TRIPLE_FLICK, "y")).toBe(3);
   });
 
-  it("still unlocks on a single step of 2.2x or more over the tail", () => {
+  it("still unlocks on a single step of 2.2x or more over the tail on the y axis", () => {
     expect(flipCount([
       140, 90, 60,
       30, 20, 12, 25,
       50, 55, 60,
       30, 20, 12,
       30, 55, 60, // 30 > 12 * 2.2: one big single step clears the block
-    ])).toBe(3);
+    ], "y")).toBe(3);
   });
 });
 
@@ -54,13 +56,14 @@ describe("DesktopWheelGesture moderate re-swipe over a settled tail", () => {
   // tail yet stays under the 24px absolute floor in every sample: the floor
   // must not swallow it, while a stream that already rose past the release
   // level keeps the original floor so one ramp cannot re-arm twice.
-  function pagesAcrossModerateReswipe(quietGapMs: number): number {
+  function pagesAcrossModerateReswipe(quietGapMs: number, axis: "x" | "y" = "y"): number {
     const gesture = new DesktopWheelGesture();
     let pages = 0;
     let at = 0;
     const feed = (magnitudes: number[], stepMs: number) => {
       for (const magnitude of magnitudes) {
-        pages += gesture.pageDelta(gesture.begin({ x: magnitude, y: 0, mode: 0 }, false, at), false);
+        const delta = axis === "x" ? { x: magnitude, y: 0, mode: 0 } : { x: 0, y: magnitude, mode: 0 };
+        pages += gesture.pageDelta(gesture.begin(delta, false, at), false);
         at += stepMs;
       }
     };
@@ -71,11 +74,15 @@ describe("DesktopWheelGesture moderate re-swipe over a settled tail", () => {
     return pages;
   }
 
-  it("rearms a moderate re-swipe rising straight off the settled tail", () => {
+  it("keeps the horizontal re-swipe to the one page its contact already flipped", () => {
+    expect(pagesAcrossModerateReswipe(0, "x")).toBe(1);
+  });
+
+  it("rearms a moderate vertical re-swipe rising straight off the settled tail", () => {
     expect(pagesAcrossModerateReswipe(0)).toBe(2);
   });
 
-  it("keeps the identical re-swipe with a 60ms quiet gap at two pages", () => {
+  it("keeps the identical vertical re-swipe with a 60ms quiet gap at two pages", () => {
     expect(pagesAcrossModerateReswipe(60)).toBe(2);
   });
 });
@@ -236,8 +243,9 @@ describe("DesktopWheelGesture sustained perpendicular stream", () => {
   }
 
   it("re-arms a sustained vertical wheel burst after a horizontal gesture", () => {
-    // Two pages from the horizontal flick plus the budgeted two notch pages
-    // from the re-armed burst.
+    // Two pages from two horizontal contacts (the flick and the quiet-gap
+    // resumption that resets into a fresh contact) plus the budgeted two
+    // notch pages from the re-armed burst.
     expect(pagesAcrossPerpendicularBurst()).toBe(4);
   });
 
@@ -261,13 +269,14 @@ describe("DesktopWheelGesture zero-component pause in the momentum tail", () => 
   // as a settledRise (lastMagnitude <= 4 with the ratio term trivially true)
   // and any >= 12px recovery re-opened the page budget mid-contact: one
   // physical gesture flipped three pages. The envelope must survive pauses.
-  it("keeps a diagonal flick across zero-component pauses inside the two-page budget", () => {
+  it("keeps a diagonal flick across zero-component pauses to its contact's one page", () => {
     // The 60px recovery stays under the preserved 30px envelope's 2.2x
     // guardrail and rides out as inertia; the later 90px rise is 3x over that
     // still-preserved envelope, a genuine re-flick under the rise-means-new-
-    // intent rule, so the contact lands at exactly the budgeted two pages
-    // (three before the pause guard, with two zero-sample re-arms).
-    expect(flipCount([[140, 8], [90, 8], [60, 8], [30, 8], [0, 8], [60, 8], [90, 8], [0, 8], [60, 8], [90, 8]])).toBe(2);
+    // intent rule - but the horizontal contact has spent its single page, so
+    // the re-arm may not flip another (three before the strict-1 contract,
+    // with two zero-sample re-arms).
+    expect(flipCount([[140, 8], [90, 8], [60, 8], [30, 8], [0, 8], [60, 8], [90, 8], [0, 8], [60, 8], [90, 8]])).toBe(1);
   });
 
   it("holds a sub-guardrail recovery after a zero pause as inertia (one page)", () => {
@@ -282,5 +291,56 @@ describe("DesktopWheelGesture zero-component pause in the momentum tail", () => 
 
   it("mirrors the sub-guardrail inertia recovery onto the y axis", () => {
     expect(flipCount([[8, 140], [8, 90], [8, 60], [8, 30], [8, 0], [8, 18], [8, 16], [8, 0], [8, 14], [8, 13], [8, 12], [8, 12], [8, 13], [8, 12]], "y")).toBe(1);
+  });
+});
+
+describe("WheelPagePacer fast-paging window", () => {
+  it("engages once three vertical pages land inside the window", () => {
+    const pacer = new WheelPagePacer();
+    expect(pacer.record(1, "y", 0)).toBe(false);
+    expect(pacer.record(1, "y", 300)).toBe(false);
+    expect(pacer.record(1, "y", 600)).toBe(true);
+    expect(pacer.engaged).toBe(true);
+  });
+
+  it("keeps slow paging disengaged", () => {
+    const pacer = new WheelPagePacer();
+    // Two deliberate notches just inside the window are not fast paging...
+    expect(pacer.record(1, "y", 0)).toBe(false);
+    expect(pacer.record(1, "y", FAST_PAGING_WINDOW_MS - 1)).toBe(false);
+    // ...and once the first flip leaves the window only one page remains.
+    expect(pacer.record(1, "y", 2 * FAST_PAGING_WINDOW_MS)).toBe(false);
+    expect(pacer.engaged).toBe(false);
+  });
+
+  it("expires pages out of the trailing window by their arrival time", () => {
+    const pacer = new WheelPagePacer();
+    pacer.record(FAST_PAGING_PAGES, "y", 0);
+    expect(pacer.engaged).toBe(true);
+    // Every page of the burst is now older than the window.
+    expect(pacer.record(1, "y", FAST_PAGING_WINDOW_MS + 1)).toBe(false);
+    expect(pacer.engaged).toBe(false);
+  });
+
+  it("never engages on horizontal flips", () => {
+    const pacer = new WheelPagePacer();
+    for (let index = 0; index < 6; index += 1) {
+      expect(pacer.record(1, "x", index * 100)).toBe(false);
+    }
+    expect(pacer.engaged).toBe(false);
+  });
+
+  it("counts every page of a merged burst, not just the event", () => {
+    const pacer = new WheelPagePacer();
+    expect(pacer.record(2, "y", 0)).toBe(false);
+    expect(pacer.record(1, "y", 100)).toBe(true);
+  });
+
+  it("drops stale engagement when the view collapses the rail", () => {
+    const pacer = new WheelPagePacer();
+    pacer.record(FAST_PAGING_PAGES, "y", 0);
+    pacer.end();
+    expect(pacer.record(1, "y", 50)).toBe(false);
+    expect(pacer.engaged).toBe(false);
   });
 });

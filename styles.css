@@ -737,7 +737,10 @@
   right: 0;
   width: 2px;
   border-radius: 1px;
-  background: transparent;
+  /* Always faintly visible: a fully transparent handle gave the drag affordance
+     zero discoverability (reported as "the rail lost horizontal stretch"). The
+     border color reads as rail chrome; hover/active promotes it to accent. */
+  background: var(--ink-border);
   transition: background-color 160ms ease;
 }
 

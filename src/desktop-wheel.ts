@@ -26,6 +26,14 @@ const RENEW_MIN_FLIPPED = 3;
 const PAGE_TRAVEL_PX = 100;
 const HORIZONTAL_PAGE_TRAVEL_PX = 48;
 const MAX_TRACKPAD_PAGES_PER_GESTURE = 2;
+/** Horizontal swipes flip exactly one page per CONTACT (the span between
+ *  hard resets: idle gap, reversal, axis or mode change). The per-gesture
+ *  budget alone used to let a mid-tail renewal re-open it and flip a second
+ *  page inside one physical contact - sideways motion is a deliberate
+ *  single-page affordance, and that continuation read as accidental
+ *  navigation, so the budget is now per contact. Vertical keeps the
+ *  per-gesture budget: repeated vertical flicks are the fast-paging input. */
+const X_PAGES_PER_CONTACT = 1;
 const AXIS_RETENTION_RATIO = 0.65;
 /** A zero held-axis component pauses a diagonal stream, but a sustained run
  *  of such samples is a genuine perpendicular stream (a mouse wheel emits
@@ -80,6 +88,11 @@ export class DesktopWheelGesture {
   private renewedIncreases = 0;
   private renewalBlocked = false;
   private trackpadPages = 0;
+  /** Pages already flipped on the x axis during the current contact. Unlike
+   *  trackpadPages it survives beginRenewedGesture: a mid-tail renewal is
+   *  the same physical contact, and the horizontal contract grants it
+   *  nothing further. */
+  private contactXPages = 0;
   private zeroAxisPauses = 0;
   private gestureId = 0;
   /** Consecutive samples seen while the gesture is flipped, counted from the
@@ -103,6 +116,7 @@ export class DesktopWheelGesture {
     this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     this.renewalBlocked = false;
     this.trackpadPages = this.zeroAxisPauses = 0;
+    this.contactXPages = 0;
     this.flippedRun = 0;
     this.flipped = this.discrete = false;
     this.mode = 0;
@@ -279,6 +293,7 @@ export class DesktopWheelGesture {
       // Quantized pixel streams (>=80px multiples of 100/120) also land here,
       // so the discrete path shares the same single-gesture page budget as
       // the continuous path instead of flipping one page per notch forever.
+      if (motion.axis === "x" && this.contactXPages >= X_PAGES_PER_CONTACT) return 0;
       if (this.trackpadPages >= MAX_TRACKPAD_PAGES_PER_GESTURE) return 0;
       const notches = motion.mode === 1 ? Math.max(1, Math.round(Math.abs(motion.movement) / 48)) : 1;
       const sensitivity = motion.mode === 0 && motion.gap > 0 && motion.gap < 80 ? 0.8 : 1;
@@ -293,19 +308,63 @@ export class DesktopWheelGesture {
       if (pages > 0) {
         this.flipped = true;
         this.trackpadPages += pages;
+        if (motion.axis === "x") this.contactXPages += pages;
       }
       return Math.sign(motion.movement) * pages;
     }
     this.travel += motion.movement;
     const travelThreshold = motion.axis === "x" ? HORIZONTAL_PAGE_TRAVEL_PX : PAGE_TRAVEL_PX;
     if (Math.abs(this.travel) < travelThreshold) return 0;
-    if (this.trackpadPages >= MAX_TRACKPAD_PAGES_PER_GESTURE) {
+    const budgetSpent = motion.axis === "x"
+      ? this.contactXPages >= X_PAGES_PER_CONTACT
+      : this.trackpadPages >= MAX_TRACKPAD_PAGES_PER_GESTURE;
+    if (budgetSpent) {
       this.travel = 0;
       return 0;
     }
     this.flipped = true;
     this.trackpadPages += 1;
+    if (motion.axis === "x") this.contactXPages += 1;
     this.travel = 0;
     return Math.sign(motion.movement);
+  }
+}
+
+/** Fast-paging rail window: enough vertical page flips inside this trailing
+ *  span count as fast paging. */
+export const FAST_PAGING_WINDOW_MS = 1000;
+export const FAST_PAGING_PAGES = 3;
+
+/** Sliding-window page-rate detector behind the fast-paging rail. Vertical
+ *  page flips land here with their real arrival time (the wheel event's
+ *  timeStamp, the same clock the #320 normalization reads) and a merged
+ *  burst pushes every page it actually flipped, so the rate reflects what
+ *  the user saw. Horizontal flips never count: the horizontal contract is
+ *  one page per contact, and a sideways stream must not pop the rail. */
+export class WheelPagePacer {
+  private flips: number[] = [];
+  private engagedState = false;
+
+  /** Records |pages| flips and returns whether enough of them fall inside
+   *  the trailing window to keep the fast-paging rail engaged. */
+  record(pages: number, axis: "x" | "y", at: number): boolean {
+    if (axis === "y" && pages > 0) {
+      for (let page = 0; page < pages; page += 1) this.flips.push(at);
+      const cutoff = at - FAST_PAGING_WINDOW_MS;
+      while (this.flips.length > 0 && this.flips[0] < cutoff) this.flips.shift();
+    }
+    this.engagedState = this.flips.length >= FAST_PAGING_PAGES;
+    return this.engagedState;
+  }
+
+  /** Clears the window for teardown or a collapse, so a later slow flip
+   *  cannot inherit a stale engagement. */
+  end(): void {
+    this.flips = [];
+    this.engagedState = false;
+  }
+
+  get engaged(): boolean {
+    return this.engagedState;
   }
 }

@@ -700,7 +700,12 @@ export class BrushPopoverController {
         taper: settings.taper ?? 0, pressure: settings.pressureGain ?? 100, speed: settings.speedGain ?? 0,
         pressureCurve: settings.pressureCurve ? settings.pressureCurve.map((point) => [...point]) : undefined,
       },
-    }, cssWidth, cssHeight);
+    }, cssWidth, cssHeight,
+    // The nib preview demonstrates the slider value at this canvas's own
+    // scale (it must stay readable on a ~200px popover), NOT the canonical
+    // page-space nib committed ink uses; pin the reference to the canvas so
+    // the renderer's width conversion is a no-op here.
+    cssWidth);
     if (outline.length < 2) return;
     ctx.globalAlpha = settings.opacity;
     ctx.fillStyle = settings.color;

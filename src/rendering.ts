@@ -10,12 +10,26 @@ import type { InkPoint, InkStroke } from "./model";
  */
 const scaledStrokes = new WeakMap<InkStroke, { scale: number; clone: InkStroke }>();
 
+/**
+ * The canonical page box width that stroke widths are authored and stored
+ * against. A stored `width` of N means N pixels on this reference-wide page;
+ * every renderer converts it ONCE into its own canvas space by
+ * `canvasWidth / STROKE_WIDTH_REFERENCE` (see penStampGeometry). Without this
+ * anchor the same stored note renders a device-dependent slice of the page —
+ * the pane-width cap here is exactly the layout cap in layoutPage — and the
+ * PDF export used to bake the exporting device's width into the document.
+ */
+export const STROKE_WIDTH_REFERENCE = 980;
+
 export function scaledStroke(stroke: InkStroke, scale: number): InkStroke {
   const cached = scaledStrokes.get(stroke);
   if (cached && cached.scale === scale && cached.clone.points === stroke.points && cached.clone.updatedAt === stroke.updatedAt) {
     return cached.clone;
   }
-  const clone = { ...stroke, width: stroke.width * scale };
+  // The clone exists so drawInkStroke's Path2D cache keeps one entry per
+  // thumbnail scale across repaints; the width stays canonical because the
+  // renderer scales the nib by the draw width itself.
+  const clone = { ...stroke };
   scaledStrokes.set(stroke, { scale, clone });
   return clone;
 }
@@ -38,8 +52,8 @@ export function canvasResolution(width: number, height: number, dpr: number, zoo
   return { width: Math.max(1, Math.round(width * scale)), height: Math.max(1, Math.round(height * scale)) };
 }
 
-export function penOutline(stroke: InkStroke, width: number, height: number): number[][] {
-  return penOutlineRings(stroke, width, height).flat();
+export function penOutline(stroke: InkStroke, width: number, height: number, referenceWidth: number = STROKE_WIDTH_REFERENCE): number[][] {
+  return penOutlineRings(stroke, width, height, referenceWidth).flat();
 }
 
 /**
@@ -51,8 +65,8 @@ export function penOutline(stroke: InkStroke, width: number, height: number): nu
  * the single fill keeps translucent strokes from double-darkening at the
  * (deliberate, area-level) overlaps that make the joins seamless.
  */
-export function penOutlineRings(stroke: InkStroke, width: number, height: number): number[][][] {
-  const geometry = penStampGeometry(stroke, width, height);
+export function penOutlineRings(stroke: InkStroke, width: number, height: number, referenceWidth: number = STROKE_WIDTH_REFERENCE): number[][][] {
+  const geometry = penStampGeometry(stroke, width, height, referenceWidth);
   if (geometry.count === 0) return [];
   return geometry.ringsFor(0, geometry.count, false);
 }
@@ -68,11 +82,15 @@ interface PenStampGeometry {
   ringsFor(from: number, to: number, linkAcrossEnd: boolean): number[][][];
 }
 
-function penStampGeometry(stroke: InkStroke, width: number, height: number): PenStampGeometry {
+function penStampGeometry(stroke: InkStroke, width: number, height: number, referenceWidth: number = STROKE_WIDTH_REFERENCE): PenStampGeometry {
+  // The single nib conversion for every renderer: callers pass their logical
+  // canvas width, so zoom × dpr reach the geometry only through `width` and
+  // the same stored stroke stamps the same fraction of the page everywhere.
+  const widthScale = width / referenceWidth;
   const pressures = smoothPenPressures(stroke.points);
   const centerline = smoothOutlineCenterline(
     stroke.points.map((point, index) => [point.x * width, point.y * height, pressures[index], point.t]),
-    stroke.width * 0.925,
+    stroke.width * widthScale * 0.925,
   );
   const count = centerline.length;
   if (count === 0) return { count, ringsFor: () => [] };
@@ -95,7 +113,7 @@ function penStampGeometry(stroke: InkStroke, width: number, height: number): Pen
   const speedGain = clampPercent(stroke.dynamics?.speed, 0) / 100;
   const pressureCurve = normalizePressureCurve(stroke.dynamics?.pressureCurve);
   const taper = clampPercent(stroke.dynamics?.taper, 0) / 100;
-  const brushWidth = stroke.width;
+  const brushWidth = stroke.width * widthScale;
   const fullDiameter = brushWidth * 1.3;
   let totalLength = 0;
   const cumulative: number[] = new Array(count);
@@ -123,7 +141,9 @@ function penStampGeometry(stroke: InkStroke, width: number, height: number): Pen
     const speedNorm = Math.min(speeds[index] / speedReference, 1);
     const speedFactor = 1 - speedGain * speedNorm * speedNorm * 0.35;
     const envelope = envelopeAt(Math.min(cumulative[index], totalLength - cumulative[index]));
-    return Math.max(0.3, (fullDiameter / 2) * envelope * modulation * speedFactor);
+    // The visibility floor scales with the nib so its EFFECT is identical on
+    // every canvas instead of fattening hairlines more on smaller panes.
+    return Math.max(0.3 * widthScale, (fullDiameter / 2) * envelope * modulation * speedFactor);
   };
   // Per-point normals from the neighbor chord (endpoints clamp to their own
   // segment), matching the band direction the quads use.
@@ -293,24 +313,24 @@ function applyStrokeStyle(ctx: CanvasRenderingContext2D, stroke: InkStroke): voi
   ctx.globalCompositeOperation = stroke.tool === "highlighter" ? "multiply" : "source-over";
 }
 
-function drawSampleDot(ctx: CanvasRenderingContext2D, stroke: InkStroke, width: number, height: number): void {
+function drawSampleDot(ctx: CanvasRenderingContext2D, stroke: InkStroke, width: number, height: number, referenceWidth: number = STROKE_WIDTH_REFERENCE): void {
   const point = stroke.points[0];
   const gain = clampPercent(stroke.dynamics?.pressure, 100) / 100;
   const effectivePressure = 0.5 + (point.pressure - 0.5) * gain;
-  const diameter = stroke.tool === "highlighter" ? stroke.width : stroke.width * (0.55 + effectivePressure * 0.75);
+  const diameter = (stroke.tool === "highlighter" ? stroke.width : stroke.width * (0.55 + effectivePressure * 0.75)) * width / referenceWidth;
   ctx.beginPath();
   ctx.arc(point.x * width, point.y * height, diameter / 2, 0, Math.PI * 2);
   ctx.fill();
 }
 
-export function drawInkStroke(ctx: CanvasRenderingContext2D, stroke: InkStroke, width: number, height: number): void {
+export function drawInkStroke(ctx: CanvasRenderingContext2D, stroke: InkStroke, width: number, height: number, referenceWidth: number = STROKE_WIDTH_REFERENCE): void {
   if (stroke.points.length === 0) return;
   ctx.save();
   applyStrokeStyle(ctx, stroke);
   if (stroke.points.length === 1) {
-    drawSampleDot(ctx, stroke, width, height);
+    drawSampleDot(ctx, stroke, width, height, referenceWidth);
   } else if (stroke.tool === "highlighter") {
-    ctx.lineWidth = stroke.width;
+    ctx.lineWidth = stroke.width * width / referenceWidth;
     drawSmoothPath(ctx, stroke.points, width, height);
     ctx.stroke();
   } else {
@@ -318,7 +338,7 @@ export function drawInkStroke(ctx: CanvasRenderingContext2D, stroke: InkStroke, 
     if (!cached || cached.points !== stroke.points || cached.count !== stroke.points.length
       || cached.updatedAt !== stroke.updatedAt || cached.size !== stroke.width || cached.width !== width || cached.height !== height) {
       cached = { points: stroke.points, count: stroke.points.length, updatedAt: stroke.updatedAt, size: stroke.width,
-        width, height, path: createPenPath(stroke, width, height) };
+        width, height, path: createPenPath(stroke, width, height, referenceWidth) };
       paths.set(stroke, cached);
     }
     // All rings share one winding direction, so one nonzero fill adds the
@@ -361,18 +381,18 @@ const tailPaths = new WeakMap<InkStroke, CachedTailPath>();
  * deliberate transparency seam; the startSample advance (per Worker reply)
  * and a wholesale points replacement rebuild once per event, not per frame.
  */
-export function drawInkStrokeTail(ctx: CanvasRenderingContext2D, stroke: InkStroke, width: number, height: number, startSample: number): void {
+export function drawInkStrokeTail(ctx: CanvasRenderingContext2D, stroke: InkStroke, width: number, height: number, startSample: number, referenceWidth: number = STROKE_WIDTH_REFERENCE): void {
   if (!Array.isArray(stroke.points) || stroke.points.length === 0) return;
   ctx.save();
   applyStrokeStyle(ctx, stroke);
   const count = stroke.points.length;
   if (count === 1) {
-    drawSampleDot(ctx, stroke, width, height);
+    drawSampleDot(ctx, stroke, width, height, referenceWidth);
     ctx.restore();
     return;
   }
   if (stroke.tool === "highlighter") {
-    ctx.lineWidth = stroke.width;
+    ctx.lineWidth = stroke.width * width / referenceWidth;
     drawSmoothPath(ctx, stroke.points, width, height, startSample, count);
     ctx.stroke();
     ctx.restore();
@@ -381,7 +401,7 @@ export function drawInkStrokeTail(ctx: CanvasRenderingContext2D, stroke: InkStro
   let cached = tailPaths.get(stroke);
   if (!cached || cached.points !== stroke.points || cached.startSample !== startSample
     || cached.size !== stroke.width || cached.width !== width || cached.height !== height) {
-    const geometry = penStampGeometry(stroke, width, height);
+    const geometry = penStampGeometry(stroke, width, height, referenceWidth);
     const settledCount = Math.max(startSample, count - TIP_SAMPLE_WINDOW);
     const settledPath = new Path2D();
     traceRings(settledPath, geometry.ringsFor(startSample, settledCount, true));
@@ -395,7 +415,7 @@ export function drawInkStrokeTail(ctx: CanvasRenderingContext2D, stroke: InkStro
     // path, then re-stamp just the tip window. The junction trapezoid anchors
     // into the tip's first sample, whose residual drift stays hidden under
     // that sample's tip disc until it settles.
-    const geometry = penStampGeometry(stroke, width, height);
+    const geometry = penStampGeometry(stroke, width, height, referenceWidth);
     const settledTarget = Math.max(startSample, count - TIP_SAMPLE_WINDOW);
     if (settledTarget > cached.settledCount) {
       traceRings(cached.settledPath, geometry.ringsFor(cached.settledCount, settledTarget, true));
@@ -418,9 +438,9 @@ function traceRings(path: Path2D, rings: number[][][]): void {
   }
 }
 
-function createPenPath(stroke: InkStroke, width: number, height: number): Path2D {
+function createPenPath(stroke: InkStroke, width: number, height: number, referenceWidth: number = STROKE_WIDTH_REFERENCE): Path2D {
   const path = new Path2D();
-  traceRings(path, penOutlineRings(stroke, width, height));
+  traceRings(path, penOutlineRings(stroke, width, height, referenceWidth));
   return path;
 }
 

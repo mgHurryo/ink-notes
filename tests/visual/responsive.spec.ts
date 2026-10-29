@@ -249,6 +249,39 @@ test("rail thumbnails render page ink and drag-widen reflows into columns", asyn
   expect(after.railRight).toBeLessThanOrEqual(after.scrollerLeft + 1);
 });
 
+test("pdf rail drag-widens from its handle and stays locked in narrow containers", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  await page.evaluate(async () => { await (window as any).__inkNotesPreview.openPdf(); });
+  await page.getByRole("button", { name: "Pages", exact: true }).click();
+  const rail = page.locator(".ink-pdf-view .ink-page-rail");
+  await expect(rail).toBeVisible();
+  // The expand transition animates width; measure once it settled.
+  await page.waitForTimeout(300);
+  const before = await rail.evaluate((element: HTMLElement) => element.getBoundingClientRect().width);
+  expect(before).toBe(148);
+  // Drag the right-edge handle +80px: parity with the notebook rail's resize.
+  const handle = page.locator(".ink-pdf-view .ink-rail-resizer");
+  const railBox = await rail.boundingBox();
+  const handleBox = await handle.boundingBox();
+  expect(railBox && handleBox).toBeTruthy();
+  const startX = handleBox!.x + handleBox!.width / 2;
+  const grabY = railBox!.y + 200;
+  await page.mouse.move(startX, grabY);
+  await page.mouse.down();
+  await page.mouse.move(startX + 80, grabY, { steps: 6 });
+  await page.mouse.up();
+  await expect.poll(async () => rail.evaluate((element: HTMLElement) => element.getBoundingClientRect().width))
+    .toBeCloseTo(before + 80, 0);
+  expect(await page.evaluate(() => window.localStorage.getItem("ink-pdf-page-rail-width")))
+    .toBe(String(Math.round(before) + 80));
+  // Narrow containers keep the fixed 128px rail: the container query sets
+  // width directly, so the dragged inline custom property must not win.
+  await page.setViewportSize({ width: 600, height: 800 });
+  await expect.poll(async () => rail.evaluate((element: HTMLElement) => element.getBoundingClientRect().width)).toBe(128);
+});
+
 test("pen and highlighter keep independent tool settings", async ({ page }) => {
   await page.goto("/");
   const pen = page.getByRole("button", { name: "Pen", exact: true });

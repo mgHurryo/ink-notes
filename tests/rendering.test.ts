@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { canvasResolution, drawInkStroke, drawInkStrokeTail, normalizePressureCurve, penOutline, smoothOutlineCenterline, smoothPenPressures } from "../src/rendering";
+import { translatePoints } from "../src/ink-writing";
 import type { InkStroke } from "../src/model";
 
 function stroke(pressure = 0.5): InkStroke {
@@ -28,7 +29,11 @@ describe("outline centerline smoothing", () => {
     return penOutline({
       ...stroke(), width: 12,
       points: points.map(([x, y], i) => ({ x: x / 100, y: y / 100, pressure: 0.5, t: i })),
-    }, 100, 100);
+    }, 100, 100,
+    // These tests exercise the geometry engine at 1:1 nib scale in a 100px
+    // canvas; pin the reference to the canvas so the canonical width
+    // conversion stays out of the way.
+    100);
   }
 
   it("keeps a deliberate long-segment corner sharp", () => {
@@ -81,7 +86,7 @@ describe("pen dynamics", () => {
     return penOutline({
       ...stroke(), width: 12, points: points.map(([x, y, p, t]) => ({ x: x / 100, y: y / 100, pressure: p, t })),
       dynamics,
-    }, 100, 100);
+    }, 100, 100, 100);
   }
 
   function thicknessAt(outline: number[][], xLow: number, xHigh: number): number {
@@ -131,6 +136,35 @@ describe("pen dynamics", () => {
     expect(onSpread).toBeLessThan(offSpread);
   });
 
+  it("lasso translate keeps sample timestamps so the speed profile survives", () => {
+    // A stroke written at an uneven pace: slow head, compressed fast tail.
+    const line = [[10, 50, 0.5, 0], [40, 50, 0.5, 8], [70, 50, 0.5, 10], [90, 50, 0.5, 11]];
+    const points = line.map(([x, y, p, t]) => ({ x: x / 100, y: y / 100, pressure: p, t }));
+    const moved = translatePoints(points, 0.2, 0.1);
+    // Translation is an isometry; sampled timing is metadata, not geometry.
+    expect(moved.map((point) => point.t)).toEqual([0, 8, 10, 11]);
+    // The moved stroke must render pixel-identical to the un-moved one;
+    // resetting every t degenerates the speed profile into a distance
+    // profile and fattens the thin fast tail.
+    const before = penOutline({ ...stroke(), width: 12, points, dynamics: { speed: 100 } }, 100, 100, 100);
+    const after = penOutline({ ...stroke(), width: 12, points: moved, dynamics: { speed: 100 } }, 100, 100, 100);
+    expect(thicknessAt(after, 92, 112)).toBeCloseTo(thicknessAt(before, 72, 92), 6);
+  });
+
+  it("speed compensation still thins the fast tail after a lasso translate", () => {
+    const line = [[10, 50, 0.5, 0], [40, 50, 0.5, 8], [70, 50, 0.5, 10], [90, 50, 0.5, 11]];
+    const moved = translatePoints(line.map(([x, y, p, t]) => ({ x: x / 100, y: y / 100, pressure: p, t })), 0.2, 0.1);
+    const tuples = moved.map(({ x, y, pressure, t }) => [x * 100, y * 100, pressure, t]);
+    const off = dynamicsStroke(tuples, { speed: 0 });
+    const on = dynamicsStroke(tuples, { speed: 100 });
+    // Probe the discs at the stroke head (x=30 after the translate) and the
+    // fast tail (x=110), each band fully containing one disc.
+    const onFast = thicknessAt(on, 105, 115);
+    expect(onFast).toBeLessThan(thicknessAt(off, 105, 115));
+    // ...and ends up thinner than the slow head, not fatter.
+    expect(onFast).toBeLessThan(thicknessAt(on, 25, 35));
+  });
+
   it("defaults preserve the historical diameter", () => {
     const line = [[10, 50, 0.5, 0], [40, 50, 0.5, 8], [70, 50, 0.5, 16], [90, 50, 0.5, 24]];
     const outline = dynamicsStroke(line, {});
@@ -149,7 +183,7 @@ describe("dynamics refinement", () => {
     return penOutline({
       ...stroke(), width: 12, points: points.map(([x, y, p, t]) => ({ x: x / 100, y: y / 100, pressure: p, t })),
       dynamics,
-    }, 100, 100);
+    }, 100, 100, 100);
   }
 
   function endCapRadius(outline: number[][], endX: number, endY: number): number {
@@ -312,7 +346,8 @@ describe("continuous pen rendering", () => {
     expect(vi.mocked(ctx.fill).mock.calls[1][0]).not.toBe(path);
   });
   it.each([0, 0.5, 1])("preserves pressure diameter at %s", (pressure) => {
-    const outline = penOutline(stroke(pressure), 800, 1000);
+    // 1:1 nib scale for this canvas, like the live editor reference width.
+    const outline = penOutline(stroke(pressure), 800, 1000, 800);
     const middle = outline.filter(p => p[0] > 200 && p[0] < 600);
     const ys = middle.map(p => p[1]);
     expect(Math.max(...ys) - Math.min(...ys)).toBeCloseTo(3 * (0.55 + pressure * 0.75), 2);

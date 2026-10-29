@@ -16,7 +16,7 @@
 
 import { FileView, Menu, Notice, Platform, setIcon, type ViewStateResult } from "obsidian";
 import { defaultReadingMode } from "./device-mode";
-import { DesktopWheelGesture, normalizeWheel } from "./desktop-wheel";
+import { DesktopWheelGesture, WheelPagePacer, normalizeWheel } from "./desktop-wheel";
 import { canStraighten, shapePoints, SHAPES, type ShapeKind } from "./shapes";
 import { ImageLibraryModal, ImageLibraryStore, placedImage } from "./image-library";
 import { PageImageLayer } from "./page-images";
@@ -45,7 +45,7 @@ import { Rect, TileRenderer } from "./tiles";
 import { StrokeModeler, StrokeModelInput, StrokeModelResult, StrokeModelParams, DEFAULT_STROKE_MODEL_PARAMS, strokeModelParamsForSmoothStrength } from "./stroke-modeler";
 import type { InkWorkerResponse, NotebookOperation } from "./worker-protocol";
 import { InkWorkerService, InkWorkerSession } from "./worker-service";
-import { canvasResolution, clampPercent, drawInkStroke, drawInkStrokeTail, normalizePressureCurve, samplePressureCurve } from "./rendering";
+import { canvasResolution, clampPercent, drawInkStroke, drawInkStrokeTail, normalizePressureCurve, samplePressureCurve, STROKE_WIDTH_REFERENCE } from "./rendering";
 import { defaultToolState, type SharedToolState } from "./tool-state";
 import { InkClipboard, pasteClipboardStrokes } from "./lasso-clipboard";
 
@@ -54,6 +54,8 @@ const PASTE_HOLD_SLOP_PX = 10;
 const MAX_SCRIBBLE_GESTURE_POINTS = 2_048;
 const SCRIBBLE_REFERENCE_SIZE = 24;
 export const QUEUED_PAGE_SWIPE_DURATION_MS = 64;
+/** A fast paging burst must hand the rail back within a second of stopping. */
+const FAST_PAGING_RAIL_IDLE_MS = 1000;
 
 export interface ToolState {
   tool: InkTool;
@@ -485,7 +487,10 @@ function restoredStroke(stroke: InkStroke): InkStroke {
 }
 
 export function translatePoints(points: InkPoint[], dx: number, dy: number): InkPoint[] {
-  return points.map((point) => ({ ...point, x: point.x + dx, y: point.y + dy, t: Date.now() }));
+  // Translation is an isometry: keep the sampled timestamps so the speed
+  // dynamics channel still sees the original writing pace after a lasso move
+  // (the spread operator already carries `t` over).
+  return points.map((point) => ({ ...point, x: point.x + dx, y: point.y + dy }));
 }
 
 export function selectionBounds(strokes: InkStroke[]): { minX: number; minY: number; maxX: number; maxY: number } | null {
@@ -1500,6 +1505,14 @@ export abstract class InkWritingView extends FileView {
   private desktopPan: { pointerId: number; x: number; y: number; startX: number; startY: number; mode: "pan" | "swipe" | null } | null = null;
   private desktopSpaceDown = false;
   private desktopWheel = new DesktopWheelGesture();
+  /** Sliding-window page rate behind the fast-paging rail. */
+  private wheelPacer = new WheelPagePacer();
+  /** True while a fast paging burst holds the rail open. */
+  private fastPagingRail = false;
+  /** Whether the burst borrowed a collapsed rail: only a borrowed rail goes
+   *  back to hidden when the burst ends, a user-expanded rail stays. */
+  protected fastPagingRailBorrowed = false;
+  private fastPagingRailTimer: number | undefined;
 
   /** Snapshot the trigger press before the host dismisses its menu on pointerdown. */
   protected beginPageOptionsMenu(event: Pick<MouseEvent, "currentTarget">): Menu | null {
@@ -1754,7 +1767,10 @@ export abstract class InkWritingView extends FileView {
       scrolled = Math.abs(scroller[property] - before) > 0.5;
     }
     const pages = this.desktopWheel.pageDelta(motion, scrolled);
-    if (pages !== 0) this.navigateWheelPages(pages, motion.axis, motion.discrete, motion.gestureId);
+    if (pages !== 0) {
+      this.noteWheelPages(Math.abs(pages), motion.axis, event.timeStamp);
+      this.navigateWheelPages(pages, motion.axis, motion.discrete, motion.gestureId);
+    }
   }
 
   private navigateWheelPages(pages: number, axis: "x" | "y", discrete: boolean, gestureId: number): void {
@@ -1769,6 +1785,60 @@ export abstract class InkWritingView extends FileView {
       if (discrete) this.queuePageSwipeDelta(pages - direction, scrollEdge);
       else this.queueTrackpadPageSwipeDelta(pages - direction, gestureId, scrollEdge);
     }
+  }
+
+  /** View hook: a fast paging burst expanded the page rail. */
+  protected onFastPagingRailExpanded(): void {}
+  /** View hook: the burst's quiet timer handed the rail back. */
+  protected onFastPagingRailCollapsed(): void {}
+
+  /** True while a fast paging burst holds the rail open. */
+  protected isFastPagingRailOpen(): boolean {
+    return this.fastPagingRail;
+  }
+
+  /** Feeds wheel-driven page flips into the fast-paging detector. Only a
+   *  flip that keeps the window engaged re-arms the collapse timer, so once
+   *  the rate drops below the threshold the rail comes back one quiet second
+   *  after the last fast flip - continued slow paging never extends it. */
+  private noteWheelPages(pages: number, axis: "x" | "y", at: number): void {
+    if (!this.wheelPacer.record(pages, axis, at)) return;
+    if (!this.fastPagingRail) {
+      this.fastPagingRail = true;
+      this.onFastPagingRailExpanded();
+    }
+    if (this.fastPagingRailTimer !== undefined) window.clearTimeout(this.fastPagingRailTimer);
+    this.fastPagingRailTimer = window.setTimeout(() => {
+      this.fastPagingRailTimer = undefined;
+      if (!this.fastPagingRail) return;
+      this.fastPagingRail = false;
+      this.wheelPacer.end();
+      this.onFastPagingRailCollapsed();
+    }, FAST_PAGING_RAIL_IDLE_MS);
+  }
+
+  /** View teardown: drop the burst state and its pending collapse timer. */
+  protected clearFastPagingRail(): void {
+    if (this.fastPagingRailTimer !== undefined) window.clearTimeout(this.fastPagingRailTimer);
+    this.fastPagingRailTimer = undefined;
+    this.fastPagingRail = false;
+    this.fastPagingRailBorrowed = false;
+    this.wheelPacer.end();
+  }
+
+  /** Keeps the active thumbnail vertically centered in the rail while fast
+   *  paging. The relative-rect delta moves only the rail's own scroll box
+   *  (unlike scrollIntoView, which may drag outer containers along), and
+   *  scrollTop clamps at both ends, so first and last pages settle at their
+   *  natural edge instead of forcing a center that does not exist. */
+  protected followWheelPageThumb(): void {
+    const rail = this.containerEl?.querySelector?.<HTMLElement>(".ink-page-rail");
+    const thumb = rail?.querySelector<HTMLElement>(".ink-page-thumb.is-active");
+    if (!rail || !thumb) return;
+    const box = rail.getBoundingClientRect();
+    const rect = thumb.getBoundingClientRect();
+    if (box.height <= 0 || rect.height <= 0) return;
+    rail.scrollTop += (rect.top + rect.height / 2) - (box.top + box.height / 2);
   }
 
   protected onPointerDown(event: InkPointerSample, source: InteractionContext["source"] = "pointer"): void {
@@ -2149,7 +2219,10 @@ export abstract class InkWritingView extends FileView {
     if (!tail) return;
     const gain = clampPercent(stroke.dynamics?.pressure, 100) / 100;
     const mapped = samplePressureCurve(tail.pressure, normalizePressureCurve(stroke.dynamics?.pressureCurve));
-    const baseHalf = Math.max(0.6, (stroke.width * (0.55 + 0.75 * (0.5 + (mapped - 0.5) * gain))) / 2);
+    // Same conversion the renderer applies (canvasWidth / reference): the
+    // ghost tip must sit on the committed nib, not on the raw slider number.
+    const widthScale = this.canvasLogicalWidth / STROKE_WIDTH_REFERENCE;
+    const baseHalf = Math.max(0.6 * widthScale, (stroke.width * widthScale * (0.55 + 0.75 * (0.5 + (mapped - 0.5) * gain))) / 2);
     let previous = { x: tail.x * this.canvasLogicalWidth, y: tail.y * this.canvasLogicalHeight };
     const segments = this.predictedTip.length;
     for (let index = 0; index < segments; index++) {
@@ -2157,7 +2230,7 @@ export abstract class InkWritingView extends FileView {
       const progress = (index + 1) / segments;
       // Deep at the junction (continuous ink) fading to faint at the tip.
       ctx.globalAlpha = stroke.opacity * (0.6 - 0.45 * progress);
-      ctx.lineWidth = Math.max(0.5, baseHalf * 2 * (1 - 0.45 * progress));
+      ctx.lineWidth = Math.max(0.5 * widthScale, baseHalf * 2 * (1 - 0.45 * progress));
       ctx.strokeStyle = stroke.color;
       ctx.lineCap = "round";
       ctx.beginPath();
@@ -3321,7 +3394,9 @@ export abstract class InkWritingView extends FileView {
     ctx.lineJoin = "round";
     if (mode === "highlighter") {
       ctx.globalCompositeOperation = "multiply";
-      ctx.lineWidth = width;
+      // The retained preview must match the tiles that replace it: the Worker
+      // tiles draw this width through the renderer's canonical conversion.
+      ctx.lineWidth = width * this.canvasLogicalWidth / STROKE_WIDTH_REFERENCE;
       ctx.stroke(cached.path);
     } else {
       ctx.globalCompositeOperation = "source-over";
