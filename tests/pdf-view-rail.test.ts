@@ -1027,6 +1027,66 @@ describe("pdf page preview rail", () => {
     await view.onClose();
   });
 
+  it("mounts a drag-resizable rail that clamps and persists the width under the PDF key", async () => {
+    window.localStorage.removeItem("ink-pdf-page-rail-width");
+    const { view, internal } = await setup(3);
+    const rail = document.querySelector<HTMLElement>(".ink-pdf-view .ink-page-rail")!;
+    const handle = rail.querySelector<HTMLElement>(".ink-rail-resizer")!;
+    expect(handle).not.toBeNull();
+    // The drag ends with a thumbnail repaint: rasters during the drag use
+    // stale widths, so only the final width is worth painting at.
+    const repaint = vi.spyOn(internal, "paintVisibleThumbnails").mockImplementation(() => undefined);
+    // jsdom has no layout: pin the rail box the drag measures (the 148px
+    // stylesheet default for the PDF rail).
+    rail.getBoundingClientRect = () => new DOMRect(0, 0, 148, 600);
+    const captured = new Set<number>();
+    handle.setPointerCapture = (id: number) => { captured.add(id); };
+    handle.hasPointerCapture = (id: number) => captured.has(id);
+    handle.releasePointerCapture = (id: number) => { captured.delete(id); };
+    const pointer = (type: string, clientX: number, pointerId = 7): PointerEvent => {
+      // jsdom has no PointerEvent; a real MouseEvent carrying pointerId
+      // satisfies both dispatchEvent and the handler's capture bookkeeping.
+      const event = new MouseEvent(type, { clientX, button: 0, bubbles: true, cancelable: true });
+      Object.defineProperty(event, "pointerId", { value: pointerId });
+      return event as unknown as PointerEvent;
+    };
+    handle.dispatchEvent(pointer("pointerdown", 148));
+    expect(captured.has(7)).toBe(true);
+    handle.dispatchEvent(pointer("pointermove", 228));
+    expect(rail.style.getPropertyValue("--ink-rail-width")).toBe("228px");
+    handle.dispatchEvent(pointer("pointerup", 228));
+    expect(window.localStorage.getItem("ink-pdf-page-rail-width")).toBe("228");
+    expect(captured.has(7)).toBe(false);
+    expect(repaint).toHaveBeenCalledOnce();
+    // Widths clamp into the usable range before display or persistence.
+    handle.dispatchEvent(pointer("pointerdown", 228, 9));
+    handle.dispatchEvent(pointer("pointermove", 228 + 900, 9));
+    expect(rail.style.getPropertyValue("--ink-rail-width")).toBe("420px");
+    handle.dispatchEvent(pointer("pointermove", 228 - 900, 9));
+    expect(rail.style.getPropertyValue("--ink-rail-width")).toBe("150px");
+    // A stale pointer's moves never drive the drag.
+    handle.dispatchEvent(pointer("pointermove", 500, 3));
+    expect(rail.style.getPropertyValue("--ink-rail-width")).toBe("150px");
+    handle.dispatchEvent(pointer("pointercancel", 228 - 900, 9));
+    expect(window.localStorage.getItem("ink-pdf-page-rail-width")).toBe("150");
+    await view.onClose();
+  });
+
+  it("applies a stored PDF rail width on open and ignores out-of-range values", async () => {
+    window.localStorage.setItem("ink-pdf-page-rail-width", "300");
+    const { view } = await setup(2);
+    const rail = document.querySelector<HTMLElement>(".ink-pdf-view .ink-page-rail")!;
+    expect(rail.style.getPropertyValue("--ink-rail-width")).toBe("300px");
+    // An out-of-range stored value falls back to the stylesheet's 148px
+    // default: the inline custom property simply stays unset.
+    window.localStorage.setItem("ink-pdf-page-rail-width", "9999");
+    await view.onOpen();
+    const rebuilt = document.querySelector<HTMLElement>(".ink-pdf-view .ink-page-rail")!;
+    expect(rebuilt).not.toBe(rail);
+    expect(rebuilt.style.getPropertyValue("--ink-rail-width")).toBe("");
+    await view.onClose();
+  });
+
   it("centers the active thumb through rail refreshes while a fast paging burst holds the rail open", async () => {
     const { view, internal } = await setup(3);
     internal.renderAll();
