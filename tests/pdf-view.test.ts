@@ -5,8 +5,8 @@ import type { NotebookOperation } from "../src/worker-protocol";
 import type { InkPoint, InkStroke } from "../src/model";
 import { InkWorkerService } from "../src/worker-service";
 import { PdfSidecarStore, serializeSidecar } from "../src/pdf-store";
-import { createSidecar, insertBlankNotePage, sourcePageId } from "../src/pdf-sidecar";
-import type { PdfSidecar } from "../src/pdf-sidecar";
+import { createSidecar, disambiguatedSidecarPathFor, insertBlankNotePage, sidecarPathFor, sourcePageId } from "../src/pdf-sidecar";
+import type { PdfSidecar, PdfSourcePageGeometry } from "../src/pdf-sidecar";
 import { PdfInkView, VIEW_TYPE_PDF_INK } from "../src/pdf-view";
 import { PdfTabTakeover } from "../src/pdf-takeover";
 
@@ -28,7 +28,9 @@ interface PdfViewInternals {
   pendingMergedSidecar: PdfSidecar | null;
   dirty: boolean;
   writeBlockedReason: string | null;
+  loadGeneration: number;
   canEdit(): boolean;
+  resolveSidecar(file: TFile, fingerprint: { sha256: string; byteLength: number }, generation: number): Promise<void>;
   noteIndex: number;
   canvasLogicalWidth: number;
   canvasLogicalHeight: number;
@@ -70,9 +72,10 @@ function setup() {
   const appliedOps: NotebookOperation[] = [];
 
   const store = {
-    sidecarFileFor: vi.fn(() => sidecarFile),
-    createFor: vi.fn(async () => sidecarFile),
-    readRaw: vi.fn(async () => serializeSidecar(sidecar)),
+    sidecarFileFor: vi.fn((_pdfPath: string, _slotPath?: string): TFile | null => sidecarFile),
+    createFor: vi.fn(async (_pdf: TFile, _fingerprint: { sha256: string; byteLength: number },
+      _sourcePages: PdfSourcePageGeometry[], _slotPath?: string) => sidecarFile),
+    readRaw: vi.fn(async (_file: TFile) => serializeSidecar(sidecar)),
     writeIfUnchanged: vi.fn(async (_file: TFile, _expectedRaw: string, _nextRaw: string): Promise<boolean> => true),
     computeFingerprint: vi.fn(async () => FINGERPRINT),
     findRecoveryCandidates: vi.fn(async () => []),
@@ -827,6 +830,79 @@ describe("PDF plugin handoff and source revisions", () => {
     expect(createBinary).not.toHaveBeenCalled();
     expect(internal.canEdit()).toBe(false);
     expect(internal.sidecar.source.sha256).toBe(FINGERPRINT.sha256);
+  });
+});
+
+describe("case-twin sidecar collision", () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.stubGlobal("window", globalThis); });
+
+  const PDF_PATH = "docs/lecture.pdf";
+  const TWIN_PATH = "Docs/Lecture.pdf";
+  const LEGACY_SLOT = sidecarPathFor(PDF_PATH);
+  const DISAMBIGUATED_SLOT = disambiguatedSidecarPathFor(PDF_PATH);
+  const FOREIGN_FINGERPRINT = { sha256: "b".repeat(64), byteLength: 200 };
+  const CHANGED_MESSAGE = "This PDF changed since these notes were created; handwriting is read-only for this copy";
+
+  /** The case twin's foreign sidecar occupies the legacy (lowercased) slot;
+   *  with `disambiguated`, our own matching sidecar sits in the exact-case
+   *  slot (steady state after a resolved collision). `existsPaths` models
+   *  which PDF spellings the vault adapter answers for. */
+  function twinSetup(existsPaths: string[], disambiguated = false) {
+    const harness = setup();
+    const foreign = createSidecar(TWIN_PATH, FOREIGN_FINGERPRINT, SOURCE_PAGES);
+    const foreignFile = { path: LEGACY_SLOT } as TFile;
+    const ours = createSidecar(PDF_PATH, FINGERPRINT, SOURCE_PAGES);
+    const oursFile = { path: DISAMBIGUATED_SLOT } as TFile;
+    harness.store.sidecarFileFor.mockImplementation((_pdfPath: string, slotPath?: string) =>
+      slotPath === DISAMBIGUATED_SLOT && disambiguated ? oursFile
+        : slotPath === undefined || slotPath === LEGACY_SLOT ? foreignFile : null);
+    harness.store.readRaw.mockImplementation(async (file: TFile) =>
+      file.path === DISAMBIGUATED_SLOT ? serializeSidecar(ours) : serializeSidecar(foreign));
+    harness.store.findRecoveryCandidates.mockResolvedValue([]);
+    harness.store.createFor.mockImplementation(async (_pdf: TFile, _fp: unknown, _pages: unknown, slotPath?: string) =>
+      ({ path: slotPath ?? LEGACY_SLOT } as TFile));
+    Object.assign(harness.internal.app.vault as object, {
+      adapter: { exists: vi.fn(async (path: string) => existsPaths.includes(path)) },
+    });
+    return { ...harness, foreign, foreignFile, ours, oursFile };
+  }
+
+  it("gives a case-twin PDF its own disambiguated slot instead of read-only foreign ink", async () => {
+    const { view, internal, store } = twinSetup([TWIN_PATH, PDF_PATH]);
+    await internal.resolveSidecar(view.file!, FINGERPRINT, internal.loadGeneration);
+    expect(internal.writeBlockedReason).toBeNull();
+    expect(internal.sidecar.source.sha256).toBe(FINGERPRINT.sha256);
+    expect(internal.sidecarFile?.path).toBe(DISAMBIGUATED_SLOT);
+    expect(store.createFor).toHaveBeenCalledWith(view.file, FINGERPRINT, expect.anything(), DISAMBIGUATED_SLOT);
+  });
+
+  it("reopens into an existing disambiguated slot without re-creating", async () => {
+    const { view, internal, store } = twinSetup([TWIN_PATH, PDF_PATH], true);
+    await internal.resolveSidecar(view.file!, FINGERPRINT, internal.loadGeneration);
+    expect(internal.writeBlockedReason).toBeNull();
+    expect(internal.sidecar.source.path).toBe(PDF_PATH);
+    expect(internal.sidecarFile?.path).toBe(DISAMBIGUATED_SLOT);
+    expect(store.createFor).not.toHaveBeenCalled();
+  });
+
+  it("keeps the read-only changed-revision path when the twin file does not exist", async () => {
+    const { view, internal, store, foreignFile } = twinSetup([PDF_PATH]);
+    await internal.resolveSidecar(view.file!, FINGERPRINT, internal.loadGeneration);
+    expect(internal.writeBlockedReason).toBe(CHANGED_MESSAGE);
+    expect(internal.sidecar.source.sha256).toBe(FOREIGN_FINGERPRINT.sha256);
+    expect(internal.sidecarFile).toBe(foreignFile);
+    expect(store.createFor).not.toHaveBeenCalled();
+  });
+
+  it("keeps the read-only path when the recorded path matches exactly", async () => {
+    const harness = twinSetup([PDF_PATH, PDF_PATH]);
+    // Same exact path, different bytes: a genuinely replaced PDF, not a twin.
+    const replaced = createSidecar(PDF_PATH, FOREIGN_FINGERPRINT, SOURCE_PAGES);
+    harness.store.readRaw.mockImplementation(async () => serializeSidecar(replaced));
+    await harness.internal.resolveSidecar(harness.view.file!, FINGERPRINT, harness.internal.loadGeneration);
+    expect(harness.internal.writeBlockedReason).toBe(CHANGED_MESSAGE);
+    expect(harness.internal.sidecar.source.sha256).toBe(FOREIGN_FINGERPRINT.sha256);
+    expect(harness.store.createFor).not.toHaveBeenCalled();
   });
 });
 

@@ -88,7 +88,8 @@ export function isSourcePageId(id: string): boolean {
  * never collide. Pure and synchronous — the hash is only a namespace, not a
  * security primitive.
  */
-export function sidecarFileNameFor(pdfPath: string): string {
+/** Shared sidecar name: sanitized lowercased stem plus path-hash suffixes. */
+function sidecarFileName(pdfPath: string, hashSuffix: string): string {
   const normalized = pdfPath.replace(/\\/g, "/");
   const dot = normalized.lastIndexOf("/");
   const file = dot >= 0 ? normalized.slice(dot + 1) : normalized;
@@ -96,25 +97,53 @@ export function sidecarFileNameFor(pdfPath: string): string {
   // The stem is lowercased so path-case differences (Windows/macOS vaults)
   // keep producing the same name; the hash normalizes the folder part.
   const safe = stem.trim().toLowerCase().replace(/[\\/:*?"<>|#^[\]]/g, "-").slice(0, 80) || "pdf";
-  return `${safe}--${pathHash(normalized)}.pdfink.json`;
+  return `${safe}--${pathHash(normalized)}${hashSuffix}.pdfink.json`;
+}
+
+export function sidecarFileNameFor(pdfPath: string): string {
+  return sidecarFileName(pdfPath, "");
 }
 
 export function sidecarPathFor(pdfPath: string): string {
   return `${PDF_INK_FOLDER}/${sidecarFileNameFor(pdfPath)}`;
 }
 
-/** FNV-1a over the normalized path, rendered as 12 hex chars (target-safe). */
-export function pathHash(pdfPath: string): string {
-  const normalized = pdfPath.replace(/[\\]+/g, "/").toLowerCase();
+/**
+ * Sidecar slot for a same-name case-twin collision. sidecarPathFor lowercases
+ * the whole path, so on case-sensitive disks (Linux/Android) Docs/Notes.pdf
+ * and docs/notes.pdf fold into one slot and the second opener inherits the
+ * first one's notes read-only. Appending a hash of the exact-case path before
+ * the extension gives each twin its own slot; legacy names stay untouched.
+ */
+export function disambiguatedSidecarPathFor(pdfPath: string): string {
+  return `${PDF_INK_FOLDER}/${sidecarFileName(pdfPath, `--${exactCaseHash(pdfPath)}`)}`;
+}
+
+/** FNV-1a over `text`, rendered as 12 hex chars (target-safe). */
+function fnv1aHash12(text: string): string {
   const fnv1a = (seed: number): number => {
     let hash = seed | 0;
-    for (let index = 0; index < normalized.length; index++) {
-      hash ^= normalized.charCodeAt(index);
+    for (let index = 0; index < text.length; index++) {
+      hash ^= text.charCodeAt(index);
       hash = Math.imul(hash, 0x01000193);
     }
     return hash >>> 0;
   };
   return (fnv1a(0x811c9dc5).toString(16).padStart(8, "0") + fnv1a(0x1b873593).toString(16).padStart(8, "0")).slice(0, 12);
+}
+
+/** FNV-1a over the normalized path, rendered as 12 hex chars (target-safe). */
+export function pathHash(pdfPath: string): string {
+  return fnv1aHash12(pdfPath.replace(/[\\]+/g, "/").toLowerCase());
+}
+
+/**
+ * pathHash's dual-seed digest with the path's exact case preserved (only
+ * separators normalized): pairs with pathHash in disambiguatedSidecarPathFor
+ * to separate case twins the lowercased digest folds together.
+ */
+export function exactCaseHash(pdfPath: string): string {
+  return fnv1aHash12(pdfPath.replace(/[\\]+/g, "/"));
 }
 
 export function createSidecar(
@@ -253,7 +282,24 @@ export function mergeSidecars(base: PdfSidecar, incoming: PdfSidecar): PdfSideca
   for (const notePage of incoming.notePages) {
     if (!byId.has(notePage.id)) byId.set(notePage.id, notePage);
   }
+  const unionById = new Map(byId);
   for (const id of Object.keys(deletedNotePages)) byId.delete(id);
+  if (byId.size === 0) {
+    // Complementary deletions (each side deletes a different page) must not
+    // wipe the whole sequence — that would crash the merged view and, once
+    // saved, lose every stroke. Keep the last-deleted page, mirroring the
+    // at-least-one-page invariant of deleteNotePageAt and normalizeSidecar.
+    // Its tombstone has to go too, or the next merge deletes the page again.
+    let revivedId: string | null = null;
+    let revivedAt = -Infinity;
+    for (const [id, timestamp] of Object.entries(deletedNotePages)) {
+      if (unionById.has(id) && timestamp > revivedAt) { revivedId = id; revivedAt = timestamp; }
+    }
+    if (revivedId !== null) {
+      byId.set(revivedId, unionById.get(revivedId)!);
+      delete deletedNotePages[revivedId];
+    }
+  }
   const orderWinner = incoming.noteOrderUpdatedAt > base.noteOrderUpdatedAt
     || (incoming.noteOrderUpdatedAt === base.noteOrderUpdatedAt && compareNotePageOrder(incoming.notePages, base.notePages) >= 0)
     ? incoming

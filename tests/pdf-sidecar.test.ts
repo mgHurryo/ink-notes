@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { InkStroke, createNotebook } from "../src/model";
+import { parseStoredJson, serializeStoredJson } from "../src/storage-codec";
 import {
   PdfSidecar,
   PdfSidecarConflictError,
   PdfSidecarFormatError,
   createSidecar,
   deleteBlankNotePage,
+  deleteNotePage,
+  disambiguatedSidecarPathFor,
+  exactCaseHash,
   insertBlankNotePage,
   insertBlankNotePageAt,
   isSourcePageId,
@@ -73,6 +77,34 @@ describe("sidecar file naming", () => {
   it("pathHash is a stable non-cryptographic digest", () => {
     expect(pathHash("docs/lecture.pdf")).toBe(pathHash("docs/lecture.pdf"));
     expect(pathHash("docs/lecture.pdf")).toHaveLength(12);
+  });
+
+  it("exactCaseHash separates case twins and stays separator-normalized", () => {
+    expect(exactCaseHash("Docs/Notes.pdf")).not.toBe(exactCaseHash("docs/notes.pdf"));
+    expect(exactCaseHash("Docs\\Notes.pdf")).toBe(exactCaseHash("Docs/Notes.pdf"));
+    expect(exactCaseHash("docs/notes.pdf")).toBe(exactCaseHash("docs/notes.pdf"));
+    expect(exactCaseHash("docs/notes.pdf")).toHaveLength(12);
+  });
+
+  it("disambiguatedSidecarPathFor gives case twins distinct stable slots", () => {
+    const upper = disambiguatedSidecarPathFor("Docs/Notes.pdf");
+    const lower = disambiguatedSidecarPathFor("docs/notes.pdf");
+    expect(upper).not.toBe(lower);
+    expect(upper.startsWith("A_pdfinkwrittern/")).toBe(true);
+    expect(upper.endsWith(".pdfink.json")).toBe(true);
+    // The disambiguator sits between the legacy hash and the extension, so
+    // the legacy-compatible name never gains a doubled .pdfink.json suffix.
+    expect(upper.match(/pdfink\.json/g)).toHaveLength(1);
+    expect(upper).toBe(disambiguatedSidecarPathFor("Docs/Notes.pdf"));
+    expect(lower).toBe(disambiguatedSidecarPathFor("docs/notes.pdf"));
+  });
+
+  it("disambiguated slots reuse the stem sanitizing and never collide", () => {
+    expect(disambiguatedSidecarPathFor("docs/notes.pdf")).not.toBe(sidecarPathFor("docs/notes.pdf"));
+    expect(disambiguatedSidecarPathFor("docs/other.pdf")).not.toBe(disambiguatedSidecarPathFor("docs/notes.pdf"));
+    const hostile = disambiguatedSidecarPathFor('a/b:*c?"<>|.pdf');
+    expect(hostile).not.toContain(":");
+    expect(hostile).not.toContain("*");
   });
 });
 
@@ -147,6 +179,29 @@ describe("merge", () => {
     const merged = mergeSidecars(base, incoming);
     expect(merged.deletedNotePages[blankId]).toBe(500);
     expect(merged.notePages.some((page) => page.id === blankId)).toBe(false);
+  });
+
+  it("complementary page deletions keep the sequence non-empty", () => {
+    const base = makeSidecar();
+    const incoming = JSON.parse(JSON.stringify(base)) as PdfSidecar;
+    expect(deleteNotePage(base, sourcePageId(0))).toBe(true);
+    expect(deleteNotePage(incoming, sourcePageId(1))).toBe(true);
+    base.deletedNotePages[sourcePageId(0)] = 100;
+    incoming.deletedNotePages[sourcePageId(1)] = 200; // device B deleted last
+    // Each device keeps writing on the page it still has.
+    base.notebook.pages[0].strokes.push(stroke(sourcePageId(1), "stroke-b"));
+    incoming.notebook.pages[0].strokes.push(stroke(sourcePageId(0), "stroke-a"));
+
+    const merged = mergeSidecars(base, incoming);
+    expect(merged.notePages.map((page) => page.id)).toEqual([sourcePageId(1)]);
+    expect(merged.notebook.pages.map((page) => page.id)).toEqual([sourcePageId(1)]);
+    expect(merged.notebook.pageOrder).toEqual([sourcePageId(1)]);
+    expect(merged.deletedNotePages[sourcePageId(0)]).toBeGreaterThan(0);
+    expect(merged.deletedNotePages[sourcePageId(1)]).toBeUndefined();
+
+    // The saved sidecar must still carry the surviving page's ink on reload.
+    const reparsed = normalizeSidecar(parseStoredJson(serializeStoredJson(merged)));
+    expect(reparsed.notebook.pages[0].strokes.map((entry) => entry.id)).toContain("stroke-b");
   });
 
   it("throws when the two sides describe different source PDFs", () => {
