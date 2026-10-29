@@ -1268,7 +1268,10 @@ export abstract class InkWritingView extends FileView {
     const fling = releaseTime - gesture.lastT < 100 && gesture.velocity * travel > 0
       && Math.abs(gesture.velocity) > 0.35 && Math.abs(travel) > 24;
     const crossed = Math.abs(travel) > width * 0.35;
-    const delta = fling || crossed ? (travel > 0 ? -1 : 1) : 0;
+    // A live pen stroke owns the input: lifting the dragging finger must
+    // spring the page back, never navigate — a flip here would force-settle
+    // the stroke onto the pre-flip page and the ink would vanish.
+    const delta = this.activePointerId !== null ? 0 : (fling || crossed ? (travel > 0 ? -1 : 1) : 0);
     if (this.flipSettling) {
       this.queuePageSwipeDelta(delta);
     } else {
@@ -1675,7 +1678,10 @@ export abstract class InkWritingView extends FileView {
     if (pan?.mode === "swipe") {
       const travel = pan.x - pan.startX;
       const threshold = this.inputScroller().clientWidth * 0.35;
-      const delta = commit && Math.abs(travel) >= threshold ? (travel > 0 ? -1 : 1) : 0;
+      // Same live-stroke guard as settlePageFlip: a pan released while a pen
+      // stroke is down must spring back, not navigate away mid-stroke.
+      const delta = commit && this.activePointerId === null && Math.abs(travel) >= threshold
+        ? (travel > 0 ? -1 : 1) : 0;
       if (delta !== 0 && !this.queuePageSwipeDelta(delta)) this.swipeSettle(delta, travel);
       else if (delta === 0 && !this.flipSettling) this.swipeSettle(0, travel);
     }
@@ -1758,6 +1764,15 @@ export abstract class InkWritingView extends FileView {
     // Pointer selects page objects through their own handlers; blank paper
     // and stylus contacts must never fall through into stroke creation.
     if (this.state.tool === "pointer") return;
+    // A contact taking over mid page-flip drag must spring the page back
+    // immediately (same contract as onTouchMove / onStylusTouch — Pointer-only
+    // platforms have no Touch stream to run that mirror). Kept after the
+    // inputLocked() check so an in-flight settle latch still swallows the
+    // very contact that would trigger this cancel.
+    if (this.touchGesture?.axis === "x") {
+      this.cancelPageFlip();
+      this.touchGesture = null;
+    }
     // Deduplicate only the contact currently owned by native stylus Touch.
     // The next contact may have Pointer events without a classified Touch,
     // so observing one Touch stream must not disable pen input for the view.
