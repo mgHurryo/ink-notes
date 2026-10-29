@@ -461,7 +461,10 @@ function boundedPreviewStroke(stroke: InkStroke): InkStroke {
 
 function restoredStroke(stroke: InkStroke): InkStroke {
   const now = Date.now();
-  return { ...cloneStroke(stroke), id: newId("stroke"), createdAt: now, updatedAt: now };
+  // Keep the original createdAt: undo/redo sorts by createdAt, and resetting
+  // it would lift restored ink above strokes drawn after it. updatedAt keeps
+  // the merge timestamp.
+  return { ...cloneStroke(stroke), id: newId("stroke"), updatedAt: now };
 }
 
 export function translatePoints(points: InkPoint[], dx: number, dy: number): InkPoint[] {
@@ -2770,7 +2773,10 @@ export abstract class InkWritingView extends FileView {
       for (const stroke of removed) {
         const segments = eraseStrokeSegments(stroke, point, radius, mode, this.canvasLogicalWidth, this.canvasLogicalHeight);
         for (const points of segments) {
-          const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, createdAt: now, updatedAt: now };
+          // Fragments inherit the original createdAt: synthesis order sorts by
+          // createdAt, so a fresh timestamp would float fragments above ink
+          // that previously covered them. updatedAt keeps the merge timestamp.
+          const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, updatedAt: now };
           page.strokes.push(replacement);
           replacements.push(replacement);
           const owner = this.stickyInput?.owners.get(stroke.id);
@@ -3701,7 +3707,10 @@ export abstract class InkWritingView extends FileView {
       if (segments === null) continue;
       removed.push(stroke);
       for (const points of segments) {
-        const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, createdAt: now, updatedAt: now };
+        // Keep the original createdAt so scribble-erase fragments stay below
+        // ink drawn after the original stroke (synthesis order = createdAt
+        // order). updatedAt keeps the merge timestamp.
+        const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, updatedAt: now };
         replacements.push(replacement);
         if (owner) this.stickyInput?.owners.set(replacement.id, owner);
       }
