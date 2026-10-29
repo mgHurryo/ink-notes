@@ -27,6 +27,7 @@ import { parseStoredJson } from "./storage-codec";
 import { PdfExportError, exportHandwrittenPdf, exportPathFor, sidecarHasInk } from "./pdf-export";
 import { PdfTabTakeover, hasNativeNavigation } from "./pdf-takeover";
 import { paintPageImages } from "./image-library";
+import { applyStoredRailWidth, mountRailResizer } from "./rail-resizer";
 
 export const VIEW_TYPE_PDF_INK = "ink-notes-pdf-view";
 
@@ -62,6 +63,9 @@ const RAIL_SWEEP_THROTTLE_MS = 120;
 /** After the rail's expand transition (200ms), repaint the visible range at
  *  full resolution; thumbnails skip painting while collapsed. */
 const RAIL_REVEAL_DELAY_MS = 230;
+/** Rail width persistence, separate from the notebook editor's key so each
+ *  rail remembers the width its own thumbnails need. */
+const PDF_RAIL_WIDTH_STORAGE_KEY = "ink-pdf-page-rail-width";
 
 export type SaveOutcome = { status: "saved" } | { status: "conflict"; message: string } | { status: "failed"; message: string };
 
@@ -796,6 +800,7 @@ export class PdfInkView extends InkWritingView {
   private buildPageRail(body: HTMLElement): void {
     const rail = body.createDiv({ cls: "ink-page-rail", attr: { "aria-label": "PDF pages" } });
     this.pageRail = rail;
+    applyStoredRailWidth(rail, PDF_RAIL_WIDTH_STORAGE_KEY);
     const header = rail.createDiv({ cls: "ink-rail-header" });
     header.createDiv({ cls: "ink-rail-heading", text: "Pages" });
     this.railCount = header.createSpan({ cls: "ink-rail-count" });
@@ -805,6 +810,10 @@ export class PdfInkView extends InkWritingView {
     // Scrolling long documents brings new thumbnails into view; repaint the
     // fresh range (throttled) instead of pre-rendering every page.
     this.registerDomEvent(rail, "scroll", () => this.scheduleRailSweep(), { passive: true });
+    // Parity with the notebook editor's rail: the right edge is draggable and
+    // the final width persists under the PDF-specific key. Thumbnails raster
+    // during the drag at stale widths; repaint the visible range at the end.
+    mountRailResizer(rail, { storageKey: PDF_RAIL_WIDTH_STORAGE_KEY, onDragEnd: () => this.paintVisibleThumbnails() });
   }
 
   /** Re-syncs the rail with the model: rebuilds the buttons when the page
