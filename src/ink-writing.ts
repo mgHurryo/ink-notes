@@ -461,7 +461,10 @@ function boundedPreviewStroke(stroke: InkStroke): InkStroke {
 
 function restoredStroke(stroke: InkStroke): InkStroke {
   const now = Date.now();
-  return { ...cloneStroke(stroke), id: newId("stroke"), createdAt: now, updatedAt: now };
+  // Keep the original createdAt: undo/redo sorts by createdAt, and resetting
+  // it would lift restored ink above strokes drawn after it. updatedAt keeps
+  // the merge timestamp.
+  return { ...cloneStroke(stroke), id: newId("stroke"), updatedAt: now };
 }
 
 export function translatePoints(points: InkPoint[], dx: number, dy: number): InkPoint[] {
@@ -1268,7 +1271,10 @@ export abstract class InkWritingView extends FileView {
     const fling = releaseTime - gesture.lastT < 100 && gesture.velocity * travel > 0
       && Math.abs(gesture.velocity) > 0.35 && Math.abs(travel) > 24;
     const crossed = Math.abs(travel) > width * 0.35;
-    const delta = fling || crossed ? (travel > 0 ? -1 : 1) : 0;
+    // A live pen stroke owns the input: lifting the dragging finger must
+    // spring the page back, never navigate — a flip here would force-settle
+    // the stroke onto the pre-flip page and the ink would vanish.
+    const delta = this.activePointerId !== null ? 0 : (fling || crossed ? (travel > 0 ? -1 : 1) : 0);
     if (this.flipSettling) {
       this.queuePageSwipeDelta(delta);
     } else {
@@ -1675,7 +1681,10 @@ export abstract class InkWritingView extends FileView {
     if (pan?.mode === "swipe") {
       const travel = pan.x - pan.startX;
       const threshold = this.inputScroller().clientWidth * 0.35;
-      const delta = commit && Math.abs(travel) >= threshold ? (travel > 0 ? -1 : 1) : 0;
+      // Same live-stroke guard as settlePageFlip: a pan released while a pen
+      // stroke is down must spring back, not navigate away mid-stroke.
+      const delta = commit && this.activePointerId === null && Math.abs(travel) >= threshold
+        ? (travel > 0 ? -1 : 1) : 0;
       if (delta !== 0 && !this.queuePageSwipeDelta(delta)) this.swipeSettle(delta, travel);
       else if (delta === 0 && !this.flipSettling) this.swipeSettle(0, travel);
     }
@@ -1758,6 +1767,15 @@ export abstract class InkWritingView extends FileView {
     // Pointer selects page objects through their own handlers; blank paper
     // and stylus contacts must never fall through into stroke creation.
     if (this.state.tool === "pointer") return;
+    // A contact taking over mid page-flip drag must spring the page back
+    // immediately (same contract as onTouchMove / onStylusTouch — Pointer-only
+    // platforms have no Touch stream to run that mirror). Kept after the
+    // inputLocked() check so an in-flight settle latch still swallows the
+    // very contact that would trigger this cancel.
+    if (this.touchGesture?.axis === "x") {
+      this.cancelPageFlip();
+      this.touchGesture = null;
+    }
     // Deduplicate only the contact currently owned by native stylus Touch.
     // The next contact may have Pointer events without a classified Touch,
     // so observing one Touch stream must not disable pen input for the view.
@@ -2755,7 +2773,10 @@ export abstract class InkWritingView extends FileView {
       for (const stroke of removed) {
         const segments = eraseStrokeSegments(stroke, point, radius, mode, this.canvasLogicalWidth, this.canvasLogicalHeight);
         for (const points of segments) {
-          const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, createdAt: now, updatedAt: now };
+          // Fragments inherit the original createdAt: synthesis order sorts by
+          // createdAt, so a fresh timestamp would float fragments above ink
+          // that previously covered them. updatedAt keeps the merge timestamp.
+          const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, updatedAt: now };
           page.strokes.push(replacement);
           replacements.push(replacement);
           const owner = this.stickyInput?.owners.get(stroke.id);
@@ -3361,6 +3382,12 @@ export abstract class InkWritingView extends FileView {
     if (!drag || !this.lassoCanvas || !this.lassoCtx) return;
     const selected = new Set(drag.strokes.map((stroke) => stroke.id));
     this.tiles?.patchStrokes([], [...selected], page.strokes.filter((s) => !this.stickyInput?.proxies.has(s.id)));
+    // The worker mirror learns about the lasso removal only when the drop
+    // commits, so exclude the selection before commitInteractive snapshots the
+    // exclusion, or replacement tiles redraw it as a static ghost under the
+    // moving preview.
+    const base = this.tileExclusion();
+    this.tiles?.setWorkerExclusion?.(base ? new Set([...base, ...selected]) : selected);
     if (this.stickyInput) this.stickies?.preview(this.stickyInput.notes.map((n) => ({ ...n, strokes: n.strokes.filter((s) => !selected.has(s.id)) })));
     this.tiles?.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, false);
     const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight,
@@ -3416,6 +3443,9 @@ export abstract class InkWritingView extends FileView {
   }
 
   private hideLassoPreview(): void {
+    // Common teardown sink for every lasso exit path: restore the pending-ink
+    // exclusion baseline so the selection rejoins worker-rendered tiles.
+    this.tiles?.setWorkerExclusion?.(this.tileExclusion());
     if (!this.lassoCanvas) return;
     this.lassoCanvas.setCssStyles({ display: "none", transform: "none" });
     this.lassoCanvas.width = this.lassoCanvas.height = 1;
@@ -3677,7 +3707,10 @@ export abstract class InkWritingView extends FileView {
       if (segments === null) continue;
       removed.push(stroke);
       for (const points of segments) {
-        const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, createdAt: now, updatedAt: now };
+        // Keep the original createdAt so scribble-erase fragments stay below
+        // ink drawn after the original stroke (synthesis order = createdAt
+        // order). updatedAt keeps the merge timestamp.
+        const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, updatedAt: now };
         replacements.push(replacement);
         if (owner) this.stickyInput?.owners.set(replacement.id, owner);
       }

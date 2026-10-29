@@ -27223,7 +27223,7 @@ function boundedPreviewStroke(stroke) {
 }
 function restoredStroke(stroke) {
   const now = Date.now();
-  return { ...cloneStroke(stroke), id: newId("stroke"), createdAt: now, updatedAt: now };
+  return { ...cloneStroke(stroke), id: newId("stroke"), updatedAt: now };
 }
 function translatePoints(points, dx, dy) {
   return points.map((point) => ({ ...point, x: point.x + dx, y: point.y + dy, t: Date.now() }));
@@ -28059,7 +28059,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     const releaseTime = typeof event.timeStamp === "number" ? event.timeStamp : gesture.lastT;
     const fling = releaseTime - gesture.lastT < 100 && gesture.velocity * travel > 0 && Math.abs(gesture.velocity) > 0.35 && Math.abs(travel) > 24;
     const crossed = Math.abs(travel) > width * 0.35;
-    const delta = fling || crossed ? travel > 0 ? -1 : 1 : 0;
+    const delta = this.activePointerId !== null ? 0 : fling || crossed ? travel > 0 ? -1 : 1 : 0;
     if (this.flipSettling) {
       this.queuePageSwipeDelta(delta);
     } else {
@@ -28576,7 +28576,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     if ((pan == null ? void 0 : pan.mode) === "swipe") {
       const travel = pan.x - pan.startX;
       const threshold = this.inputScroller().clientWidth * 0.35;
-      const delta = commit && Math.abs(travel) >= threshold ? travel > 0 ? -1 : 1 : 0;
+      const delta = commit && this.activePointerId === null && Math.abs(travel) >= threshold ? travel > 0 ? -1 : 1 : 0;
       if (delta !== 0 && !this.queuePageSwipeDelta(delta)) this.swipeSettle(delta, travel);
       else if (delta === 0 && !this.flipSettling) this.swipeSettle(0, travel);
     }
@@ -28644,7 +28644,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     }
   }
   onPointerDown(event, source = "pointer") {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
     this.cancelPasteHold();
     if (event.pointerType !== "touch") {
       this.hideSelectionActions();
@@ -28658,7 +28658,11 @@ var InkWritingView = class extends import_obsidian6.FileView {
     if (this.nativeMenuOpen()) return;
     if (event.pointerType === "touch" && source !== "finger-touch") return;
     if (this.state.tool === "pointer") return;
-    if (source === "pointer" && event.pointerType === "pen" && ((_b = this.interaction) == null ? void 0 : _b.source) === "stylus-touch") return;
+    if (((_b = this.touchGesture) == null ? void 0 : _b.axis) === "x") {
+      this.cancelPageFlip();
+      this.touchGesture = null;
+    }
+    if (source === "pointer" && event.pointerType === "pen" && ((_c = this.interaction) == null ? void 0 : _c.source) === "stylus-touch") return;
     if (event.pointerType === "pen") this.finishFingerInput(true);
     this.onInputStarting();
     this.interactionGeneration += 1;
@@ -28670,9 +28674,9 @@ var InkWritingView = class extends import_obsidian6.FileView {
     this.beginStickyInput(page);
     const brush = tool === "shape" ? this.brushSettings("pen") : isBrushTool(tool) ? this.brushSettings(tool) : null;
     const rect = this.inputRect();
-    (_d = (_c = this.tiles) == null ? void 0 : _c.beginInput) == null ? void 0 : _d.call(_c);
+    (_e = (_d = this.tiles) == null ? void 0 : _d.beginInput) == null ? void 0 : _e.call(_d);
     this.cancelPendingInkCommitTimer();
-    if (tool === "pen" || tool === "highlighter" || tool === "shape") (_e = this.tiles) == null ? void 0 : _e.pauseInkCommit();
+    if (tool === "pen" || tool === "highlighter" || tool === "shape") (_f = this.tiles) == null ? void 0 : _f.pauseInkCommit();
     else if (this.pendingInkStrokes.length > 0 || this.committingInkStrokes) this.materializePendingInkPreview(page);
     if (this.saveTimer !== void 0) {
       window.clearTimeout(this.saveTimer);
@@ -28738,9 +28742,9 @@ var InkWritingView = class extends import_obsidian6.FileView {
       opacity: brush.opacity,
       points: [point],
       dynamics: tool === "pen" ? {
-        taper: (_f = this.state.pen.taper) != null ? _f : 0,
-        pressure: (_g = this.state.pen.pressureGain) != null ? _g : 100,
-        speed: (_h = this.state.pen.speedGain) != null ? _h : 0,
+        taper: (_g = this.state.pen.taper) != null ? _g : 0,
+        pressure: (_h = this.state.pen.pressureGain) != null ? _h : 100,
+        speed: (_i = this.state.pen.speedGain) != null ? _i : 0,
         pressureCurve: this.state.pen.pressureCurve ? this.state.pen.pressureCurve.map((point2) => [...point2]) : void 0
       } : tool === "shape" ? { taper: 0, pressure: 0, speed: 0 } : void 0,
       createdAt: Date.now(),
@@ -29588,7 +29592,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
       for (const stroke of removed) {
         const segments = eraseStrokeSegments(stroke, point, radius, mode, this.canvasLogicalWidth, this.canvasLogicalHeight);
         for (const points of segments) {
-          const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, createdAt: now, updatedAt: now };
+          const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, updatedAt: now };
           page.strokes.push(replacement);
           replacements.push(replacement);
           const owner = (_c = this.stickyInput) == null ? void 0 : _c.owners.get(stroke.id);
@@ -30192,7 +30196,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     ctx.restore();
   }
   beginLassoPreview(page) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d, _e;
     const drag = this.lassoDrag;
     if (!drag || !this.lassoCanvas || !this.lassoCtx) return;
     const selected = new Set(drag.strokes.map((stroke) => stroke.id));
@@ -30200,8 +30204,10 @@ var InkWritingView = class extends import_obsidian6.FileView {
       var _a2;
       return !((_a2 = this.stickyInput) == null ? void 0 : _a2.proxies.has(s.id));
     }));
-    if (this.stickyInput) (_b = this.stickies) == null ? void 0 : _b.preview(this.stickyInput.notes.map((n) => ({ ...n, strokes: n.strokes.filter((s) => !selected.has(s.id)) })));
-    (_c = this.tiles) == null ? void 0 : _c.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, false);
+    const base = this.tileExclusion();
+    (_c = (_b = this.tiles) == null ? void 0 : _b.setWorkerExclusion) == null ? void 0 : _c.call(_b, base ? /* @__PURE__ */ new Set([...base, ...selected]) : selected);
+    if (this.stickyInput) (_d = this.stickies) == null ? void 0 : _d.preview(this.stickyInput.notes.map((n) => ({ ...n, strokes: n.strokes.filter((s) => !selected.has(s.id)) })));
+    (_e = this.tiles) == null ? void 0 : _e.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, false);
     const resolution = canvasResolution(
       this.canvasLogicalWidth,
       this.canvasLogicalHeight,
@@ -30262,6 +30268,8 @@ var InkWritingView = class extends import_obsidian6.FileView {
     });
   }
   hideLassoPreview() {
+    var _a, _b;
+    (_b = (_a = this.tiles) == null ? void 0 : _a.setWorkerExclusion) == null ? void 0 : _b.call(_a, this.tileExclusion());
     if (!this.lassoCanvas) return;
     this.lassoCanvas.setCssStyles({ display: "none", transform: "none" });
     this.lassoCanvas.width = this.lassoCanvas.height = 1;
@@ -30527,7 +30535,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
       if (segments === null) continue;
       removed.push(stroke);
       for (const points of segments) {
-        const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, createdAt: now, updatedAt: now };
+        const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, updatedAt: now };
         replacements.push(replacement);
         if (owner) (_h = this.stickyInput) == null ? void 0 : _h.owners.set(replacement.id, owner);
       }

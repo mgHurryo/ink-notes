@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5-beta.22 - 2026-10-29
+
+- Block page-flip settlement while a pen stroke is live (#310): a held-finger flip drag or a desktop swipe pan that releases mid-stroke now computes delta 0 and rebounds to the current page, so the in-progress stroke is no longer force-settled onto the pre-flip page and appears to vanish; a pen or stylus landing also springs the pending flip drag immediately. Exclude lasso-selected strokes from worker tiles during drag (#311): the replacement tiles rendered by the worker no longer redraw the selected strokes beneath the lasso preview, so dragging a selection no longer leaves a static ghost that reads doubly dark for highlighter through multiply blending, and any lasso exit path restores the baseline exclusion. Keep original createdAt on erase fragments and undo restores (#312): partial-erase fragments, scribble-erase fragments and undo/redo-restored strokes inherit the original stroke's createdAt, so they stay layered beneath strokes drawn after the original instead of floating to the top after each erase or undo.
+
 ## 0.1.5-beta.21 - 2026-10-29
 
 - Rebuild session indexes after an identical merge-external (#305): lasso drags, in-progress stroke appends and index-addressed translations now survive the next save even when an external merge produced identical content, instead of silently reverting or truncating strokes on disk. Preserve the momentum-tail envelope across zero-component pauses (#306): a transient zero held-axis sample inside a flipped diagonal stream no longer zeroes the envelope and re-opens the per-gesture budget mid-contact, so one physical gesture cannot flip past the two-page invariant. Dedupe conflict-copy sticky notes in the search index (#307): after a PDF save conflict each sticky note is indexed once (newest updatedAt wins, keyed by path + page + note id) instead of appearing twice in search results pointing at the same note.
