@@ -34677,15 +34677,36 @@ var PdfSidecarStore = class {
    * already exists both files are kept and the recovery scan resolves it.
    */
   async migrateForRename(pdfPath, oldPdfPath) {
-    const source = this.sidecarFileFor(oldPdfPath);
+    var _a;
     const destinationPath = sidecarPathFor(pdfPath);
     const destination = this.vault.getAbstractFileByPath(destinationPath);
-    if (!source) return false;
     if (destination) return false;
+    const source = (_a = await this.ownedSidecarFor(oldPdfPath, sidecarPathFor(oldPdfPath))) != null ? _a : await this.ownedSidecarFor(oldPdfPath, disambiguatedSidecarPathFor(oldPdfPath));
+    if (!source) return false;
     await this.ensureFolder();
     await this.vault.rename(source, destinationPath);
     await this.recordSourcePath(source, pdfPath);
     return true;
+  }
+  /**
+   * The sidecar in a slot may belong to a case twin instead: sidecarPathFor
+   * lowercases the whole path, so Docs/Lecture.pdf and docs/lecture.pdf share
+   * the legacy slot while the second opener keeps its notes in the exact-case
+   * disambiguated slot (pdf-view.ts resolveSidecar). Only a sidecar recording
+   * the renamed PDF's exact-case path may be moved and re-pointed — migrating
+   * the twin's sidecar would strand both owners on the recovery scan. Corrupt
+   * slots are skipped (not migrated) so the recovery scan keeps resolving them.
+   */
+  async ownedSidecarFor(pdfPath, slotPath) {
+    const file = this.sidecarFileFor(pdfPath, slotPath);
+    if (!file) return null;
+    try {
+      const sidecar = await this.read(file);
+      return sidecar.source.path === pdfPath.replace(/\\/g, "/") ? file : null;
+    } catch (error) {
+      if (error instanceof PdfSidecarFormatError || error instanceof SyntaxError) return null;
+      throw error;
+    }
   }
   /** Best-effort metadata refresh so the sidecar records its PDF's path. */
   async recordSourcePath(file, pdfPath) {
