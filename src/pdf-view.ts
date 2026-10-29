@@ -242,6 +242,7 @@ export class PdfInkView extends InkWritingView {
   async onClose(): Promise<void> {
     this.disposeZoomHud();
     this.closePageOptionsMenu();
+    this.clearFastPagingRail();
     this.finishPointerInput(false);
     this.clearSelection();
     this.closeLassoSettings();
@@ -850,7 +851,10 @@ export class PdfInkView extends InkWritingView {
     });
     if (this.railCount) this.railCount.textContent = this.pageManagement
       ? `${this.selectedPageIds.size} selected` : `${this.noteIndex + 1} / ${count}`;
-    this.thumbButtons.get(this.noteIndex)?.scrollIntoView?.({ block: "nearest" });
+    // Fast paging keeps the current page under the user's eye: center the
+    // active thumb instead of the usual nearest-visibility nudge.
+    if (this.isFastPagingRailOpen()) this.followWheelPageThumb();
+    else this.thumbButtons.get(this.noteIndex)?.scrollIntoView?.({ block: "nearest" });
     this.evictDistantThumbnails();
     this.paintVisibleThumbnails();
     this.scheduleSwipeThumbnailPaint();
@@ -869,6 +873,22 @@ export class PdfInkView extends InkWritingView {
       }
     };
     window.setTimeout(paint, SWIPE_PREVIEW_IDLE_DELAY_MS);
+  }
+
+  /** Fast paging borrows a collapsed rail: expand like the toolbar toggle
+   *  (repaint the revealed range after the transition), remembering to hand
+   *  it back afterwards. A rail the user already expanded stays open. */
+  protected onFastPagingRailExpanded(): void {
+    if (!this.root?.hasClass("ink-rail-hidden")) return;
+    this.fastPagingRailBorrowed = true;
+    this.root.removeClass("ink-rail-hidden");
+    window.setTimeout(() => this.paintVisibleThumbnails(), RAIL_REVEAL_DELAY_MS);
+  }
+
+  protected onFastPagingRailCollapsed(): void {
+    if (!this.fastPagingRailBorrowed) return;
+    this.fastPagingRailBorrowed = false;
+    this.root?.addClass("ink-rail-hidden");
   }
 
   private rebuildRailButtons(count: number): void {

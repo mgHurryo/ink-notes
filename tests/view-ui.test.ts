@@ -1059,6 +1059,41 @@ describe("page rail thumbnails and resizing", () => {
     expect(window.localStorage.getItem("ink-notes-page-rail-width")).toBe("150");
   });
 
+  it("centers the active thumb through rail rebuilds while a fast paging burst holds the rail open", () => {
+    const internal = view as unknown as { addPage(): void; renderPageRail(): void; fastPagingRail: boolean };
+    internal.addPage();
+    button("Pages").click();   // expand so the thumbs exist in a visible rail
+    const rail = document.querySelector<HTMLElement>(".ink-page-rail")!;
+    let railTop = 0;
+    Object.defineProperties(rail, {
+      clientHeight: { configurable: true, value: 600 },
+      scrollHeight: { configurable: true, value: 3000 },
+      scrollTop: { configurable: true, get: () => railTop, set: (value: number) => { railTop = value; } },
+    });
+    // renderPageRail rebuilds the thumbs every time, so the active thumb's
+    // box is pinned at the prototype level; the rail's own rect stays direct.
+    const originalRect = HTMLElement.prototype.getBoundingClientRect;
+    HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
+      if (this === rail) return new DOMRect(0, 0, 176, 600);
+      if (this.classList.contains("ink-page-thumb") && this.classList.contains("is-active")) return new DOMRect(0, 2400, 150, 120);
+      return originalRect.call(this);
+    };
+    try {
+      // Without the burst the rebuild keeps the usual nearest-visibility
+      // nudge (jsdom has no scrollIntoView: no scroll movement at all).
+      internal.renderPageRail();
+      expect(railTop).toBe(0);
+      // While the burst holds the rail open the rebuild centers the page the
+      // user is flipping through.
+      internal.fastPagingRail = true;
+      internal.renderPageRail();
+      expect(railTop).toBe(2160);
+      internal.fastPagingRail = false;
+    } finally {
+      HTMLElement.prototype.getBoundingClientRect = originalRect;
+    }
+  });
+
   it("applies a stored rail width on open and ignores out-of-range values", async () => {
     window.localStorage.setItem("ink-notes-page-rail-width", "300");
     document.body.innerHTML = '<div id="host"><div></div><main></main></div>';

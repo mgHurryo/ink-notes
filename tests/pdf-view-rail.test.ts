@@ -1027,6 +1027,32 @@ describe("pdf page preview rail", () => {
     await view.onClose();
   });
 
+  it("centers the active thumb through rail refreshes while a fast paging burst holds the rail open", async () => {
+    const { view, internal } = await setup(3);
+    internal.renderAll();
+    const rail = document.querySelector<HTMLElement>(".ink-pdf-view .ink-page-rail")!;
+    const thumb = thumbAt(0);
+    rail.getBoundingClientRect = () => new DOMRect(0, 0, 176, 600);
+    thumb.getBoundingClientRect = () => new DOMRect(0, 2400, 150, 120);
+    let railTop = 0;
+    Object.defineProperties(rail, {
+      clientHeight: { configurable: true, value: 600 },
+      scrollHeight: { configurable: true, value: 3000 },
+      scrollTop: { configurable: true, get: () => railTop, set: (value: number) => { railTop = value; } },
+    });
+    // Without the burst the refresh keeps the usual nearest-visibility nudge
+    // (jsdom has no scrollIntoView: no scroll movement at all).
+    internal.renderAll();
+    expect(railTop).toBe(0);
+    // While the burst holds the rail open the refresh centers the page the
+    // user is flipping through.
+    (internal as unknown as { fastPagingRail: boolean }).fastPagingRail = true;
+    internal.renderAll();
+    expect(railTop).toBe(2160);
+    (internal as unknown as { fastPagingRail: boolean }).fastPagingRail = false;
+    await view.onClose();
+  });
+
   it("is always present with one thumbnail per note page and highlights the current page", async () => {
     const { view, internal } = await setup(3);
     internal.renderAll();
