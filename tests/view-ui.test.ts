@@ -1094,6 +1094,25 @@ describe("page rail thumbnails and resizing", () => {
     }
   });
 
+  it("keeps a manually re-expanded rail open when the fast paging burst returns it", () => {
+    const hooks = view as unknown as { onFastPagingRailExpanded(): void; onFastPagingRailCollapsed(): void };
+    const hidden = () => document.querySelector<HTMLElement>(".ink-notes-view")!.classList.contains("ink-rail-hidden");
+    // Contract guard: a borrow the user never touched is still handed back.
+    hooks.onFastPagingRailExpanded();
+    expect(hidden()).toBe(false);
+    hooks.onFastPagingRailCollapsed();
+    expect(hidden()).toBe(true);
+    // During the burst the user toggles the rail closed and open again; the
+    // silent collapse after the burst must honor that last explicit state.
+    hooks.onFastPagingRailExpanded();
+    button("Pages").click();
+    expect(hidden()).toBe(true);
+    button("Pages").click();
+    expect(hidden()).toBe(false);
+    hooks.onFastPagingRailCollapsed();
+    expect(hidden()).toBe(false);
+  });
+
   it("applies a stored rail width on open and ignores out-of-range values", async () => {
     window.localStorage.setItem("ink-notes-page-rail-width", "300");
     document.body.innerHTML = '<div id="host"><div></div><main></main></div>';
