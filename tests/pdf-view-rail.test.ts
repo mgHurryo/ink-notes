@@ -1113,6 +1113,29 @@ describe("pdf page preview rail", () => {
     await view.onClose();
   });
 
+  it("keeps a manually re-expanded rail open when the fast paging burst returns it", async () => {
+    const { view, internal } = await setup(3);
+    internal.renderAll();
+    const hooks = internal as unknown as { onFastPagingRailExpanded(): void; onFastPagingRailCollapsed(): void };
+    const hidden = () => document.querySelector<HTMLElement>(".ink-pdf-view")!.classList.contains("ink-rail-hidden");
+    // Contract guard: a borrow the user never touched is still handed back.
+    hooks.onFastPagingRailExpanded();
+    expect(hidden()).toBe(false);
+    hooks.onFastPagingRailCollapsed();
+    expect(hidden()).toBe(true);
+    // During the burst the user toggles the rail closed and open again; the
+    // silent collapse after the burst must honor that last explicit state.
+    hooks.onFastPagingRailExpanded();
+    const toggle = document.querySelector<HTMLButtonElement>('.ink-pdf-view button[aria-label="Pages"]')!;
+    toggle.click();
+    expect(hidden()).toBe(true);
+    toggle.click();
+    expect(hidden()).toBe(false);
+    hooks.onFastPagingRailCollapsed();
+    expect(hidden()).toBe(false);
+    await view.onClose();
+  });
+
   it("is always present with one thumbnail per note page and highlights the current page", async () => {
     const { view, internal } = await setup(3);
     internal.renderAll();

@@ -246,6 +246,9 @@ export class InkView extends InkWritingView {
     const toggle = this.addIconButton(navigation, "panel-left", "Pages", () => {
       const hidden = !this.root.hasClass("ink-rail-hidden");
       this.root.toggleClass("ink-rail-hidden", hidden);
+      // An explicit toggle reclaims the rail, so a pending fast-paging burst
+      // must not hand it back to the state the user just overrode.
+      this.fastPagingRailBorrowed = false;
       toggle.setAttribute("aria-pressed", String(!hidden));
       this.resizeCanvas();
       // Thumbnails skipped painting while the rail was collapsed (zero

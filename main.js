@@ -32708,6 +32708,7 @@ var InkView = class extends InkWritingView {
     const toggle = this.addIconButton(navigation, "panel-left", "Pages", () => {
       const hidden = !this.root.hasClass("ink-rail-hidden");
       this.root.toggleClass("ink-rail-hidden", hidden);
+      this.fastPagingRailBorrowed = false;
       toggle.setAttribute("aria-pressed", String(!hidden));
       this.resizeCanvas();
       if (!hidden) this.scheduleRailThumbnailRefresh();
@@ -35656,6 +35657,7 @@ var PdfInkView = class extends InkWritingView {
       var _a2, _b2;
       const hidden = !((_a2 = this.root) == null ? void 0 : _a2.hasClass("ink-rail-hidden"));
       (_b2 = this.root) == null ? void 0 : _b2.toggleClass("ink-rail-hidden", hidden);
+      this.fastPagingRailBorrowed = false;
       toggle.setAttribute("aria-pressed", String(!hidden));
       if (!hidden) window.setTimeout(() => this.paintVisibleThumbnails(), RAIL_REVEAL_DELAY_MS);
     });
