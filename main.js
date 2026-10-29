@@ -27223,7 +27223,7 @@ function boundedPreviewStroke(stroke) {
 }
 function restoredStroke(stroke) {
   const now = Date.now();
-  return { ...cloneStroke(stroke), id: newId("stroke"), createdAt: now, updatedAt: now };
+  return { ...cloneStroke(stroke), id: newId("stroke"), updatedAt: now };
 }
 function translatePoints(points, dx, dy) {
   return points.map((point) => ({ ...point, x: point.x + dx, y: point.y + dy, t: Date.now() }));
@@ -29592,7 +29592,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
       for (const stroke of removed) {
         const segments = eraseStrokeSegments(stroke, point, radius, mode, this.canvasLogicalWidth, this.canvasLogicalHeight);
         for (const points of segments) {
-          const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, createdAt: now, updatedAt: now };
+          const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, updatedAt: now };
           page.strokes.push(replacement);
           replacements.push(replacement);
           const owner = (_c = this.stickyInput) == null ? void 0 : _c.owners.get(stroke.id);
@@ -30535,7 +30535,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
       if (segments === null) continue;
       removed.push(stroke);
       for (const points of segments) {
-        const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, createdAt: now, updatedAt: now };
+        const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, updatedAt: now };
         replacements.push(replacement);
         if (owner) (_h = this.stickyInput) == null ? void 0 : _h.owners.set(replacement.id, owner);
       }
