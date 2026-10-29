@@ -186,6 +186,29 @@ describe("InkWorkerCore persistence mirror", () => {
     expect(moved.points[0]).toMatchObject({ x: 0.35, y: 0.1 });
   });
 
+  it("keeps index-addressed translations on the mirror after an identical external merge", async () => {
+    const core = new InkWorkerCore({ offscreenCanvas: false, imageBitmap: false });
+    const notebook = createNotebook();
+    const page = notebook.pages[0];
+    page.strokes.push({
+      id: "move", pageId: page.id, tool: "pen", color: "#000", width: 3, opacity: 1,
+      points: [{ x: 0.1, y: 0.2, pressure: 0.5, t: 1 }], createdAt: 1, updatedAt: 1,
+    });
+    await response(core, request({ type: "initialize-notebook", notebook, revision: 0 }));
+    // Identical content: the merge reports no change and the mirror is still
+    // replaced by a fresh copy, so the indexes must be rebuilt against it.
+    expect(await response(core, request({ type: "merge-external", raw: JSON.stringify(notebook) }, 2, 0)))
+      .toMatchObject({ type: "external-merged", notebook: undefined, notebookRevision: 0 });
+    await response(core, request({ type: "apply-operation", revision: 1, operation: {
+      type: "translate-strokes", pageId: page.id, strokeIds: ["move"], dx: 0.25, dy: 0,
+      pageUpdatedAt: 3, notebookUpdatedAt: 3,
+    } }, 3));
+    const prepared = await response(core, request({ type: "prepare-save", raw: JSON.stringify(createNotebook()), minimumRevision: 1 }, 4));
+    if (prepared.type !== "save-prepared") throw new Error("save was not prepared");
+    const moved = parseStoredJson(prepared.content).pages.find((candidate: { id: string }) => candidate.id === page.id).strokes[0];
+    expect(moved.points[0].x).toBeCloseTo(0.35, 6);
+  });
+
   it("keeps page order, deletion tombstones, and history restoration consistent", async () => {
     const core = new InkWorkerCore({ offscreenCanvas: false, imageBitmap: false });
     const notebook = createNotebook();
