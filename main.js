@@ -27373,7 +27373,7 @@ function restoredStroke(stroke) {
   return { ...cloneStroke(stroke), id: newId("stroke"), updatedAt: now };
 }
 function translatePoints(points, dx, dy) {
-  return points.map((point) => ({ ...point, x: point.x + dx, y: point.y + dy, t: Date.now() }));
+  return points.map((point) => ({ ...point, x: point.x + dx, y: point.y + dy }));
 }
 function selectionBounds(strokes) {
   return boundsForPointSets(strokes.map((stroke) => stroke.points));

@@ -487,7 +487,10 @@ function restoredStroke(stroke: InkStroke): InkStroke {
 }
 
 export function translatePoints(points: InkPoint[], dx: number, dy: number): InkPoint[] {
-  return points.map((point) => ({ ...point, x: point.x + dx, y: point.y + dy, t: Date.now() }));
+  // Translation is an isometry: keep the sampled timestamps so the speed
+  // dynamics channel still sees the original writing pace after a lasso move
+  // (the spread operator already carries `t` over).
+  return points.map((point) => ({ ...point, x: point.x + dx, y: point.y + dy }));
 }
 
 export function selectionBounds(strokes: InkStroke[]): { minX: number; minY: number; maxX: number; maxY: number } | null {
