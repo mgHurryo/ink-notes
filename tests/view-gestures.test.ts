@@ -29,6 +29,7 @@ function setup(viewportWidth = 800) {
   view.pageScroller = {
     clientWidth: viewportWidth,
     clientHeight: viewportHeight,
+    classList: { add: () => {}, remove: () => {} },
     get scrollWidth() { return width * view.zoom + horizontalGutter * 2; },
     get scrollHeight() { return height * view.zoom + 48; },
     getBoundingClientRect: () => ({ left: 90, top: 120 }),
@@ -40,6 +41,7 @@ function setup(viewportWidth = 800) {
     set scrollTop(value: number) { top = Math.max(0, Math.min(height * view.zoom + 48 - viewportHeight, value)); },
   };
   view.pageElement = {
+    hasPointerCapture: () => false,
     getBoundingClientRect: () => ({
       left: 90 + 24
         + Math.max(0, (availableWidth - width * view.zoom - horizontalGutter * 2) / 2)
@@ -346,6 +348,30 @@ describe("page touch navigation", () => {
     view.onTouchMove(touchEvent([[1, 300, 400]]));
     expect(view.swipeSettle).toHaveBeenCalledWith(0);
     expect(view.touchGesture).toBeNull();
+  });
+
+  it("does not settle a flip from a held finger's touchend while a pen stroke is live", () => {
+    // touchend only checks that the dragging finger left the touch list; it
+    // never looked at the live pen stroke, so the flip decided here forced
+    // finishPointerInput to commit the stroke onto the pre-flip page while
+    // the view had already moved on — the ink appeared to vanish.
+    const { view } = setup();
+    view.swipeSettle = vi.fn();
+    view.touchGesture = { ids: [1], axis: "x", dragX: -400 };
+    view.activePointerId = 9;
+    view.onTouchStart({ ...touchEvent([]), type: "touchend", timeStamp: 4000 });
+    expect(view.swipeSettle).toHaveBeenCalledWith(0, -400);
+  });
+
+  it("springs a desktop swipe pan back instead of flipping while a pen stroke is live", () => {
+    // Middle-button / Space pans only check activePointerId when they begin;
+    // a pen landing afterwards must not let the mouseup flip the page.
+    const { view } = setup();
+    view.swipeSettle = vi.fn();
+    view.desktopPan = { pointerId: 2, x: 700, y: 300, startX: 300, startY: 300, mode: "swipe" };
+    view.activePointerId = 9;
+    (view as unknown as { endDesktopPan: (commit: boolean) => void }).endDesktopPan(true);
+    expect(view.swipeSettle).toHaveBeenCalledWith(0, 400);
   });
 
   it("allows a zoomed flip drag only from the scroll edge the drag heads for", () => {
