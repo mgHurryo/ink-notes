@@ -35356,17 +35356,20 @@ var PdfInkView = class extends InkWritingView {
   /**
    * Whether an occupied sidecar slot really belongs to a case twin of this
    * PDF: the recorded path equals this one ignoring case but not exactly, and
-   * vault.adapter.exists confirms both spellings. When the probe cannot
-   * confirm the twin (twin absent, or paths equal — a genuinely replaced
-   * PDF), callers keep the strict changed-revision read-only behavior.
+   * the vault index holds the recorded spelling as a file distinct from this
+   * one. The index — not the filesystem — is the signal: on case-insensitive
+   * disks (NTFS/APFS) both spellings hit the same physical file, so an
+   * adapter.exists probe would "confirm" a twin that does not exist and
+   * wrongly fork the twin's slot. When the probe cannot confirm the twin
+   * (twin absent from the index, or paths equal — a genuinely replaced PDF),
+   * callers keep the strict changed-revision read-only behavior.
    */
   async isCaseTwinCollision(sidecar, file) {
     const recorded = sidecar.source.path.replace(/\\/g, "/");
     if (recorded === file.path || recorded.toLowerCase() !== file.path.toLowerCase()) return false;
-    const adapter = this.app.vault.adapter;
-    if (!adapter) return false;
     try {
-      return await adapter.exists(recorded) && await adapter.exists(file.path);
+      const twin = this.app.vault.getAbstractFileByPath(recorded);
+      return twin instanceof import_obsidian12.TFile && twin !== file;
     } catch (e) {
       return false;
     }

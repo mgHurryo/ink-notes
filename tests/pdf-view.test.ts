@@ -1,6 +1,6 @@
 import { parseStoredJson, serializeStoredJson } from "../src/storage-codec";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { TFile, WorkspaceLeaf } from "obsidian";
+import { TFile, type WorkspaceLeaf } from "obsidian";
 import type { NotebookOperation } from "../src/worker-protocol";
 import type { InkPoint, InkStroke } from "../src/model";
 import { InkWorkerService } from "../src/worker-service";
@@ -845,14 +845,20 @@ describe("case-twin sidecar collision", () => {
 
   /** The case twin's foreign sidecar occupies the legacy (lowercased) slot;
    *  with `disambiguated`, our own matching sidecar sits in the exact-case
-   *  slot (steady state after a resolved collision). `existsPaths` models
-   *  which PDF spellings the vault adapter answers for. */
-  function twinSetup(existsPaths: string[], disambiguated = false) {
+   *  slot (steady state after a resolved collision). `indexedPaths` models
+   *  which spellings the vault index holds as files besides the open PDF —
+   *  the twin probe's signal source. adapter.exists defaults to answering
+   *  for both spellings, which every real disk does (distinct files on ext4,
+   *  one shared physical file on NTFS/APFS); `existsPaths` narrows it to
+   *  model a case-sensitive disk. */
+  function twinSetup(indexedPaths: string[], options: { existsPaths?: string[]; disambiguated?: boolean } = {}) {
+    const { existsPaths = [TWIN_PATH, PDF_PATH], disambiguated } = options;
     const harness = setup();
     const foreign = createSidecar(TWIN_PATH, FOREIGN_FINGERPRINT, SOURCE_PAGES);
     const foreignFile = { path: LEGACY_SLOT } as TFile;
     const ours = createSidecar(PDF_PATH, FINGERPRINT, SOURCE_PAGES);
     const oursFile = { path: DISAMBIGUATED_SLOT } as TFile;
+    const twinFile = Object.assign(new TFile(), { path: TWIN_PATH });
     harness.store.sidecarFileFor.mockImplementation((_pdfPath: string, slotPath?: string) =>
       slotPath === DISAMBIGUATED_SLOT && disambiguated ? oursFile
         : slotPath === undefined || slotPath === LEGACY_SLOT ? foreignFile : null);
@@ -862,6 +868,8 @@ describe("case-twin sidecar collision", () => {
     harness.store.createFor.mockImplementation(async (_pdf: TFile, _fp: unknown, _pages: unknown, slotPath?: string) =>
       ({ path: slotPath ?? LEGACY_SLOT } as TFile));
     Object.assign(harness.internal.app.vault as object, {
+      getAbstractFileByPath: vi.fn((path: string) =>
+        path === PDF_PATH ? harness.view.file : indexedPaths.includes(path) ? twinFile : null),
       adapter: { exists: vi.fn(async (path: string) => existsPaths.includes(path)) },
     });
     return { ...harness, foreign, foreignFile, ours, oursFile };
@@ -877,7 +885,7 @@ describe("case-twin sidecar collision", () => {
   });
 
   it("reopens into an existing disambiguated slot without re-creating", async () => {
-    const { view, internal, store } = twinSetup([TWIN_PATH, PDF_PATH], true);
+    const { view, internal, store } = twinSetup([TWIN_PATH, PDF_PATH], { disambiguated: true });
     await internal.resolveSidecar(view.file!, FINGERPRINT, internal.loadGeneration);
     expect(internal.writeBlockedReason).toBeNull();
     expect(internal.sidecar.source.path).toBe(PDF_PATH);
@@ -886,6 +894,22 @@ describe("case-twin sidecar collision", () => {
   });
 
   it("keeps the read-only changed-revision path when the twin file does not exist", async () => {
+    // Case-sensitive disk: the twin spelling is no real file, so it is absent
+    // from the index and adapter.exists only answers for the open PDF.
+    const { view, internal, store, foreignFile } = twinSetup([PDF_PATH], { existsPaths: [PDF_PATH] });
+    await internal.resolveSidecar(view.file!, FINGERPRINT, internal.loadGeneration);
+    expect(internal.writeBlockedReason).toBe(CHANGED_MESSAGE);
+    expect(internal.sidecar.source.sha256).toBe(FOREIGN_FINGERPRINT.sha256);
+    expect(internal.sidecarFile).toBe(foreignFile);
+    expect(store.createFor).not.toHaveBeenCalled();
+  });
+
+  it("keeps the read-only changed-revision path on case-insensitive disks after a case-only rename", async () => {
+    // NTFS/APFS drift: the PDF was renamed case-only outside the app, so
+    // adapter.exists answers for both spellings (same physical file) while
+    // the vault index holds only the new spelling. The old exists probe read
+    // this as a twin and forked an empty disambiguated slot, silently
+    // dropping the recorded ink; only the index can veto that.
     const { view, internal, store, foreignFile } = twinSetup([PDF_PATH]);
     await internal.resolveSidecar(view.file!, FINGERPRINT, internal.loadGeneration);
     expect(internal.writeBlockedReason).toBe(CHANGED_MESSAGE);
@@ -895,7 +919,7 @@ describe("case-twin sidecar collision", () => {
   });
 
   it("keeps the read-only path when the recorded path matches exactly", async () => {
-    const harness = twinSetup([PDF_PATH, PDF_PATH]);
+    const harness = twinSetup([PDF_PATH]);
     // Same exact path, different bytes: a genuinely replaced PDF, not a twin.
     const replaced = createSidecar(PDF_PATH, FOREIGN_FINGERPRINT, SOURCE_PAGES);
     harness.store.readRaw.mockImplementation(async () => serializeSidecar(replaced));
