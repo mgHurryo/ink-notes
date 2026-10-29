@@ -31368,7 +31368,7 @@ var StrokeIndex = class {
       return [];
     }
     if (previous) this.removeEntry(previous);
-    const padding = stroke.width * 0.7 + BLEED;
+    const padding = stroke.width * (this.width / STROKE_WIDTH_REFERENCE) * 0.7 + BLEED;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const p of stroke.points) {
       minX = Math.min(minX, p.x * this.width);
