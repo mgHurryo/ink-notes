@@ -19,7 +19,7 @@ export function filterStickyEntries(entries: StickySearchEntry[], query: string)
 
 /** Derive the index from authoritative files on demand; do not maintain another database. */
 export async function collectStickyEntries(app: App, signal: AbortSignal): Promise<{ entries: StickySearchEntry[]; errors: string[] }> {
-  const entries: StickySearchEntry[] = [], errors: string[] = [];
+  const byId = new Map<string, StickySearchEntry>(), errors: string[] = [];
   for (const file of app.vault.getFiles()) {
     if (signal.aborted) break;
     const pdf = file.parent?.path === PDF_INK_FOLDER && file.name.endsWith(`.${PDF_SIDECAR_EXTENSION}`);
@@ -31,10 +31,16 @@ export async function collectStickyEntries(app: App, signal: AbortSignal): Promi
       if (!sidecar && (raw.schema !== 2 || !Array.isArray(raw.pages))) throw new Error("Invalid notebook format");
       const notebook = sidecar?.notebook ?? normalizeNotebook(raw), path = sidecar?.source.path ?? file.path;
       if (sidecar && !(app.vault.getAbstractFileByPath(path) instanceof TFile)) continue;
-      for (const page of notebook.pages) for (const note of page.stickyNotes ?? []) entries.push({ file: path, pageId: page.id, pageTitle: page.title, note: cloneSticky(note) });
+      for (const page of notebook.pages) for (const note of page.stickyNotes ?? []) {
+        const entry: StickySearchEntry = { file: path, pageId: page.id, pageTitle: page.title, note: cloneSticky(note) };
+        // Conflict copies inherit the same PDF path, so one note can be indexed twice;
+        // keep the newest copy, matching liveStickyEntries in main.ts.
+        const key = `${path}\0${page.id}\0${note.id}`, previous = byId.get(key);
+        if (!previous || entry.note.updatedAt > previous.note.updatedAt) byId.set(key, entry);
+      }
     } catch (error) { errors.push(`${file.path}: ${error instanceof Error ? error.message : String(error)}`); }
   }
-  return { entries, errors };
+  return { entries: [...byId.values()], errors };
 }
 
 export class StickySearchModal extends Modal {

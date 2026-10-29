@@ -36751,7 +36751,7 @@ function filterStickyEntries(entries, query) {
 }
 async function collectStickyEntries(app, signal) {
   var _a, _b, _c, _d;
-  const entries = [], errors = [];
+  const byId = /* @__PURE__ */ new Map(), errors = [];
   for (const file of app.vault.getFiles()) {
     if (signal.aborted) break;
     const pdf = ((_a = file.parent) == null ? void 0 : _a.path) === PDF_INK_FOLDER && file.name.endsWith(`.${PDF_SIDECAR_EXTENSION}`);
@@ -36763,12 +36763,16 @@ async function collectStickyEntries(app, signal) {
       if (!sidecar && (raw.schema !== 2 || !Array.isArray(raw.pages))) throw new Error("Invalid notebook format");
       const notebook = (_b = sidecar == null ? void 0 : sidecar.notebook) != null ? _b : normalizeNotebook(raw), path = (_c = sidecar == null ? void 0 : sidecar.source.path) != null ? _c : file.path;
       if (sidecar && !(app.vault.getAbstractFileByPath(path) instanceof import_obsidian13.TFile)) continue;
-      for (const page of notebook.pages) for (const note of (_d = page.stickyNotes) != null ? _d : []) entries.push({ file: path, pageId: page.id, pageTitle: page.title, note: cloneSticky(note) });
+      for (const page of notebook.pages) for (const note of (_d = page.stickyNotes) != null ? _d : []) {
+        const entry = { file: path, pageId: page.id, pageTitle: page.title, note: cloneSticky(note) };
+        const key = `${path}\0${page.id}\0${note.id}`, previous = byId.get(key);
+        if (!previous || entry.note.updatedAt > previous.note.updatedAt) byId.set(key, entry);
+      }
     } catch (error) {
       errors.push(`${file.path}: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
-  return { entries, errors };
+  return { entries: [...byId.values()], errors };
 }
 var StickySearchModal = class extends import_obsidian13.Modal {
   constructor(app, openNote, live, handwriting) {

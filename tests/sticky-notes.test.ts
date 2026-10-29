@@ -212,6 +212,25 @@ describe("sticky note persistence and search", () => {
     const controller = new AbortController(); controller.abort();
     expect((await collectStickyEntries(app, controller.signal)).entries).toEqual([]);
   });
+  it("indexes each PDF note once when a conflict copy mirrors the same sidecar", async () => {
+    const app = imageVaultApp();
+    await app.vault.createBinary("Paper.pdf", new ArrayBuffer(2));
+    const sidecar = createSidecar("Paper.pdf", { sha256: "a".repeat(64), byteLength: 2 }, [{ width: 600, height: 800, rotation: 0 }]);
+    const shared = { ...note(sidecar.notePages[0].id), title: "PDF note", text: "exam review" };
+    sidecar.notebook.pages[0].stickyNotes = [{ ...shared, updatedAt: 2 }];
+    await app.vault.create(`${PDF_INK_FOLDER}/Paper.pdfink.json`, serializeStoredJson(sidecar));
+    const conflict = structuredClone(sidecar);
+    conflict.notebook.pages[0].stickyNotes = [{ ...shared, updatedAt: 1 }];
+    await app.vault.create(`${PDF_INK_FOLDER}/Paper.conflict-1700000000000.pdfink.json`, serializeStoredJson(conflict));
+    // The preview vault supplies no parent; use the host's parent metadata as Obsidian does.
+    for (const path of [`${PDF_INK_FOLDER}/Paper.pdfink.json`, `${PDF_INK_FOLDER}/Paper.conflict-1700000000000.pdfink.json`])
+      Object.assign(app.vault.getAbstractFileByPath(path)!, { parent: { path: PDF_INK_FOLDER } });
+    const result = await collectStickyEntries(app, new AbortController().signal);
+    const paper = result.entries.filter((entry) => entry.file === "Paper.pdf");
+    expect(paper).toHaveLength(1);
+    expect(paper[0].note.updatedAt).toBe(2);
+    expect(result.errors).toEqual([]);
+  });
   it("encodes stable vault/file/page/note IDs in external links and deep-clones recognizer inputs", () => {
     const url = new URL(stickyLink("笔记/#?.ink", "p #?", "n#?", "My vault"));
     expect(url.searchParams.get("file")).toBe("笔记/#?.ink"); expect(url.searchParams.get("page")).toBe("p #?");
