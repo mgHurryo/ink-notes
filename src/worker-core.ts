@@ -283,10 +283,12 @@ export class InkWorkerCore {
       const merged = mergeNotebooks(parseNotebook(request.raw), session.notebook);
       const changed = JSON.stringify(merged) !== JSON.stringify(session.notebook);
       session.notebook = normalizeNotebook(merged);
-      if (changed) {
-        session.indexes = workerIndexes(session.notebook);
-        session.outlineCache.clear();
-      }
+      // Rebuild unconditionally like commit-save: the assignment above swaps in
+      // a fresh object graph even when the content is unchanged, and stale
+      // indexes would send index-first operations (append/complete/translate)
+      // into the orphaned graph, silently dropping the edits from the next save.
+      session.indexes = workerIndexes(session.notebook);
+      session.outlineCache.clear();
       return this.response(request, { type: "external-merged", notebook: changed ? session.notebook : undefined, revision: session.revision });
     }
     this.sessions.delete(request.sessionId);
