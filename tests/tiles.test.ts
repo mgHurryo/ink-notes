@@ -487,7 +487,11 @@ describe("interactive tile commits", () => {
     expect(onComplete).toHaveBeenCalledWith(false);
     expect(renderer.inkCommit).toBeNull();
     expect(renderer.heldCells.has("1/0:0")).toBe(false);
-    expect(renderer.schedule).toHaveBeenCalledOnce();
+    // Settling the stranded commit also compensates the refine work that
+    // beginInput() dropped while the commit was live, so schedule() runs for
+    // the rebuilt queue in addition to the settle's own unblock.
+    expect(renderer.schedule).toHaveBeenCalled();
+    expect(renderer.jobs).toEqual([expect.objectContaining({ cell: "0:0", density: 3, priority: "visible" })]);
     vi.unstubAllGlobals();
   });
 
@@ -585,6 +589,64 @@ describe("interactive tile commits", () => {
 
     // pauseInkCommit() aborts the commit; resumeInkCommit() must settle the
     // orphaned cells instead of leaving stale rasters mounted.
+    renderer.inkCommit = null;
+    renderer.resumeInkCommit();
+    expect(renderer.jobs).toEqual([expect.objectContaining({ cell: "0:0", density: 2, priority: "visible" })]);
+  });
+
+  it("keeps the dropped-refine flag when an interactive commit is still live at resume", () => {
+    const host = { children: [] };
+    const state = { id: 1, index: { width: 256, height: 256, revisions: new Map([["0:0", 4]]), hasCell: () => true } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, {
+      active: state, disposed: false, host, density: 2, visible: new Set(["0:0"]),
+      viewport: { x: 0, y: 0, width: 100, height: 100 }, jobs: [], heldCells: new Set(),
+      cache: new Map(), pixels: 0, get: vi.fn(() => undefined), schedule: vi.fn(), scheduleInkCommit: vi.fn(),
+      backend: null, renderGeneration: 0, frame: null, inkFrame: null, pendingTiles: new Map(),
+      inkCommit: { state, strokes: [], cells: ["0:0"], clearCells: [],
+        jobs: [{ state, cell: "0:0", density: 2, priority: "visible" }], tiles: [],
+        onComplete: vi.fn(), invalid: false, generation: 0 },
+      inkCommitPaused: false, droppedRefine: false,
+    });
+
+    renderer.beginInput();
+    expect(renderer.droppedRefine).toBe(true);
+
+    // An eraser gesture that erased nothing leaves the previous interactive
+    // commit in flight: resume must keep the flag instead of swallowing it,
+    // and finishInkCommit() compensates once the commit settles.
+    renderer.resumeInkCommit();
+    expect(renderer.droppedRefine).toBe(true);
+    expect(renderer.jobs).toEqual([]);
+
+    renderer.finishInkCommit(true);
+    expect(renderer.droppedRefine).toBe(false);
+    expect(renderer.jobs).toEqual([expect.objectContaining({ cell: "0:0", density: 2, priority: "visible" })]);
+  });
+
+  it("still rebuilds at resume when the dropped commit was aborted under pause", () => {
+    const host = { children: [] };
+    const state = { id: 1, index: { width: 256, height: 256, revisions: new Map([["0:0", 4]]), hasCell: () => true } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, {
+      active: state, disposed: false, host, density: 2, visible: new Set(["0:0"]),
+      viewport: { x: 0, y: 0, width: 100, height: 100 }, jobs: [], heldCells: new Set(),
+      cache: new Map(), pixels: 0, get: vi.fn(() => undefined), schedule: vi.fn(), scheduleInkCommit: vi.fn(),
+      backend: null, renderGeneration: 0, frame: null, inkFrame: null, pendingTiles: new Map(),
+      inkCommit: { state, strokes: [], cells: ["0:0"], clearCells: [],
+        jobs: [{ state, cell: "0:0", density: 2, priority: "visible" }], tiles: [],
+        onComplete: vi.fn(), invalid: false, generation: 0 },
+      inkCommitPaused: false, droppedRefine: false,
+    });
+
+    renderer.beginInput();
+    // The pen path pauses before aborting: finishInkCommit() must leave the
+    // flag for the gesture's own resume instead of consuming it mid-abort.
+    renderer.inkCommitPaused = true;
+    renderer.abortInkCommit(true);
+    expect(renderer.droppedRefine).toBe(true);
+
+    renderer.inkCommitPaused = false;
     renderer.inkCommit = null;
     renderer.resumeInkCommit();
     expect(renderer.jobs).toEqual([expect.objectContaining({ cell: "0:0", density: 2, priority: "visible" })]);
