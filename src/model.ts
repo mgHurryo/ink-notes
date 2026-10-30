@@ -132,14 +132,24 @@ export function normalizeNotebook(value: unknown): InkNotebook {
   const raw = value as Partial<InkNotebook>;
   const pages = Array.isArray(raw.pages) ? raw.pages : [];
   const normalizedPages = pages.map(normalizePage).filter((page): page is InkPage => page !== null);
-  const pageIds = new Set(normalizedPages.map((page) => page.id));
-  const legacyOrder = [...normalizedPages].sort((a, b) => a.createdAt - b.createdAt).map((page) => page.id);
+  // External rewrites and manual sync-conflict merges can leave two entries
+  // with the same page id in one file. Folding them with mergePages keeps
+  // every copy's content; without this, the byId map below would silently
+  // keep only the last entry and the next save would make that loss final.
+  const mergedById = new Map<string, InkPage>();
+  for (const page of normalizedPages) {
+    const existing = mergedById.get(page.id);
+    mergedById.set(page.id, existing ? mergePages(existing, page) : page);
+  }
+  const dedupedPages = [...mergedById.values()];
+  const pageIds = new Set(dedupedPages.map((page) => page.id));
+  const legacyOrder = [...dedupedPages].sort((a, b) => a.createdAt - b.createdAt).map((page) => page.id);
   const requestedOrder = Array.isArray(raw.pageOrder) ? raw.pageOrder.filter((id): id is string => typeof id === "string") : legacyOrder;
   const pageOrder = [...new Set([...requestedOrder.filter((id) => pageIds.has(id)), ...legacyOrder.filter((id) => !requestedOrder.includes(id))])];
   const deletedPages = raw.deletedPages && typeof raw.deletedPages === "object"
     ? Object.fromEntries(Object.entries(raw.deletedPages).filter((entry): entry is [string, number] => typeof entry[0] === "string" && typeof entry[1] === "number" && Number.isFinite(entry[1])))
     : {};
-  const visiblePages = normalizedPages.filter((page) => !(page.id in deletedPages));
+  const visiblePages = dedupedPages.filter((page) => !(page.id in deletedPages));
   const visibleIds = new Set(visiblePages.map((page) => page.id));
   const byId = new Map(visiblePages.map((page) => [page.id, page]));
   const orderedPages = pageOrder.map((id) => byId.get(id)).filter((page): page is InkPage => page !== undefined);
