@@ -122,4 +122,25 @@ describe("Ink notebook model", () => {
     const merged = mergeNotebooks(reordered, concurrent);
     expect(merged.pageOrder).toEqual([third.id, added.id, base.pages[0].id, second.id]);
   });
+
+  it("merges duplicate page ids instead of silently dropping one copy", () => {
+    const raw = {
+      pages: [
+        { id: "dup", title: "A", strokes: [{ id: "s1", pageId: "dup", points: [], createdAt: 1, updatedAt: 1 }], createdAt: 1, updatedAt: 100 },
+        { id: "dup", title: "B", strokes: [{ id: "s2", pageId: "dup", points: [], createdAt: 2, updatedAt: 2 }], createdAt: 1, updatedAt: 200 },
+      ],
+      pageOrder: ["dup"],
+    };
+    const notebook = normalizeNotebook(raw);
+    expect(notebook.pages).toHaveLength(1);
+    expect(notebook.pages[0].strokes.map((stroke) => stroke.id)).toEqual(["s1", "s2"]);
+    expect(notebook.pages[0].title).toBe("B");
+    expect(notebook.pageOrder).toEqual(["dup"]);
+    expect(notebook.deletedPages).toEqual({});
+
+    // The next save (NotebookStore.save) re-merges the in-memory result with a
+    // fresh normalize of the still-duplicated file; both copies' strokes must
+    // survive that round-trip.
+    expect(mergeNotebooks(normalizeNotebook(raw), notebook).pages[0].strokes.map((stroke) => stroke.id)).toEqual(["s1", "s2"]);
+  });
 });
