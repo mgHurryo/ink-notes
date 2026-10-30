@@ -4,6 +4,7 @@ import {
   InkNotebook,
   InkPage,
   InkStroke,
+  PageFlag,
   PaperStyle,
   createNotebook,
   mergeNotebooks,
@@ -38,6 +39,13 @@ export {
 } from "./ink-writing";
 import { canvasResolution, drawInkStroke, scaledStroke, STROKE_WIDTH_REFERENCE } from "./rendering";
 import { applyStoredRailWidth, mountRailResizer } from "./rail-resizer";
+import {
+  RailTagFilters,
+  openTagPopover,
+  paintThumbBadges,
+  pageMatchesRailFilters,
+  railFiltersActive,
+} from "./page-tags";
 import { cloneSticky } from "./sticky-model";
 import { BrushPopoverController, BrushSettings } from "./brush-popover";
 import { TileRenderer, cellKeys } from "./tiles";
@@ -106,6 +114,10 @@ export class InkView extends InkWritingView {
   private pendingThumbs = new WeakMap<HTMLCanvasElement, InkPage>();
   private pageManagement = false;
   private selectedPageIds = new Set<string>();
+  /** Rail filter toggles (with ink / tagged); both stack. */
+  private railFilters: RailTagFilters = { ink: false, tagged: false };
+  /** Close for the shared tagging popover while it is open. */
+  private tagPopoverClose: (() => void) | null = null;
 
   constructor(leaf: WorkspaceLeaf, store: NotebookStore, workers?: InkWorkerService, toolState?: SharedToolState) {
     super(leaf);
@@ -144,6 +156,7 @@ export class InkView extends InkWritingView {
   async onClose(): Promise<void> {
     this.disposeZoomHud();
     this.closePageOptionsMenu();
+    this.closeTagPopover();
     this.pageNavigationGeneration += 1;
     this.closeDevPanel();
     this.clearFastPagingRail();
@@ -348,8 +361,16 @@ export class InkView extends InkWritingView {
     rail.empty();
     const header = rail.createDiv({ cls: "ink-rail-header" });
     header.createDiv({ cls: "ink-rail-heading", text: "Pages" });
+    const visiblePages = this.visibleRailPages();
     header.createSpan({ cls: "ink-rail-count", text: this.pageManagement
-      ? `${this.selectedPageIds.size} selected` : `${this.pageIndex + 1} / ${this.notebook.pages.length}` });
+      ? `${this.selectedPageIds.size} selected` : railFiltersActive(this.railFilters)
+        ? `${visiblePages.length} of ${this.notebook.pages.length}`
+        : `${this.pageIndex + 1} / ${this.notebook.pages.length}` });
+    const filters = rail.createDiv({ cls: "ink-rail-filters", attr: { role: "group", "aria-label": "Page filters" } });
+    const inkToggle = this.addIconButton(filters, "pen-line", "Pages with ink only", () => this.setRailFilter("ink", !this.railFilters.ink));
+    inkToggle.setAttribute("aria-pressed", String(this.railFilters.ink));
+    const taggedToggle = this.addIconButton(filters, "tag", "Tagged pages only", () => this.setRailFilter("tagged", !this.railFilters.tagged));
+    taggedToggle.setAttribute("aria-pressed", String(this.railFilters.tagged));
     const actions = rail.createDiv({ cls: "ink-rail-actions", attr: { role: "group", "aria-label": "Current page actions" } });
     if (this.pageManagement) {
       this.addIconButton(actions, "trash-2", "Delete selected pages", () => this.deleteSelectedPages(),
@@ -363,8 +384,10 @@ export class InkView extends InkWritingView {
       this.addIconButton(actions, "list-checks", "Manage pages", () => this.setPageManagement(true), this.readingMode);
     }
     const thumbs = rail.createDiv({ cls: "ink-rail-thumbs" });
-    this.notebook.pages.forEach((page, index) => {
+    visiblePages.forEach((page) => {
+      const index = this.notebook.pages.indexOf(page);
       const button = thumbs.createEl("button", { cls: "ink-page-thumb", attr: { type: "button", title: page.title } });
+      button.dataset.pageId = page.id;
       if (index === this.pageIndex) button.addClass("is-active");
       if (this.pageManagement && this.selectedPageIds.has(page.id)) button.addClass("is-selected");
       button.setAttribute("aria-label", String(index + 1) + ": " + page.title);
@@ -377,6 +400,20 @@ export class InkView extends InkWritingView {
       const canvas = button.createEl("canvas", { cls: "ink-page-thumb-canvas", attr: { "aria-hidden": "true" } });
       button.createSpan({ text: String(index + 1), cls: "ink-page-thumb-number" });
       button.createSpan({ text: page.title, cls: "ink-page-thumb-title" });
+      paintThumbBadges(button, page);
+      const tagButton = button.createEl("button", {
+        cls: "ink-thumb-tag-button",
+        attr: { type: "button", "aria-label": `Tag page ${index + 1}`, title: "Tag", "aria-disabled": String(this.readingMode) },
+      });
+      tagButton.disabled = this.readingMode;
+      tagButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        this.openThumbTagPopover(button);
+      });
+      button.addEventListener("contextmenu", (event) => {
+        event.preventDefault();
+        if (!this.readingMode) this.openThumbTagPopover(button);
+      });
       button.addEventListener("click", () => this.pageManagement
         ? this.togglePageSelection(page.id) : this.navigateToPage(page.id));
       this.scheduleThumbnail(canvas, page);
@@ -387,6 +424,96 @@ export class InkView extends InkWritingView {
     // active thumb instead of the usual nearest-visibility nudge.
     if (this.isFastPagingRailOpen()) this.followWheelPageThumb();
     else rail.querySelector<HTMLElement>(".ink-page-thumb.is-active")?.scrollIntoView?.({ block: "nearest" });
+  }
+
+  /** Notebook pages surviving the active rail filters, in notebook order. */
+  private visibleRailPages(): InkPage[] {
+    return this.notebook.pages.filter((page) => pageMatchesRailFilters(page, this.railFilters));
+  }
+
+  private setRailFilter(key: keyof RailTagFilters, value: boolean): void {
+    this.railFilters[key] = value;
+    this.renderPageRail();
+  }
+
+  /** Resolves a thumb's canvas through its stable page id — positional
+   *  indexes break once the filters hide pages from the rail. */
+  private railCanvasForPage(pageId: string): HTMLCanvasElement | null {
+    let match: HTMLCanvasElement | null = null;
+    this.root?.querySelectorAll<HTMLElement>(".ink-page-thumb").forEach((thumb) => {
+      if (match || thumb.dataset.pageId !== pageId) return;
+      match = thumb.querySelector<HTMLCanvasElement>("canvas");
+    });
+    return match;
+  }
+
+  private openThumbTagPopover(thumb: HTMLElement): void {
+    this.closeTagPopover();
+    const pageId = thumb.dataset.pageId;
+    if (!pageId) return;
+    this.tagPopoverClose = openTagPopover(this.root, thumb, {
+      getPage: () => this.pageById(pageId) ?? null,
+      isLocked: () => this.readingMode,
+      onTagsChange: (page, tags) => this.applyRailTags(page, tags),
+      onFlagChange: (page, flag) => this.applyRailFlag(page, flag),
+    });
+  }
+
+  private closeTagPopover(): void {
+    this.tagPopoverClose?.();
+    this.tagPopoverClose = null;
+  }
+
+  /** Applies a popover tag edit: mutate, sync the Worker, record undo. */
+  private applyRailTags(page: InkPage, tags: string[]): void {
+    if (this.readingMode) return;
+    const before = page.tags;
+    page.tags = [...tags];
+    this.markChanged(page);
+    this.queueWorkerOperation({ type: "set-page", pageId: page.id, tags: [...tags],
+      pageUpdatedAt: page.updatedAt, notebookUpdatedAt: this.notebook.updatedAt });
+    this.pushCommand({
+      undo: () => this.setPageTags(page.id, before),
+      redo: () => this.setPageTags(page.id, tags),
+      rebuild: true,
+    });
+    this.renderPageRail();
+    this.scheduleSave();
+  }
+
+  private applyRailFlag(page: InkPage, flag: PageFlag | null): void {
+    if (this.readingMode) return;
+    const before = page.flag;
+    page.flag = flag ?? undefined;
+    this.markChanged(page);
+    this.queueWorkerOperation({ type: "set-page", pageId: page.id, flag: flag,
+      pageUpdatedAt: page.updatedAt, notebookUpdatedAt: this.notebook.updatedAt });
+    this.pushCommand({
+      undo: () => this.setPageFlag(page.id, before),
+      redo: () => this.setPageFlag(page.id, flag ?? undefined),
+      rebuild: true,
+    });
+    this.renderPageRail();
+    this.scheduleSave();
+  }
+
+  private setPageTags(pageId: string, tags: string[] | undefined): void {
+    const page = this.pageById(pageId);
+    if (!page) return;
+    if (tags?.length) page.tags = [...tags];
+    else delete page.tags;
+    this.markChanged(page);
+    this.queueWorkerOperation({ type: "set-page", pageId, tags: tags ?? [],
+      pageUpdatedAt: page.updatedAt, notebookUpdatedAt: this.notebook.updatedAt });
+  }
+
+  private setPageFlag(pageId: string, flag: PageFlag | undefined): void {
+    const page = this.pageById(pageId);
+    if (!page) return;
+    page.flag = flag;
+    this.markChanged(page);
+    this.queueWorkerOperation({ type: "set-page", pageId, flag: flag ?? null,
+      pageUpdatedAt: page.updatedAt, notebookUpdatedAt: this.notebook.updatedAt });
   }
 
   private scheduleSwipePreviewPaint(): void {
@@ -400,7 +527,9 @@ export class InkView extends InkWritingView {
       }
       for (const index of [this.pageIndex - 1, this.pageIndex + 1]) {
         const page = this.notebook.pages[index];
-        const canvas = rail.querySelectorAll<HTMLCanvasElement>(".ink-page-thumb-canvas")[index];
+        // Resolve through the page id: filters can hide a neighbour from the
+        // rail, so thumb order no longer matches notebook order.
+        const canvas = page ? this.railCanvasForPage(page.id) : null;
         if (!page || !canvas?.isConnected || canvas.dataset.previewReady === "true") continue;
         this.drawPageThumbnail(canvas, page, 120);
       }
@@ -481,13 +610,16 @@ export class InkView extends InkWritingView {
     }
   }
 
-  /** Repaints every thumbnail from the live model (expand settle, drag end). */
+  /** Repaints every thumbnail from the live model (expand settle, drag end).
+   *  Thumbs resolve by page id: with filters on, rail order ≠ notebook order. */
   private redrawPageThumbnails(): void {
     const rail = this.root?.querySelector<HTMLElement>(".ink-page-rail");
     if (!rail) return;
-    rail.querySelectorAll<HTMLCanvasElement>(".ink-page-thumb canvas").forEach((canvas, index) => {
-      const page = this.notebook.pages[index];
-      if (page) this.drawPageThumbnail(canvas, page);
+    rail.querySelectorAll<HTMLElement>(".ink-page-thumb").forEach((thumb) => {
+      const pageId = thumb.dataset.pageId;
+      const page = pageId ? this.pageById(pageId) : undefined;
+      const canvas = thumb.querySelector<HTMLCanvasElement>("canvas");
+      if (page && canvas) this.drawPageThumbnail(canvas, page);
     });
   }
 
@@ -500,8 +632,7 @@ export class InkView extends InkWritingView {
     if (this.thumbnailRefreshFrame !== null) return;
     this.thumbnailRefreshFrame = window.requestAnimationFrame(() => {
       this.thumbnailRefreshFrame = null;
-      const rail = this.root?.querySelector<HTMLElement>(".ink-page-rail");
-      const canvas = rail?.querySelectorAll<HTMLCanvasElement>(".ink-page-thumb canvas")[this.pageIndex];
+      const canvas = this.railCanvasForPage(this.currentPage().id);
       if (canvas) this.drawPageThumbnail(canvas, this.currentPage());
     });
   }

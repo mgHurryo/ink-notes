@@ -1229,6 +1229,81 @@ describe("pdf page preview rail", () => {
     await view.onClose();
   });
 
+  it("tags a PDF note page from the shared popover as one undoable snapshot", async () => {
+    const { view, internal, sidecar } = await setupExpanded(3);
+    internal.renderAll();
+    document.querySelector<HTMLButtonElement>('[aria-label="Tag page 1"]')!.click();
+    expect(document.querySelector(".ink-tag-popover")).not.toBeNull();
+    document.querySelector<HTMLButtonElement>('button[aria-label="Green flag"]')!.click();
+    expect(sidecar.notebook.pages[0].flag).toBe("green");
+    expect(thumbAt(0).querySelector(".ink-thumb-flag.is-green")).not.toBeNull();
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Add tag"]')!;
+    input.value = "review";
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(sidecar.notebook.pages[0].tags).toEqual(["review"]);
+    expect(thumbAt(0).querySelector(".ink-thumb-tags")?.textContent).toBe("1");
+    document.querySelector<HTMLButtonElement>('button[aria-label="Remove tag review"]')!.click();
+    expect(sidecar.notebook.pages[0].tags).toEqual([]);
+    document.querySelector<HTMLButtonElement>('button[aria-label="No flag"]')!.click();
+    expect(sidecar.notebook.pages[0].flag).toBeUndefined();
+    // The whole popover session is a chain of undoable sidecar snapshots;
+    // each undo replaces the sidecar object, so read through the live model.
+    const live = () => internal.sidecar.notebook.pages[0];
+    document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')!.click();
+    expect(live().flag).toBe("green");
+    expect(live().tags).toEqual([]);
+    document.querySelector<HTMLButtonElement>('[aria-label="Undo"]')!.click();
+    expect(live().tags).toEqual(["review"]);
+    document.querySelector<HTMLButtonElement>('[aria-label="Redo"]')!.click();
+    expect(live().tags).toEqual([]);
+    // The tag removal redone above predates the flag clear: still green here.
+    expect(live().flag).toBe("green");
+    document.querySelector<HTMLButtonElement>('[aria-label="Redo"]')!.click();
+    expect(live().flag).toBeUndefined();
+    await view.onClose();
+  });
+
+  it("filters the PDF rail to pages with ink and tagged pages, stacking both", async () => {
+    const { view, internal, sidecar } = await setupExpanded(3);
+    sidecar.notebook.pages[1].strokes.push({
+      id: "pdf-ink", pageId: sidecar.notebook.pages[1].id, tool: "pen", color: "#000",
+      width: 3, opacity: 1, points: [{ x: .2, y: .2, pressure: .5, t: 1 }], createdAt: 1, updatedAt: 1,
+    });
+    sidecar.notebook.pages[2].tags = ["exam"];
+    internal.renderAll();
+    const railCount = document.querySelector<HTMLElement>(".ink-pdf-view .ink-rail-count")!;
+    document.querySelector<HTMLButtonElement>('button[aria-label="Pages with ink only"]')!.click();
+    expect(document.querySelectorAll(".ink-pdf-view .ink-page-thumb:not(.is-filtered-out)")).toHaveLength(1);
+    expect(railCount.textContent).toBe("1 of 3");
+    document.querySelector<HTMLButtonElement>('button[aria-label="Tagged pages only"]')!.click();
+    // Stacked: page 2 has only ink, page 3 only a tag — nothing has both.
+    expect(document.querySelectorAll(".ink-pdf-view .ink-page-thumb:not(.is-filtered-out)")).toHaveLength(0);
+    expect(railCount.textContent).toBe("0 of 3");
+    // The current page can sit outside the filtered set without breaking it.
+    expect(internal.noteIndex).toBe(0);
+    document.querySelector<HTMLButtonElement>('button[aria-label="Pages with ink only"]')!.click();
+    document.querySelector<HTMLButtonElement>('button[aria-label="Tagged pages only"]')!.click();
+    expect(document.querySelectorAll(".ink-pdf-view .ink-page-thumb:not(.is-filtered-out)")).toHaveLength(3);
+    expect(railCount.textContent).toBe("1 / 3");
+    await view.onClose();
+  });
+
+  it("keeps PDF tag badges in sync when a peer merge brings remote tags", async () => {
+    const { view, internal } = await setupExpanded(3);
+    internal.renderAll();
+    const editor = view as unknown as { receiveMergedSidecar(sidecar: PdfSidecar): void };
+    const remote = parseStoredJson(serializeSidecar(internal.sidecar)) as PdfSidecar;
+    remote.notebook.pages[1].tags = ["from-peer"];
+    remote.notebook.pages[1].flag = "yellow";
+    remote.notebook.pages[1].updatedAt = remote.notebook.pages[1].updatedAt + 10;
+    editor.receiveMergedSidecar(remote);
+    expect(internal.sidecar.notebook.pages[1].tags).toEqual(["from-peer"]);
+    expect(internal.sidecar.notebook.pages[1].flag).toBe("yellow");
+    expect(thumbAt(1).querySelector(".ink-thumb-tags")?.textContent).toBe("1");
+    expect(thumbAt(1).querySelector(".ink-thumb-flag.is-yellow")).not.toBeNull();
+    await view.onClose();
+  });
+
   it("immediately paints an inserted blank instead of a prewarmed PDF at its old index", async () => {
     const { view, internal, sidecar } = await setupExpanded(3);
     internal.renderAll();

@@ -1,5 +1,5 @@
 import { App, Notice, Platform, Scope, SuggestModal, TFile, WorkspaceLeaf, loadPdfJs, setIcon } from "obsidian";
-import { InkNotebook, InkPage, InkTool, createNotebook } from "./model";
+import { InkNotebook, InkPage, InkTool, PageFlag, createNotebook } from "./model";
 import { canvasResolution, drawInkStroke, scaledStroke } from "./rendering";
 import { registerDocumentPointerEndEvents } from "./ink-input";
 import { InkWritingView, QUEUED_PAGE_SWIPE_DURATION_MS } from "./ink-writing";
@@ -28,6 +28,13 @@ import { PdfExportError, exportHandwrittenPdf, exportPathFor, sidecarHasInk } fr
 import { PdfTabTakeover, hasNativeNavigation } from "./pdf-takeover";
 import { paintPageImages } from "./image-library";
 import { applyStoredRailWidth, mountRailResizer } from "./rail-resizer";
+import {
+  RailTagFilters,
+  openTagPopover,
+  paintThumbBadges,
+  pageMatchesRailFilters,
+  railFiltersActive,
+} from "./page-tags";
 
 export const VIEW_TYPE_PDF_INK = "ink-notes-pdf-view";
 
@@ -168,6 +175,11 @@ export class PdfInkView extends InkWritingView {
   private railSweepTimer: number | undefined;
   private pageManagement = false;
   private selectedPageIds = new Set<string>();
+  /** Rail filter toggles (with ink / tagged); both stack. */
+  private railFilters: RailTagFilters = { ink: false, tagged: false };
+  private railFilterButtons: { ink?: HTMLButtonElement; tagged?: HTMLButtonElement } = {};
+  /** Close for the shared tagging popover while it is open. */
+  private tagPopoverClose: (() => void) | null = null;
 
   private dirty = false;
   private editRevision = 0;
@@ -246,6 +258,7 @@ export class PdfInkView extends InkWritingView {
   async onClose(): Promise<void> {
     this.disposeZoomHud();
     this.closePageOptionsMenu();
+    this.closeTagPopover();
     this.clearFastPagingRail();
     this.finishPointerInput(false);
     this.clearSelection();
@@ -807,6 +820,12 @@ export class PdfInkView extends InkWritingView {
     const header = rail.createDiv({ cls: "ink-rail-header" });
     header.createDiv({ cls: "ink-rail-heading", text: "Pages" });
     this.railCount = header.createSpan({ cls: "ink-rail-count" });
+    // Filter toggles are persistent; refreshPageRail only syncs their state.
+    const filters = rail.createDiv({ cls: "ink-rail-filters", attr: { role: "group", "aria-label": "Page filters" } });
+    this.railFilterButtons.ink = this.addIconButton(filters, "pen-line", "Pages with ink only",
+      () => this.setRailFilter("ink", !this.railFilters.ink));
+    this.railFilterButtons.tagged = this.addIconButton(filters, "tag", "Tagged pages only",
+      () => this.setRailFilter("tagged", !this.railFilters.tagged));
     this.railActions = rail.createDiv({ cls: "ink-rail-actions", attr: { role: "group", "aria-label": "Page management" } });
     this.renderPageRailActions();
     this.railThumbs = rail.createDiv({ cls: "ink-rail-thumbs" });
@@ -851,6 +870,11 @@ export class PdfInkView extends InkWritingView {
     const pageIds = new Set(pages?.map((page) => page.id) ?? []);
     this.selectedPageIds.forEach((pageId) => { if (!pageIds.has(pageId)) this.selectedPageIds.delete(pageId); });
     this.renderPageRailActions();
+    // Filter toggles are view-only: usable in reading mode and alongside
+    // page management; they hide thumbnails without touching the model.
+    this.railFilterButtons.ink?.setAttribute("aria-pressed", String(this.railFilters.ink));
+    this.railFilterButtons.tagged?.setAttribute("aria-pressed", String(this.railFilters.tagged));
+    let visibleCount = 0;
     this.thumbButtons.forEach((button, index) => {
       const pageId = pages?.[index]?.id;
       const active = index === this.noteIndex;
@@ -860,9 +884,20 @@ export class PdfInkView extends InkWritingView {
       button.setAttribute("aria-current", String(active));
       button.setAttribute("aria-pressed", String(this.pageManagement && selected));
       button.setAttribute("aria-disabled", String(!pages || this.editingLocked()));
+      // Badges ride the persistent buttons; the notebook page mirrors the
+      // note page at the same index (alignPageSequence keeps them 1:1).
+      const notebookPage = this.sidecar?.notebook.pages[index];
+      if (notebookPage) {
+        paintThumbBadges(button, notebookPage);
+        button.querySelector<HTMLButtonElement>(":scope > .ink-thumb-tag-button")!.disabled = this.editingLocked();
+      }
+      const matches = notebookPage ? pageMatchesRailFilters(notebookPage, this.railFilters) : true;
+      button.toggleClass("is-filtered-out", !matches);
+      if (matches) visibleCount += 1;
     });
     if (this.railCount) this.railCount.textContent = this.pageManagement
-      ? `${this.selectedPageIds.size} selected` : `${this.noteIndex + 1} / ${count}`;
+      ? `${this.selectedPageIds.size} selected` : railFiltersActive(this.railFilters)
+        ? `${visibleCount} of ${count}` : `${this.noteIndex + 1} / ${count}`;
     // Fast paging keeps the current page under the user's eye: center the
     // active thumb instead of the usual nearest-visibility nudge.
     if (this.isFastPagingRailOpen()) this.followWheelPageThumb();
@@ -922,6 +957,25 @@ export class PdfInkView extends InkWritingView {
       button.style.aspectRatio = `${Math.max(1, display.width)} / ${Math.max(1, display.height)}`;
       button.createEl("canvas", { cls: "ink-page-thumb-canvas", attr: { "aria-hidden": "true" } });
       button.createSpan({ text: String(index + 1), cls: "ink-page-thumb-number" });
+      const notebookPage = this.sidecar?.notebook.pages[index];
+      if (notebookPage) {
+        paintThumbBadges(button, notebookPage);
+        // Hover/corner entry to the shared tagging popover (right-click too).
+        const tagButton = button.createEl("button", {
+          cls: "ink-thumb-tag-button",
+          attr: { type: "button", "aria-label": `Tag page ${index + 1}`, title: "Tag" },
+        });
+        tagButton.disabled = this.editingLocked();
+        tagButton.addEventListener("click", (event) => {
+          event.stopPropagation();
+          if (pageId) this.openThumbTagPopover(button);
+        });
+      }
+      button.addEventListener("contextmenu", (event) => {
+        if (!pageId) return;
+        event.preventDefault();
+        if (!this.editingLocked()) this.openThumbTagPopover(button);
+      });
       button.addEventListener("click", () => {
         if (this.pageManagement) {
           if (pageId) this.toggleManagedPage(pageId);
@@ -931,6 +985,47 @@ export class PdfInkView extends InkWritingView {
       });
       this.thumbButtons.set(index, button);
     }
+  }
+
+  private setRailFilter(key: keyof RailTagFilters, value: boolean): void {
+    this.railFilters[key] = value;
+    this.refreshPageRail();
+  }
+
+  /** Shared tagging popover over the live sidecar notebook page. */
+  private openThumbTagPopover(button: HTMLElement): void {
+    this.closeTagPopover();
+    const pageId = button.dataset.pageId;
+    if (!pageId || !this.root) return;
+    this.tagPopoverClose = openTagPopover(this.root, button, {
+      getPage: () => this.sidecar?.notebook.pages.find((page) => page.id === pageId) ?? null,
+      isLocked: () => this.editingLocked(),
+      onTagsChange: (page, tags) => this.applyRailTags(page, tags),
+      onFlagChange: (page, flag) => this.applyRailFlag(page, flag),
+    });
+  }
+
+  private closeTagPopover(): void {
+    this.tagPopoverClose?.();
+    this.tagPopoverClose = null;
+  }
+
+  /** Applies a popover tag/flag edit as one undoable sidecar snapshot. */
+  private applyRailTags(page: InkPage, tags: string[]): void {
+    this.withPageUndo(() => {
+      page.tags = [...tags];
+      // LWW merge needs the page's own timestamp to move with the edit.
+      page.updatedAt = Date.now();
+      return true;
+    }, "change the page tags");
+  }
+
+  private applyRailFlag(page: InkPage, flag: PageFlag | null): void {
+    this.withPageUndo(() => {
+      page.flag = flag ?? undefined;
+      page.updatedAt = Date.now();
+      return true;
+    }, "change the page flag");
   }
 
   private renderPageRailActions(): void {
@@ -995,6 +1090,8 @@ export class PdfInkView extends InkWritingView {
     if (this.railSweepTimer !== undefined) { window.clearTimeout(this.railSweepTimer); this.railSweepTimer = undefined; }
     this.invalidateThumbnails();
     this.thumbButtons.clear();
+    this.closeTagPopover();
+    this.railFilterButtons = {};
     this.pageRail = null;
     this.railThumbs = null;
     this.railCount = null;
@@ -1058,6 +1155,7 @@ export class PdfInkView extends InkWritingView {
     if (!railRect || this.pageRail!.clientHeight <= 0) return nearby;
     const visible: number[] = [];
     for (const [index, button] of this.thumbButtons) {
+      if (button.classList.contains("is-filtered-out")) continue;
       const rect = button.getBoundingClientRect();
       if (rect.bottom > railRect.top && rect.top < railRect.bottom) visible.push(index);
     }

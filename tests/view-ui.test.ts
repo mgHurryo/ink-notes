@@ -1125,3 +1125,115 @@ describe("page rail thumbnails and resizing", () => {
     (second as unknown as { cleanups: (() => void)[] }).cleanups.forEach((cleanup) => cleanup());
   });
 });
+
+describe("page rail tagging and filters", () => {
+  const stroke = (page: InkPage, id: string): InkStroke => ({
+    id, pageId: page.id, tool: "pen", color: "#123456", width: 3, opacity: 1,
+    points: [{ x: 0.2, y: 0.3, pressure: 0.5, t: 0 }, { x: 0.6, y: 0.7, pressure: 0.5, t: 40 }],
+    createdAt: 1, updatedAt: 1,
+  });
+  const visibleThumbs = () => document.querySelectorAll<HTMLElement>(".ink-page-thumb:not(.is-filtered-out)");
+
+  it("tags a page from the rail popover with badges and undo", () => {
+    const host = view as unknown as { notebook: ReturnType<typeof createNotebook> };
+    button("Pages").click();
+    button("Tag page 1").click();
+    expect(document.querySelector(".ink-tag-popover")).not.toBeNull();
+    button("Red flag").click();
+    expect(host.notebook.pages[0].flag).toBe("red");
+    expect(document.querySelector(".ink-thumb-flag.is-red")).not.toBeNull();
+    expect(button("Red flag").getAttribute("aria-pressed")).toBe("true");
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Add tag"]')!;
+    input.value = "exam";
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+    expect(host.notebook.pages[0].tags).toEqual(["exam"]);
+    expect(document.querySelector(".ink-thumb-tags")?.textContent).toBe("1");
+    expect(document.querySelector(".ink-thumb-tags")?.getAttribute("title")).toBe("exam");
+    // The rail rebuild keeps the popover alive and its chips in sync.
+    expect(document.querySelector(".ink-tag-popover")).not.toBeNull();
+    button("Remove tag exam").click();
+    expect(host.notebook.pages[0].tags).toEqual([]);
+    expect(document.querySelector(".ink-thumb-tags")).toBeNull();
+    button("No flag").click();
+    expect(host.notebook.pages[0].flag).toBeUndefined();
+    expect(document.querySelector(".ink-thumb-flag")).toBeNull();
+    // Undo walks back through every tag edit (last first).
+    button("Undo").click();
+    expect(host.notebook.pages[0].flag).toBe("red");
+    button("Undo").click();
+    expect(host.notebook.pages[0].tags).toEqual(["exam"]);
+    button("Undo").click();
+    expect(host.notebook.pages[0].tags).toBeUndefined();
+    button("Undo").click();
+    expect(host.notebook.pages[0].flag).toBeUndefined();
+  });
+
+  it("opens the tagging popover from a thumbnail right-click and closes it outside", () => {
+    const thumb = () => document.querySelector<HTMLElement>(".ink-page-thumb")!;
+    button("Pages").click();
+    thumb().dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    expect(document.querySelector(".ink-tag-popover")).not.toBeNull();
+    document.body.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+    expect(document.querySelector(".ink-tag-popover")).toBeNull();
+    document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    expect(document.querySelector(".ink-tag-popover")).toBeNull();
+  });
+
+  it("filters the rail to pages with ink and tagged pages, stacking both", () => {
+    const host = view as unknown as { notebook: ReturnType<typeof createNotebook>; addPage(): void; renderPageRail(): void };
+    host.addPage();
+    host.addPage();
+    host.notebook.pages[1].strokes.push(stroke(host.notebook.pages[1], "ink-1"));
+    host.notebook.pages[2].tags = ["exam"];
+    button("Pages").click();
+    expect(document.querySelectorAll(".ink-page-thumb")).toHaveLength(3);
+    button("Pages with ink only").click();
+    expect(visibleThumbs()).toHaveLength(1);
+    expect(visibleThumbs()[0].dataset.pageId).toBe(host.notebook.pages[1].id);
+    expect(document.querySelector(".ink-rail-count")?.textContent).toBe("1 of 3");
+    expect(button("Pages with ink only").getAttribute("aria-pressed")).toBe("true");
+    // Stacked with "tagged": page 2 has only ink, page 3 only a tag — neither
+    // satisfies both filters, so the rail is empty until a page has both.
+    button("Tagged pages only").click();
+    expect(visibleThumbs()).toHaveLength(0);
+    expect(document.querySelector(".ink-rail-count")?.textContent).toBe("0 of 3");
+    host.notebook.pages[2].strokes.push(stroke(host.notebook.pages[2], "ink-2"));
+    host.renderPageRail();
+    expect(visibleThumbs()).toHaveLength(1);
+    expect(visibleThumbs()[0].dataset.pageId).toBe(host.notebook.pages[2].id);
+    // Navigation still works on the filtered set.
+    visibleThumbs()[0].click();
+    expect(document.querySelector(".ink-page-status")?.textContent).toBe("3 / 3");
+    // Turning both off restores the full list and the page counter.
+    button("Pages with ink only").click();
+    button("Tagged pages only").click();
+    expect(visibleThumbs()).toHaveLength(3);
+    expect(document.querySelector(".ink-rail-count")?.textContent).toBe("3 / 3");
+    expect(button("Pages with ink only").getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("disables the tag entry in reading mode but keeps the filters usable", () => {
+    const host = view as unknown as { notebook: ReturnType<typeof createNotebook> };
+    host.notebook.pages[0].tags = ["exam"];
+    button("Pages").click();
+    button("Reading mode").click();
+    // Reading mode blocks page mutations (same rule as manage/rename), so
+    // neither tagging entry opens the popover.
+    expect(button("Tag page 1").disabled).toBe(true);
+    button("Tag page 1").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    expect(document.querySelector(".ink-tag-popover")).toBeNull();
+    button("Tagged pages only").click();
+    expect(visibleThumbs()).toHaveLength(1);
+    // Stacking "with ink" hides the un-inked tagged page: an empty result
+    // empties the rail while the count keeps explaining why.
+    button("Pages with ink only").click();
+    expect(visibleThumbs()).toHaveLength(0);
+    expect(document.querySelector(".ink-rail-count")?.textContent).toBe("0 of 1");
+    // Back in editing mode the popover opens with live controls.
+    button("Reading mode").click();
+    button("Pages with ink only").click();
+    button("Tag page 1").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
+    expect(document.querySelector(".ink-tag-popover")).not.toBeNull();
+    expect(document.querySelector<HTMLButtonElement>('button[aria-label="Red flag"]')!.disabled).toBe(false);
+  });
+});

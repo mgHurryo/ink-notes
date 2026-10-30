@@ -1,4 +1,4 @@
-import type { InkImage, InkNotebook, InkPage, InkPoint, InkStroke, PaperStyle } from "./model";
+import type { InkImage, InkNotebook, InkPage, InkPoint, InkStroke, PageFlag, PaperStyle } from "./model";
 import { cloneSticky } from "./sticky-model";
 import type { StickyNote } from "./sticky-model";
 import { serializeStoredJson } from "./storage-codec";
@@ -69,6 +69,10 @@ export type NotebookOperation =
     pageId: string;
     title?: string;
     paper?: PaperStyle;
+    /** Full replacement list; omit to keep the page's tags untouched. */
+    tags?: string[];
+    /** null clears the flag; omit to keep it untouched. */
+    flag?: PageFlag | null;
     pageUpdatedAt: number;
     notebookUpdatedAt: number;
   }

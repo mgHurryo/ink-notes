@@ -3,6 +3,8 @@ import type { StickyNote } from "./sticky-model";
 
 export type InkTool = "pen" | "highlighter" | "eraser" | "lasso" | "pointer" | "shape";
 export type PaperStyle = "blank" | "ruled" | "grid" | "dot";
+/** One-click triage flag on a page; absence means unflagged. */
+export type PageFlag = "red" | "yellow" | "green";
 
 export interface InkPoint {
   x: number;
@@ -72,6 +74,14 @@ export interface InkPage {
   deletedImageIds?: string[];
   stickyNotes?: StickyNote[];
   deletedStickyNotes?: Record<string, number>;
+  /** Free-text labels. Merged as a union across devices (additive; removal is
+   *  a local refinement only), so a page can carry several at once. */
+  tags?: string[];
+  /**
+   * Triage flag. Single-valued, so it merges last-writer-wins on page
+   * updatedAt exactly like title/paper; a newer side without one clears it.
+   */
+  flag?: PageFlag;
   createdAt: number;
   updatedAt: number;
 }
@@ -229,13 +239,22 @@ function mergePages(base: InkPage, incoming: InkPage): InkPage {
   }
   const deletedStrokeIds = [...new Set([...(base.deletedStrokeIds ?? []), ...(incoming.deletedStrokeIds ?? [])])];
   for (const id of deletedStrokeIds) strokes.delete(id);
+  // Tags are append-only across devices: union in base order first, then
+  // incoming-only tags (the spread above would otherwise replace wholesale,
+  // and a wholesale replace would silently drop the other device's labels).
+  const tags = [...(base.tags ?? [])];
+  for (const tag of incoming.tags ?? []) if (!tags.includes(tag)) tags.push(tag);
   return {
     ...base,
     ...incoming,
     title: incoming.updatedAt >= base.updatedAt ? incoming.title : base.title,
     paper: incoming.updatedAt >= base.updatedAt ? incoming.paper : base.paper,
+    // Flag is single-valued; the newest side decides, including "cleared"
+    // (an absent flag on the newer side must override the older flag).
+    flag: incoming.updatedAt >= base.updatedAt ? incoming.flag : base.flag,
     strokes: [...strokes.values()].sort((a, b) => a.createdAt - b.createdAt),
     deletedStrokeIds,
+    ...(base.tags || incoming.tags ? { tags } : {}),
     ...(base.stickyNotes || incoming.stickyNotes || base.deletedStickyNotes || incoming.deletedStickyNotes ? {
       stickyNotes: [...stickyNotes.values()].sort(compareStickyOrder), deletedStickyNotes,
     } : {}),
@@ -270,9 +289,28 @@ function normalizePage(value: unknown): InkPage | null {
         .filter((image): image is InkImage => !!image && !deletedImageIds.includes(image.id)),
       deletedImageIds,
     } : {}),
+    // Legacy files carry neither field; garbage values are dropped instead of
+    // being round-tripped, so an unknown writer can never poison the model.
+    ...(Array.isArray(raw.tags) ? { tags: normalizeTagList(raw.tags) } : {}),
+    ...(isPageFlag(raw.flag) ? { flag: raw.flag } : {}),
     createdAt: finitePositive(raw.createdAt, Date.now()),
     updatedAt: finitePositive(raw.updatedAt, Date.now()),
   };
+}
+
+/** Trimmed, non-empty, de-duplicated free-text tags in first-seen order. */
+function normalizeTagList(value: unknown[]): string[] {
+  const tags: string[] = [];
+  for (const tag of value) {
+    if (typeof tag !== "string") continue;
+    const trimmed = tag.trim();
+    if (trimmed && !tags.includes(trimmed)) tags.push(trimmed);
+  }
+  return tags;
+}
+
+export function isPageFlag(value: unknown): value is PageFlag {
+  return value === "red" || value === "yellow" || value === "green";
 }
 
 export function isManagedImagePath(path: unknown): path is string {
