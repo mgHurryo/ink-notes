@@ -24325,7 +24325,8 @@ var DesktopWheelGesture = class {
     const axis = shift ? "x" : this.axis === "x" && (horizontal === 0 && this.zeroAxisPauses < ZERO_AXIS_PAUSES_TO_SWITCH || horizontal >= vertical * AXIS_RETENTION_RATIO) ? "x" : this.axis === "y" && (vertical === 0 && this.zeroAxisPauses < ZERO_AXIS_PAUSES_TO_SWITCH || vertical >= horizontal * AXIS_RETENTION_RATIO) ? "y" : horizontal >= vertical ? "x" : "y";
     const movement = axis === "x" ? delta.x || (shift ? delta.y : 0) : delta.y;
     const magnitude = Math.abs(movement);
-    const normalized = magnitude * (REF_DT_MS / Math.min(Math.max(gap, 1), REF_DT_MS * 5));
+    const unclamped = this.flipped && !this.discrete && Math.abs(this.lastDelta) > RENEWED_FLICK_RELEASE_PX;
+    const normalized = magnitude * (REF_DT_MS / (unclamped ? Math.max(gap, 1) : Math.min(Math.max(gap, 1), REF_DT_MS * 5)));
     const pixelNotch = delta.x === 0 && (axis === "y" || shift) && magnitude >= 80 && (magnitude % 100 === 0 || magnitude % 120 === 0);
     const discrete = delta.mode !== 0 || pixelNotch;
     const reversed = this.lastDelta !== 0 && movement !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta);
