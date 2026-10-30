@@ -41,896 +41,6 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// node_modules/tslib/tslib.es6.js
-var tslib_es6_exports = {};
-__export(tslib_es6_exports, {
-  __assign: () => __assign,
-  __asyncDelegator: () => __asyncDelegator,
-  __asyncGenerator: () => __asyncGenerator,
-  __asyncValues: () => __asyncValues,
-  __await: () => __await,
-  __awaiter: () => __awaiter,
-  __classPrivateFieldGet: () => __classPrivateFieldGet,
-  __classPrivateFieldSet: () => __classPrivateFieldSet,
-  __createBinding: () => __createBinding,
-  __decorate: () => __decorate,
-  __exportStar: () => __exportStar,
-  __extends: () => __extends,
-  __generator: () => __generator,
-  __importDefault: () => __importDefault,
-  __importStar: () => __importStar,
-  __makeTemplateObject: () => __makeTemplateObject,
-  __metadata: () => __metadata,
-  __param: () => __param,
-  __read: () => __read,
-  __rest: () => __rest,
-  __spread: () => __spread,
-  __spreadArrays: () => __spreadArrays,
-  __values: () => __values
-});
-function __extends(d, b) {
-  extendStatics(d, b);
-  function __() {
-    this.constructor = d;
-  }
-  d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
-}
-function __rest(s, e) {
-  var t = {};
-  for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p) && e.indexOf(p) < 0)
-    t[p] = s[p];
-  if (s != null && typeof Object.getOwnPropertySymbols === "function")
-    for (var i = 0, p = Object.getOwnPropertySymbols(s); i < p.length; i++) {
-      if (e.indexOf(p[i]) < 0 && Object.prototype.propertyIsEnumerable.call(s, p[i]))
-        t[p[i]] = s[p[i]];
-    }
-  return t;
-}
-function __decorate(decorators, target, key, desc) {
-  var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
-  if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
-  else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
-  return c > 3 && r && Object.defineProperty(target, key, r), r;
-}
-function __param(paramIndex, decorator) {
-  return function(target, key) {
-    decorator(target, key, paramIndex);
-  };
-}
-function __metadata(metadataKey, metadataValue) {
-  if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(metadataKey, metadataValue);
-}
-function __awaiter(thisArg, _arguments, P, generator) {
-  function adopt(value) {
-    return value instanceof P ? value : new P(function(resolve) {
-      resolve(value);
-    });
-  }
-  return new (P || (P = Promise))(function(resolve, reject) {
-    function fulfilled(value) {
-      try {
-        step(generator.next(value));
-      } catch (e) {
-        reject(e);
-      }
-    }
-    function rejected(value) {
-      try {
-        step(generator["throw"](value));
-      } catch (e) {
-        reject(e);
-      }
-    }
-    function step(result) {
-      result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
-    }
-    step((generator = generator.apply(thisArg, _arguments || [])).next());
-  });
-}
-function __generator(thisArg, body) {
-  var _ = { label: 0, sent: function() {
-    if (t[0] & 1) throw t[1];
-    return t[1];
-  }, trys: [], ops: [] }, f, y, t, g;
-  return g = { next: verb(0), "throw": verb(1), "return": verb(2) }, typeof Symbol === "function" && (g[Symbol.iterator] = function() {
-    return this;
-  }), g;
-  function verb(n) {
-    return function(v) {
-      return step([n, v]);
-    };
-  }
-  function step(op) {
-    if (f) throw new TypeError("Generator is already executing.");
-    while (_) try {
-      if (f = 1, y && (t = op[0] & 2 ? y["return"] : op[0] ? y["throw"] || ((t = y["return"]) && t.call(y), 0) : y.next) && !(t = t.call(y, op[1])).done) return t;
-      if (y = 0, t) op = [op[0] & 2, t.value];
-      switch (op[0]) {
-        case 0:
-        case 1:
-          t = op;
-          break;
-        case 4:
-          _.label++;
-          return { value: op[1], done: false };
-        case 5:
-          _.label++;
-          y = op[1];
-          op = [0];
-          continue;
-        case 7:
-          op = _.ops.pop();
-          _.trys.pop();
-          continue;
-        default:
-          if (!(t = _.trys, t = t.length > 0 && t[t.length - 1]) && (op[0] === 6 || op[0] === 2)) {
-            _ = 0;
-            continue;
-          }
-          if (op[0] === 3 && (!t || op[1] > t[0] && op[1] < t[3])) {
-            _.label = op[1];
-            break;
-          }
-          if (op[0] === 6 && _.label < t[1]) {
-            _.label = t[1];
-            t = op;
-            break;
-          }
-          if (t && _.label < t[2]) {
-            _.label = t[2];
-            _.ops.push(op);
-            break;
-          }
-          if (t[2]) _.ops.pop();
-          _.trys.pop();
-          continue;
-      }
-      op = body.call(thisArg, _);
-    } catch (e) {
-      op = [6, e];
-      y = 0;
-    } finally {
-      f = t = 0;
-    }
-    if (op[0] & 5) throw op[1];
-    return { value: op[0] ? op[1] : void 0, done: true };
-  }
-}
-function __createBinding(o, m, k, k2) {
-  if (k2 === void 0) k2 = k;
-  o[k2] = m[k];
-}
-function __exportStar(m, exports2) {
-  for (var p in m) if (p !== "default" && !exports2.hasOwnProperty(p)) exports2[p] = m[p];
-}
-function __values(o) {
-  var s = typeof Symbol === "function" && Symbol.iterator, m = s && o[s], i = 0;
-  if (m) return m.call(o);
-  if (o && typeof o.length === "number") return {
-    next: function() {
-      if (o && i >= o.length) o = void 0;
-      return { value: o && o[i++], done: !o };
-    }
-  };
-  throw new TypeError(s ? "Object is not iterable." : "Symbol.iterator is not defined.");
-}
-function __read(o, n) {
-  var m = typeof Symbol === "function" && o[Symbol.iterator];
-  if (!m) return o;
-  var i = m.call(o), r, ar = [], e;
-  try {
-    while ((n === void 0 || n-- > 0) && !(r = i.next()).done) ar.push(r.value);
-  } catch (error) {
-    e = { error };
-  } finally {
-    try {
-      if (r && !r.done && (m = i["return"])) m.call(i);
-    } finally {
-      if (e) throw e.error;
-    }
-  }
-  return ar;
-}
-function __spread() {
-  for (var ar = [], i = 0; i < arguments.length; i++)
-    ar = ar.concat(__read(arguments[i]));
-  return ar;
-}
-function __spreadArrays() {
-  for (var s = 0, i = 0, il = arguments.length; i < il; i++) s += arguments[i].length;
-  for (var r = Array(s), k = 0, i = 0; i < il; i++)
-    for (var a = arguments[i], j = 0, jl = a.length; j < jl; j++, k++)
-      r[k] = a[j];
-  return r;
-}
-function __await(v) {
-  return this instanceof __await ? (this.v = v, this) : new __await(v);
-}
-function __asyncGenerator(thisArg, _arguments, generator) {
-  if (!Symbol.asyncIterator) throw new TypeError("Symbol.asyncIterator is not defined.");
-  var g = generator.apply(thisArg, _arguments || []), i, q = [];
-  return i = {}, verb("next"), verb("throw"), verb("return"), i[Symbol.asyncIterator] = function() {
-    return this;
-  }, i;
-  function verb(n) {
-    if (g[n]) i[n] = function(v) {
-      return new Promise(function(a, b) {
-        q.push([n, v, a, b]) > 1 || resume(n, v);
-      });
-    };
-  }
-  function resume(n, v) {
-    try {
-      step(g[n](v));
-    } catch (e) {
-      settle(q[0][3], e);
-    }
-  }
-  function step(r) {
-    r.value instanceof __await ? Promise.resolve(r.value.v).then(fulfill, reject) : settle(q[0][2], r);
-  }
-  function fulfill(value) {
-    resume("next", value);
-  }
-  function reject(value) {
-    resume("throw", value);
-  }
-  function settle(f, v) {
-    if (f(v), q.shift(), q.length) resume(q[0][0], q[0][1]);
-  }
-}
-function __asyncDelegator(o) {
-  var i, p;
-  return i = {}, verb("next"), verb("throw", function(e) {
-    throw e;
-  }), verb("return"), i[Symbol.iterator] = function() {
-    return this;
-  }, i;
-  function verb(n, f) {
-    i[n] = o[n] ? function(v) {
-      return (p = !p) ? { value: __await(o[n](v)), done: n === "return" } : f ? f(v) : v;
-    } : f;
-  }
-}
-function __asyncValues(o) {
-  if (!Symbol.asyncIterator) throw new TypeError("Symbol.asyncIterator is not defined.");
-  var m = o[Symbol.asyncIterator], i;
-  return m ? m.call(o) : (o = typeof __values === "function" ? __values(o) : o[Symbol.iterator](), i = {}, verb("next"), verb("throw"), verb("return"), i[Symbol.asyncIterator] = function() {
-    return this;
-  }, i);
-  function verb(n) {
-    i[n] = o[n] && function(v) {
-      return new Promise(function(resolve, reject) {
-        v = o[n](v), settle(resolve, reject, v.done, v.value);
-      });
-    };
-  }
-  function settle(resolve, reject, d, v) {
-    Promise.resolve(v).then(function(v2) {
-      resolve({ value: v2, done: d });
-    }, reject);
-  }
-}
-function __makeTemplateObject(cooked, raw) {
-  if (Object.defineProperty) {
-    Object.defineProperty(cooked, "raw", { value: raw });
-  } else {
-    cooked.raw = raw;
-  }
-  return cooked;
-}
-function __importStar(mod) {
-  if (mod && mod.__esModule) return mod;
-  var result = {};
-  if (mod != null) {
-    for (var k in mod) if (Object.hasOwnProperty.call(mod, k)) result[k] = mod[k];
-  }
-  result.default = mod;
-  return result;
-}
-function __importDefault(mod) {
-  return mod && mod.__esModule ? mod : { default: mod };
-}
-function __classPrivateFieldGet(receiver, privateMap) {
-  if (!privateMap.has(receiver)) {
-    throw new TypeError("attempted to get private field on non-instance");
-  }
-  return privateMap.get(receiver);
-}
-function __classPrivateFieldSet(receiver, privateMap, value) {
-  if (!privateMap.has(receiver)) {
-    throw new TypeError("attempted to set private field on non-instance");
-  }
-  privateMap.set(receiver, value);
-  return value;
-}
-var extendStatics, __assign;
-var init_tslib_es6 = __esm({
-  "node_modules/tslib/tslib.es6.js"() {
-    extendStatics = function(d, b) {
-      extendStatics = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d2, b2) {
-        d2.__proto__ = b2;
-      } || function(d2, b2) {
-        for (var p in b2) if (b2.hasOwnProperty(p)) d2[p] = b2[p];
-      };
-      return extendStatics(d, b);
-    };
-    __assign = function() {
-      __assign = Object.assign || function __assign2(t) {
-        for (var s, i = 1, n = arguments.length; i < n; i++) {
-          s = arguments[i];
-          for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p)) t[p] = s[p];
-        }
-        return t;
-      };
-      return __assign.apply(this, arguments);
-    };
-  }
-});
-
-// node_modules/pdf-lib/cjs/utils/base64.js
-var require_base64 = __commonJS({
-  "node_modules/pdf-lib/cjs/utils/base64.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.decodeFromBase64DataUri = exports2.decodeFromBase64 = exports2.encodeToBase64 = void 0;
-    var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    var lookup = new Uint8Array(256);
-    for (i = 0; i < chars.length; i++) {
-      lookup[chars.charCodeAt(i)] = i;
-    }
-    var i;
-    exports2.encodeToBase64 = function(bytes) {
-      var base64 = "";
-      var len = bytes.length;
-      for (var i2 = 0; i2 < len; i2 += 3) {
-        base64 += chars[bytes[i2] >> 2];
-        base64 += chars[(bytes[i2] & 3) << 4 | bytes[i2 + 1] >> 4];
-        base64 += chars[(bytes[i2 + 1] & 15) << 2 | bytes[i2 + 2] >> 6];
-        base64 += chars[bytes[i2 + 2] & 63];
-      }
-      if (len % 3 === 2) {
-        base64 = base64.substring(0, base64.length - 1) + "=";
-      } else if (len % 3 === 1) {
-        base64 = base64.substring(0, base64.length - 2) + "==";
-      }
-      return base64;
-    };
-    exports2.decodeFromBase64 = function(base64) {
-      var bufferLength = base64.length * 0.75;
-      var len = base64.length;
-      var i2;
-      var p = 0;
-      var encoded1;
-      var encoded2;
-      var encoded3;
-      var encoded4;
-      if (base64[base64.length - 1] === "=") {
-        bufferLength--;
-        if (base64[base64.length - 2] === "=") {
-          bufferLength--;
-        }
-      }
-      var bytes = new Uint8Array(bufferLength);
-      for (i2 = 0; i2 < len; i2 += 4) {
-        encoded1 = lookup[base64.charCodeAt(i2)];
-        encoded2 = lookup[base64.charCodeAt(i2 + 1)];
-        encoded3 = lookup[base64.charCodeAt(i2 + 2)];
-        encoded4 = lookup[base64.charCodeAt(i2 + 3)];
-        bytes[p++] = encoded1 << 2 | encoded2 >> 4;
-        bytes[p++] = (encoded2 & 15) << 4 | encoded3 >> 2;
-        bytes[p++] = (encoded3 & 3) << 6 | encoded4 & 63;
-      }
-      return bytes;
-    };
-    var DATA_URI_PREFIX_REGEX = /^(data)?:?([\w\/\+]+)?;?(charset=[\w-]+|base64)?.*,/i;
-    exports2.decodeFromBase64DataUri = function(dataUri) {
-      var trimmedUri = dataUri.trim();
-      var prefix = trimmedUri.substring(0, 100);
-      var res = prefix.match(DATA_URI_PREFIX_REGEX);
-      if (!res)
-        return exports2.decodeFromBase64(trimmedUri);
-      var fullMatch = res[0];
-      var data = trimmedUri.substring(fullMatch.length);
-      return exports2.decodeFromBase64(data);
-    };
-  }
-});
-
-// node_modules/pdf-lib/cjs/utils/strings.js
-var require_strings = __commonJS({
-  "node_modules/pdf-lib/cjs/utils/strings.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.findLastMatch = exports2.parseDate = exports2.breakTextIntoLines = exports2.charSplit = exports2.charAtIndex = exports2.mergeLines = exports2.lineSplit = exports2.isNewlineChar = exports2.newlineChars = exports2.escapedNewlineChars = exports2.cleanText = exports2.escapeRegExp = exports2.addRandomSuffix = exports2.copyStringIntoBuffer = exports2.padStart = exports2.charFromHexCode = exports2.charFromCode = exports2.toHexString = exports2.toHexStringOfMinLength = exports2.toCodePoint = exports2.toCharCode = void 0;
-    exports2.toCharCode = function(character) {
-      return character.charCodeAt(0);
-    };
-    exports2.toCodePoint = function(character) {
-      return character.codePointAt(0);
-    };
-    exports2.toHexStringOfMinLength = function(num, minLength) {
-      return exports2.padStart(num.toString(16), minLength, "0").toUpperCase();
-    };
-    exports2.toHexString = function(num) {
-      return exports2.toHexStringOfMinLength(num, 2);
-    };
-    exports2.charFromCode = function(code) {
-      return String.fromCharCode(code);
-    };
-    exports2.charFromHexCode = function(hex) {
-      return exports2.charFromCode(parseInt(hex, 16));
-    };
-    exports2.padStart = function(value, length, padChar) {
-      var padding = "";
-      for (var idx = 0, len = length - value.length; idx < len; idx++) {
-        padding += padChar;
-      }
-      return padding + value;
-    };
-    exports2.copyStringIntoBuffer = function(str, buffer, offset) {
-      var length = str.length;
-      for (var idx = 0; idx < length; idx++) {
-        buffer[offset++] = str.charCodeAt(idx);
-      }
-      return length;
-    };
-    exports2.addRandomSuffix = function(prefix, suffixLength) {
-      if (suffixLength === void 0) {
-        suffixLength = 4;
-      }
-      return prefix + "-" + Math.floor(Math.random() * Math.pow(10, suffixLength));
-    };
-    exports2.escapeRegExp = function(str) {
-      return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    };
-    exports2.cleanText = function(text) {
-      return text.replace(/\t|\u0085|\u2028|\u2029/g, "    ").replace(/[\b\v]/g, "");
-    };
-    exports2.escapedNewlineChars = ["\\n", "\\f", "\\r", "\\u000B"];
-    exports2.newlineChars = ["\n", "\f", "\r", "\v"];
-    exports2.isNewlineChar = function(text) {
-      return /^[\n\f\r\u000B]$/.test(text);
-    };
-    exports2.lineSplit = function(text) {
-      return text.split(/[\n\f\r\u000B]/);
-    };
-    exports2.mergeLines = function(text) {
-      return text.replace(/[\n\f\r\u000B]/g, " ");
-    };
-    exports2.charAtIndex = function(text, index) {
-      var cuFirst = text.charCodeAt(index);
-      var cuSecond;
-      var nextIndex = index + 1;
-      var length = 1;
-      if (
-        // Check if it's the start of a surrogate pair.
-        cuFirst >= 55296 && cuFirst <= 56319 && // high surrogate
-        text.length > nextIndex
-      ) {
-        cuSecond = text.charCodeAt(nextIndex);
-        if (cuSecond >= 56320 && cuSecond <= 57343)
-          length = 2;
-      }
-      return [text.slice(index, index + length), length];
-    };
-    exports2.charSplit = function(text) {
-      var chars = [];
-      for (var idx = 0, len = text.length; idx < len; ) {
-        var _a = exports2.charAtIndex(text, idx), c = _a[0], cLen = _a[1];
-        chars.push(c);
-        idx += cLen;
-      }
-      return chars;
-    };
-    var buildWordBreakRegex = function(wordBreaks) {
-      var newlineCharUnion = exports2.escapedNewlineChars.join("|");
-      var escapedRules = ["$"];
-      for (var idx = 0, len = wordBreaks.length; idx < len; idx++) {
-        var wordBreak = wordBreaks[idx];
-        if (exports2.isNewlineChar(wordBreak)) {
-          throw new TypeError("`wordBreak` must not include " + newlineCharUnion);
-        }
-        escapedRules.push(wordBreak === "" ? "." : exports2.escapeRegExp(wordBreak));
-      }
-      var breakRules = escapedRules.join("|");
-      return new RegExp("(" + newlineCharUnion + ")|((.*?)(" + breakRules + "))", "gm");
-    };
-    exports2.breakTextIntoLines = function(text, wordBreaks, maxWidth, computeWidthOfText) {
-      var regex = buildWordBreakRegex(wordBreaks);
-      var words = exports2.cleanText(text).match(regex);
-      var currLine = "";
-      var currWidth = 0;
-      var lines = [];
-      var pushCurrLine = function() {
-        if (currLine !== "")
-          lines.push(currLine);
-        currLine = "";
-        currWidth = 0;
-      };
-      for (var idx = 0, len = words.length; idx < len; idx++) {
-        var word = words[idx];
-        if (exports2.isNewlineChar(word)) {
-          pushCurrLine();
-        } else {
-          var width = computeWidthOfText(word);
-          if (currWidth + width > maxWidth)
-            pushCurrLine();
-          currLine += word;
-          currWidth += width;
-        }
-      }
-      pushCurrLine();
-      return lines;
-    };
-    var dateRegex = /^D:(\d\d\d\d)(\d\d)?(\d\d)?(\d\d)?(\d\d)?(\d\d)?([+\-Z])?(\d\d)?'?(\d\d)?'?$/;
-    exports2.parseDate = function(dateStr) {
-      var match = dateStr.match(dateRegex);
-      if (!match)
-        return void 0;
-      var year = match[1], _a = match[2], month = _a === void 0 ? "01" : _a, _b = match[3], day = _b === void 0 ? "01" : _b, _c = match[4], hours = _c === void 0 ? "00" : _c, _d = match[5], mins = _d === void 0 ? "00" : _d, _e = match[6], secs = _e === void 0 ? "00" : _e, _f = match[7], offsetSign = _f === void 0 ? "Z" : _f, _g = match[8], offsetHours = _g === void 0 ? "00" : _g, _h = match[9], offsetMins = _h === void 0 ? "00" : _h;
-      var tzOffset = offsetSign === "Z" ? "Z" : "" + offsetSign + offsetHours + ":" + offsetMins;
-      var date = /* @__PURE__ */ new Date(year + "-" + month + "-" + day + "T" + hours + ":" + mins + ":" + secs + tzOffset);
-      return date;
-    };
-    exports2.findLastMatch = function(value, regex) {
-      var _a;
-      var position = 0;
-      var lastMatch;
-      while (position < value.length) {
-        var match = value.substring(position).match(regex);
-        if (!match)
-          return { match: lastMatch, pos: position };
-        lastMatch = match;
-        position += ((_a = match.index) !== null && _a !== void 0 ? _a : 0) + match[0].length;
-      }
-      return { match: lastMatch, pos: position };
-    };
-  }
-});
-
-// node_modules/pdf-lib/cjs/utils/arrays.js
-var require_arrays = __commonJS({
-  "node_modules/pdf-lib/cjs/utils/arrays.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.toUint8Array = exports2.canBeConvertedToUint8Array = exports2.pluckIndices = exports2.range = exports2.sum = exports2.reverseArray = exports2.sortedUniq = exports2.byAscendingId = exports2.arrayAsString = exports2.mergeUint8Arrays = exports2.mergeIntoTypedArray = exports2.typedArrayFor = exports2.last = void 0;
-    var base64_1 = require_base64();
-    var strings_1 = require_strings();
-    exports2.last = function(array) {
-      return array[array.length - 1];
-    };
-    exports2.typedArrayFor = function(value) {
-      if (value instanceof Uint8Array)
-        return value;
-      var length = value.length;
-      var typedArray = new Uint8Array(length);
-      for (var idx = 0; idx < length; idx++) {
-        typedArray[idx] = value.charCodeAt(idx);
-      }
-      return typedArray;
-    };
-    exports2.mergeIntoTypedArray = function() {
-      var arrays = [];
-      for (var _i = 0; _i < arguments.length; _i++) {
-        arrays[_i] = arguments[_i];
-      }
-      var arrayCount = arrays.length;
-      var typedArrays = [];
-      for (var idx = 0; idx < arrayCount; idx++) {
-        var element = arrays[idx];
-        typedArrays[idx] = element instanceof Uint8Array ? element : exports2.typedArrayFor(element);
-      }
-      var totalSize = 0;
-      for (var idx = 0; idx < arrayCount; idx++) {
-        totalSize += arrays[idx].length;
-      }
-      var merged = new Uint8Array(totalSize);
-      var offset = 0;
-      for (var arrIdx = 0; arrIdx < arrayCount; arrIdx++) {
-        var arr = typedArrays[arrIdx];
-        for (var byteIdx = 0, arrLen = arr.length; byteIdx < arrLen; byteIdx++) {
-          merged[offset++] = arr[byteIdx];
-        }
-      }
-      return merged;
-    };
-    exports2.mergeUint8Arrays = function(arrays) {
-      var totalSize = 0;
-      for (var idx = 0, len = arrays.length; idx < len; idx++) {
-        totalSize += arrays[idx].length;
-      }
-      var mergedBuffer = new Uint8Array(totalSize);
-      var offset = 0;
-      for (var idx = 0, len = arrays.length; idx < len; idx++) {
-        var array = arrays[idx];
-        mergedBuffer.set(array, offset);
-        offset += array.length;
-      }
-      return mergedBuffer;
-    };
-    exports2.arrayAsString = function(array) {
-      var str = "";
-      for (var idx = 0, len = array.length; idx < len; idx++) {
-        str += strings_1.charFromCode(array[idx]);
-      }
-      return str;
-    };
-    exports2.byAscendingId = function(a, b) {
-      return a.id - b.id;
-    };
-    exports2.sortedUniq = function(array, indexer) {
-      var uniq = [];
-      for (var idx = 0, len = array.length; idx < len; idx++) {
-        var curr = array[idx];
-        var prev = array[idx - 1];
-        if (idx === 0 || indexer(curr) !== indexer(prev)) {
-          uniq.push(curr);
-        }
-      }
-      return uniq;
-    };
-    exports2.reverseArray = function(array) {
-      var arrayLen = array.length;
-      for (var idx = 0, len = Math.floor(arrayLen / 2); idx < len; idx++) {
-        var leftIdx = idx;
-        var rightIdx = arrayLen - idx - 1;
-        var temp = array[idx];
-        array[leftIdx] = array[rightIdx];
-        array[rightIdx] = temp;
-      }
-      return array;
-    };
-    exports2.sum = function(array) {
-      var total = 0;
-      for (var idx = 0, len = array.length; idx < len; idx++) {
-        total += array[idx];
-      }
-      return total;
-    };
-    exports2.range = function(start, end) {
-      var arr = new Array(end - start);
-      for (var idx = 0, len = arr.length; idx < len; idx++) {
-        arr[idx] = start + idx;
-      }
-      return arr;
-    };
-    exports2.pluckIndices = function(arr, indices) {
-      var plucked = new Array(indices.length);
-      for (var idx = 0, len = indices.length; idx < len; idx++) {
-        plucked[idx] = arr[indices[idx]];
-      }
-      return plucked;
-    };
-    exports2.canBeConvertedToUint8Array = function(input) {
-      return input instanceof Uint8Array || input instanceof ArrayBuffer || typeof input === "string";
-    };
-    exports2.toUint8Array = function(input) {
-      if (typeof input === "string") {
-        return base64_1.decodeFromBase64DataUri(input);
-      } else if (input instanceof ArrayBuffer) {
-        return new Uint8Array(input);
-      } else if (input instanceof Uint8Array) {
-        return input;
-      } else {
-        throw new TypeError("`input` must be one of `string | ArrayBuffer | Uint8Array`");
-      }
-    };
-  }
-});
-
-// node_modules/pdf-lib/cjs/utils/async.js
-var require_async = __commonJS({
-  "node_modules/pdf-lib/cjs/utils/async.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.waitForTick = void 0;
-    exports2.waitForTick = function() {
-      return new Promise(function(resolve) {
-        setTimeout(function() {
-          return resolve();
-        }, 0);
-      });
-    };
-  }
-});
-
-// node_modules/pdf-lib/cjs/utils/unicode.js
-var require_unicode = __commonJS({
-  "node_modules/pdf-lib/cjs/utils/unicode.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.hasUtf16BOM = exports2.utf16Decode = exports2.lowSurrogate = exports2.highSurrogate = exports2.hasSurrogates = exports2.isWithinBMP = exports2.utf16Encode = exports2.utf8Encode = void 0;
-    var strings_1 = require_strings();
-    exports2.utf8Encode = function(input, byteOrderMark) {
-      if (byteOrderMark === void 0) {
-        byteOrderMark = true;
-      }
-      var encoded = [];
-      if (byteOrderMark)
-        encoded.push(239, 187, 191);
-      for (var idx = 0, len = input.length; idx < len; ) {
-        var codePoint = input.codePointAt(idx);
-        if (codePoint < 128) {
-          var byte1 = codePoint & 127;
-          encoded.push(byte1);
-          idx += 1;
-        } else if (codePoint < 2048) {
-          var byte1 = codePoint >> 6 & 31 | 192;
-          var byte2 = codePoint & 63 | 128;
-          encoded.push(byte1, byte2);
-          idx += 1;
-        } else if (codePoint < 65536) {
-          var byte1 = codePoint >> 12 & 15 | 224;
-          var byte2 = codePoint >> 6 & 63 | 128;
-          var byte3 = codePoint & 63 | 128;
-          encoded.push(byte1, byte2, byte3);
-          idx += 1;
-        } else if (codePoint < 1114112) {
-          var byte1 = codePoint >> 18 & 7 | 240;
-          var byte2 = codePoint >> 12 & 63 | 128;
-          var byte3 = codePoint >> 6 & 63 | 128;
-          var byte4 = codePoint >> 0 & 63 | 128;
-          encoded.push(byte1, byte2, byte3, byte4);
-          idx += 2;
-        } else
-          throw new Error("Invalid code point: 0x" + strings_1.toHexString(codePoint));
-      }
-      return new Uint8Array(encoded);
-    };
-    exports2.utf16Encode = function(input, byteOrderMark) {
-      if (byteOrderMark === void 0) {
-        byteOrderMark = true;
-      }
-      var encoded = [];
-      if (byteOrderMark)
-        encoded.push(65279);
-      for (var idx = 0, len = input.length; idx < len; ) {
-        var codePoint = input.codePointAt(idx);
-        if (codePoint < 65536) {
-          encoded.push(codePoint);
-          idx += 1;
-        } else if (codePoint < 1114112) {
-          encoded.push(exports2.highSurrogate(codePoint), exports2.lowSurrogate(codePoint));
-          idx += 2;
-        } else
-          throw new Error("Invalid code point: 0x" + strings_1.toHexString(codePoint));
-      }
-      return new Uint16Array(encoded);
-    };
-    exports2.isWithinBMP = function(codePoint) {
-      return codePoint >= 0 && codePoint <= 65535;
-    };
-    exports2.hasSurrogates = function(codePoint) {
-      return codePoint >= 65536 && codePoint <= 1114111;
-    };
-    exports2.highSurrogate = function(codePoint) {
-      return Math.floor((codePoint - 65536) / 1024) + 55296;
-    };
-    exports2.lowSurrogate = function(codePoint) {
-      return (codePoint - 65536) % 1024 + 56320;
-    };
-    var ByteOrder;
-    (function(ByteOrder2) {
-      ByteOrder2["BigEndian"] = "BigEndian";
-      ByteOrder2["LittleEndian"] = "LittleEndian";
-    })(ByteOrder || (ByteOrder = {}));
-    var REPLACEMENT = "\uFFFD".codePointAt(0);
-    exports2.utf16Decode = function(input, byteOrderMark) {
-      if (byteOrderMark === void 0) {
-        byteOrderMark = true;
-      }
-      if (input.length <= 1)
-        return String.fromCodePoint(REPLACEMENT);
-      var byteOrder = byteOrderMark ? readBOM(input) : ByteOrder.BigEndian;
-      var idx = byteOrderMark ? 2 : 0;
-      var codePoints = [];
-      while (input.length - idx >= 2) {
-        var first = decodeValues(input[idx++], input[idx++], byteOrder);
-        if (isHighSurrogate(first)) {
-          if (input.length - idx < 2) {
-            codePoints.push(REPLACEMENT);
-          } else {
-            var second = decodeValues(input[idx++], input[idx++], byteOrder);
-            if (isLowSurrogate(second)) {
-              codePoints.push(first, second);
-            } else {
-              codePoints.push(REPLACEMENT);
-            }
-          }
-        } else if (isLowSurrogate(first)) {
-          idx += 2;
-          codePoints.push(REPLACEMENT);
-        } else {
-          codePoints.push(first);
-        }
-      }
-      if (idx < input.length)
-        codePoints.push(REPLACEMENT);
-      return String.fromCodePoint.apply(String, codePoints);
-    };
-    var isHighSurrogate = function(codePoint) {
-      return codePoint >= 55296 && codePoint <= 56319;
-    };
-    var isLowSurrogate = function(codePoint) {
-      return codePoint >= 56320 && codePoint <= 57343;
-    };
-    var decodeValues = function(first, second, byteOrder) {
-      if (byteOrder === ByteOrder.LittleEndian)
-        return second << 8 | first;
-      if (byteOrder === ByteOrder.BigEndian)
-        return first << 8 | second;
-      throw new Error("Invalid byteOrder: " + byteOrder);
-    };
-    var readBOM = function(bytes) {
-      return hasUtf16BigEndianBOM(bytes) ? ByteOrder.BigEndian : hasUtf16LittleEndianBOM(bytes) ? ByteOrder.LittleEndian : ByteOrder.BigEndian;
-    };
-    var hasUtf16BigEndianBOM = function(bytes) {
-      return bytes[0] === 254 && bytes[1] === 255;
-    };
-    var hasUtf16LittleEndianBOM = function(bytes) {
-      return bytes[0] === 255 && bytes[1] === 254;
-    };
-    exports2.hasUtf16BOM = function(bytes) {
-      return hasUtf16BigEndianBOM(bytes) || hasUtf16LittleEndianBOM(bytes);
-    };
-  }
-});
-
-// node_modules/pdf-lib/cjs/utils/numbers.js
-var require_numbers = __commonJS({
-  "node_modules/pdf-lib/cjs/utils/numbers.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.bytesFor = exports2.sizeInBytes = exports2.numberToString = void 0;
-    exports2.numberToString = function(num) {
-      var numStr = String(num);
-      if (Math.abs(num) < 1) {
-        var e = parseInt(num.toString().split("e-")[1]);
-        if (e) {
-          var negative = num < 0;
-          if (negative)
-            num *= -1;
-          num *= Math.pow(10, e - 1);
-          numStr = "0." + new Array(e).join("0") + num.toString().substring(2);
-          if (negative)
-            numStr = "-" + numStr;
-        }
-      } else {
-        var e = parseInt(num.toString().split("+")[1]);
-        if (e > 20) {
-          e -= 20;
-          num /= Math.pow(10, e);
-          numStr = num.toString() + new Array(e + 1).join("0");
-        }
-      }
-      return numStr;
-    };
-    exports2.sizeInBytes = function(n) {
-      return Math.ceil(n.toString(2).length / 8);
-    };
-    exports2.bytesFor = function(n) {
-      var bytes = new Uint8Array(exports2.sizeInBytes(n));
-      for (var i = 1; i <= bytes.length; i++) {
-        bytes[i - 1] = n >> (bytes.length - i) * 8;
-      }
-      return bytes;
-    };
-  }
-});
-
-// node_modules/pdf-lib/cjs/utils/errors.js
-var require_errors = __commonJS({
-  "node_modules/pdf-lib/cjs/utils/errors.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.error = void 0;
-    exports2.error = function(msg) {
-      throw new Error(msg);
-    };
-  }
-});
-
 // node_modules/pako/lib/utils/common.js
 var require_common = __commonJS({
   "node_modules/pako/lib/utils/common.js"(exports2) {
@@ -2791,7 +1901,7 @@ var require_deflate = __commonJS({
 });
 
 // node_modules/pako/lib/utils/strings.js
-var require_strings2 = __commonJS({
+var require_strings = __commonJS({
   "node_modules/pako/lib/utils/strings.js"(exports2) {
     "use strict";
     var utils = require_common();
@@ -2960,7 +2070,7 @@ var require_deflate2 = __commonJS({
     "use strict";
     var zlib_deflate = require_deflate();
     var utils = require_common();
-    var strings = require_strings2();
+    var strings = require_strings();
     var msg = require_messages();
     var ZStream = require_zstream();
     var toString = Object.prototype.toString;
@@ -4972,7 +4082,7 @@ var require_inflate2 = __commonJS({
     "use strict";
     var zlib_inflate = require_inflate();
     var utils = require_common();
-    var strings = require_strings2();
+    var strings = require_strings();
     var c = require_constants();
     var msg = require_messages();
     var ZStream = require_zstream();
@@ -5151,6 +4261,896 @@ var require_pako = __commonJS({
     var pako = {};
     assign(pako, deflate, inflate, constants);
     module2.exports = pako;
+  }
+});
+
+// node_modules/tslib/tslib.es6.js
+var tslib_es6_exports = {};
+__export(tslib_es6_exports, {
+  __assign: () => __assign,
+  __asyncDelegator: () => __asyncDelegator,
+  __asyncGenerator: () => __asyncGenerator,
+  __asyncValues: () => __asyncValues,
+  __await: () => __await,
+  __awaiter: () => __awaiter,
+  __classPrivateFieldGet: () => __classPrivateFieldGet,
+  __classPrivateFieldSet: () => __classPrivateFieldSet,
+  __createBinding: () => __createBinding,
+  __decorate: () => __decorate,
+  __exportStar: () => __exportStar,
+  __extends: () => __extends,
+  __generator: () => __generator,
+  __importDefault: () => __importDefault,
+  __importStar: () => __importStar,
+  __makeTemplateObject: () => __makeTemplateObject,
+  __metadata: () => __metadata,
+  __param: () => __param,
+  __read: () => __read,
+  __rest: () => __rest,
+  __spread: () => __spread,
+  __spreadArrays: () => __spreadArrays,
+  __values: () => __values
+});
+function __extends(d, b) {
+  extendStatics(d, b);
+  function __() {
+    this.constructor = d;
+  }
+  d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+}
+function __rest(s, e) {
+  var t = {};
+  for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p) && e.indexOf(p) < 0)
+    t[p] = s[p];
+  if (s != null && typeof Object.getOwnPropertySymbols === "function")
+    for (var i = 0, p = Object.getOwnPropertySymbols(s); i < p.length; i++) {
+      if (e.indexOf(p[i]) < 0 && Object.prototype.propertyIsEnumerable.call(s, p[i]))
+        t[p[i]] = s[p[i]];
+    }
+  return t;
+}
+function __decorate(decorators, target, key, desc) {
+  var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+  if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+  else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+  return c > 3 && r && Object.defineProperty(target, key, r), r;
+}
+function __param(paramIndex, decorator) {
+  return function(target, key) {
+    decorator(target, key, paramIndex);
+  };
+}
+function __metadata(metadataKey, metadataValue) {
+  if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(metadataKey, metadataValue);
+}
+function __awaiter(thisArg, _arguments, P, generator) {
+  function adopt(value) {
+    return value instanceof P ? value : new P(function(resolve) {
+      resolve(value);
+    });
+  }
+  return new (P || (P = Promise))(function(resolve, reject) {
+    function fulfilled(value) {
+      try {
+        step(generator.next(value));
+      } catch (e) {
+        reject(e);
+      }
+    }
+    function rejected(value) {
+      try {
+        step(generator["throw"](value));
+      } catch (e) {
+        reject(e);
+      }
+    }
+    function step(result) {
+      result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
+    }
+    step((generator = generator.apply(thisArg, _arguments || [])).next());
+  });
+}
+function __generator(thisArg, body) {
+  var _ = { label: 0, sent: function() {
+    if (t[0] & 1) throw t[1];
+    return t[1];
+  }, trys: [], ops: [] }, f, y, t, g;
+  return g = { next: verb(0), "throw": verb(1), "return": verb(2) }, typeof Symbol === "function" && (g[Symbol.iterator] = function() {
+    return this;
+  }), g;
+  function verb(n) {
+    return function(v) {
+      return step([n, v]);
+    };
+  }
+  function step(op) {
+    if (f) throw new TypeError("Generator is already executing.");
+    while (_) try {
+      if (f = 1, y && (t = op[0] & 2 ? y["return"] : op[0] ? y["throw"] || ((t = y["return"]) && t.call(y), 0) : y.next) && !(t = t.call(y, op[1])).done) return t;
+      if (y = 0, t) op = [op[0] & 2, t.value];
+      switch (op[0]) {
+        case 0:
+        case 1:
+          t = op;
+          break;
+        case 4:
+          _.label++;
+          return { value: op[1], done: false };
+        case 5:
+          _.label++;
+          y = op[1];
+          op = [0];
+          continue;
+        case 7:
+          op = _.ops.pop();
+          _.trys.pop();
+          continue;
+        default:
+          if (!(t = _.trys, t = t.length > 0 && t[t.length - 1]) && (op[0] === 6 || op[0] === 2)) {
+            _ = 0;
+            continue;
+          }
+          if (op[0] === 3 && (!t || op[1] > t[0] && op[1] < t[3])) {
+            _.label = op[1];
+            break;
+          }
+          if (op[0] === 6 && _.label < t[1]) {
+            _.label = t[1];
+            t = op;
+            break;
+          }
+          if (t && _.label < t[2]) {
+            _.label = t[2];
+            _.ops.push(op);
+            break;
+          }
+          if (t[2]) _.ops.pop();
+          _.trys.pop();
+          continue;
+      }
+      op = body.call(thisArg, _);
+    } catch (e) {
+      op = [6, e];
+      y = 0;
+    } finally {
+      f = t = 0;
+    }
+    if (op[0] & 5) throw op[1];
+    return { value: op[0] ? op[1] : void 0, done: true };
+  }
+}
+function __createBinding(o, m, k, k2) {
+  if (k2 === void 0) k2 = k;
+  o[k2] = m[k];
+}
+function __exportStar(m, exports2) {
+  for (var p in m) if (p !== "default" && !exports2.hasOwnProperty(p)) exports2[p] = m[p];
+}
+function __values(o) {
+  var s = typeof Symbol === "function" && Symbol.iterator, m = s && o[s], i = 0;
+  if (m) return m.call(o);
+  if (o && typeof o.length === "number") return {
+    next: function() {
+      if (o && i >= o.length) o = void 0;
+      return { value: o && o[i++], done: !o };
+    }
+  };
+  throw new TypeError(s ? "Object is not iterable." : "Symbol.iterator is not defined.");
+}
+function __read(o, n) {
+  var m = typeof Symbol === "function" && o[Symbol.iterator];
+  if (!m) return o;
+  var i = m.call(o), r, ar = [], e;
+  try {
+    while ((n === void 0 || n-- > 0) && !(r = i.next()).done) ar.push(r.value);
+  } catch (error) {
+    e = { error };
+  } finally {
+    try {
+      if (r && !r.done && (m = i["return"])) m.call(i);
+    } finally {
+      if (e) throw e.error;
+    }
+  }
+  return ar;
+}
+function __spread() {
+  for (var ar = [], i = 0; i < arguments.length; i++)
+    ar = ar.concat(__read(arguments[i]));
+  return ar;
+}
+function __spreadArrays() {
+  for (var s = 0, i = 0, il = arguments.length; i < il; i++) s += arguments[i].length;
+  for (var r = Array(s), k = 0, i = 0; i < il; i++)
+    for (var a = arguments[i], j = 0, jl = a.length; j < jl; j++, k++)
+      r[k] = a[j];
+  return r;
+}
+function __await(v) {
+  return this instanceof __await ? (this.v = v, this) : new __await(v);
+}
+function __asyncGenerator(thisArg, _arguments, generator) {
+  if (!Symbol.asyncIterator) throw new TypeError("Symbol.asyncIterator is not defined.");
+  var g = generator.apply(thisArg, _arguments || []), i, q = [];
+  return i = {}, verb("next"), verb("throw"), verb("return"), i[Symbol.asyncIterator] = function() {
+    return this;
+  }, i;
+  function verb(n) {
+    if (g[n]) i[n] = function(v) {
+      return new Promise(function(a, b) {
+        q.push([n, v, a, b]) > 1 || resume(n, v);
+      });
+    };
+  }
+  function resume(n, v) {
+    try {
+      step(g[n](v));
+    } catch (e) {
+      settle(q[0][3], e);
+    }
+  }
+  function step(r) {
+    r.value instanceof __await ? Promise.resolve(r.value.v).then(fulfill, reject) : settle(q[0][2], r);
+  }
+  function fulfill(value) {
+    resume("next", value);
+  }
+  function reject(value) {
+    resume("throw", value);
+  }
+  function settle(f, v) {
+    if (f(v), q.shift(), q.length) resume(q[0][0], q[0][1]);
+  }
+}
+function __asyncDelegator(o) {
+  var i, p;
+  return i = {}, verb("next"), verb("throw", function(e) {
+    throw e;
+  }), verb("return"), i[Symbol.iterator] = function() {
+    return this;
+  }, i;
+  function verb(n, f) {
+    i[n] = o[n] ? function(v) {
+      return (p = !p) ? { value: __await(o[n](v)), done: n === "return" } : f ? f(v) : v;
+    } : f;
+  }
+}
+function __asyncValues(o) {
+  if (!Symbol.asyncIterator) throw new TypeError("Symbol.asyncIterator is not defined.");
+  var m = o[Symbol.asyncIterator], i;
+  return m ? m.call(o) : (o = typeof __values === "function" ? __values(o) : o[Symbol.iterator](), i = {}, verb("next"), verb("throw"), verb("return"), i[Symbol.asyncIterator] = function() {
+    return this;
+  }, i);
+  function verb(n) {
+    i[n] = o[n] && function(v) {
+      return new Promise(function(resolve, reject) {
+        v = o[n](v), settle(resolve, reject, v.done, v.value);
+      });
+    };
+  }
+  function settle(resolve, reject, d, v) {
+    Promise.resolve(v).then(function(v2) {
+      resolve({ value: v2, done: d });
+    }, reject);
+  }
+}
+function __makeTemplateObject(cooked, raw) {
+  if (Object.defineProperty) {
+    Object.defineProperty(cooked, "raw", { value: raw });
+  } else {
+    cooked.raw = raw;
+  }
+  return cooked;
+}
+function __importStar(mod) {
+  if (mod && mod.__esModule) return mod;
+  var result = {};
+  if (mod != null) {
+    for (var k in mod) if (Object.hasOwnProperty.call(mod, k)) result[k] = mod[k];
+  }
+  result.default = mod;
+  return result;
+}
+function __importDefault(mod) {
+  return mod && mod.__esModule ? mod : { default: mod };
+}
+function __classPrivateFieldGet(receiver, privateMap) {
+  if (!privateMap.has(receiver)) {
+    throw new TypeError("attempted to get private field on non-instance");
+  }
+  return privateMap.get(receiver);
+}
+function __classPrivateFieldSet(receiver, privateMap, value) {
+  if (!privateMap.has(receiver)) {
+    throw new TypeError("attempted to set private field on non-instance");
+  }
+  privateMap.set(receiver, value);
+  return value;
+}
+var extendStatics, __assign;
+var init_tslib_es6 = __esm({
+  "node_modules/tslib/tslib.es6.js"() {
+    extendStatics = function(d, b) {
+      extendStatics = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d2, b2) {
+        d2.__proto__ = b2;
+      } || function(d2, b2) {
+        for (var p in b2) if (b2.hasOwnProperty(p)) d2[p] = b2[p];
+      };
+      return extendStatics(d, b);
+    };
+    __assign = function() {
+      __assign = Object.assign || function __assign2(t) {
+        for (var s, i = 1, n = arguments.length; i < n; i++) {
+          s = arguments[i];
+          for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p)) t[p] = s[p];
+        }
+        return t;
+      };
+      return __assign.apply(this, arguments);
+    };
+  }
+});
+
+// node_modules/pdf-lib/cjs/utils/base64.js
+var require_base64 = __commonJS({
+  "node_modules/pdf-lib/cjs/utils/base64.js"(exports2) {
+    "use strict";
+    Object.defineProperty(exports2, "__esModule", { value: true });
+    exports2.decodeFromBase64DataUri = exports2.decodeFromBase64 = exports2.encodeToBase64 = void 0;
+    var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    var lookup = new Uint8Array(256);
+    for (i = 0; i < chars.length; i++) {
+      lookup[chars.charCodeAt(i)] = i;
+    }
+    var i;
+    exports2.encodeToBase64 = function(bytes) {
+      var base64 = "";
+      var len = bytes.length;
+      for (var i2 = 0; i2 < len; i2 += 3) {
+        base64 += chars[bytes[i2] >> 2];
+        base64 += chars[(bytes[i2] & 3) << 4 | bytes[i2 + 1] >> 4];
+        base64 += chars[(bytes[i2 + 1] & 15) << 2 | bytes[i2 + 2] >> 6];
+        base64 += chars[bytes[i2 + 2] & 63];
+      }
+      if (len % 3 === 2) {
+        base64 = base64.substring(0, base64.length - 1) + "=";
+      } else if (len % 3 === 1) {
+        base64 = base64.substring(0, base64.length - 2) + "==";
+      }
+      return base64;
+    };
+    exports2.decodeFromBase64 = function(base64) {
+      var bufferLength = base64.length * 0.75;
+      var len = base64.length;
+      var i2;
+      var p = 0;
+      var encoded1;
+      var encoded2;
+      var encoded3;
+      var encoded4;
+      if (base64[base64.length - 1] === "=") {
+        bufferLength--;
+        if (base64[base64.length - 2] === "=") {
+          bufferLength--;
+        }
+      }
+      var bytes = new Uint8Array(bufferLength);
+      for (i2 = 0; i2 < len; i2 += 4) {
+        encoded1 = lookup[base64.charCodeAt(i2)];
+        encoded2 = lookup[base64.charCodeAt(i2 + 1)];
+        encoded3 = lookup[base64.charCodeAt(i2 + 2)];
+        encoded4 = lookup[base64.charCodeAt(i2 + 3)];
+        bytes[p++] = encoded1 << 2 | encoded2 >> 4;
+        bytes[p++] = (encoded2 & 15) << 4 | encoded3 >> 2;
+        bytes[p++] = (encoded3 & 3) << 6 | encoded4 & 63;
+      }
+      return bytes;
+    };
+    var DATA_URI_PREFIX_REGEX = /^(data)?:?([\w\/\+]+)?;?(charset=[\w-]+|base64)?.*,/i;
+    exports2.decodeFromBase64DataUri = function(dataUri) {
+      var trimmedUri = dataUri.trim();
+      var prefix = trimmedUri.substring(0, 100);
+      var res = prefix.match(DATA_URI_PREFIX_REGEX);
+      if (!res)
+        return exports2.decodeFromBase64(trimmedUri);
+      var fullMatch = res[0];
+      var data = trimmedUri.substring(fullMatch.length);
+      return exports2.decodeFromBase64(data);
+    };
+  }
+});
+
+// node_modules/pdf-lib/cjs/utils/strings.js
+var require_strings2 = __commonJS({
+  "node_modules/pdf-lib/cjs/utils/strings.js"(exports2) {
+    "use strict";
+    Object.defineProperty(exports2, "__esModule", { value: true });
+    exports2.findLastMatch = exports2.parseDate = exports2.breakTextIntoLines = exports2.charSplit = exports2.charAtIndex = exports2.mergeLines = exports2.lineSplit = exports2.isNewlineChar = exports2.newlineChars = exports2.escapedNewlineChars = exports2.cleanText = exports2.escapeRegExp = exports2.addRandomSuffix = exports2.copyStringIntoBuffer = exports2.padStart = exports2.charFromHexCode = exports2.charFromCode = exports2.toHexString = exports2.toHexStringOfMinLength = exports2.toCodePoint = exports2.toCharCode = void 0;
+    exports2.toCharCode = function(character) {
+      return character.charCodeAt(0);
+    };
+    exports2.toCodePoint = function(character) {
+      return character.codePointAt(0);
+    };
+    exports2.toHexStringOfMinLength = function(num, minLength) {
+      return exports2.padStart(num.toString(16), minLength, "0").toUpperCase();
+    };
+    exports2.toHexString = function(num) {
+      return exports2.toHexStringOfMinLength(num, 2);
+    };
+    exports2.charFromCode = function(code) {
+      return String.fromCharCode(code);
+    };
+    exports2.charFromHexCode = function(hex) {
+      return exports2.charFromCode(parseInt(hex, 16));
+    };
+    exports2.padStart = function(value, length, padChar) {
+      var padding = "";
+      for (var idx = 0, len = length - value.length; idx < len; idx++) {
+        padding += padChar;
+      }
+      return padding + value;
+    };
+    exports2.copyStringIntoBuffer = function(str, buffer, offset) {
+      var length = str.length;
+      for (var idx = 0; idx < length; idx++) {
+        buffer[offset++] = str.charCodeAt(idx);
+      }
+      return length;
+    };
+    exports2.addRandomSuffix = function(prefix, suffixLength) {
+      if (suffixLength === void 0) {
+        suffixLength = 4;
+      }
+      return prefix + "-" + Math.floor(Math.random() * Math.pow(10, suffixLength));
+    };
+    exports2.escapeRegExp = function(str) {
+      return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    };
+    exports2.cleanText = function(text) {
+      return text.replace(/\t|\u0085|\u2028|\u2029/g, "    ").replace(/[\b\v]/g, "");
+    };
+    exports2.escapedNewlineChars = ["\\n", "\\f", "\\r", "\\u000B"];
+    exports2.newlineChars = ["\n", "\f", "\r", "\v"];
+    exports2.isNewlineChar = function(text) {
+      return /^[\n\f\r\u000B]$/.test(text);
+    };
+    exports2.lineSplit = function(text) {
+      return text.split(/[\n\f\r\u000B]/);
+    };
+    exports2.mergeLines = function(text) {
+      return text.replace(/[\n\f\r\u000B]/g, " ");
+    };
+    exports2.charAtIndex = function(text, index) {
+      var cuFirst = text.charCodeAt(index);
+      var cuSecond;
+      var nextIndex = index + 1;
+      var length = 1;
+      if (
+        // Check if it's the start of a surrogate pair.
+        cuFirst >= 55296 && cuFirst <= 56319 && // high surrogate
+        text.length > nextIndex
+      ) {
+        cuSecond = text.charCodeAt(nextIndex);
+        if (cuSecond >= 56320 && cuSecond <= 57343)
+          length = 2;
+      }
+      return [text.slice(index, index + length), length];
+    };
+    exports2.charSplit = function(text) {
+      var chars = [];
+      for (var idx = 0, len = text.length; idx < len; ) {
+        var _a = exports2.charAtIndex(text, idx), c = _a[0], cLen = _a[1];
+        chars.push(c);
+        idx += cLen;
+      }
+      return chars;
+    };
+    var buildWordBreakRegex = function(wordBreaks) {
+      var newlineCharUnion = exports2.escapedNewlineChars.join("|");
+      var escapedRules = ["$"];
+      for (var idx = 0, len = wordBreaks.length; idx < len; idx++) {
+        var wordBreak = wordBreaks[idx];
+        if (exports2.isNewlineChar(wordBreak)) {
+          throw new TypeError("`wordBreak` must not include " + newlineCharUnion);
+        }
+        escapedRules.push(wordBreak === "" ? "." : exports2.escapeRegExp(wordBreak));
+      }
+      var breakRules = escapedRules.join("|");
+      return new RegExp("(" + newlineCharUnion + ")|((.*?)(" + breakRules + "))", "gm");
+    };
+    exports2.breakTextIntoLines = function(text, wordBreaks, maxWidth, computeWidthOfText) {
+      var regex = buildWordBreakRegex(wordBreaks);
+      var words = exports2.cleanText(text).match(regex);
+      var currLine = "";
+      var currWidth = 0;
+      var lines = [];
+      var pushCurrLine = function() {
+        if (currLine !== "")
+          lines.push(currLine);
+        currLine = "";
+        currWidth = 0;
+      };
+      for (var idx = 0, len = words.length; idx < len; idx++) {
+        var word = words[idx];
+        if (exports2.isNewlineChar(word)) {
+          pushCurrLine();
+        } else {
+          var width = computeWidthOfText(word);
+          if (currWidth + width > maxWidth)
+            pushCurrLine();
+          currLine += word;
+          currWidth += width;
+        }
+      }
+      pushCurrLine();
+      return lines;
+    };
+    var dateRegex = /^D:(\d\d\d\d)(\d\d)?(\d\d)?(\d\d)?(\d\d)?(\d\d)?([+\-Z])?(\d\d)?'?(\d\d)?'?$/;
+    exports2.parseDate = function(dateStr) {
+      var match = dateStr.match(dateRegex);
+      if (!match)
+        return void 0;
+      var year = match[1], _a = match[2], month = _a === void 0 ? "01" : _a, _b = match[3], day = _b === void 0 ? "01" : _b, _c = match[4], hours = _c === void 0 ? "00" : _c, _d = match[5], mins = _d === void 0 ? "00" : _d, _e = match[6], secs = _e === void 0 ? "00" : _e, _f = match[7], offsetSign = _f === void 0 ? "Z" : _f, _g = match[8], offsetHours = _g === void 0 ? "00" : _g, _h = match[9], offsetMins = _h === void 0 ? "00" : _h;
+      var tzOffset = offsetSign === "Z" ? "Z" : "" + offsetSign + offsetHours + ":" + offsetMins;
+      var date = /* @__PURE__ */ new Date(year + "-" + month + "-" + day + "T" + hours + ":" + mins + ":" + secs + tzOffset);
+      return date;
+    };
+    exports2.findLastMatch = function(value, regex) {
+      var _a;
+      var position = 0;
+      var lastMatch;
+      while (position < value.length) {
+        var match = value.substring(position).match(regex);
+        if (!match)
+          return { match: lastMatch, pos: position };
+        lastMatch = match;
+        position += ((_a = match.index) !== null && _a !== void 0 ? _a : 0) + match[0].length;
+      }
+      return { match: lastMatch, pos: position };
+    };
+  }
+});
+
+// node_modules/pdf-lib/cjs/utils/arrays.js
+var require_arrays = __commonJS({
+  "node_modules/pdf-lib/cjs/utils/arrays.js"(exports2) {
+    "use strict";
+    Object.defineProperty(exports2, "__esModule", { value: true });
+    exports2.toUint8Array = exports2.canBeConvertedToUint8Array = exports2.pluckIndices = exports2.range = exports2.sum = exports2.reverseArray = exports2.sortedUniq = exports2.byAscendingId = exports2.arrayAsString = exports2.mergeUint8Arrays = exports2.mergeIntoTypedArray = exports2.typedArrayFor = exports2.last = void 0;
+    var base64_1 = require_base64();
+    var strings_1 = require_strings2();
+    exports2.last = function(array) {
+      return array[array.length - 1];
+    };
+    exports2.typedArrayFor = function(value) {
+      if (value instanceof Uint8Array)
+        return value;
+      var length = value.length;
+      var typedArray = new Uint8Array(length);
+      for (var idx = 0; idx < length; idx++) {
+        typedArray[idx] = value.charCodeAt(idx);
+      }
+      return typedArray;
+    };
+    exports2.mergeIntoTypedArray = function() {
+      var arrays = [];
+      for (var _i = 0; _i < arguments.length; _i++) {
+        arrays[_i] = arguments[_i];
+      }
+      var arrayCount = arrays.length;
+      var typedArrays = [];
+      for (var idx = 0; idx < arrayCount; idx++) {
+        var element = arrays[idx];
+        typedArrays[idx] = element instanceof Uint8Array ? element : exports2.typedArrayFor(element);
+      }
+      var totalSize = 0;
+      for (var idx = 0; idx < arrayCount; idx++) {
+        totalSize += arrays[idx].length;
+      }
+      var merged = new Uint8Array(totalSize);
+      var offset = 0;
+      for (var arrIdx = 0; arrIdx < arrayCount; arrIdx++) {
+        var arr = typedArrays[arrIdx];
+        for (var byteIdx = 0, arrLen = arr.length; byteIdx < arrLen; byteIdx++) {
+          merged[offset++] = arr[byteIdx];
+        }
+      }
+      return merged;
+    };
+    exports2.mergeUint8Arrays = function(arrays) {
+      var totalSize = 0;
+      for (var idx = 0, len = arrays.length; idx < len; idx++) {
+        totalSize += arrays[idx].length;
+      }
+      var mergedBuffer = new Uint8Array(totalSize);
+      var offset = 0;
+      for (var idx = 0, len = arrays.length; idx < len; idx++) {
+        var array = arrays[idx];
+        mergedBuffer.set(array, offset);
+        offset += array.length;
+      }
+      return mergedBuffer;
+    };
+    exports2.arrayAsString = function(array) {
+      var str = "";
+      for (var idx = 0, len = array.length; idx < len; idx++) {
+        str += strings_1.charFromCode(array[idx]);
+      }
+      return str;
+    };
+    exports2.byAscendingId = function(a, b) {
+      return a.id - b.id;
+    };
+    exports2.sortedUniq = function(array, indexer) {
+      var uniq = [];
+      for (var idx = 0, len = array.length; idx < len; idx++) {
+        var curr = array[idx];
+        var prev = array[idx - 1];
+        if (idx === 0 || indexer(curr) !== indexer(prev)) {
+          uniq.push(curr);
+        }
+      }
+      return uniq;
+    };
+    exports2.reverseArray = function(array) {
+      var arrayLen = array.length;
+      for (var idx = 0, len = Math.floor(arrayLen / 2); idx < len; idx++) {
+        var leftIdx = idx;
+        var rightIdx = arrayLen - idx - 1;
+        var temp = array[idx];
+        array[leftIdx] = array[rightIdx];
+        array[rightIdx] = temp;
+      }
+      return array;
+    };
+    exports2.sum = function(array) {
+      var total = 0;
+      for (var idx = 0, len = array.length; idx < len; idx++) {
+        total += array[idx];
+      }
+      return total;
+    };
+    exports2.range = function(start, end) {
+      var arr = new Array(end - start);
+      for (var idx = 0, len = arr.length; idx < len; idx++) {
+        arr[idx] = start + idx;
+      }
+      return arr;
+    };
+    exports2.pluckIndices = function(arr, indices) {
+      var plucked = new Array(indices.length);
+      for (var idx = 0, len = indices.length; idx < len; idx++) {
+        plucked[idx] = arr[indices[idx]];
+      }
+      return plucked;
+    };
+    exports2.canBeConvertedToUint8Array = function(input) {
+      return input instanceof Uint8Array || input instanceof ArrayBuffer || typeof input === "string";
+    };
+    exports2.toUint8Array = function(input) {
+      if (typeof input === "string") {
+        return base64_1.decodeFromBase64DataUri(input);
+      } else if (input instanceof ArrayBuffer) {
+        return new Uint8Array(input);
+      } else if (input instanceof Uint8Array) {
+        return input;
+      } else {
+        throw new TypeError("`input` must be one of `string | ArrayBuffer | Uint8Array`");
+      }
+    };
+  }
+});
+
+// node_modules/pdf-lib/cjs/utils/async.js
+var require_async = __commonJS({
+  "node_modules/pdf-lib/cjs/utils/async.js"(exports2) {
+    "use strict";
+    Object.defineProperty(exports2, "__esModule", { value: true });
+    exports2.waitForTick = void 0;
+    exports2.waitForTick = function() {
+      return new Promise(function(resolve) {
+        setTimeout(function() {
+          return resolve();
+        }, 0);
+      });
+    };
+  }
+});
+
+// node_modules/pdf-lib/cjs/utils/unicode.js
+var require_unicode = __commonJS({
+  "node_modules/pdf-lib/cjs/utils/unicode.js"(exports2) {
+    "use strict";
+    Object.defineProperty(exports2, "__esModule", { value: true });
+    exports2.hasUtf16BOM = exports2.utf16Decode = exports2.lowSurrogate = exports2.highSurrogate = exports2.hasSurrogates = exports2.isWithinBMP = exports2.utf16Encode = exports2.utf8Encode = void 0;
+    var strings_1 = require_strings2();
+    exports2.utf8Encode = function(input, byteOrderMark) {
+      if (byteOrderMark === void 0) {
+        byteOrderMark = true;
+      }
+      var encoded = [];
+      if (byteOrderMark)
+        encoded.push(239, 187, 191);
+      for (var idx = 0, len = input.length; idx < len; ) {
+        var codePoint = input.codePointAt(idx);
+        if (codePoint < 128) {
+          var byte1 = codePoint & 127;
+          encoded.push(byte1);
+          idx += 1;
+        } else if (codePoint < 2048) {
+          var byte1 = codePoint >> 6 & 31 | 192;
+          var byte2 = codePoint & 63 | 128;
+          encoded.push(byte1, byte2);
+          idx += 1;
+        } else if (codePoint < 65536) {
+          var byte1 = codePoint >> 12 & 15 | 224;
+          var byte2 = codePoint >> 6 & 63 | 128;
+          var byte3 = codePoint & 63 | 128;
+          encoded.push(byte1, byte2, byte3);
+          idx += 1;
+        } else if (codePoint < 1114112) {
+          var byte1 = codePoint >> 18 & 7 | 240;
+          var byte2 = codePoint >> 12 & 63 | 128;
+          var byte3 = codePoint >> 6 & 63 | 128;
+          var byte4 = codePoint >> 0 & 63 | 128;
+          encoded.push(byte1, byte2, byte3, byte4);
+          idx += 2;
+        } else
+          throw new Error("Invalid code point: 0x" + strings_1.toHexString(codePoint));
+      }
+      return new Uint8Array(encoded);
+    };
+    exports2.utf16Encode = function(input, byteOrderMark) {
+      if (byteOrderMark === void 0) {
+        byteOrderMark = true;
+      }
+      var encoded = [];
+      if (byteOrderMark)
+        encoded.push(65279);
+      for (var idx = 0, len = input.length; idx < len; ) {
+        var codePoint = input.codePointAt(idx);
+        if (codePoint < 65536) {
+          encoded.push(codePoint);
+          idx += 1;
+        } else if (codePoint < 1114112) {
+          encoded.push(exports2.highSurrogate(codePoint), exports2.lowSurrogate(codePoint));
+          idx += 2;
+        } else
+          throw new Error("Invalid code point: 0x" + strings_1.toHexString(codePoint));
+      }
+      return new Uint16Array(encoded);
+    };
+    exports2.isWithinBMP = function(codePoint) {
+      return codePoint >= 0 && codePoint <= 65535;
+    };
+    exports2.hasSurrogates = function(codePoint) {
+      return codePoint >= 65536 && codePoint <= 1114111;
+    };
+    exports2.highSurrogate = function(codePoint) {
+      return Math.floor((codePoint - 65536) / 1024) + 55296;
+    };
+    exports2.lowSurrogate = function(codePoint) {
+      return (codePoint - 65536) % 1024 + 56320;
+    };
+    var ByteOrder;
+    (function(ByteOrder2) {
+      ByteOrder2["BigEndian"] = "BigEndian";
+      ByteOrder2["LittleEndian"] = "LittleEndian";
+    })(ByteOrder || (ByteOrder = {}));
+    var REPLACEMENT = "\uFFFD".codePointAt(0);
+    exports2.utf16Decode = function(input, byteOrderMark) {
+      if (byteOrderMark === void 0) {
+        byteOrderMark = true;
+      }
+      if (input.length <= 1)
+        return String.fromCodePoint(REPLACEMENT);
+      var byteOrder = byteOrderMark ? readBOM(input) : ByteOrder.BigEndian;
+      var idx = byteOrderMark ? 2 : 0;
+      var codePoints = [];
+      while (input.length - idx >= 2) {
+        var first = decodeValues(input[idx++], input[idx++], byteOrder);
+        if (isHighSurrogate(first)) {
+          if (input.length - idx < 2) {
+            codePoints.push(REPLACEMENT);
+          } else {
+            var second = decodeValues(input[idx++], input[idx++], byteOrder);
+            if (isLowSurrogate(second)) {
+              codePoints.push(first, second);
+            } else {
+              codePoints.push(REPLACEMENT);
+            }
+          }
+        } else if (isLowSurrogate(first)) {
+          idx += 2;
+          codePoints.push(REPLACEMENT);
+        } else {
+          codePoints.push(first);
+        }
+      }
+      if (idx < input.length)
+        codePoints.push(REPLACEMENT);
+      return String.fromCodePoint.apply(String, codePoints);
+    };
+    var isHighSurrogate = function(codePoint) {
+      return codePoint >= 55296 && codePoint <= 56319;
+    };
+    var isLowSurrogate = function(codePoint) {
+      return codePoint >= 56320 && codePoint <= 57343;
+    };
+    var decodeValues = function(first, second, byteOrder) {
+      if (byteOrder === ByteOrder.LittleEndian)
+        return second << 8 | first;
+      if (byteOrder === ByteOrder.BigEndian)
+        return first << 8 | second;
+      throw new Error("Invalid byteOrder: " + byteOrder);
+    };
+    var readBOM = function(bytes) {
+      return hasUtf16BigEndianBOM(bytes) ? ByteOrder.BigEndian : hasUtf16LittleEndianBOM(bytes) ? ByteOrder.LittleEndian : ByteOrder.BigEndian;
+    };
+    var hasUtf16BigEndianBOM = function(bytes) {
+      return bytes[0] === 254 && bytes[1] === 255;
+    };
+    var hasUtf16LittleEndianBOM = function(bytes) {
+      return bytes[0] === 255 && bytes[1] === 254;
+    };
+    exports2.hasUtf16BOM = function(bytes) {
+      return hasUtf16BigEndianBOM(bytes) || hasUtf16LittleEndianBOM(bytes);
+    };
+  }
+});
+
+// node_modules/pdf-lib/cjs/utils/numbers.js
+var require_numbers = __commonJS({
+  "node_modules/pdf-lib/cjs/utils/numbers.js"(exports2) {
+    "use strict";
+    Object.defineProperty(exports2, "__esModule", { value: true });
+    exports2.bytesFor = exports2.sizeInBytes = exports2.numberToString = void 0;
+    exports2.numberToString = function(num) {
+      var numStr = String(num);
+      if (Math.abs(num) < 1) {
+        var e = parseInt(num.toString().split("e-")[1]);
+        if (e) {
+          var negative = num < 0;
+          if (negative)
+            num *= -1;
+          num *= Math.pow(10, e - 1);
+          numStr = "0." + new Array(e).join("0") + num.toString().substring(2);
+          if (negative)
+            numStr = "-" + numStr;
+        }
+      } else {
+        var e = parseInt(num.toString().split("+")[1]);
+        if (e > 20) {
+          e -= 20;
+          num /= Math.pow(10, e);
+          numStr = num.toString() + new Array(e + 1).join("0");
+        }
+      }
+      return numStr;
+    };
+    exports2.sizeInBytes = function(n) {
+      return Math.ceil(n.toString(2).length / 8);
+    };
+    exports2.bytesFor = function(n) {
+      var bytes = new Uint8Array(exports2.sizeInBytes(n));
+      for (var i = 1; i <= bytes.length; i++) {
+        bytes[i - 1] = n >> (bytes.length - i) * 8;
+      }
+      return bytes;
+    };
+  }
+});
+
+// node_modules/pdf-lib/cjs/utils/errors.js
+var require_errors = __commonJS({
+  "node_modules/pdf-lib/cjs/utils/errors.js"(exports2) {
+    "use strict";
+    Object.defineProperty(exports2, "__esModule", { value: true });
+    exports2.error = void 0;
+    exports2.error = function(msg) {
+      throw new Error(msg);
+    };
   }
 });
 
@@ -5690,7 +5690,7 @@ var require_pdfDocEncoding = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.pdfDocEncodingDecode = void 0;
-    var strings_1 = require_strings();
+    var strings_1 = require_strings2();
     var pdfDocEncodingToUnicode = new Uint16Array(256);
     for (idx = 0; idx < 256; idx++) {
       pdfDocEncodingToUnicode[idx] = idx;
@@ -5791,7 +5791,7 @@ var require_utils2 = __commonJS({
     var tslib_1 = (init_tslib_es6(), __toCommonJS(tslib_es6_exports));
     tslib_1.__exportStar(require_arrays(), exports2);
     tslib_1.__exportStar(require_async(), exports2);
-    tslib_1.__exportStar(require_strings(), exports2);
+    tslib_1.__exportStar(require_strings2(), exports2);
     tslib_1.__exportStar(require_unicode(), exports2);
     tslib_1.__exportStar(require_numbers(), exports2);
     tslib_1.__exportStar(require_errors(), exports2);
@@ -22031,153 +22031,10 @@ module.exports = __toCommonJS(main_exports);
 var import_obsidian15 = require("obsidian");
 
 // src/notebook-modal.ts
+var import_obsidian2 = require("obsidian");
+
+// src/storage.ts
 var import_obsidian = require("obsidian");
-var NotebookSuggestModal = class extends import_obsidian.SuggestModal {
-  constructor(app, files, select, create, rename) {
-    super(app);
-    this.files = files;
-    this.select = select;
-    this.create = create;
-    this.rename = rename;
-    this.actions = null;
-    this.setPlaceholder("Search Ink notebooks");
-    this.emptyStateText = "No notebooks found";
-  }
-  onOpen() {
-    super.onOpen();
-    this.modalEl.addClass("ink-notebook-picker");
-    this.actions = this.modalEl.createDiv({ cls: "ink-notebook-picker-actions" });
-    this.modalEl.prepend(this.actions);
-    this.actions.createEl("span", { text: "Ink notebooks" });
-    const button3 = this.actions.createEl("button", { cls: "ink-notebook-create", attr: {
-      type: "button",
-      title: "Create Ink notebook",
-      "aria-label": "Create Ink notebook"
-    } });
-    (0, import_obsidian.setIcon)(button3.createSpan({ attr: { "aria-hidden": "true" } }), "plus");
-    button3.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") event.stopPropagation();
-    });
-    button3.addEventListener("click", () => {
-      this.close();
-      new NotebookNameModal(this.app, "Create Ink notebook", "Ink Notebook", "Create", this.create).open();
-    });
-  }
-  onClose() {
-    var _a;
-    (_a = this.actions) == null ? void 0 : _a.remove();
-    this.actions = null;
-    super.onClose();
-  }
-  getSuggestions(query) {
-    const search = query.trim().toLowerCase();
-    return this.files.filter((file) => !search || file.path.toLowerCase().includes(search));
-  }
-  renderSuggestion(file, el) {
-    el.addClass("ink-notebook-result");
-    const name = el.createDiv({ cls: "ink-notebook-result-name" });
-    name.createDiv({ text: file.basename });
-    name.createDiv({ text: file.path, cls: "ink-notebook-result-path" });
-    const rename = el.createEl("button", { cls: "ink-notebook-rename", attr: {
-      type: "button",
-      title: "Rename notebook",
-      "aria-label": `Rename ${file.basename}`
-    } });
-    (0, import_obsidian.setIcon)(rename.createSpan({ attr: { "aria-hidden": "true" } }), "pencil");
-    rename.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") event.stopPropagation();
-    });
-    rename.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      this.close();
-      new NotebookNameModal(
-        this.app,
-        "Rename Ink notebook",
-        file.basename,
-        "Rename",
-        (title) => this.rename(file, title)
-      ).open();
-    });
-  }
-  onChooseSuggestion(file, event) {
-    var _a, _b;
-    if ((_b = (_a = event.target) == null ? void 0 : _a.closest) == null ? void 0 : _b.call(_a, "button")) return;
-    this.select(file);
-  }
-};
-var NotebookNameModal = class extends import_obsidian.Modal {
-  constructor(app, heading, initialName, action, submitName) {
-    super(app);
-    this.heading = heading;
-    this.initialName = initialName;
-    this.action = action;
-    this.submitName = submitName;
-  }
-  onOpen() {
-    this.setTitle(this.heading);
-    this.modalEl.addClass("ink-notebook-name-modal");
-    const form = this.contentEl.createEl("form", { cls: "ink-notebook-name-form" });
-    const label = form.createEl("label", { text: "Notebook name" });
-    const input = label.createEl("input", { attr: { type: "text", required: "", maxlength: "80" } });
-    input.value = this.initialName;
-    const error = form.createDiv({ cls: "ink-notebook-name-error", attr: { role: "alert" } });
-    const actions = form.createDiv({ cls: "ink-notebook-name-actions" });
-    const cancel = actions.createEl("button", { text: "Cancel", attr: { type: "button" } });
-    const submit = actions.createEl("button", { text: this.action, cls: "mod-cta", attr: { type: "submit" } });
-    cancel.addEventListener("click", () => this.close());
-    let pending = false;
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      if (pending) return;
-      const title = input.value.trim();
-      if (!title || title.length > 80 || /[\\/:*?"<>|#^\[\]]/.test(title) || /\.$/.test(title)) {
-        error.setText("Enter a valid notebook name without path or reserved characters.");
-        input.focus();
-        return;
-      }
-      pending = true;
-      input.disabled = cancel.disabled = submit.disabled = true;
-      error.setText("");
-      void this.submitName(title).then(() => this.close()).catch((reason) => {
-        error.setText(`Could not ${this.action.toLowerCase()} notebook: ${reason instanceof Error ? reason.message : String(reason)}`);
-      }).finally(() => {
-        pending = false;
-        input.disabled = cancel.disabled = submit.disabled = false;
-      });
-    });
-    input.focus();
-    input.select();
-  }
-  onClose() {
-    this.contentEl.empty();
-  }
-};
-
-// src/view.ts
-var import_obsidian8 = require("obsidian");
-
-// src/diagnostics.ts
-function intervalStats(intervals) {
-  if (intervals.length === 0) return { count: 0, min: null, median: null, mean: null, max: null };
-  const sorted = [...intervals].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  const median = sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
-  const total = sorted.reduce((sum, value) => sum + value, 0);
-  return {
-    count: sorted.length,
-    min: sorted[0],
-    median,
-    mean: total / sorted.length,
-    max: sorted[sorted.length - 1]
-  };
-}
-var MAX_RECORDED_STROKES = 8;
-var MAX_RAW_POINT_SAMPLES = 8192;
-function pushStrokeRecord(records, record) {
-  records.push(record);
-  if (records.length > MAX_RECORDED_STROKES) records.splice(0, records.length - MAX_RECORDED_STROKES);
-}
 
 // src/sticky-model.ts
 var STICKY_UNIT = 1e3;
@@ -22702,6 +22559,479 @@ function clamp(value, min, max) {
 }
 function isPaperStyle(value) {
   return value === "blank" || value === "ruled" || value === "grid" || value === "dot";
+}
+
+// src/storage-codec.ts
+var import_pako = __toESM(require_pako());
+var MAGIC = "INK-GZIP-1\n";
+var MIN_COMPRESS_LENGTH = 1024;
+var MAX_INFLATED_BYTES = 256 * 1024 * 1024;
+function serializeStoredJson(value) {
+  const plain = `${JSON.stringify(value)}
+`;
+  if (plain.length < MIN_COMPRESS_LENGTH) return plain;
+  const bytes = new TextEncoder().encode(plain);
+  if (bytes.length > MAX_INFLATED_BYTES) return plain;
+  const compressed = (0, import_pako.gzip)(plain, { level: 6 });
+  let binary = "";
+  for (let offset = 0; offset < compressed.length; offset += 8192)
+    binary += String.fromCharCode(...compressed.subarray(offset, offset + 8192));
+  const encoded = `${MAGIC}${btoa(binary)}
+`;
+  return encoded.length < bytes.length ? encoded : plain;
+}
+function parseStoredJson(raw) {
+  if (!raw.startsWith(MAGIC)) return JSON.parse(raw);
+  try {
+    const base64 = raw.slice(MAGIC.length).trim();
+    if (!base64 || base64.length > Math.ceil(MAX_INFLATED_BYTES / 3) * 4 || base64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) throw new Error("Invalid base64");
+    const binary = atob(base64), data = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) data[index] = binary.charCodeAt(index);
+    if (data.length < 18 || data[0] !== 31 || data[1] !== 139 || data[2] !== 8) throw new Error("Invalid gzip header");
+    if (new DataView(data.buffer).getUint32(data.length - 4, true) > MAX_INFLATED_BYTES) throw new Error("Notebook exceeds 256 MiB decompression limit");
+    const chunks = [];
+    let size = 0;
+    const inflate = new import_pako.Inflate({ chunkSize: 65536 });
+    inflate.onData = (chunk) => {
+      size += chunk.length;
+      if (size > MAX_INFLATED_BYTES) throw new Error("Notebook exceeds 256 MiB decompression limit");
+      chunks.push(chunk);
+    };
+    if (!inflate.push(data, false) || inflate.err || !inflate.ended || inflate.strm.avail_in !== 0) throw new Error(inflate.msg || "Incomplete or trailing gzip data");
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch (error) {
+    throw new SyntaxError(`Invalid compressed Ink Notes file: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+// src/storage.ts
+var INK_EXTENSION = "ink";
+var INK_FOLDER = "Ink Notes";
+var NotebookFormatError = class extends Error {
+  constructor(message = "Ink notebook contains invalid JSON") {
+    super(message);
+    this.name = "NotebookFormatError";
+  }
+};
+var NotebookStore = class {
+  constructor(app) {
+    this.selfWrites = /* @__PURE__ */ new Map();
+    this.app = app;
+    this.vault = app.vault;
+  }
+  async create(title, folder) {
+    const parent = this.resolveFolder(folder);
+    await this.ensureFolder(parent);
+    const safeTitle = title.trim().replace(/[\\/:*?"<>|#^\[\]]/g, "-").slice(0, 80) || "Ink Notebook";
+    let path = `${parent}/${safeTitle}.${INK_EXTENSION}`;
+    let count = 2;
+    while (this.vault.getAbstractFileByPath(path)) path = `${parent}/${safeTitle} ${count++}.${INK_EXTENSION}`;
+    const notebook = createNotebook(safeTitle);
+    return this.vault.create(path, serialize(notebook));
+  }
+  async read(file) {
+    const raw = await this.readRaw(file);
+    return normalizeNotebook(parseStoredJson(raw));
+  }
+  async readRaw(file) {
+    return this.vault.read(file);
+  }
+  async writeIfUnchanged(file, expectedRaw, nextRaw) {
+    let matched = false;
+    try {
+      await this.vault.process(file, (raw) => {
+        if (raw !== expectedRaw) return raw;
+        matched = true;
+        this.selfWrites.set(file.path, nextRaw);
+        return nextRaw;
+      });
+    } catch (error) {
+      if (this.selfWrites.get(file.path) === nextRaw) this.selfWrites.delete(file.path);
+      throw error;
+    }
+    return matched;
+  }
+  async save(file, notebook) {
+    const next = { ...notebook, updatedAt: Date.now() };
+    let merged = next;
+    let expectedWrite = null;
+    try {
+      await this.vault.process(file, (raw) => {
+        let latest;
+        try {
+          latest = normalizeNotebook(parseStoredJson(raw));
+        } catch (error) {
+          throw new NotebookFormatError(`Cannot save ${file.path || "notebook"}: existing file is corrupt or uses an unsupported encoding`);
+        }
+        merged = mergeNotebooks(latest, next);
+        expectedWrite = serialize(merged);
+        this.selfWrites.set(file.path, expectedWrite);
+        return expectedWrite;
+      });
+    } catch (error) {
+      if (expectedWrite !== null && this.selfWrites.get(file.path) === expectedWrite) this.selfWrites.delete(file.path);
+      throw error;
+    }
+    return merged;
+  }
+  /** Full-vault scan: every .ink file is a notebook regardless of folder, so
+   *  notebooks moved out of the default folder stay discoverable. The scan
+   *  reads vault.getFiles() — Obsidian's incrementally maintained in-memory
+   *  index — so one filter pass per picker open costs no disk I/O and needs no
+   *  second cache that could go stale. */
+  async list() {
+    return this.vault.getFiles().filter((file) => file.extension === INK_EXTENSION);
+  }
+  observe(onChange) {
+    const timers = /* @__PURE__ */ new Map();
+    const handler = (file) => {
+      if (!(file instanceof import_obsidian.TFile) || file.extension !== INK_EXTENSION) return;
+      const expected = this.selfWrites.get(file.path);
+      const notify = () => {
+        timers.delete(file.path);
+        onChange(file);
+      };
+      const existing = timers.get(file.path);
+      if (existing !== void 0) globalThis.clearTimeout(existing);
+      if (!expected) {
+        timers.set(file.path, globalThis.setTimeout(notify, 75));
+        return;
+      }
+      void this.vault.cachedRead(file).then((raw) => {
+        if (this.selfWrites.get(file.path) === expected) this.selfWrites.delete(file.path);
+        if (raw !== expected) timers.set(file.path, globalThis.setTimeout(notify, 75));
+      }).catch(() => {
+        this.selfWrites.delete(file.path);
+        timers.set(file.path, globalThis.setTimeout(notify, 75));
+      });
+    };
+    const ref = this.vault.on("modify", handler);
+    return () => {
+      for (const timer of timers.values()) globalThis.clearTimeout(timer);
+      timers.clear();
+      this.vault.offref(ref);
+    };
+  }
+  /** Custom creation folders follow Obsidian's forward-slash path semantics:
+   *  backslashes and duplicated slashes are normalized away, and reserved
+   *  filename characters are cleaned exactly like notebook titles so a pasted
+   *  path can never produce an invalid folder name. An empty result falls back
+   *  to the default folder for zero-perception compatibility. */
+  resolveFolder(folder) {
+    const cleaned = (folder != null ? folder : "").trim().replace(/\\/g, "/").replace(/\/+/g, "/").split("/").map((segment) => segment.trim().replace(/[:*?"<>|#^\[\]]/g, "-")).filter((segment) => segment && segment !== "." && segment !== "..").join("/");
+    return cleaned || INK_FOLDER;
+  }
+  async ensureFolder(path) {
+    let current = "";
+    for (const segment of path.split("/")) {
+      current = current ? `${current}/${segment}` : segment;
+      const existing = this.vault.getAbstractFileByPath(current);
+      if (existing) {
+        if (existing instanceof import_obsidian.TFile) throw new Error(`Cannot create notebook folder: a file already exists at ${current}`);
+        continue;
+      }
+      await this.vault.createFolder(current);
+    }
+  }
+};
+var MAX_HISTORY_ENTRIES = 200;
+var NotebookHistoryIndex = class _NotebookHistoryIndex {
+  constructor(saved) {
+    this.entries = /* @__PURE__ */ new Map();
+    if (!Array.isArray(saved)) return;
+    for (const item of saved) {
+      const entry = _NotebookHistoryIndex.coerce(item);
+      if (!entry) continue;
+      const previous = this.entries.get(entry.path);
+      if (!previous || previous.lastOpened < entry.lastOpened) this.entries.set(entry.path, entry);
+    }
+    this.trim();
+  }
+  record(path, title, openedAt = Date.now()) {
+    if (!path) return;
+    this.entries.set(path, { path, title, lastOpened: openedAt });
+    this.trim();
+  }
+  remove(path) {
+    this.entries.delete(path);
+  }
+  /** Manual bulk cleanup for entries whose files no longer exist: drops every
+   *  remembered path that is not among the given existing paths. */
+  removeMissing(existingPaths) {
+    let removed = 0;
+    for (const path of [...this.entries.keys()]) {
+      if (!existingPaths.has(path)) {
+        this.entries.delete(path);
+        removed++;
+      }
+    }
+    return removed;
+  }
+  list() {
+    return [...this.entries.values()].sort((left, right) => right.lastOpened - left.lastOpened || left.path.localeCompare(right.path));
+  }
+  trim() {
+    while (this.entries.size > MAX_HISTORY_ENTRIES) {
+      let oldest = null;
+      for (const [path, entry] of this.entries) {
+        if (oldest === null || entry.lastOpened < this.entries.get(oldest).lastOpened) oldest = path;
+      }
+      if (oldest === null) break;
+      this.entries.delete(oldest);
+    }
+  }
+  /** Field-level load: one malformed value is skipped instead of taking the
+   *  whole history down with it. */
+  static coerce(item) {
+    if (typeof item !== "object" || item === null) return null;
+    const path = item.path;
+    if (typeof path !== "string" || !path) return null;
+    const title = item.title;
+    const lastOpened = item.lastOpened;
+    return {
+      path,
+      title: typeof title === "string" && title ? title : path.slice(path.lastIndexOf("/") + 1),
+      lastOpened: typeof lastOpened === "number" && Number.isFinite(lastOpened) ? lastOpened : 0
+    };
+  }
+};
+function discoverNotebooks(files, history) {
+  var _a;
+  const remembered = new Map(history.map((entry) => [entry.path, entry]));
+  const merged = /* @__PURE__ */ new Map();
+  for (const file of files) {
+    merged.set(file.path, { path: file.path, title: file.basename, lastOpened: (_a = remembered.get(file.path)) == null ? void 0 : _a.lastOpened, file });
+  }
+  for (const entry of remembered.values()) {
+    if (!merged.has(entry.path)) merged.set(entry.path, { path: entry.path, title: entry.title, lastOpened: entry.lastOpened, file: null });
+  }
+  return [...merged.values()].sort((left, right) => {
+    var _a2, _b;
+    return (left.file ? 0 : 1) - (right.file ? 0 : 1) || ((_a2 = right.lastOpened) != null ? _a2 : 0) - ((_b = left.lastOpened) != null ? _b : 0) || left.path.localeCompare(right.path);
+  });
+}
+function serialize(notebook) {
+  return serializeStoredJson(notebook);
+}
+
+// src/notebook-modal.ts
+var NotebookSuggestModal = class extends import_obsidian2.SuggestModal {
+  constructor(app, entries, select, create, rename, clear) {
+    super(app);
+    this.entries = entries;
+    this.select = select;
+    this.create = create;
+    this.rename = rename;
+    this.clear = clear;
+    this.actions = null;
+    this.setPlaceholder("Search Ink notebooks");
+    this.emptyStateText = "No notebooks found";
+  }
+  onOpen() {
+    super.onOpen();
+    this.modalEl.addClass("ink-notebook-picker");
+    this.actions = this.modalEl.createDiv({ cls: "ink-notebook-picker-actions" });
+    this.modalEl.prepend(this.actions);
+    this.actions.createEl("span", { text: "Ink notebooks" });
+    const buttons = this.actions.createDiv({ cls: "ink-notebook-picker-buttons" });
+    const missing = this.entries.filter((entry) => !entry.file);
+    if (missing.length) {
+      const clearMissing = buttons.createEl("button", { text: "Clear missing", cls: "ink-notebook-clear-missing", attr: {
+        type: "button",
+        title: "Clear missing notebook entries",
+        "aria-label": "Clear missing notebook entries"
+      } });
+      clearMissing.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+      });
+      clearMissing.addEventListener("click", () => {
+        this.close();
+        void this.clear(missing);
+      });
+    }
+    const button3 = buttons.createEl("button", { cls: "ink-notebook-create", attr: {
+      type: "button",
+      title: "Create Ink notebook",
+      "aria-label": "Create Ink notebook"
+    } });
+    (0, import_obsidian2.setIcon)(button3.createSpan({ attr: { "aria-hidden": "true" } }), "plus");
+    button3.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+    });
+    button3.addEventListener("click", () => {
+      this.close();
+      new NotebookNameModal(this.app, "Create Ink notebook", "Ink Notebook", "Create", this.create, { folder: true }).open();
+    });
+  }
+  onClose() {
+    var _a;
+    (_a = this.actions) == null ? void 0 : _a.remove();
+    this.actions = null;
+    super.onClose();
+  }
+  getSuggestions(query) {
+    const search = query.trim().toLowerCase();
+    return this.entries.filter((entry) => !search || entry.path.toLowerCase().includes(search));
+  }
+  renderSuggestion(entry, el) {
+    el.addClass("ink-notebook-result");
+    if (!entry.file) el.addClass("ink-notebook-result-missing");
+    const name = el.createDiv({ cls: "ink-notebook-result-name" });
+    name.createDiv({ text: entry.title });
+    name.createDiv({ text: entry.path, cls: "ink-notebook-result-path" });
+    if (!entry.file) {
+      name.createDiv({ text: "File missing", cls: "ink-notebook-result-missing-label" });
+      const clear = el.createEl("button", { cls: "ink-notebook-clear", attr: {
+        type: "button",
+        title: `Clear ${entry.title} from history`,
+        "aria-label": `Clear ${entry.title} from history`
+      } });
+      (0, import_obsidian2.setIcon)(clear.createSpan({ attr: { "aria-hidden": "true" } }), "trash-2");
+      clear.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+      });
+      clear.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.close();
+        void this.clear([entry]);
+      });
+      return;
+    }
+    const rename = el.createEl("button", { cls: "ink-notebook-rename", attr: {
+      type: "button",
+      title: "Rename notebook",
+      "aria-label": `Rename ${entry.title}`
+    } });
+    (0, import_obsidian2.setIcon)(rename.createSpan({ attr: { "aria-hidden": "true" } }), "pencil");
+    rename.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+    });
+    rename.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.close();
+      new NotebookNameModal(
+        this.app,
+        "Rename Ink notebook",
+        entry.title,
+        "Rename",
+        (title) => this.rename(entry.file, title)
+      ).open();
+    });
+  }
+  onChooseSuggestion(entry, event) {
+    var _a, _b;
+    if (!entry.file) return;
+    if ((_b = (_a = event.target) == null ? void 0 : _a.closest) == null ? void 0 : _b.call(_a, "button")) return;
+    this.select(entry.file);
+  }
+};
+var NotebookNameModal = class extends import_obsidian2.Modal {
+  constructor(app, heading, initialName, action, submitName, options) {
+    super(app);
+    this.heading = heading;
+    this.initialName = initialName;
+    this.action = action;
+    this.submitName = submitName;
+    this.options = options;
+  }
+  onOpen() {
+    var _a;
+    this.setTitle(this.heading);
+    this.modalEl.addClass("ink-notebook-name-modal");
+    const form = this.contentEl.createEl("form", { cls: "ink-notebook-name-form" });
+    const label = form.createEl("label", { text: "Notebook name" });
+    const input = label.createEl("input", { attr: { type: "text", required: "", maxlength: "80" } });
+    input.value = this.initialName;
+    let folderInput = null;
+    if ((_a = this.options) == null ? void 0 : _a.folder) {
+      const folderLabel = form.createEl("label", { text: "Folder" });
+      folderInput = folderLabel.createEl("input", { attr: {
+        type: "text",
+        placeholder: `${INK_FOLDER} (default)`,
+        spellcheck: "false"
+      } });
+    }
+    const error = form.createDiv({ cls: "ink-notebook-name-error", attr: { role: "alert" } });
+    const actions = form.createDiv({ cls: "ink-notebook-name-actions" });
+    const cancel = actions.createEl("button", { text: "Cancel", attr: { type: "button" } });
+    const submit = actions.createEl("button", { text: this.action, cls: "mod-cta", attr: { type: "submit" } });
+    cancel.addEventListener("click", () => this.close());
+    let pending = false;
+    form.addEventListener("submit", (event) => {
+      var _a2;
+      event.preventDefault();
+      if (pending) return;
+      const title = input.value.trim();
+      if (!title || title.length > 80 || /[\\/:*?"<>|#^\[\]]/.test(title) || /\.$/.test(title)) {
+        error.setText("Enter a valid notebook name without path or reserved characters.");
+        input.focus();
+        return;
+      }
+      const folder = cleanedNotebookFolder((_a2 = folderInput == null ? void 0 : folderInput.value) != null ? _a2 : "");
+      if (folder === null) {
+        error.setText("Enter a valid folder path without reserved characters.");
+        folderInput.focus();
+        return;
+      }
+      pending = true;
+      input.disabled = cancel.disabled = submit.disabled = true;
+      if (folderInput) folderInput.disabled = true;
+      error.setText("");
+      void this.submitName(title, folder || void 0).then(() => this.close()).catch((reason) => {
+        error.setText(`Could not ${this.action.toLowerCase()} notebook: ${reason instanceof Error ? reason.message : String(reason)}`);
+      }).finally(() => {
+        pending = false;
+        input.disabled = cancel.disabled = submit.disabled = false;
+        if (folderInput) folderInput.disabled = false;
+      });
+    });
+    input.focus();
+    input.select();
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
+function cleanedNotebookFolder(raw) {
+  const collapsed = raw.trim().replace(/\\/g, "/").replace(/\/+/g, "/").replace(/^\/|\/$/g, "");
+  if (!collapsed) return "";
+  if (/[:*?"<>|#^\[\]]/.test(collapsed)) return null;
+  const segments = collapsed.split("/");
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) return null;
+  return collapsed;
+}
+
+// src/view.ts
+var import_obsidian9 = require("obsidian");
+
+// src/diagnostics.ts
+function intervalStats(intervals) {
+  if (intervals.length === 0) return { count: 0, min: null, median: null, mean: null, max: null };
+  const sorted = [...intervals].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+  const total = sorted.reduce((sum, value) => sum + value, 0);
+  return {
+    count: sorted.length,
+    min: sorted[0],
+    median,
+    mean: total / sorted.length,
+    max: sorted[sorted.length - 1]
+  };
+}
+var MAX_RECORDED_STROKES = 8;
+var MAX_RAW_POINT_SAMPLES = 8192;
+function pushStrokeRecord(records, record) {
+  records.push(record);
+  if (records.length > MAX_RECORDED_STROKES) records.splice(0, records.length - MAX_RECORDED_STROKES);
 }
 
 // src/rendering.ts
@@ -23233,9 +23563,9 @@ function splitStickyStroke(stroke, notes, g) {
 }
 
 // src/sticky-rendering.ts
-var import_obsidian2 = require("obsidian");
+var import_obsidian3 = require("obsidian");
 async function markdownImage(note, context, viewportWidth, viewportHeight) {
-  const component = new import_obsidian2.Component();
+  const component = new import_obsidian3.Component();
   component.load();
   const el = document.createElement("div");
   try {
@@ -23250,7 +23580,7 @@ async function markdownImage(note, context, viewportWidth, viewportHeight) {
         font: stickyFont(box, true),
         ...box.height === void 0 ? {} : { height: `${box.height}px`, overflow: "hidden" }
       });
-      await import_obsidian2.MarkdownRenderer.render(context.app, box.text, content, context.source, component);
+      await import_obsidian3.MarkdownRenderer.render(context.app, box.text, content, context.source, component);
       frame.append(content);
       el.append(frame);
     }
@@ -23664,7 +23994,7 @@ function fmt(value) {
 }
 
 // src/image-library.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 var LIBRARY_PATH = "Ink Notes/Images/library.json";
 var EMPTY = () => ({ schema: 1, groups: [], assets: [] });
 var IMAGE_EXTENSIONS = /\.(png|jpe?g|webp|gif|bmp|avif|heic|heif)$/i;
@@ -23721,7 +24051,7 @@ var ImageLibraryStore = class {
   }
   async read() {
     const file = this.app.vault.getAbstractFileByPath(LIBRARY_PATH);
-    return file instanceof import_obsidian3.TFile ? parseImageLibrary(await this.app.vault.read(file)) : EMPTY();
+    return file instanceof import_obsidian4.TFile ? parseImageLibrary(await this.app.vault.read(file)) : EMPTY();
   }
   update(change) {
     return this.serial(async () => {
@@ -23735,7 +24065,7 @@ var ImageLibraryStore = class {
           if (!file) throw error;
         }
       }
-      if (!(file instanceof import_obsidian3.TFile)) throw new Error("Image library path is not a file");
+      if (!(file instanceof import_obsidian4.TFile)) throw new Error("Image library path is not a file");
       await this.app.vault.process(file, (text) => {
         const library = parseImageLibrary(text);
         change(library);
@@ -23787,8 +24117,8 @@ var ImageLibraryStore = class {
     const errors = [];
     for (const path of [...new Set(paths2)]) {
       try {
-        const file = this.app.vault.getAbstractFileByPath((0, import_obsidian3.normalizePath)(path.trim()));
-        if (!(file instanceof import_obsidian3.TFile) || !IMAGE_EXTENSIONS.test(file.path)) throw new Error("Image file not found");
+        const file = this.app.vault.getAbstractFileByPath((0, import_obsidian4.normalizePath)(path.trim()));
+        if (!(file instanceof import_obsidian4.TFile) || !IMAGE_EXTENSIONS.test(file.path)) throw new Error("Image file not found");
         await this.importBlob(new Blob([await this.app.vault.readBinary(file)]), file.name, groupId);
       } catch (error) {
         errors.push(`${path}: ${error instanceof Error ? error.message : String(error)}`);
@@ -23835,7 +24165,7 @@ var ImageLibraryStore = class {
   url(path) {
     if (!isManagedImagePath(path)) throw new Error("Invalid managed image path");
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof import_obsidian3.TFile)) throw new Error(`Image asset missing: ${path}`);
+    if (!(file instanceof import_obsidian4.TFile)) throw new Error(`Image asset missing: ${path}`);
     return this.app.vault.getResourcePath(file);
   }
   async image(path) {
@@ -23919,7 +24249,7 @@ function libraryMenu(parent, label) {
   });
   return panel;
 }
-var ImageLibraryModal = class extends import_obsidian3.Modal {
+var ImageLibraryModal = class extends import_obsidian4.Modal {
   constructor(store, insert) {
     super(store.app);
     this.store = store;
@@ -23976,7 +24306,7 @@ var ImageLibraryModal = class extends import_obsidian3.Modal {
     this.contentEl.empty();
   }
   report(error) {
-    new import_obsidian3.Notice(`Image library: ${error instanceof Error ? error.message : String(error)}`, 8e3);
+    new import_obsidian4.Notice(`Image library: ${error instanceof Error ? error.message : String(error)}`, 8e3);
   }
   async operation(run) {
     if (this.busy || this.closed) return;
@@ -24071,7 +24401,7 @@ var ImageLibraryModal = class extends import_obsidian3.Modal {
         void this.operation(async () => {
           await this.store.restore(this.lastDeleted);
           this.lastDeleted = [];
-          new import_obsidian3.Notice("Image library deletion undone");
+          new import_obsidian4.Notice("Image library deletion undone");
         });
       });
     }
@@ -24112,7 +24442,7 @@ var ImageLibraryModal = class extends import_obsidian3.Modal {
   }
   deleteDialog(assets) {
     if (!assets.length || this.closed || this.busy || this.deleteConfirmation) return;
-    const modal = new import_obsidian3.Modal(this.app);
+    const modal = new import_obsidian4.Modal(this.app);
     this.deleteConfirmation = modal;
     modal.setTitle("Delete library images");
     modal.modalEl.addClass("ink-image-library-confirm");
@@ -24136,7 +24466,7 @@ var ImageLibraryModal = class extends import_obsidian3.Modal {
         if (removed.length) this.lastDeleted = removed;
         assets.forEach((asset) => this.selected.delete(asset.id));
         modal.close();
-        new import_obsidian3.Notice(`Removed ${removed.length} images from the library`);
+        new import_obsidian4.Notice(`Removed ${removed.length} images from the library`);
       }).finally(() => {
         confirm.disabled = false;
         cancel.disabled = false;
@@ -24147,7 +24477,7 @@ var ImageLibraryModal = class extends import_obsidian3.Modal {
     cancel.focus();
   }
   groupDialog(id, name = "") {
-    const modal = new import_obsidian3.Modal(this.app);
+    const modal = new import_obsidian4.Modal(this.app);
     modal.setTitle(id ? "Rename group" : "New group");
     const input = modal.contentEl.createEl("input", { value: name, attr: { "aria-label": "Group name" } });
     button(modal.contentEl, "Save", () => {
@@ -24160,7 +24490,7 @@ var ImageLibraryModal = class extends import_obsidian3.Modal {
     input.focus();
   }
   pathDialog() {
-    const modal = new import_obsidian3.Modal(this.app);
+    const modal = new import_obsidian4.Modal(this.app);
     modal.setTitle("Import vault paths");
     const input = modal.contentEl.createEl("textarea", { placeholder: "One image path per line", attr: { "aria-label": "Image paths" } });
     button(modal.contentEl, "Import all", () => {
@@ -24175,7 +24505,7 @@ var ImageLibraryModal = class extends import_obsidian3.Modal {
     modal.open();
   }
   vaultDialog() {
-    const modal = new import_obsidian3.Modal(this.app);
+    const modal = new import_obsidian4.Modal(this.app);
     modal.setTitle("Import images from vault");
     const paths2 = /* @__PURE__ */ new Set();
     const list = modal.contentEl.createDiv({ cls: "ink-image-vault-list" });
@@ -24231,7 +24561,7 @@ function registerDocumentPointerEndEvents(element, register, onEnd) {
 }
 
 // src/ink-writing.ts
-var import_obsidian6 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 
 // src/device-mode.ts
 function defaultReadingMode(platform, device) {
@@ -24792,10 +25122,10 @@ var PageImageLayer = class {
 };
 
 // src/sticky-notes.ts
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 function button2(parent, label, icon, run) {
   const el = parent.createEl("button", { attr: { type: "button", "aria-label": label, title: label } });
-  (0, import_obsidian4.setIcon)(el, icon);
+  (0, import_obsidian5.setIcon)(el, icon);
   el.onclick = run;
   return el;
 }
@@ -24834,7 +25164,7 @@ var StickyNoteLayer = class {
     this.context = context;
     this.events = new AbortController();
     this.cards = new AbortController();
-    this.markdown = new import_obsidian4.Component();
+    this.markdown = new import_obsidian5.Component();
     this.suppressTap = false;
     this.pendingTextRefresh = false;
     this.readFrames = /* @__PURE__ */ new Map();
@@ -25365,7 +25695,7 @@ var StickyNoteLayer = class {
     const baseBox = stickyTextBoxes(edit.base).find((box) => box.id === edit.boxId);
     if (!current || edit.boxId && !currentBox || (edit.boxId ? (currentBox == null ? void 0 : currentBox.text) !== (baseBox == null ? void 0 : baseBox.text) : current[edit.field] !== edit.base[edit.field])) {
       this.editing = edit;
-      new import_obsidian4.Notice("This text changed in another pane. Copy your draft before reopening it.");
+      new import_obsidian5.Notice("This text changed in another pane. Copy your draft before reopening it.");
       return;
     }
     if (edit.boxId) this.update(current, patchStickyTextBox(current, edit.boxId, { text: edit.input.value }));
@@ -25414,7 +25744,7 @@ var StickyNoteLayer = class {
     var _a;
     clearTimeout(this.hold);
     (_a = this.menu) == null ? void 0 : _a.hide();
-    const menu = new import_obsidian4.Menu();
+    const menu = new import_obsidian5.Menu();
     this.menu = menu;
     this.menuNote = note.id;
     menu.onHide(() => {
@@ -25425,11 +25755,11 @@ var StickyNoteLayer = class {
     });
     const addLinks = () => {
       menu.addItem((item) => item.setTitle(note.kind === "text" ? "Copy link to text box" : "Copy link to sticky note").setIcon("link").onClick(() => {
-        void navigator.clipboard.writeText(this.context.link(note)).catch(() => new import_obsidian4.Notice("Could not copy the note link"));
+        void navigator.clipboard.writeText(this.context.link(note)).catch(() => new import_obsidian5.Notice("Could not copy the note link"));
       }));
       for (const block of stickyText(note).matchAll(/(?:^|\s)\^([a-zA-Z0-9-]+)\s*$/gm)) {
         menu.addItem((item) => item.setTitle(`Copy paragraph link: ${block[1]}`).setIcon("link").onClick(() => {
-          void navigator.clipboard.writeText(this.context.link(note, block[1])).catch(() => new import_obsidian4.Notice("Could not copy the paragraph link"));
+          void navigator.clipboard.writeText(this.context.link(note, block[1])).catch(() => new import_obsidian5.Notice("Could not copy the paragraph link"));
         }));
       }
     };
@@ -25518,7 +25848,7 @@ var StickyNoteLayer = class {
     this.cards.abort();
     this.cards = new AbortController();
     this.markdown.unload();
-    this.markdown = new import_obsidian4.Component();
+    this.markdown = new import_obsidian5.Component();
     this.markdown.load();
     this.layer.empty();
     for (const stored of (_i = page.stickyNotes) != null ? _i : []) {
@@ -25701,7 +26031,7 @@ var StickyNoteLayer = class {
               event.stopPropagation();
             }
           }, { signal: this.cards.signal, capture: true });
-          void import_obsidian4.MarkdownRenderer.render(this.app, box.text, text, this.context.source(), this.markdown).then(() => {
+          void import_obsidian5.MarkdownRenderer.render(this.app, box.text, text, this.context.source(), this.markdown).then(() => {
             var _a2, _b2;
             if (!frame.isConnected) return;
             if (!this.drag) {
@@ -25894,7 +26224,7 @@ function markdownStickyLink(file, note, vault, block) {
 }
 
 // src/brush-popover.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 var INK_COLORS = [
   { value: "#1b1b1b", label: "Black" },
   { value: "#195bff", label: "Blue" },
@@ -26065,7 +26395,7 @@ var BrushPopoverController = class {
     const swatches = control.createDiv({ cls: "ink-color-swatches" });
     this.buildSwatches(swatches, spec);
     const custom = control.createEl("label", { cls: "ink-custom-color", attr: { title: "Add a preset color" } });
-    (0, import_obsidian5.setIcon)(custom.createSpan({ cls: "ink-button-icon" }), "plus");
+    (0, import_obsidian6.setIcon)(custom.createSpan({ cls: "ink-button-icon" }), "plus");
     const input = custom.createEl("input", { attr: {
       type: "color",
       value: settings.color,
@@ -26182,7 +26512,7 @@ var BrushPopoverController = class {
         var _a2;
         this.cancelPresetHold();
         (_a2 = this.presetMenu) == null ? void 0 : _a2.hide();
-        const menu = new import_obsidian5.Menu();
+        const menu = new import_obsidian6.Menu();
         this.presetMenu = menu;
         menu.addItem((item) => {
           var _a3, _b2, _c2;
@@ -26242,7 +26572,7 @@ var BrushPopoverController = class {
     if (settings.color.toLowerCase() === removed.toLowerCase()) settings.color = (_c = palette[0]) != null ? _c : removed;
     this.buildSwatchesInto(spec);
     this.update();
-    new import_obsidian5.Notice("Preset color removed");
+    new import_obsidian6.Notice("Preset color removed");
   }
   updateColorSwatches(tool, color) {
     this.root.querySelectorAll(`.ink-color-swatch[data-brush-tool="${tool}"]`).forEach((swatch) => {
@@ -26278,11 +26608,11 @@ var BrushPopoverController = class {
       }
     });
     const curveIcon = curveToggle.createSpan({ cls: "ink-button-icon" });
-    (0, import_obsidian5.setIcon)(curveIcon, this.curveOpen ? "chevron-up" : "chevron-down");
+    (0, import_obsidian6.setIcon)(curveIcon, this.curveOpen ? "chevron-up" : "chevron-down");
     curveToggle.addEventListener("click", () => {
       this.curveOpen = !this.curveOpen;
       curveToggle.setAttribute("aria-expanded", String(this.curveOpen));
-      (0, import_obsidian5.setIcon)(curveIcon, this.curveOpen ? "chevron-up" : "chevron-down");
+      (0, import_obsidian6.setIcon)(curveIcon, this.curveOpen ? "chevron-up" : "chevron-down");
       curveBody.toggleClass("is-collapsed", !this.curveOpen);
       if (this.curveOpen) requestAnimationFrame(() => this.drawPressureCurve(settings));
     });
@@ -27435,7 +27765,7 @@ function isPointerCaptureError(error) {
   const name = error.name;
   return name === "NotFoundError" || name === "InvalidStateError";
 }
-var InkWritingView = class extends import_obsidian6.FileView {
+var InkWritingView = class extends import_obsidian7.FileView {
   constructor() {
     super(...arguments);
     this.stickyCommands = null;
@@ -27711,7 +28041,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     if (this.inputLocked()) return;
     const pageId = (before != null ? before : after).pageId, id = (before != null ? before : after).id;
     if (before && ((_c = (_b = (_a = this.pageById(pageId)) == null ? void 0 : _a.stickyNotes) == null ? void 0 : _b.find((note) => note.id === id)) == null ? void 0 : _c.updatedAt) !== before.updatedAt) {
-      new import_obsidian6.Notice("This sticky note changed in another pane. Reopen it before editing.");
+      new import_obsidian7.Notice("This sticky note changed in another pane. Reopen it before editing.");
       return;
     }
     const restoredIds = /* @__PURE__ */ new Map();
@@ -27929,7 +28259,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     new ImageLibraryModal(this.imageLibrary, (assets) => {
       var _a;
       if (this.file !== file || this.currentNotebook() !== notebook || this.currentPage().id !== pageId || this.inputLocked()) {
-        new import_obsidian6.Notice("The page changed. Open the image library again to insert here.");
+        new import_obsidian7.Notice("The page changed. Open the image library again to insert here.");
         return;
       }
       const images = assets.map((asset, index) => placedImage(asset, pageId, this.canvasLogicalWidth / this.canvasLogicalHeight, index));
@@ -27987,7 +28317,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
   }
   initializeReadingMode() {
     if (!this.readingModeInitialized) {
-      this.readingMode = defaultReadingMode(import_obsidian6.Platform, {
+      this.readingMode = defaultReadingMode(import_obsidian7.Platform, {
         width: window.screen.width,
         height: window.screen.height
       });
@@ -28037,7 +28367,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
       button3.setAttribute("title", label);
       button3.setAttribute("aria-pressed", String(this.zoomLocked));
       button3.replaceChildren();
-      (0, import_obsidian6.setIcon)(button3, this.zoomLocked ? "lock-keyhole" : "lock-keyhole-open");
+      (0, import_obsidian7.setIcon)(button3, this.zoomLocked ? "lock-keyhole" : "lock-keyhole-open");
     }
   }
   showZoomHud() {
@@ -28104,7 +28434,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     stage.dataset.insert = "true";
     const hint = stage.createDiv({ cls: "ink-page-insert-hint", attr: { "aria-hidden": "true" } });
     hint.setCssStyles(side < 0 ? { right: "24px" } : { left: "24px" });
-    (0, import_obsidian6.setIcon)(hint, "plus");
+    (0, import_obsidian7.setIcon)(hint, "plus");
   }
   updatePageInsertPreview(stage, offset) {
     if (stage == null ? void 0 : stage.dataset.insert) stage.toggleClass("is-ready", Math.abs(offset) >= this.pageInsertThreshold());
@@ -28477,7 +28807,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
       return null;
     }
     this.closePageOptionsMenu();
-    const menu = new import_obsidian6.Menu();
+    const menu = new import_obsidian7.Menu();
     const opened = { menu, trigger };
     this.pageOptionsMenu = opened;
     trigger == null ? void 0 : trigger.setAttribute("aria-haspopup", "menu");
@@ -30982,7 +31312,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     this.workerSession = null;
     if (this.workerFallbackReported || ((_d = this.workers) == null ? void 0 : _d.isDisabled())) return;
     this.workerFallbackReported = true;
-    new import_obsidian6.Notice(`Ink Notes background processing is unavailable; using reduced-performance mode: ${error instanceof Error ? error.message : String(error)}`);
+    new import_obsidian7.Notice(`Ink Notes background processing is unavailable; using reduced-performance mode: ${error instanceof Error ? error.message : String(error)}`);
   }
   // --------------------------------------------------------------- brushes
   brushSettings(tool) {
@@ -31011,7 +31341,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     const modes = pop.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
     for (const [mode, label, shortLabel, iconName] of [["stroke", "Stroke eraser", "Stroke", "eraser"], ["circle", "Circle eraser", "Circle", "circle"], ["square", "Square eraser", "Square", "square"]]) {
       const modeButton = modes.createEl("button", { cls: "ink-eraser-mode", attr: { type: "button", role: "radio", title: label, "aria-label": label, "aria-checked": String(this.state.eraserMode === mode), "data-eraser-mode": mode } });
-      (0, import_obsidian6.setIcon)(modeButton.createSpan({ cls: "ink-button-icon" }), iconName);
+      (0, import_obsidian7.setIcon)(modeButton.createSpan({ cls: "ink-button-icon" }), iconName);
       modeButton.createSpan({ cls: "ink-eraser-mode-label", text: shortLabel });
       modeButton.addEventListener("click", () => {
         this.state.eraserMode = mode;
@@ -31136,7 +31466,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
         "aria-checked": String(this.state.lasso.mode === mode),
         "data-lasso-mode": mode
       } });
-      (0, import_obsidian6.setIcon)(button3.createSpan({ cls: "ink-button-icon" }), icon);
+      (0, import_obsidian7.setIcon)(button3.createSpan({ cls: "ink-button-icon" }), icon);
       button3.createSpan({ cls: "ink-eraser-mode-label", text: label });
       button3.addEventListener("click", () => {
         this.finishPointerInput(false);
@@ -31240,7 +31570,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     if (label === "Undo") button3.title = "Undo (Ctrl/Command+Z)";
     if (label === "Redo") button3.title = "Redo (Ctrl/Command+Shift+Z, Ctrl/Command+Y)";
     const iconHolder = button3.createSpan({ cls: "ink-button-icon" });
-    (0, import_obsidian6.setIcon)(iconHolder, icon);
+    (0, import_obsidian7.setIcon)(iconHolder, icon);
     button3.addEventListener("click", callback);
     return button3;
   }
@@ -31256,7 +31586,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     const shortcut = { pen: "B", highlighter: "H", eraser: "E", lasso: "V", pointer: "A", shape: "S" };
     button3.title = `${label} (${shortcut[tool]})`;
     const iconHolder = button3.createSpan({ cls: "ink-button-icon" });
-    (0, import_obsidian6.setIcon)(iconHolder, icon);
+    (0, import_obsidian7.setIcon)(iconHolder, icon);
     button3.addEventListener("click", () => {
       if (this.readingMode) return;
       this.finishPointerInput(false);
@@ -31366,7 +31696,7 @@ function applyRailWidth(rail, width) {
 }
 
 // src/page-tags.ts
-var import_obsidian7 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 var PAGE_FLAGS = ["red", "yellow", "green"];
 function pageHasInk(page) {
   var _a, _b, _c, _d;
@@ -31417,7 +31747,7 @@ function openTagPopover(host, anchor, controller) {
       cls: flag === null ? "ink-flag-choice ink-flag-none" : `ink-flag-choice ink-flag-${flag}`,
       attr: { type: "button", "aria-label": label, title: label }
     });
-    (0, import_obsidian7.setIcon)(button3, flag === null ? "flag-off" : "flag");
+    (0, import_obsidian8.setIcon)(button3, flag === null ? "flag-off" : "flag");
     button3.addEventListener("click", () => {
       const page = controller.getPage();
       if (!page || controller.isLocked()) return;
@@ -31450,7 +31780,7 @@ function openTagPopover(host, anchor, controller) {
     }
   });
   const addButton = inputRow.createEl("button", { cls: "ink-icon-button", attr: { type: "button", "aria-label": "Add page tag" } });
-  (0, import_obsidian7.setIcon)(addButton, "plus");
+  (0, import_obsidian8.setIcon)(addButton, "plus");
   addButton.addEventListener("click", commitInput);
   function sync() {
     var _a, _b, _c;
@@ -31471,7 +31801,7 @@ function openTagPopover(host, anchor, controller) {
       const chip = tagList.createDiv({ cls: "ink-tag-chip" });
       chip.createSpan({ text: tag, cls: "ink-tag-chip-name" });
       const remove = chip.createEl("button", { cls: "ink-icon-button", attr: { type: "button", "aria-label": `Remove tag ${tag}`, title: "Remove" } });
-      (0, import_obsidian7.setIcon)(remove, "x");
+      (0, import_obsidian8.setIcon)(remove, "x");
       remove.disabled = locked;
       remove.addEventListener("click", () => {
         var _a2;
@@ -32745,7 +33075,7 @@ var InkView = class extends InkWritingView {
     this.store = store;
     this.workers = workers;
     if (toolState) this.useSharedToolState(toolState);
-    this.scope = new import_obsidian8.Scope(this.app.scope);
+    this.scope = new import_obsidian9.Scope(this.app.scope);
   }
   getViewType() {
     return VIEW_TYPE_INK;
@@ -32909,16 +33239,16 @@ var InkView = class extends InkWritingView {
     var _a;
     if (!this.file) return;
     if (!notebookHasInk(this.notebook)) {
-      new import_obsidian8.Notice("This notebook has no handwriting to export yet");
+      new import_obsidian9.Notice("This notebook has no handwriting to export yet");
       return;
     }
     try {
       const output = await exportNotebookPdf(this.notebook, this.file.basename, this.canvasLogicalWidth, (_a = this.imageLibrary) == null ? void 0 : _a.bytes, { app: this.app, source: this.file.path });
       const target = exportPathFor(this.file.path, (candidate) => this.app.vault.getAbstractFileByPath(candidate) !== null);
       await this.app.vault.createBinary(target, output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength));
-      new import_obsidian8.Notice(`Exported ${target}`);
+      new import_obsidian9.Notice(`Exported ${target}`);
     } catch (error) {
-      new import_obsidian8.Notice(`Export failed: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian9.Notice(`Export failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   activeToolButton() {
@@ -33411,7 +33741,7 @@ var InkView = class extends InkWritingView {
     this.refreshCurrentPageThumbnail();
     if (this.externalRefreshPending && this.pendingInkStrokes.length === 0) {
       this.externalRefreshPending = false;
-      void this.reloadFromDisk().catch((error) => new import_obsidian8.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
+      void this.reloadFromDisk().catch((error) => new import_obsidian9.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
     }
   }
   afterCommand(command) {
@@ -33806,7 +34136,7 @@ var InkView = class extends InkWritingView {
     };
     const text = JSON.stringify(report, null, 2);
     if (toClipboard) {
-      void navigator.clipboard.writeText(text).then(() => new import_obsidian8.Notice("Ink diagnostics copied to the clipboard.")).catch((error) => new import_obsidian8.Notice(`Ink Notes could not copy diagnostics: ${error instanceof Error ? error.message : String(error)}`));
+      void navigator.clipboard.writeText(text).then(() => new import_obsidian9.Notice("Ink diagnostics copied to the clipboard.")).catch((error) => new import_obsidian9.Notice(`Ink Notes could not copy diagnostics: ${error instanceof Error ? error.message : String(error)}`));
       return;
     }
     const blob = new Blob([text], { type: "application/json" });
@@ -33816,7 +34146,7 @@ var InkView = class extends InkWritingView {
     anchor.download = `ink-diagnostics-${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}.json`;
     anchor.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
-    new import_obsidian8.Notice(`Exported ${report.strokes.length} stroke records.`);
+    new import_obsidian9.Notice(`Exported ${report.strokes.length} stroke records.`);
   }
   // ------------------------------------------------------------ page tools
   addPage(index = this.notebook.pages.length) {
@@ -33881,7 +34211,7 @@ var InkView = class extends InkWritingView {
         (window.devicePixelRatio || 1) * this.zoom
       );
     })().catch((error) => {
-      new import_obsidian8.Notice(`Ink Notes could not switch pages: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian9.Notice(`Ink Notes could not switch pages: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
   openPageMenu(event) {
@@ -34145,9 +34475,9 @@ page: ${this.currentPage().id}
 \`\`\``;
     try {
       await navigator.clipboard.writeText(syntax);
-      new import_obsidian8.Notice("Copied Ink page embed syntax");
+      new import_obsidian9.Notice("Copied Ink page embed syntax");
     } catch (error) {
-      new import_obsidian8.Notice(`Could not copy embed syntax: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian9.Notice(`Could not copy embed syntax: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   /**
@@ -34250,7 +34580,7 @@ page: ${this.currentPage().id}
     if (this.activeSave === saving) this.activeSave = null;
   }
   reportSaveFailure(file, error) {
-    new import_obsidian8.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
+    new import_obsidian9.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
   }
   async performSave(file) {
     this.syncing = true;
@@ -34263,7 +34593,7 @@ page: ${this.currentPage().id}
           this.savedRevision = Math.max(this.savedRevision, result.revision);
           if (result.merged && this.file === file) this.receiveMergedNotebook(result.merged);
         } catch (error) {
-          new import_obsidian8.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
+          new import_obsidian9.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
           break;
         }
       } while (this.saveRequested || this.dirtyRevision > this.savedRevision);
@@ -34271,7 +34601,7 @@ page: ${this.currentPage().id}
       this.syncing = false;
       if (this.externalRefreshPending && this.activePointerId === null) {
         this.externalRefreshPending = false;
-        void this.reloadFromDisk().catch((error) => new import_obsidian8.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
+        void this.reloadFromDisk().catch((error) => new import_obsidian9.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
       }
       if (this.dirtyRevision > this.savedRevision && this.saveRequested) this.scheduleSave();
     }
@@ -34395,168 +34725,6 @@ function clonePageAsNew(page, title, now = Date.now()) {
 }
 function notebooksEqual(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
-}
-
-// src/storage.ts
-var import_obsidian9 = require("obsidian");
-
-// src/storage-codec.ts
-var import_pako = __toESM(require_pako());
-var MAGIC = "INK-GZIP-1\n";
-var MIN_COMPRESS_LENGTH = 1024;
-var MAX_INFLATED_BYTES = 256 * 1024 * 1024;
-function serializeStoredJson(value) {
-  const plain = `${JSON.stringify(value)}
-`;
-  if (plain.length < MIN_COMPRESS_LENGTH) return plain;
-  const bytes = new TextEncoder().encode(plain);
-  if (bytes.length > MAX_INFLATED_BYTES) return plain;
-  const compressed = (0, import_pako.gzip)(plain, { level: 6 });
-  let binary = "";
-  for (let offset = 0; offset < compressed.length; offset += 8192)
-    binary += String.fromCharCode(...compressed.subarray(offset, offset + 8192));
-  const encoded = `${MAGIC}${btoa(binary)}
-`;
-  return encoded.length < bytes.length ? encoded : plain;
-}
-function parseStoredJson(raw) {
-  if (!raw.startsWith(MAGIC)) return JSON.parse(raw);
-  try {
-    const base64 = raw.slice(MAGIC.length).trim();
-    if (!base64 || base64.length > Math.ceil(MAX_INFLATED_BYTES / 3) * 4 || base64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) throw new Error("Invalid base64");
-    const binary = atob(base64), data = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index++) data[index] = binary.charCodeAt(index);
-    if (data.length < 18 || data[0] !== 31 || data[1] !== 139 || data[2] !== 8) throw new Error("Invalid gzip header");
-    if (new DataView(data.buffer).getUint32(data.length - 4, true) > MAX_INFLATED_BYTES) throw new Error("Notebook exceeds 256 MiB decompression limit");
-    const chunks = [];
-    let size = 0;
-    const inflate = new import_pako.Inflate({ chunkSize: 65536 });
-    inflate.onData = (chunk) => {
-      size += chunk.length;
-      if (size > MAX_INFLATED_BYTES) throw new Error("Notebook exceeds 256 MiB decompression limit");
-      chunks.push(chunk);
-    };
-    if (!inflate.push(data, false) || inflate.err || !inflate.ended || inflate.strm.avail_in !== 0) throw new Error(inflate.msg || "Incomplete or trailing gzip data");
-    const bytes = new Uint8Array(size);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.length;
-    }
-    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-  } catch (error) {
-    throw new SyntaxError(`Invalid compressed Ink Notes file: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
-// src/storage.ts
-var INK_EXTENSION = "ink";
-var INK_FOLDER = "Ink Notes";
-var NotebookFormatError = class extends Error {
-  constructor(message = "Ink notebook contains invalid JSON") {
-    super(message);
-    this.name = "NotebookFormatError";
-  }
-};
-var NotebookStore = class {
-  constructor(app) {
-    this.selfWrites = /* @__PURE__ */ new Map();
-    this.app = app;
-    this.vault = app.vault;
-  }
-  async create(title) {
-    await this.ensureFolder();
-    const safeTitle = title.trim().replace(/[\\/:*?"<>|#^\[\]]/g, "-").slice(0, 80) || "Ink Notebook";
-    let path = `${INK_FOLDER}/${safeTitle}.${INK_EXTENSION}`;
-    let count = 2;
-    while (this.vault.getAbstractFileByPath(path)) path = `${INK_FOLDER}/${safeTitle} ${count++}.${INK_EXTENSION}`;
-    const notebook = createNotebook(safeTitle);
-    return this.vault.create(path, serialize(notebook));
-  }
-  async read(file) {
-    const raw = await this.readRaw(file);
-    return normalizeNotebook(parseStoredJson(raw));
-  }
-  async readRaw(file) {
-    return this.vault.read(file);
-  }
-  async writeIfUnchanged(file, expectedRaw, nextRaw) {
-    let matched = false;
-    try {
-      await this.vault.process(file, (raw) => {
-        if (raw !== expectedRaw) return raw;
-        matched = true;
-        this.selfWrites.set(file.path, nextRaw);
-        return nextRaw;
-      });
-    } catch (error) {
-      if (this.selfWrites.get(file.path) === nextRaw) this.selfWrites.delete(file.path);
-      throw error;
-    }
-    return matched;
-  }
-  async save(file, notebook) {
-    const next = { ...notebook, updatedAt: Date.now() };
-    let merged = next;
-    let expectedWrite = null;
-    try {
-      await this.vault.process(file, (raw) => {
-        let latest;
-        try {
-          latest = normalizeNotebook(parseStoredJson(raw));
-        } catch (error) {
-          throw new NotebookFormatError(`Cannot save ${file.path || "notebook"}: existing file is corrupt or uses an unsupported encoding`);
-        }
-        merged = mergeNotebooks(latest, next);
-        expectedWrite = serialize(merged);
-        this.selfWrites.set(file.path, expectedWrite);
-        return expectedWrite;
-      });
-    } catch (error) {
-      if (expectedWrite !== null && this.selfWrites.get(file.path) === expectedWrite) this.selfWrites.delete(file.path);
-      throw error;
-    }
-    return merged;
-  }
-  async list() {
-    return this.vault.getFiles().filter((file) => file.extension === INK_EXTENSION && file.path.startsWith(`${INK_FOLDER}/`));
-  }
-  observe(onChange) {
-    const timers = /* @__PURE__ */ new Map();
-    const handler = (file) => {
-      if (!(file instanceof import_obsidian9.TFile) || file.extension !== INK_EXTENSION || !file.path.startsWith(`${INK_FOLDER}/`)) return;
-      const expected = this.selfWrites.get(file.path);
-      const notify = () => {
-        timers.delete(file.path);
-        onChange(file);
-      };
-      const existing = timers.get(file.path);
-      if (existing !== void 0) globalThis.clearTimeout(existing);
-      if (!expected) {
-        timers.set(file.path, globalThis.setTimeout(notify, 75));
-        return;
-      }
-      void this.vault.cachedRead(file).then((raw) => {
-        if (this.selfWrites.get(file.path) === expected) this.selfWrites.delete(file.path);
-        if (raw !== expected) timers.set(file.path, globalThis.setTimeout(notify, 75));
-      }).catch(() => {
-        this.selfWrites.delete(file.path);
-        timers.set(file.path, globalThis.setTimeout(notify, 75));
-      });
-    };
-    const ref = this.vault.on("modify", handler);
-    return () => {
-      for (const timer of timers.values()) globalThis.clearTimeout(timer);
-      timers.clear();
-      this.vault.offref(ref);
-    };
-  }
-  async ensureFolder() {
-    if (!this.vault.getAbstractFileByPath(INK_FOLDER)) await this.vault.createFolder(INK_FOLDER);
-  }
-};
-function serialize(notebook) {
-  return serializeStoredJson(notebook);
 }
 
 // src/embed.ts
@@ -37615,6 +37783,9 @@ var DEFAULT_SETTINGS = {
 var InkNotesPlugin = class extends import_obsidian15.Plugin {
   constructor() {
     super(...arguments);
+    /** Recently opened notebooks; persisted in the plugin data document so the
+     *  picker can offer them even after they leave the default folder. */
+    this.history = new NotebookHistoryIndex();
     this.config = { ...DEFAULT_SETTINGS };
     /** Tool settings shared by both editors; loaded sanitized in onload and
      *  kept current by the debounced saver. */
@@ -37667,6 +37838,7 @@ var InkNotesPlugin = class extends import_obsidian15.Plugin {
       pdfOpenMode: (saved == null ? void 0 : saved.pdfOpenMode) === "native" || (saved == null ? void 0 : saved.pdfOpenMode) === "compatible" || (saved == null ? void 0 : saved.pdfOpenMode) === "ink" ? saved.pdfOpenMode : typeof (saved == null ? void 0 : saved.takeOverPdfTabs) === "boolean" ? saved.takeOverPdfTabs ? "ink" : "native" : DEFAULT_SETTINGS.pdfOpenMode
     };
     this.toolState = sanitizeToolState(saved == null ? void 0 : saved.toolState);
+    this.history = new NotebookHistoryIndex(saved == null ? void 0 : saved.notebookHistory);
     this.toolStateSaver = new ToolStateSaver((stored) => this.persistToolState(stored));
     this.toolStateBinding = {
       config: this.toolState,
@@ -37832,13 +38004,13 @@ var InkNotesPlugin = class extends import_obsidian15.Plugin {
   persistToolState(stored) {
     this.toolState.eraserMode = stored.eraserMode;
     this.toolState.eraserSize = stored.eraserSize;
-    return this.saveData({ pdfOpenMode: this.config.pdfOpenMode, toolState: stored }).catch((error) => {
+    return this.saveData({ pdfOpenMode: this.config.pdfOpenMode, toolState: stored, notebookHistory: this.history.list() }).catch((error) => {
       new import_obsidian15.Notice(`Ink Notes could not save tool settings: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
   /** Persists the plugin settings together with the latest tool settings. */
   async persistSettings() {
-    await this.saveData({ pdfOpenMode: this.config.pdfOpenMode, toolState: storedToolState(this.toolState) });
+    await this.saveData({ pdfOpenMode: this.config.pdfOpenMode, toolState: storedToolState(this.toolState), notebookHistory: this.history.list() });
   }
   get fingerAsPen() {
     return this.toolState.fingerAsPen;
@@ -37858,27 +38030,43 @@ var InkNotesPlugin = class extends import_obsidian15.Plugin {
     await leaf.setViewState({ type: VIEW_TYPE_PDF_INK, state: { file: file.path } });
   }
   async openNotebook() {
-    const files = await this.store.list();
+    const entries = discoverNotebooks(await this.store.list(), this.history.list());
     new NotebookSuggestModal(
       this.app,
-      files,
+      entries,
       (file) => this.runAsync(this.openFile(file), `open ${file.path}`),
-      (title) => this.createNotebook(title),
+      (title, folder) => this.createNotebook(title, folder),
       async (file, title) => {
         const parent = file.path.slice(0, file.path.lastIndexOf("/") + 1);
         const path = `${parent}${title}.${INK_EXTENSION}`;
         if (path !== file.path) await this.app.fileManager.renameFile(file, path);
-      }
+      },
+      (cleared) => this.runAsync(this.forgetNotebooks(cleared), "clear missing notebook entries")
     ).open();
   }
-  async createNotebook(title = "Ink Notebook") {
-    const file = await this.store.create(title);
+  async createNotebook(title = "Ink Notebook", folder) {
+    const file = await this.store.create(title, folder);
     await this.openFile(file);
   }
   async openFile(file, pageId) {
+    if (file.extension === INK_EXTENSION) this.rememberNotebook(file);
     const leaf = this.app.workspace.getLeaf(true);
     await leaf.openFile(file);
     if (pageId && leaf.view instanceof InkView) leaf.view.revealPage(pageId);
+  }
+  /** Records the open for discovery even after the notebook moves anywhere in
+   *  the vault; a persistence failure must not block opening the notebook. */
+  rememberNotebook(file) {
+    this.history.record(file.path, file.basename);
+    void this.persistSettings().catch((error) => {
+      new import_obsidian15.Notice(`Ink Notes could not save notebook history: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
+  /** Manual cleanup only: removes the given history entries (missing files)
+   *  without touching the notebooks themselves. */
+  async forgetNotebooks(entries) {
+    for (const entry of entries) this.history.remove(entry.path);
+    await this.persistSettings();
   }
   runAsync(action, operation) {
     void action.catch((error) => new import_obsidian15.Notice(`Ink Notes could not ${operation}: ${error instanceof Error ? error.message : String(error)}`));

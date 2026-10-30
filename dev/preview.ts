@@ -8,6 +8,7 @@ import { InkWorkerService } from "../src/worker-service";
 import { drawInkStroke } from "../src/rendering";
 import { TFile } from "obsidian";
 import { NotebookSuggestModal } from "../src/notebook-modal";
+import { discoverNotebooks } from "../src/storage";
 import type { WorkspaceLeaf } from "obsidian";
 import { ImageLibraryStore } from "../src/image-library";
 import { imageVaultApp } from "./image-vault";
@@ -192,14 +193,29 @@ void (async () => {
     (window as any).__inkNotesPreview.view = pdf;
   };
   if (new URLSearchParams(location.search).has("notebooks")) {
-    const files = new URLSearchParams(location.search).has("empty") ? [] : ["Class notes", "Sketchbook"].map((name) =>
+    const params = new URLSearchParams(location.search);
+    const files = params.has("empty") ? [] : ["Class notes", "Sketchbook"].map((name) =>
       Object.assign(new TFile(), { path: `Ink Notes/${name}.ink`, basename: name, extension: "ink" }));
-    const openPicker = () => new NotebookSuggestModal({} as never, files,
+    const history = params.has("missing") ? [{ path: "Archive/Old notes.ink", title: "Old notes", lastOpened: 1 }] : [];
+    const entries = discoverNotebooks(files, history);
+    const openPicker = () => new NotebookSuggestModal({} as never, entries,
       (file) => { document.documentElement.dataset.openedNotebook = file.path; },
-      async (title) => {
-        files.push(Object.assign(new TFile(), { path: `Ink Notes/${title}.ink`, basename: title, extension: "ink" }));
-        document.documentElement.dataset.openedNotebook = files[files.length - 1].path;
-      }, async (file, title) => { file.basename = title; file.path = `Ink Notes/${title}.ink`; }).open();
+      async (title, folder) => {
+        const created = Object.assign(new TFile(), { path: `${folder || "Ink Notes"}/${title}.ink`, basename: title, extension: "ink" });
+        files.push(created);
+        entries.push({ path: created.path, title, file: created });
+        document.documentElement.dataset.openedNotebook = created.path;
+      }, async (file, title) => {
+        file.basename = title;
+        file.path = `${file.path.slice(0, file.path.lastIndexOf("/") + 1)}${title}.ink`;
+        const entry = entries.find((candidate) => candidate.file === file);
+        if (entry) { entry.path = file.path; entry.title = title; }
+      }, async (cleared) => {
+        for (const entry of cleared) {
+          const index = entries.indexOf(entry);
+          if (index >= 0) entries.splice(index, 1);
+        }
+      }).open();
     (window as unknown as { openNotebookPicker(): void }).openNotebookPicker = openPicker;
     openPicker();
   }

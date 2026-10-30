@@ -1,7 +1,7 @@
 import { Notice, Plugin, PluginSettingTab, Setting, TAbstractFile, TFile, WorkspaceLeaf } from "obsidian";
 import { NotebookSuggestModal } from "./notebook-modal";
 import { InkView, VIEW_TYPE_INK } from "./view";
-import { INK_EXTENSION, NotebookStore } from "./storage";
+import { INK_EXTENSION, NotebookHistoryIndex, NotebookStore, discoverNotebooks, type NotebookDiscovery } from "./storage";
 import { createInkEmbedProcessor } from "./embed";
 import { InkWorkerService } from "./worker-service";
 import { PdfInkView, VIEW_TYPE_PDF_INK } from "./pdf-view";
@@ -57,6 +57,9 @@ export default class InkNotesPlugin extends Plugin {
   }
   private imageLibrary?: ImageLibraryStore;
   private store!: NotebookStore;
+  /** Recently opened notebooks; persisted in the plugin data document so the
+   *  picker can offer them even after they leave the default folder. */
+  private history = new NotebookHistoryIndex();
   private workers!: InkWorkerService;
   private pdfStore!: PdfSidecarStore;
   private takeover!: PdfTabTakeover;
@@ -73,7 +76,7 @@ export default class InkNotesPlugin extends Plugin {
   async onload(): Promise<void> {
     // Field-level read: one corrupted value falls back to its default
     // instead of taking the whole configuration down with it.
-    const saved = (await this.loadData()) as { pdfOpenMode?: unknown; takeOverPdfTabs?: unknown; toolState?: unknown } | null;
+    const saved = (await this.loadData()) as { pdfOpenMode?: unknown; takeOverPdfTabs?: unknown; toolState?: unknown; notebookHistory?: unknown } | null;
     this.config = {
       pdfOpenMode: saved?.pdfOpenMode === "native" || saved?.pdfOpenMode === "compatible" || saved?.pdfOpenMode === "ink"
         ? saved.pdfOpenMode
@@ -82,6 +85,7 @@ export default class InkNotesPlugin extends Plugin {
           : DEFAULT_SETTINGS.pdfOpenMode,
     };
     this.toolState = sanitizeToolState(saved?.toolState);
+    this.history = new NotebookHistoryIndex(saved?.notebookHistory);
     this.toolStateSaver = new ToolStateSaver((stored) => this.persistToolState(stored));
     this.toolStateBinding = {
       config: this.toolState,
@@ -245,14 +249,14 @@ export default class InkNotesPlugin extends Plugin {
     // settings need no sync: the editors alias the shared objects in place.
     this.toolState.eraserMode = stored.eraserMode;
     this.toolState.eraserSize = stored.eraserSize;
-    return this.saveData({ pdfOpenMode: this.config.pdfOpenMode, toolState: stored }).catch((error) => {
+    return this.saveData({ pdfOpenMode: this.config.pdfOpenMode, toolState: stored, notebookHistory: this.history.list() }).catch((error) => {
       new Notice(`Ink Notes could not save tool settings: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
 
   /** Persists the plugin settings together with the latest tool settings. */
   async persistSettings(): Promise<void> {
-    await this.saveData({ pdfOpenMode: this.config.pdfOpenMode, toolState: storedToolState(this.toolState) });
+    await this.saveData({ pdfOpenMode: this.config.pdfOpenMode, toolState: storedToolState(this.toolState), notebookHistory: this.history.list() });
   }
 
   get fingerAsPen(): boolean { return this.toolState.fingerAsPen; }
@@ -274,24 +278,43 @@ export default class InkNotesPlugin extends Plugin {
   }
 
   private async openNotebook(): Promise<void> {
-    const files = await this.store.list();
-    new NotebookSuggestModal(this.app, files, (file) => this.runAsync(this.openFile(file), `open ${file.path}`),
-      (title) => this.createNotebook(title), async (file, title) => {
+    const entries = discoverNotebooks(await this.store.list(), this.history.list());
+    new NotebookSuggestModal(this.app, entries, (file) => this.runAsync(this.openFile(file), `open ${file.path}`),
+      (title, folder) => this.createNotebook(title, folder),
+      async (file, title) => {
         const parent = file.path.slice(0, file.path.lastIndexOf("/") + 1);
         const path = `${parent}${title}.${INK_EXTENSION}`;
         if (path !== file.path) await this.app.fileManager.renameFile(file, path);
-      }).open();
+      },
+      (cleared) => this.runAsync(this.forgetNotebooks(cleared), "clear missing notebook entries")).open();
   }
 
-  private async createNotebook(title = "Ink Notebook"): Promise<void> {
-    const file = await this.store.create(title);
+  private async createNotebook(title = "Ink Notebook", folder?: string): Promise<void> {
+    const file = await this.store.create(title, folder);
     await this.openFile(file);
   }
 
   private async openFile(file: TFile, pageId?: string): Promise<void> {
+    if (file.extension === INK_EXTENSION) this.rememberNotebook(file);
     const leaf = this.app.workspace.getLeaf(true);
     await leaf.openFile(file);
     if (pageId && leaf.view instanceof InkView) leaf.view.revealPage(pageId);
+  }
+
+  /** Records the open for discovery even after the notebook moves anywhere in
+   *  the vault; a persistence failure must not block opening the notebook. */
+  private rememberNotebook(file: TFile): void {
+    this.history.record(file.path, file.basename);
+    void this.persistSettings().catch((error) => {
+      new Notice(`Ink Notes could not save notebook history: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
+
+  /** Manual cleanup only: removes the given history entries (missing files)
+   *  without touching the notebooks themselves. */
+  private async forgetNotebooks(entries: NotebookDiscovery[]): Promise<void> {
+    for (const entry of entries) this.history.remove(entry.path);
+    await this.persistSettings();
   }
 
   private runAsync(action: Promise<unknown>, operation: string): void {
