@@ -41,896 +41,6 @@ var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__ge
 ));
 var __toCommonJS = (mod) => __copyProps(__defProp({}, "__esModule", { value: true }), mod);
 
-// node_modules/tslib/tslib.es6.js
-var tslib_es6_exports = {};
-__export(tslib_es6_exports, {
-  __assign: () => __assign,
-  __asyncDelegator: () => __asyncDelegator,
-  __asyncGenerator: () => __asyncGenerator,
-  __asyncValues: () => __asyncValues,
-  __await: () => __await,
-  __awaiter: () => __awaiter,
-  __classPrivateFieldGet: () => __classPrivateFieldGet,
-  __classPrivateFieldSet: () => __classPrivateFieldSet,
-  __createBinding: () => __createBinding,
-  __decorate: () => __decorate,
-  __exportStar: () => __exportStar,
-  __extends: () => __extends,
-  __generator: () => __generator,
-  __importDefault: () => __importDefault,
-  __importStar: () => __importStar,
-  __makeTemplateObject: () => __makeTemplateObject,
-  __metadata: () => __metadata,
-  __param: () => __param,
-  __read: () => __read,
-  __rest: () => __rest,
-  __spread: () => __spread,
-  __spreadArrays: () => __spreadArrays,
-  __values: () => __values
-});
-function __extends(d, b) {
-  extendStatics(d, b);
-  function __() {
-    this.constructor = d;
-  }
-  d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
-}
-function __rest(s, e) {
-  var t = {};
-  for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p) && e.indexOf(p) < 0)
-    t[p] = s[p];
-  if (s != null && typeof Object.getOwnPropertySymbols === "function")
-    for (var i = 0, p = Object.getOwnPropertySymbols(s); i < p.length; i++) {
-      if (e.indexOf(p[i]) < 0 && Object.prototype.propertyIsEnumerable.call(s, p[i]))
-        t[p[i]] = s[p[i]];
-    }
-  return t;
-}
-function __decorate(decorators, target, key, desc) {
-  var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
-  if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
-  else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
-  return c > 3 && r && Object.defineProperty(target, key, r), r;
-}
-function __param(paramIndex, decorator) {
-  return function(target, key) {
-    decorator(target, key, paramIndex);
-  };
-}
-function __metadata(metadataKey, metadataValue) {
-  if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(metadataKey, metadataValue);
-}
-function __awaiter(thisArg, _arguments, P, generator) {
-  function adopt(value) {
-    return value instanceof P ? value : new P(function(resolve) {
-      resolve(value);
-    });
-  }
-  return new (P || (P = Promise))(function(resolve, reject) {
-    function fulfilled(value) {
-      try {
-        step(generator.next(value));
-      } catch (e) {
-        reject(e);
-      }
-    }
-    function rejected(value) {
-      try {
-        step(generator["throw"](value));
-      } catch (e) {
-        reject(e);
-      }
-    }
-    function step(result) {
-      result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
-    }
-    step((generator = generator.apply(thisArg, _arguments || [])).next());
-  });
-}
-function __generator(thisArg, body) {
-  var _ = { label: 0, sent: function() {
-    if (t[0] & 1) throw t[1];
-    return t[1];
-  }, trys: [], ops: [] }, f, y, t, g;
-  return g = { next: verb(0), "throw": verb(1), "return": verb(2) }, typeof Symbol === "function" && (g[Symbol.iterator] = function() {
-    return this;
-  }), g;
-  function verb(n) {
-    return function(v) {
-      return step([n, v]);
-    };
-  }
-  function step(op) {
-    if (f) throw new TypeError("Generator is already executing.");
-    while (_) try {
-      if (f = 1, y && (t = op[0] & 2 ? y["return"] : op[0] ? y["throw"] || ((t = y["return"]) && t.call(y), 0) : y.next) && !(t = t.call(y, op[1])).done) return t;
-      if (y = 0, t) op = [op[0] & 2, t.value];
-      switch (op[0]) {
-        case 0:
-        case 1:
-          t = op;
-          break;
-        case 4:
-          _.label++;
-          return { value: op[1], done: false };
-        case 5:
-          _.label++;
-          y = op[1];
-          op = [0];
-          continue;
-        case 7:
-          op = _.ops.pop();
-          _.trys.pop();
-          continue;
-        default:
-          if (!(t = _.trys, t = t.length > 0 && t[t.length - 1]) && (op[0] === 6 || op[0] === 2)) {
-            _ = 0;
-            continue;
-          }
-          if (op[0] === 3 && (!t || op[1] > t[0] && op[1] < t[3])) {
-            _.label = op[1];
-            break;
-          }
-          if (op[0] === 6 && _.label < t[1]) {
-            _.label = t[1];
-            t = op;
-            break;
-          }
-          if (t && _.label < t[2]) {
-            _.label = t[2];
-            _.ops.push(op);
-            break;
-          }
-          if (t[2]) _.ops.pop();
-          _.trys.pop();
-          continue;
-      }
-      op = body.call(thisArg, _);
-    } catch (e) {
-      op = [6, e];
-      y = 0;
-    } finally {
-      f = t = 0;
-    }
-    if (op[0] & 5) throw op[1];
-    return { value: op[0] ? op[1] : void 0, done: true };
-  }
-}
-function __createBinding(o, m, k, k2) {
-  if (k2 === void 0) k2 = k;
-  o[k2] = m[k];
-}
-function __exportStar(m, exports2) {
-  for (var p in m) if (p !== "default" && !exports2.hasOwnProperty(p)) exports2[p] = m[p];
-}
-function __values(o) {
-  var s = typeof Symbol === "function" && Symbol.iterator, m = s && o[s], i = 0;
-  if (m) return m.call(o);
-  if (o && typeof o.length === "number") return {
-    next: function() {
-      if (o && i >= o.length) o = void 0;
-      return { value: o && o[i++], done: !o };
-    }
-  };
-  throw new TypeError(s ? "Object is not iterable." : "Symbol.iterator is not defined.");
-}
-function __read(o, n) {
-  var m = typeof Symbol === "function" && o[Symbol.iterator];
-  if (!m) return o;
-  var i = m.call(o), r, ar = [], e;
-  try {
-    while ((n === void 0 || n-- > 0) && !(r = i.next()).done) ar.push(r.value);
-  } catch (error) {
-    e = { error };
-  } finally {
-    try {
-      if (r && !r.done && (m = i["return"])) m.call(i);
-    } finally {
-      if (e) throw e.error;
-    }
-  }
-  return ar;
-}
-function __spread() {
-  for (var ar = [], i = 0; i < arguments.length; i++)
-    ar = ar.concat(__read(arguments[i]));
-  return ar;
-}
-function __spreadArrays() {
-  for (var s = 0, i = 0, il = arguments.length; i < il; i++) s += arguments[i].length;
-  for (var r = Array(s), k = 0, i = 0; i < il; i++)
-    for (var a = arguments[i], j = 0, jl = a.length; j < jl; j++, k++)
-      r[k] = a[j];
-  return r;
-}
-function __await(v) {
-  return this instanceof __await ? (this.v = v, this) : new __await(v);
-}
-function __asyncGenerator(thisArg, _arguments, generator) {
-  if (!Symbol.asyncIterator) throw new TypeError("Symbol.asyncIterator is not defined.");
-  var g = generator.apply(thisArg, _arguments || []), i, q = [];
-  return i = {}, verb("next"), verb("throw"), verb("return"), i[Symbol.asyncIterator] = function() {
-    return this;
-  }, i;
-  function verb(n) {
-    if (g[n]) i[n] = function(v) {
-      return new Promise(function(a, b) {
-        q.push([n, v, a, b]) > 1 || resume(n, v);
-      });
-    };
-  }
-  function resume(n, v) {
-    try {
-      step(g[n](v));
-    } catch (e) {
-      settle(q[0][3], e);
-    }
-  }
-  function step(r) {
-    r.value instanceof __await ? Promise.resolve(r.value.v).then(fulfill, reject) : settle(q[0][2], r);
-  }
-  function fulfill(value) {
-    resume("next", value);
-  }
-  function reject(value) {
-    resume("throw", value);
-  }
-  function settle(f, v) {
-    if (f(v), q.shift(), q.length) resume(q[0][0], q[0][1]);
-  }
-}
-function __asyncDelegator(o) {
-  var i, p;
-  return i = {}, verb("next"), verb("throw", function(e) {
-    throw e;
-  }), verb("return"), i[Symbol.iterator] = function() {
-    return this;
-  }, i;
-  function verb(n, f) {
-    i[n] = o[n] ? function(v) {
-      return (p = !p) ? { value: __await(o[n](v)), done: n === "return" } : f ? f(v) : v;
-    } : f;
-  }
-}
-function __asyncValues(o) {
-  if (!Symbol.asyncIterator) throw new TypeError("Symbol.asyncIterator is not defined.");
-  var m = o[Symbol.asyncIterator], i;
-  return m ? m.call(o) : (o = typeof __values === "function" ? __values(o) : o[Symbol.iterator](), i = {}, verb("next"), verb("throw"), verb("return"), i[Symbol.asyncIterator] = function() {
-    return this;
-  }, i);
-  function verb(n) {
-    i[n] = o[n] && function(v) {
-      return new Promise(function(resolve, reject) {
-        v = o[n](v), settle(resolve, reject, v.done, v.value);
-      });
-    };
-  }
-  function settle(resolve, reject, d, v) {
-    Promise.resolve(v).then(function(v2) {
-      resolve({ value: v2, done: d });
-    }, reject);
-  }
-}
-function __makeTemplateObject(cooked, raw) {
-  if (Object.defineProperty) {
-    Object.defineProperty(cooked, "raw", { value: raw });
-  } else {
-    cooked.raw = raw;
-  }
-  return cooked;
-}
-function __importStar(mod) {
-  if (mod && mod.__esModule) return mod;
-  var result = {};
-  if (mod != null) {
-    for (var k in mod) if (Object.hasOwnProperty.call(mod, k)) result[k] = mod[k];
-  }
-  result.default = mod;
-  return result;
-}
-function __importDefault(mod) {
-  return mod && mod.__esModule ? mod : { default: mod };
-}
-function __classPrivateFieldGet(receiver, privateMap) {
-  if (!privateMap.has(receiver)) {
-    throw new TypeError("attempted to get private field on non-instance");
-  }
-  return privateMap.get(receiver);
-}
-function __classPrivateFieldSet(receiver, privateMap, value) {
-  if (!privateMap.has(receiver)) {
-    throw new TypeError("attempted to set private field on non-instance");
-  }
-  privateMap.set(receiver, value);
-  return value;
-}
-var extendStatics, __assign;
-var init_tslib_es6 = __esm({
-  "node_modules/tslib/tslib.es6.js"() {
-    extendStatics = function(d, b) {
-      extendStatics = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d2, b2) {
-        d2.__proto__ = b2;
-      } || function(d2, b2) {
-        for (var p in b2) if (b2.hasOwnProperty(p)) d2[p] = b2[p];
-      };
-      return extendStatics(d, b);
-    };
-    __assign = function() {
-      __assign = Object.assign || function __assign2(t) {
-        for (var s, i = 1, n = arguments.length; i < n; i++) {
-          s = arguments[i];
-          for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p)) t[p] = s[p];
-        }
-        return t;
-      };
-      return __assign.apply(this, arguments);
-    };
-  }
-});
-
-// node_modules/pdf-lib/cjs/utils/base64.js
-var require_base64 = __commonJS({
-  "node_modules/pdf-lib/cjs/utils/base64.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.decodeFromBase64DataUri = exports2.decodeFromBase64 = exports2.encodeToBase64 = void 0;
-    var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    var lookup = new Uint8Array(256);
-    for (i = 0; i < chars.length; i++) {
-      lookup[chars.charCodeAt(i)] = i;
-    }
-    var i;
-    exports2.encodeToBase64 = function(bytes) {
-      var base64 = "";
-      var len = bytes.length;
-      for (var i2 = 0; i2 < len; i2 += 3) {
-        base64 += chars[bytes[i2] >> 2];
-        base64 += chars[(bytes[i2] & 3) << 4 | bytes[i2 + 1] >> 4];
-        base64 += chars[(bytes[i2 + 1] & 15) << 2 | bytes[i2 + 2] >> 6];
-        base64 += chars[bytes[i2 + 2] & 63];
-      }
-      if (len % 3 === 2) {
-        base64 = base64.substring(0, base64.length - 1) + "=";
-      } else if (len % 3 === 1) {
-        base64 = base64.substring(0, base64.length - 2) + "==";
-      }
-      return base64;
-    };
-    exports2.decodeFromBase64 = function(base64) {
-      var bufferLength = base64.length * 0.75;
-      var len = base64.length;
-      var i2;
-      var p = 0;
-      var encoded1;
-      var encoded2;
-      var encoded3;
-      var encoded4;
-      if (base64[base64.length - 1] === "=") {
-        bufferLength--;
-        if (base64[base64.length - 2] === "=") {
-          bufferLength--;
-        }
-      }
-      var bytes = new Uint8Array(bufferLength);
-      for (i2 = 0; i2 < len; i2 += 4) {
-        encoded1 = lookup[base64.charCodeAt(i2)];
-        encoded2 = lookup[base64.charCodeAt(i2 + 1)];
-        encoded3 = lookup[base64.charCodeAt(i2 + 2)];
-        encoded4 = lookup[base64.charCodeAt(i2 + 3)];
-        bytes[p++] = encoded1 << 2 | encoded2 >> 4;
-        bytes[p++] = (encoded2 & 15) << 4 | encoded3 >> 2;
-        bytes[p++] = (encoded3 & 3) << 6 | encoded4 & 63;
-      }
-      return bytes;
-    };
-    var DATA_URI_PREFIX_REGEX = /^(data)?:?([\w\/\+]+)?;?(charset=[\w-]+|base64)?.*,/i;
-    exports2.decodeFromBase64DataUri = function(dataUri) {
-      var trimmedUri = dataUri.trim();
-      var prefix = trimmedUri.substring(0, 100);
-      var res = prefix.match(DATA_URI_PREFIX_REGEX);
-      if (!res)
-        return exports2.decodeFromBase64(trimmedUri);
-      var fullMatch = res[0];
-      var data = trimmedUri.substring(fullMatch.length);
-      return exports2.decodeFromBase64(data);
-    };
-  }
-});
-
-// node_modules/pdf-lib/cjs/utils/strings.js
-var require_strings = __commonJS({
-  "node_modules/pdf-lib/cjs/utils/strings.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.findLastMatch = exports2.parseDate = exports2.breakTextIntoLines = exports2.charSplit = exports2.charAtIndex = exports2.mergeLines = exports2.lineSplit = exports2.isNewlineChar = exports2.newlineChars = exports2.escapedNewlineChars = exports2.cleanText = exports2.escapeRegExp = exports2.addRandomSuffix = exports2.copyStringIntoBuffer = exports2.padStart = exports2.charFromHexCode = exports2.charFromCode = exports2.toHexString = exports2.toHexStringOfMinLength = exports2.toCodePoint = exports2.toCharCode = void 0;
-    exports2.toCharCode = function(character) {
-      return character.charCodeAt(0);
-    };
-    exports2.toCodePoint = function(character) {
-      return character.codePointAt(0);
-    };
-    exports2.toHexStringOfMinLength = function(num, minLength) {
-      return exports2.padStart(num.toString(16), minLength, "0").toUpperCase();
-    };
-    exports2.toHexString = function(num) {
-      return exports2.toHexStringOfMinLength(num, 2);
-    };
-    exports2.charFromCode = function(code) {
-      return String.fromCharCode(code);
-    };
-    exports2.charFromHexCode = function(hex) {
-      return exports2.charFromCode(parseInt(hex, 16));
-    };
-    exports2.padStart = function(value, length, padChar) {
-      var padding = "";
-      for (var idx = 0, len = length - value.length; idx < len; idx++) {
-        padding += padChar;
-      }
-      return padding + value;
-    };
-    exports2.copyStringIntoBuffer = function(str, buffer, offset) {
-      var length = str.length;
-      for (var idx = 0; idx < length; idx++) {
-        buffer[offset++] = str.charCodeAt(idx);
-      }
-      return length;
-    };
-    exports2.addRandomSuffix = function(prefix, suffixLength) {
-      if (suffixLength === void 0) {
-        suffixLength = 4;
-      }
-      return prefix + "-" + Math.floor(Math.random() * Math.pow(10, suffixLength));
-    };
-    exports2.escapeRegExp = function(str) {
-      return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    };
-    exports2.cleanText = function(text) {
-      return text.replace(/\t|\u0085|\u2028|\u2029/g, "    ").replace(/[\b\v]/g, "");
-    };
-    exports2.escapedNewlineChars = ["\\n", "\\f", "\\r", "\\u000B"];
-    exports2.newlineChars = ["\n", "\f", "\r", "\v"];
-    exports2.isNewlineChar = function(text) {
-      return /^[\n\f\r\u000B]$/.test(text);
-    };
-    exports2.lineSplit = function(text) {
-      return text.split(/[\n\f\r\u000B]/);
-    };
-    exports2.mergeLines = function(text) {
-      return text.replace(/[\n\f\r\u000B]/g, " ");
-    };
-    exports2.charAtIndex = function(text, index) {
-      var cuFirst = text.charCodeAt(index);
-      var cuSecond;
-      var nextIndex = index + 1;
-      var length = 1;
-      if (
-        // Check if it's the start of a surrogate pair.
-        cuFirst >= 55296 && cuFirst <= 56319 && // high surrogate
-        text.length > nextIndex
-      ) {
-        cuSecond = text.charCodeAt(nextIndex);
-        if (cuSecond >= 56320 && cuSecond <= 57343)
-          length = 2;
-      }
-      return [text.slice(index, index + length), length];
-    };
-    exports2.charSplit = function(text) {
-      var chars = [];
-      for (var idx = 0, len = text.length; idx < len; ) {
-        var _a = exports2.charAtIndex(text, idx), c = _a[0], cLen = _a[1];
-        chars.push(c);
-        idx += cLen;
-      }
-      return chars;
-    };
-    var buildWordBreakRegex = function(wordBreaks) {
-      var newlineCharUnion = exports2.escapedNewlineChars.join("|");
-      var escapedRules = ["$"];
-      for (var idx = 0, len = wordBreaks.length; idx < len; idx++) {
-        var wordBreak = wordBreaks[idx];
-        if (exports2.isNewlineChar(wordBreak)) {
-          throw new TypeError("`wordBreak` must not include " + newlineCharUnion);
-        }
-        escapedRules.push(wordBreak === "" ? "." : exports2.escapeRegExp(wordBreak));
-      }
-      var breakRules = escapedRules.join("|");
-      return new RegExp("(" + newlineCharUnion + ")|((.*?)(" + breakRules + "))", "gm");
-    };
-    exports2.breakTextIntoLines = function(text, wordBreaks, maxWidth, computeWidthOfText) {
-      var regex = buildWordBreakRegex(wordBreaks);
-      var words = exports2.cleanText(text).match(regex);
-      var currLine = "";
-      var currWidth = 0;
-      var lines = [];
-      var pushCurrLine = function() {
-        if (currLine !== "")
-          lines.push(currLine);
-        currLine = "";
-        currWidth = 0;
-      };
-      for (var idx = 0, len = words.length; idx < len; idx++) {
-        var word = words[idx];
-        if (exports2.isNewlineChar(word)) {
-          pushCurrLine();
-        } else {
-          var width = computeWidthOfText(word);
-          if (currWidth + width > maxWidth)
-            pushCurrLine();
-          currLine += word;
-          currWidth += width;
-        }
-      }
-      pushCurrLine();
-      return lines;
-    };
-    var dateRegex = /^D:(\d\d\d\d)(\d\d)?(\d\d)?(\d\d)?(\d\d)?(\d\d)?([+\-Z])?(\d\d)?'?(\d\d)?'?$/;
-    exports2.parseDate = function(dateStr) {
-      var match = dateStr.match(dateRegex);
-      if (!match)
-        return void 0;
-      var year = match[1], _a = match[2], month = _a === void 0 ? "01" : _a, _b = match[3], day = _b === void 0 ? "01" : _b, _c = match[4], hours = _c === void 0 ? "00" : _c, _d = match[5], mins = _d === void 0 ? "00" : _d, _e = match[6], secs = _e === void 0 ? "00" : _e, _f = match[7], offsetSign = _f === void 0 ? "Z" : _f, _g = match[8], offsetHours = _g === void 0 ? "00" : _g, _h = match[9], offsetMins = _h === void 0 ? "00" : _h;
-      var tzOffset = offsetSign === "Z" ? "Z" : "" + offsetSign + offsetHours + ":" + offsetMins;
-      var date = /* @__PURE__ */ new Date(year + "-" + month + "-" + day + "T" + hours + ":" + mins + ":" + secs + tzOffset);
-      return date;
-    };
-    exports2.findLastMatch = function(value, regex) {
-      var _a;
-      var position = 0;
-      var lastMatch;
-      while (position < value.length) {
-        var match = value.substring(position).match(regex);
-        if (!match)
-          return { match: lastMatch, pos: position };
-        lastMatch = match;
-        position += ((_a = match.index) !== null && _a !== void 0 ? _a : 0) + match[0].length;
-      }
-      return { match: lastMatch, pos: position };
-    };
-  }
-});
-
-// node_modules/pdf-lib/cjs/utils/arrays.js
-var require_arrays = __commonJS({
-  "node_modules/pdf-lib/cjs/utils/arrays.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.toUint8Array = exports2.canBeConvertedToUint8Array = exports2.pluckIndices = exports2.range = exports2.sum = exports2.reverseArray = exports2.sortedUniq = exports2.byAscendingId = exports2.arrayAsString = exports2.mergeUint8Arrays = exports2.mergeIntoTypedArray = exports2.typedArrayFor = exports2.last = void 0;
-    var base64_1 = require_base64();
-    var strings_1 = require_strings();
-    exports2.last = function(array) {
-      return array[array.length - 1];
-    };
-    exports2.typedArrayFor = function(value) {
-      if (value instanceof Uint8Array)
-        return value;
-      var length = value.length;
-      var typedArray = new Uint8Array(length);
-      for (var idx = 0; idx < length; idx++) {
-        typedArray[idx] = value.charCodeAt(idx);
-      }
-      return typedArray;
-    };
-    exports2.mergeIntoTypedArray = function() {
-      var arrays = [];
-      for (var _i = 0; _i < arguments.length; _i++) {
-        arrays[_i] = arguments[_i];
-      }
-      var arrayCount = arrays.length;
-      var typedArrays = [];
-      for (var idx = 0; idx < arrayCount; idx++) {
-        var element = arrays[idx];
-        typedArrays[idx] = element instanceof Uint8Array ? element : exports2.typedArrayFor(element);
-      }
-      var totalSize = 0;
-      for (var idx = 0; idx < arrayCount; idx++) {
-        totalSize += arrays[idx].length;
-      }
-      var merged = new Uint8Array(totalSize);
-      var offset = 0;
-      for (var arrIdx = 0; arrIdx < arrayCount; arrIdx++) {
-        var arr = typedArrays[arrIdx];
-        for (var byteIdx = 0, arrLen = arr.length; byteIdx < arrLen; byteIdx++) {
-          merged[offset++] = arr[byteIdx];
-        }
-      }
-      return merged;
-    };
-    exports2.mergeUint8Arrays = function(arrays) {
-      var totalSize = 0;
-      for (var idx = 0, len = arrays.length; idx < len; idx++) {
-        totalSize += arrays[idx].length;
-      }
-      var mergedBuffer = new Uint8Array(totalSize);
-      var offset = 0;
-      for (var idx = 0, len = arrays.length; idx < len; idx++) {
-        var array = arrays[idx];
-        mergedBuffer.set(array, offset);
-        offset += array.length;
-      }
-      return mergedBuffer;
-    };
-    exports2.arrayAsString = function(array) {
-      var str = "";
-      for (var idx = 0, len = array.length; idx < len; idx++) {
-        str += strings_1.charFromCode(array[idx]);
-      }
-      return str;
-    };
-    exports2.byAscendingId = function(a, b) {
-      return a.id - b.id;
-    };
-    exports2.sortedUniq = function(array, indexer) {
-      var uniq = [];
-      for (var idx = 0, len = array.length; idx < len; idx++) {
-        var curr = array[idx];
-        var prev = array[idx - 1];
-        if (idx === 0 || indexer(curr) !== indexer(prev)) {
-          uniq.push(curr);
-        }
-      }
-      return uniq;
-    };
-    exports2.reverseArray = function(array) {
-      var arrayLen = array.length;
-      for (var idx = 0, len = Math.floor(arrayLen / 2); idx < len; idx++) {
-        var leftIdx = idx;
-        var rightIdx = arrayLen - idx - 1;
-        var temp = array[idx];
-        array[leftIdx] = array[rightIdx];
-        array[rightIdx] = temp;
-      }
-      return array;
-    };
-    exports2.sum = function(array) {
-      var total = 0;
-      for (var idx = 0, len = array.length; idx < len; idx++) {
-        total += array[idx];
-      }
-      return total;
-    };
-    exports2.range = function(start, end) {
-      var arr = new Array(end - start);
-      for (var idx = 0, len = arr.length; idx < len; idx++) {
-        arr[idx] = start + idx;
-      }
-      return arr;
-    };
-    exports2.pluckIndices = function(arr, indices) {
-      var plucked = new Array(indices.length);
-      for (var idx = 0, len = indices.length; idx < len; idx++) {
-        plucked[idx] = arr[indices[idx]];
-      }
-      return plucked;
-    };
-    exports2.canBeConvertedToUint8Array = function(input) {
-      return input instanceof Uint8Array || input instanceof ArrayBuffer || typeof input === "string";
-    };
-    exports2.toUint8Array = function(input) {
-      if (typeof input === "string") {
-        return base64_1.decodeFromBase64DataUri(input);
-      } else if (input instanceof ArrayBuffer) {
-        return new Uint8Array(input);
-      } else if (input instanceof Uint8Array) {
-        return input;
-      } else {
-        throw new TypeError("`input` must be one of `string | ArrayBuffer | Uint8Array`");
-      }
-    };
-  }
-});
-
-// node_modules/pdf-lib/cjs/utils/async.js
-var require_async = __commonJS({
-  "node_modules/pdf-lib/cjs/utils/async.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.waitForTick = void 0;
-    exports2.waitForTick = function() {
-      return new Promise(function(resolve) {
-        setTimeout(function() {
-          return resolve();
-        }, 0);
-      });
-    };
-  }
-});
-
-// node_modules/pdf-lib/cjs/utils/unicode.js
-var require_unicode = __commonJS({
-  "node_modules/pdf-lib/cjs/utils/unicode.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.hasUtf16BOM = exports2.utf16Decode = exports2.lowSurrogate = exports2.highSurrogate = exports2.hasSurrogates = exports2.isWithinBMP = exports2.utf16Encode = exports2.utf8Encode = void 0;
-    var strings_1 = require_strings();
-    exports2.utf8Encode = function(input, byteOrderMark) {
-      if (byteOrderMark === void 0) {
-        byteOrderMark = true;
-      }
-      var encoded = [];
-      if (byteOrderMark)
-        encoded.push(239, 187, 191);
-      for (var idx = 0, len = input.length; idx < len; ) {
-        var codePoint = input.codePointAt(idx);
-        if (codePoint < 128) {
-          var byte1 = codePoint & 127;
-          encoded.push(byte1);
-          idx += 1;
-        } else if (codePoint < 2048) {
-          var byte1 = codePoint >> 6 & 31 | 192;
-          var byte2 = codePoint & 63 | 128;
-          encoded.push(byte1, byte2);
-          idx += 1;
-        } else if (codePoint < 65536) {
-          var byte1 = codePoint >> 12 & 15 | 224;
-          var byte2 = codePoint >> 6 & 63 | 128;
-          var byte3 = codePoint & 63 | 128;
-          encoded.push(byte1, byte2, byte3);
-          idx += 1;
-        } else if (codePoint < 1114112) {
-          var byte1 = codePoint >> 18 & 7 | 240;
-          var byte2 = codePoint >> 12 & 63 | 128;
-          var byte3 = codePoint >> 6 & 63 | 128;
-          var byte4 = codePoint >> 0 & 63 | 128;
-          encoded.push(byte1, byte2, byte3, byte4);
-          idx += 2;
-        } else
-          throw new Error("Invalid code point: 0x" + strings_1.toHexString(codePoint));
-      }
-      return new Uint8Array(encoded);
-    };
-    exports2.utf16Encode = function(input, byteOrderMark) {
-      if (byteOrderMark === void 0) {
-        byteOrderMark = true;
-      }
-      var encoded = [];
-      if (byteOrderMark)
-        encoded.push(65279);
-      for (var idx = 0, len = input.length; idx < len; ) {
-        var codePoint = input.codePointAt(idx);
-        if (codePoint < 65536) {
-          encoded.push(codePoint);
-          idx += 1;
-        } else if (codePoint < 1114112) {
-          encoded.push(exports2.highSurrogate(codePoint), exports2.lowSurrogate(codePoint));
-          idx += 2;
-        } else
-          throw new Error("Invalid code point: 0x" + strings_1.toHexString(codePoint));
-      }
-      return new Uint16Array(encoded);
-    };
-    exports2.isWithinBMP = function(codePoint) {
-      return codePoint >= 0 && codePoint <= 65535;
-    };
-    exports2.hasSurrogates = function(codePoint) {
-      return codePoint >= 65536 && codePoint <= 1114111;
-    };
-    exports2.highSurrogate = function(codePoint) {
-      return Math.floor((codePoint - 65536) / 1024) + 55296;
-    };
-    exports2.lowSurrogate = function(codePoint) {
-      return (codePoint - 65536) % 1024 + 56320;
-    };
-    var ByteOrder;
-    (function(ByteOrder2) {
-      ByteOrder2["BigEndian"] = "BigEndian";
-      ByteOrder2["LittleEndian"] = "LittleEndian";
-    })(ByteOrder || (ByteOrder = {}));
-    var REPLACEMENT = "\uFFFD".codePointAt(0);
-    exports2.utf16Decode = function(input, byteOrderMark) {
-      if (byteOrderMark === void 0) {
-        byteOrderMark = true;
-      }
-      if (input.length <= 1)
-        return String.fromCodePoint(REPLACEMENT);
-      var byteOrder = byteOrderMark ? readBOM(input) : ByteOrder.BigEndian;
-      var idx = byteOrderMark ? 2 : 0;
-      var codePoints = [];
-      while (input.length - idx >= 2) {
-        var first = decodeValues(input[idx++], input[idx++], byteOrder);
-        if (isHighSurrogate(first)) {
-          if (input.length - idx < 2) {
-            codePoints.push(REPLACEMENT);
-          } else {
-            var second = decodeValues(input[idx++], input[idx++], byteOrder);
-            if (isLowSurrogate(second)) {
-              codePoints.push(first, second);
-            } else {
-              codePoints.push(REPLACEMENT);
-            }
-          }
-        } else if (isLowSurrogate(first)) {
-          idx += 2;
-          codePoints.push(REPLACEMENT);
-        } else {
-          codePoints.push(first);
-        }
-      }
-      if (idx < input.length)
-        codePoints.push(REPLACEMENT);
-      return String.fromCodePoint.apply(String, codePoints);
-    };
-    var isHighSurrogate = function(codePoint) {
-      return codePoint >= 55296 && codePoint <= 56319;
-    };
-    var isLowSurrogate = function(codePoint) {
-      return codePoint >= 56320 && codePoint <= 57343;
-    };
-    var decodeValues = function(first, second, byteOrder) {
-      if (byteOrder === ByteOrder.LittleEndian)
-        return second << 8 | first;
-      if (byteOrder === ByteOrder.BigEndian)
-        return first << 8 | second;
-      throw new Error("Invalid byteOrder: " + byteOrder);
-    };
-    var readBOM = function(bytes) {
-      return hasUtf16BigEndianBOM(bytes) ? ByteOrder.BigEndian : hasUtf16LittleEndianBOM(bytes) ? ByteOrder.LittleEndian : ByteOrder.BigEndian;
-    };
-    var hasUtf16BigEndianBOM = function(bytes) {
-      return bytes[0] === 254 && bytes[1] === 255;
-    };
-    var hasUtf16LittleEndianBOM = function(bytes) {
-      return bytes[0] === 255 && bytes[1] === 254;
-    };
-    exports2.hasUtf16BOM = function(bytes) {
-      return hasUtf16BigEndianBOM(bytes) || hasUtf16LittleEndianBOM(bytes);
-    };
-  }
-});
-
-// node_modules/pdf-lib/cjs/utils/numbers.js
-var require_numbers = __commonJS({
-  "node_modules/pdf-lib/cjs/utils/numbers.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.bytesFor = exports2.sizeInBytes = exports2.numberToString = void 0;
-    exports2.numberToString = function(num) {
-      var numStr = String(num);
-      if (Math.abs(num) < 1) {
-        var e = parseInt(num.toString().split("e-")[1]);
-        if (e) {
-          var negative = num < 0;
-          if (negative)
-            num *= -1;
-          num *= Math.pow(10, e - 1);
-          numStr = "0." + new Array(e).join("0") + num.toString().substring(2);
-          if (negative)
-            numStr = "-" + numStr;
-        }
-      } else {
-        var e = parseInt(num.toString().split("+")[1]);
-        if (e > 20) {
-          e -= 20;
-          num /= Math.pow(10, e);
-          numStr = num.toString() + new Array(e + 1).join("0");
-        }
-      }
-      return numStr;
-    };
-    exports2.sizeInBytes = function(n) {
-      return Math.ceil(n.toString(2).length / 8);
-    };
-    exports2.bytesFor = function(n) {
-      var bytes = new Uint8Array(exports2.sizeInBytes(n));
-      for (var i = 1; i <= bytes.length; i++) {
-        bytes[i - 1] = n >> (bytes.length - i) * 8;
-      }
-      return bytes;
-    };
-  }
-});
-
-// node_modules/pdf-lib/cjs/utils/errors.js
-var require_errors = __commonJS({
-  "node_modules/pdf-lib/cjs/utils/errors.js"(exports2) {
-    "use strict";
-    Object.defineProperty(exports2, "__esModule", { value: true });
-    exports2.error = void 0;
-    exports2.error = function(msg) {
-      throw new Error(msg);
-    };
-  }
-});
-
 // node_modules/pako/lib/utils/common.js
 var require_common = __commonJS({
   "node_modules/pako/lib/utils/common.js"(exports2) {
@@ -2791,7 +1901,7 @@ var require_deflate = __commonJS({
 });
 
 // node_modules/pako/lib/utils/strings.js
-var require_strings2 = __commonJS({
+var require_strings = __commonJS({
   "node_modules/pako/lib/utils/strings.js"(exports2) {
     "use strict";
     var utils = require_common();
@@ -2960,7 +2070,7 @@ var require_deflate2 = __commonJS({
     "use strict";
     var zlib_deflate = require_deflate();
     var utils = require_common();
-    var strings = require_strings2();
+    var strings = require_strings();
     var msg = require_messages();
     var ZStream = require_zstream();
     var toString = Object.prototype.toString;
@@ -4972,7 +4082,7 @@ var require_inflate2 = __commonJS({
     "use strict";
     var zlib_inflate = require_inflate();
     var utils = require_common();
-    var strings = require_strings2();
+    var strings = require_strings();
     var c = require_constants();
     var msg = require_messages();
     var ZStream = require_zstream();
@@ -5151,6 +4261,896 @@ var require_pako = __commonJS({
     var pako = {};
     assign(pako, deflate, inflate, constants);
     module2.exports = pako;
+  }
+});
+
+// node_modules/tslib/tslib.es6.js
+var tslib_es6_exports = {};
+__export(tslib_es6_exports, {
+  __assign: () => __assign,
+  __asyncDelegator: () => __asyncDelegator,
+  __asyncGenerator: () => __asyncGenerator,
+  __asyncValues: () => __asyncValues,
+  __await: () => __await,
+  __awaiter: () => __awaiter,
+  __classPrivateFieldGet: () => __classPrivateFieldGet,
+  __classPrivateFieldSet: () => __classPrivateFieldSet,
+  __createBinding: () => __createBinding,
+  __decorate: () => __decorate,
+  __exportStar: () => __exportStar,
+  __extends: () => __extends,
+  __generator: () => __generator,
+  __importDefault: () => __importDefault,
+  __importStar: () => __importStar,
+  __makeTemplateObject: () => __makeTemplateObject,
+  __metadata: () => __metadata,
+  __param: () => __param,
+  __read: () => __read,
+  __rest: () => __rest,
+  __spread: () => __spread,
+  __spreadArrays: () => __spreadArrays,
+  __values: () => __values
+});
+function __extends(d, b) {
+  extendStatics(d, b);
+  function __() {
+    this.constructor = d;
+  }
+  d.prototype = b === null ? Object.create(b) : (__.prototype = b.prototype, new __());
+}
+function __rest(s, e) {
+  var t = {};
+  for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p) && e.indexOf(p) < 0)
+    t[p] = s[p];
+  if (s != null && typeof Object.getOwnPropertySymbols === "function")
+    for (var i = 0, p = Object.getOwnPropertySymbols(s); i < p.length; i++) {
+      if (e.indexOf(p[i]) < 0 && Object.prototype.propertyIsEnumerable.call(s, p[i]))
+        t[p[i]] = s[p[i]];
+    }
+  return t;
+}
+function __decorate(decorators, target, key, desc) {
+  var c = arguments.length, r = c < 3 ? target : desc === null ? desc = Object.getOwnPropertyDescriptor(target, key) : desc, d;
+  if (typeof Reflect === "object" && typeof Reflect.decorate === "function") r = Reflect.decorate(decorators, target, key, desc);
+  else for (var i = decorators.length - 1; i >= 0; i--) if (d = decorators[i]) r = (c < 3 ? d(r) : c > 3 ? d(target, key, r) : d(target, key)) || r;
+  return c > 3 && r && Object.defineProperty(target, key, r), r;
+}
+function __param(paramIndex, decorator) {
+  return function(target, key) {
+    decorator(target, key, paramIndex);
+  };
+}
+function __metadata(metadataKey, metadataValue) {
+  if (typeof Reflect === "object" && typeof Reflect.metadata === "function") return Reflect.metadata(metadataKey, metadataValue);
+}
+function __awaiter(thisArg, _arguments, P, generator) {
+  function adopt(value) {
+    return value instanceof P ? value : new P(function(resolve) {
+      resolve(value);
+    });
+  }
+  return new (P || (P = Promise))(function(resolve, reject) {
+    function fulfilled(value) {
+      try {
+        step(generator.next(value));
+      } catch (e) {
+        reject(e);
+      }
+    }
+    function rejected(value) {
+      try {
+        step(generator["throw"](value));
+      } catch (e) {
+        reject(e);
+      }
+    }
+    function step(result) {
+      result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected);
+    }
+    step((generator = generator.apply(thisArg, _arguments || [])).next());
+  });
+}
+function __generator(thisArg, body) {
+  var _ = { label: 0, sent: function() {
+    if (t[0] & 1) throw t[1];
+    return t[1];
+  }, trys: [], ops: [] }, f, y, t, g;
+  return g = { next: verb(0), "throw": verb(1), "return": verb(2) }, typeof Symbol === "function" && (g[Symbol.iterator] = function() {
+    return this;
+  }), g;
+  function verb(n) {
+    return function(v) {
+      return step([n, v]);
+    };
+  }
+  function step(op) {
+    if (f) throw new TypeError("Generator is already executing.");
+    while (_) try {
+      if (f = 1, y && (t = op[0] & 2 ? y["return"] : op[0] ? y["throw"] || ((t = y["return"]) && t.call(y), 0) : y.next) && !(t = t.call(y, op[1])).done) return t;
+      if (y = 0, t) op = [op[0] & 2, t.value];
+      switch (op[0]) {
+        case 0:
+        case 1:
+          t = op;
+          break;
+        case 4:
+          _.label++;
+          return { value: op[1], done: false };
+        case 5:
+          _.label++;
+          y = op[1];
+          op = [0];
+          continue;
+        case 7:
+          op = _.ops.pop();
+          _.trys.pop();
+          continue;
+        default:
+          if (!(t = _.trys, t = t.length > 0 && t[t.length - 1]) && (op[0] === 6 || op[0] === 2)) {
+            _ = 0;
+            continue;
+          }
+          if (op[0] === 3 && (!t || op[1] > t[0] && op[1] < t[3])) {
+            _.label = op[1];
+            break;
+          }
+          if (op[0] === 6 && _.label < t[1]) {
+            _.label = t[1];
+            t = op;
+            break;
+          }
+          if (t && _.label < t[2]) {
+            _.label = t[2];
+            _.ops.push(op);
+            break;
+          }
+          if (t[2]) _.ops.pop();
+          _.trys.pop();
+          continue;
+      }
+      op = body.call(thisArg, _);
+    } catch (e) {
+      op = [6, e];
+      y = 0;
+    } finally {
+      f = t = 0;
+    }
+    if (op[0] & 5) throw op[1];
+    return { value: op[0] ? op[1] : void 0, done: true };
+  }
+}
+function __createBinding(o, m, k, k2) {
+  if (k2 === void 0) k2 = k;
+  o[k2] = m[k];
+}
+function __exportStar(m, exports2) {
+  for (var p in m) if (p !== "default" && !exports2.hasOwnProperty(p)) exports2[p] = m[p];
+}
+function __values(o) {
+  var s = typeof Symbol === "function" && Symbol.iterator, m = s && o[s], i = 0;
+  if (m) return m.call(o);
+  if (o && typeof o.length === "number") return {
+    next: function() {
+      if (o && i >= o.length) o = void 0;
+      return { value: o && o[i++], done: !o };
+    }
+  };
+  throw new TypeError(s ? "Object is not iterable." : "Symbol.iterator is not defined.");
+}
+function __read(o, n) {
+  var m = typeof Symbol === "function" && o[Symbol.iterator];
+  if (!m) return o;
+  var i = m.call(o), r, ar = [], e;
+  try {
+    while ((n === void 0 || n-- > 0) && !(r = i.next()).done) ar.push(r.value);
+  } catch (error) {
+    e = { error };
+  } finally {
+    try {
+      if (r && !r.done && (m = i["return"])) m.call(i);
+    } finally {
+      if (e) throw e.error;
+    }
+  }
+  return ar;
+}
+function __spread() {
+  for (var ar = [], i = 0; i < arguments.length; i++)
+    ar = ar.concat(__read(arguments[i]));
+  return ar;
+}
+function __spreadArrays() {
+  for (var s = 0, i = 0, il = arguments.length; i < il; i++) s += arguments[i].length;
+  for (var r = Array(s), k = 0, i = 0; i < il; i++)
+    for (var a = arguments[i], j = 0, jl = a.length; j < jl; j++, k++)
+      r[k] = a[j];
+  return r;
+}
+function __await(v) {
+  return this instanceof __await ? (this.v = v, this) : new __await(v);
+}
+function __asyncGenerator(thisArg, _arguments, generator) {
+  if (!Symbol.asyncIterator) throw new TypeError("Symbol.asyncIterator is not defined.");
+  var g = generator.apply(thisArg, _arguments || []), i, q = [];
+  return i = {}, verb("next"), verb("throw"), verb("return"), i[Symbol.asyncIterator] = function() {
+    return this;
+  }, i;
+  function verb(n) {
+    if (g[n]) i[n] = function(v) {
+      return new Promise(function(a, b) {
+        q.push([n, v, a, b]) > 1 || resume(n, v);
+      });
+    };
+  }
+  function resume(n, v) {
+    try {
+      step(g[n](v));
+    } catch (e) {
+      settle(q[0][3], e);
+    }
+  }
+  function step(r) {
+    r.value instanceof __await ? Promise.resolve(r.value.v).then(fulfill, reject) : settle(q[0][2], r);
+  }
+  function fulfill(value) {
+    resume("next", value);
+  }
+  function reject(value) {
+    resume("throw", value);
+  }
+  function settle(f, v) {
+    if (f(v), q.shift(), q.length) resume(q[0][0], q[0][1]);
+  }
+}
+function __asyncDelegator(o) {
+  var i, p;
+  return i = {}, verb("next"), verb("throw", function(e) {
+    throw e;
+  }), verb("return"), i[Symbol.iterator] = function() {
+    return this;
+  }, i;
+  function verb(n, f) {
+    i[n] = o[n] ? function(v) {
+      return (p = !p) ? { value: __await(o[n](v)), done: n === "return" } : f ? f(v) : v;
+    } : f;
+  }
+}
+function __asyncValues(o) {
+  if (!Symbol.asyncIterator) throw new TypeError("Symbol.asyncIterator is not defined.");
+  var m = o[Symbol.asyncIterator], i;
+  return m ? m.call(o) : (o = typeof __values === "function" ? __values(o) : o[Symbol.iterator](), i = {}, verb("next"), verb("throw"), verb("return"), i[Symbol.asyncIterator] = function() {
+    return this;
+  }, i);
+  function verb(n) {
+    i[n] = o[n] && function(v) {
+      return new Promise(function(resolve, reject) {
+        v = o[n](v), settle(resolve, reject, v.done, v.value);
+      });
+    };
+  }
+  function settle(resolve, reject, d, v) {
+    Promise.resolve(v).then(function(v2) {
+      resolve({ value: v2, done: d });
+    }, reject);
+  }
+}
+function __makeTemplateObject(cooked, raw) {
+  if (Object.defineProperty) {
+    Object.defineProperty(cooked, "raw", { value: raw });
+  } else {
+    cooked.raw = raw;
+  }
+  return cooked;
+}
+function __importStar(mod) {
+  if (mod && mod.__esModule) return mod;
+  var result = {};
+  if (mod != null) {
+    for (var k in mod) if (Object.hasOwnProperty.call(mod, k)) result[k] = mod[k];
+  }
+  result.default = mod;
+  return result;
+}
+function __importDefault(mod) {
+  return mod && mod.__esModule ? mod : { default: mod };
+}
+function __classPrivateFieldGet(receiver, privateMap) {
+  if (!privateMap.has(receiver)) {
+    throw new TypeError("attempted to get private field on non-instance");
+  }
+  return privateMap.get(receiver);
+}
+function __classPrivateFieldSet(receiver, privateMap, value) {
+  if (!privateMap.has(receiver)) {
+    throw new TypeError("attempted to set private field on non-instance");
+  }
+  privateMap.set(receiver, value);
+  return value;
+}
+var extendStatics, __assign;
+var init_tslib_es6 = __esm({
+  "node_modules/tslib/tslib.es6.js"() {
+    extendStatics = function(d, b) {
+      extendStatics = Object.setPrototypeOf || { __proto__: [] } instanceof Array && function(d2, b2) {
+        d2.__proto__ = b2;
+      } || function(d2, b2) {
+        for (var p in b2) if (b2.hasOwnProperty(p)) d2[p] = b2[p];
+      };
+      return extendStatics(d, b);
+    };
+    __assign = function() {
+      __assign = Object.assign || function __assign2(t) {
+        for (var s, i = 1, n = arguments.length; i < n; i++) {
+          s = arguments[i];
+          for (var p in s) if (Object.prototype.hasOwnProperty.call(s, p)) t[p] = s[p];
+        }
+        return t;
+      };
+      return __assign.apply(this, arguments);
+    };
+  }
+});
+
+// node_modules/pdf-lib/cjs/utils/base64.js
+var require_base64 = __commonJS({
+  "node_modules/pdf-lib/cjs/utils/base64.js"(exports2) {
+    "use strict";
+    Object.defineProperty(exports2, "__esModule", { value: true });
+    exports2.decodeFromBase64DataUri = exports2.decodeFromBase64 = exports2.encodeToBase64 = void 0;
+    var chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    var lookup = new Uint8Array(256);
+    for (i = 0; i < chars.length; i++) {
+      lookup[chars.charCodeAt(i)] = i;
+    }
+    var i;
+    exports2.encodeToBase64 = function(bytes) {
+      var base64 = "";
+      var len = bytes.length;
+      for (var i2 = 0; i2 < len; i2 += 3) {
+        base64 += chars[bytes[i2] >> 2];
+        base64 += chars[(bytes[i2] & 3) << 4 | bytes[i2 + 1] >> 4];
+        base64 += chars[(bytes[i2 + 1] & 15) << 2 | bytes[i2 + 2] >> 6];
+        base64 += chars[bytes[i2 + 2] & 63];
+      }
+      if (len % 3 === 2) {
+        base64 = base64.substring(0, base64.length - 1) + "=";
+      } else if (len % 3 === 1) {
+        base64 = base64.substring(0, base64.length - 2) + "==";
+      }
+      return base64;
+    };
+    exports2.decodeFromBase64 = function(base64) {
+      var bufferLength = base64.length * 0.75;
+      var len = base64.length;
+      var i2;
+      var p = 0;
+      var encoded1;
+      var encoded2;
+      var encoded3;
+      var encoded4;
+      if (base64[base64.length - 1] === "=") {
+        bufferLength--;
+        if (base64[base64.length - 2] === "=") {
+          bufferLength--;
+        }
+      }
+      var bytes = new Uint8Array(bufferLength);
+      for (i2 = 0; i2 < len; i2 += 4) {
+        encoded1 = lookup[base64.charCodeAt(i2)];
+        encoded2 = lookup[base64.charCodeAt(i2 + 1)];
+        encoded3 = lookup[base64.charCodeAt(i2 + 2)];
+        encoded4 = lookup[base64.charCodeAt(i2 + 3)];
+        bytes[p++] = encoded1 << 2 | encoded2 >> 4;
+        bytes[p++] = (encoded2 & 15) << 4 | encoded3 >> 2;
+        bytes[p++] = (encoded3 & 3) << 6 | encoded4 & 63;
+      }
+      return bytes;
+    };
+    var DATA_URI_PREFIX_REGEX = /^(data)?:?([\w\/\+]+)?;?(charset=[\w-]+|base64)?.*,/i;
+    exports2.decodeFromBase64DataUri = function(dataUri) {
+      var trimmedUri = dataUri.trim();
+      var prefix = trimmedUri.substring(0, 100);
+      var res = prefix.match(DATA_URI_PREFIX_REGEX);
+      if (!res)
+        return exports2.decodeFromBase64(trimmedUri);
+      var fullMatch = res[0];
+      var data = trimmedUri.substring(fullMatch.length);
+      return exports2.decodeFromBase64(data);
+    };
+  }
+});
+
+// node_modules/pdf-lib/cjs/utils/strings.js
+var require_strings2 = __commonJS({
+  "node_modules/pdf-lib/cjs/utils/strings.js"(exports2) {
+    "use strict";
+    Object.defineProperty(exports2, "__esModule", { value: true });
+    exports2.findLastMatch = exports2.parseDate = exports2.breakTextIntoLines = exports2.charSplit = exports2.charAtIndex = exports2.mergeLines = exports2.lineSplit = exports2.isNewlineChar = exports2.newlineChars = exports2.escapedNewlineChars = exports2.cleanText = exports2.escapeRegExp = exports2.addRandomSuffix = exports2.copyStringIntoBuffer = exports2.padStart = exports2.charFromHexCode = exports2.charFromCode = exports2.toHexString = exports2.toHexStringOfMinLength = exports2.toCodePoint = exports2.toCharCode = void 0;
+    exports2.toCharCode = function(character) {
+      return character.charCodeAt(0);
+    };
+    exports2.toCodePoint = function(character) {
+      return character.codePointAt(0);
+    };
+    exports2.toHexStringOfMinLength = function(num, minLength) {
+      return exports2.padStart(num.toString(16), minLength, "0").toUpperCase();
+    };
+    exports2.toHexString = function(num) {
+      return exports2.toHexStringOfMinLength(num, 2);
+    };
+    exports2.charFromCode = function(code) {
+      return String.fromCharCode(code);
+    };
+    exports2.charFromHexCode = function(hex) {
+      return exports2.charFromCode(parseInt(hex, 16));
+    };
+    exports2.padStart = function(value, length, padChar) {
+      var padding = "";
+      for (var idx = 0, len = length - value.length; idx < len; idx++) {
+        padding += padChar;
+      }
+      return padding + value;
+    };
+    exports2.copyStringIntoBuffer = function(str, buffer, offset) {
+      var length = str.length;
+      for (var idx = 0; idx < length; idx++) {
+        buffer[offset++] = str.charCodeAt(idx);
+      }
+      return length;
+    };
+    exports2.addRandomSuffix = function(prefix, suffixLength) {
+      if (suffixLength === void 0) {
+        suffixLength = 4;
+      }
+      return prefix + "-" + Math.floor(Math.random() * Math.pow(10, suffixLength));
+    };
+    exports2.escapeRegExp = function(str) {
+      return str.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    };
+    exports2.cleanText = function(text) {
+      return text.replace(/\t|\u0085|\u2028|\u2029/g, "    ").replace(/[\b\v]/g, "");
+    };
+    exports2.escapedNewlineChars = ["\\n", "\\f", "\\r", "\\u000B"];
+    exports2.newlineChars = ["\n", "\f", "\r", "\v"];
+    exports2.isNewlineChar = function(text) {
+      return /^[\n\f\r\u000B]$/.test(text);
+    };
+    exports2.lineSplit = function(text) {
+      return text.split(/[\n\f\r\u000B]/);
+    };
+    exports2.mergeLines = function(text) {
+      return text.replace(/[\n\f\r\u000B]/g, " ");
+    };
+    exports2.charAtIndex = function(text, index) {
+      var cuFirst = text.charCodeAt(index);
+      var cuSecond;
+      var nextIndex = index + 1;
+      var length = 1;
+      if (
+        // Check if it's the start of a surrogate pair.
+        cuFirst >= 55296 && cuFirst <= 56319 && // high surrogate
+        text.length > nextIndex
+      ) {
+        cuSecond = text.charCodeAt(nextIndex);
+        if (cuSecond >= 56320 && cuSecond <= 57343)
+          length = 2;
+      }
+      return [text.slice(index, index + length), length];
+    };
+    exports2.charSplit = function(text) {
+      var chars = [];
+      for (var idx = 0, len = text.length; idx < len; ) {
+        var _a = exports2.charAtIndex(text, idx), c = _a[0], cLen = _a[1];
+        chars.push(c);
+        idx += cLen;
+      }
+      return chars;
+    };
+    var buildWordBreakRegex = function(wordBreaks) {
+      var newlineCharUnion = exports2.escapedNewlineChars.join("|");
+      var escapedRules = ["$"];
+      for (var idx = 0, len = wordBreaks.length; idx < len; idx++) {
+        var wordBreak = wordBreaks[idx];
+        if (exports2.isNewlineChar(wordBreak)) {
+          throw new TypeError("`wordBreak` must not include " + newlineCharUnion);
+        }
+        escapedRules.push(wordBreak === "" ? "." : exports2.escapeRegExp(wordBreak));
+      }
+      var breakRules = escapedRules.join("|");
+      return new RegExp("(" + newlineCharUnion + ")|((.*?)(" + breakRules + "))", "gm");
+    };
+    exports2.breakTextIntoLines = function(text, wordBreaks, maxWidth, computeWidthOfText) {
+      var regex = buildWordBreakRegex(wordBreaks);
+      var words = exports2.cleanText(text).match(regex);
+      var currLine = "";
+      var currWidth = 0;
+      var lines = [];
+      var pushCurrLine = function() {
+        if (currLine !== "")
+          lines.push(currLine);
+        currLine = "";
+        currWidth = 0;
+      };
+      for (var idx = 0, len = words.length; idx < len; idx++) {
+        var word = words[idx];
+        if (exports2.isNewlineChar(word)) {
+          pushCurrLine();
+        } else {
+          var width = computeWidthOfText(word);
+          if (currWidth + width > maxWidth)
+            pushCurrLine();
+          currLine += word;
+          currWidth += width;
+        }
+      }
+      pushCurrLine();
+      return lines;
+    };
+    var dateRegex = /^D:(\d\d\d\d)(\d\d)?(\d\d)?(\d\d)?(\d\d)?(\d\d)?([+\-Z])?(\d\d)?'?(\d\d)?'?$/;
+    exports2.parseDate = function(dateStr) {
+      var match = dateStr.match(dateRegex);
+      if (!match)
+        return void 0;
+      var year = match[1], _a = match[2], month = _a === void 0 ? "01" : _a, _b = match[3], day = _b === void 0 ? "01" : _b, _c = match[4], hours = _c === void 0 ? "00" : _c, _d = match[5], mins = _d === void 0 ? "00" : _d, _e = match[6], secs = _e === void 0 ? "00" : _e, _f = match[7], offsetSign = _f === void 0 ? "Z" : _f, _g = match[8], offsetHours = _g === void 0 ? "00" : _g, _h = match[9], offsetMins = _h === void 0 ? "00" : _h;
+      var tzOffset = offsetSign === "Z" ? "Z" : "" + offsetSign + offsetHours + ":" + offsetMins;
+      var date = /* @__PURE__ */ new Date(year + "-" + month + "-" + day + "T" + hours + ":" + mins + ":" + secs + tzOffset);
+      return date;
+    };
+    exports2.findLastMatch = function(value, regex) {
+      var _a;
+      var position = 0;
+      var lastMatch;
+      while (position < value.length) {
+        var match = value.substring(position).match(regex);
+        if (!match)
+          return { match: lastMatch, pos: position };
+        lastMatch = match;
+        position += ((_a = match.index) !== null && _a !== void 0 ? _a : 0) + match[0].length;
+      }
+      return { match: lastMatch, pos: position };
+    };
+  }
+});
+
+// node_modules/pdf-lib/cjs/utils/arrays.js
+var require_arrays = __commonJS({
+  "node_modules/pdf-lib/cjs/utils/arrays.js"(exports2) {
+    "use strict";
+    Object.defineProperty(exports2, "__esModule", { value: true });
+    exports2.toUint8Array = exports2.canBeConvertedToUint8Array = exports2.pluckIndices = exports2.range = exports2.sum = exports2.reverseArray = exports2.sortedUniq = exports2.byAscendingId = exports2.arrayAsString = exports2.mergeUint8Arrays = exports2.mergeIntoTypedArray = exports2.typedArrayFor = exports2.last = void 0;
+    var base64_1 = require_base64();
+    var strings_1 = require_strings2();
+    exports2.last = function(array) {
+      return array[array.length - 1];
+    };
+    exports2.typedArrayFor = function(value) {
+      if (value instanceof Uint8Array)
+        return value;
+      var length = value.length;
+      var typedArray = new Uint8Array(length);
+      for (var idx = 0; idx < length; idx++) {
+        typedArray[idx] = value.charCodeAt(idx);
+      }
+      return typedArray;
+    };
+    exports2.mergeIntoTypedArray = function() {
+      var arrays = [];
+      for (var _i = 0; _i < arguments.length; _i++) {
+        arrays[_i] = arguments[_i];
+      }
+      var arrayCount = arrays.length;
+      var typedArrays = [];
+      for (var idx = 0; idx < arrayCount; idx++) {
+        var element = arrays[idx];
+        typedArrays[idx] = element instanceof Uint8Array ? element : exports2.typedArrayFor(element);
+      }
+      var totalSize = 0;
+      for (var idx = 0; idx < arrayCount; idx++) {
+        totalSize += arrays[idx].length;
+      }
+      var merged = new Uint8Array(totalSize);
+      var offset = 0;
+      for (var arrIdx = 0; arrIdx < arrayCount; arrIdx++) {
+        var arr = typedArrays[arrIdx];
+        for (var byteIdx = 0, arrLen = arr.length; byteIdx < arrLen; byteIdx++) {
+          merged[offset++] = arr[byteIdx];
+        }
+      }
+      return merged;
+    };
+    exports2.mergeUint8Arrays = function(arrays) {
+      var totalSize = 0;
+      for (var idx = 0, len = arrays.length; idx < len; idx++) {
+        totalSize += arrays[idx].length;
+      }
+      var mergedBuffer = new Uint8Array(totalSize);
+      var offset = 0;
+      for (var idx = 0, len = arrays.length; idx < len; idx++) {
+        var array = arrays[idx];
+        mergedBuffer.set(array, offset);
+        offset += array.length;
+      }
+      return mergedBuffer;
+    };
+    exports2.arrayAsString = function(array) {
+      var str = "";
+      for (var idx = 0, len = array.length; idx < len; idx++) {
+        str += strings_1.charFromCode(array[idx]);
+      }
+      return str;
+    };
+    exports2.byAscendingId = function(a, b) {
+      return a.id - b.id;
+    };
+    exports2.sortedUniq = function(array, indexer) {
+      var uniq = [];
+      for (var idx = 0, len = array.length; idx < len; idx++) {
+        var curr = array[idx];
+        var prev = array[idx - 1];
+        if (idx === 0 || indexer(curr) !== indexer(prev)) {
+          uniq.push(curr);
+        }
+      }
+      return uniq;
+    };
+    exports2.reverseArray = function(array) {
+      var arrayLen = array.length;
+      for (var idx = 0, len = Math.floor(arrayLen / 2); idx < len; idx++) {
+        var leftIdx = idx;
+        var rightIdx = arrayLen - idx - 1;
+        var temp = array[idx];
+        array[leftIdx] = array[rightIdx];
+        array[rightIdx] = temp;
+      }
+      return array;
+    };
+    exports2.sum = function(array) {
+      var total = 0;
+      for (var idx = 0, len = array.length; idx < len; idx++) {
+        total += array[idx];
+      }
+      return total;
+    };
+    exports2.range = function(start, end) {
+      var arr = new Array(end - start);
+      for (var idx = 0, len = arr.length; idx < len; idx++) {
+        arr[idx] = start + idx;
+      }
+      return arr;
+    };
+    exports2.pluckIndices = function(arr, indices) {
+      var plucked = new Array(indices.length);
+      for (var idx = 0, len = indices.length; idx < len; idx++) {
+        plucked[idx] = arr[indices[idx]];
+      }
+      return plucked;
+    };
+    exports2.canBeConvertedToUint8Array = function(input) {
+      return input instanceof Uint8Array || input instanceof ArrayBuffer || typeof input === "string";
+    };
+    exports2.toUint8Array = function(input) {
+      if (typeof input === "string") {
+        return base64_1.decodeFromBase64DataUri(input);
+      } else if (input instanceof ArrayBuffer) {
+        return new Uint8Array(input);
+      } else if (input instanceof Uint8Array) {
+        return input;
+      } else {
+        throw new TypeError("`input` must be one of `string | ArrayBuffer | Uint8Array`");
+      }
+    };
+  }
+});
+
+// node_modules/pdf-lib/cjs/utils/async.js
+var require_async = __commonJS({
+  "node_modules/pdf-lib/cjs/utils/async.js"(exports2) {
+    "use strict";
+    Object.defineProperty(exports2, "__esModule", { value: true });
+    exports2.waitForTick = void 0;
+    exports2.waitForTick = function() {
+      return new Promise(function(resolve) {
+        setTimeout(function() {
+          return resolve();
+        }, 0);
+      });
+    };
+  }
+});
+
+// node_modules/pdf-lib/cjs/utils/unicode.js
+var require_unicode = __commonJS({
+  "node_modules/pdf-lib/cjs/utils/unicode.js"(exports2) {
+    "use strict";
+    Object.defineProperty(exports2, "__esModule", { value: true });
+    exports2.hasUtf16BOM = exports2.utf16Decode = exports2.lowSurrogate = exports2.highSurrogate = exports2.hasSurrogates = exports2.isWithinBMP = exports2.utf16Encode = exports2.utf8Encode = void 0;
+    var strings_1 = require_strings2();
+    exports2.utf8Encode = function(input, byteOrderMark) {
+      if (byteOrderMark === void 0) {
+        byteOrderMark = true;
+      }
+      var encoded = [];
+      if (byteOrderMark)
+        encoded.push(239, 187, 191);
+      for (var idx = 0, len = input.length; idx < len; ) {
+        var codePoint = input.codePointAt(idx);
+        if (codePoint < 128) {
+          var byte1 = codePoint & 127;
+          encoded.push(byte1);
+          idx += 1;
+        } else if (codePoint < 2048) {
+          var byte1 = codePoint >> 6 & 31 | 192;
+          var byte2 = codePoint & 63 | 128;
+          encoded.push(byte1, byte2);
+          idx += 1;
+        } else if (codePoint < 65536) {
+          var byte1 = codePoint >> 12 & 15 | 224;
+          var byte2 = codePoint >> 6 & 63 | 128;
+          var byte3 = codePoint & 63 | 128;
+          encoded.push(byte1, byte2, byte3);
+          idx += 1;
+        } else if (codePoint < 1114112) {
+          var byte1 = codePoint >> 18 & 7 | 240;
+          var byte2 = codePoint >> 12 & 63 | 128;
+          var byte3 = codePoint >> 6 & 63 | 128;
+          var byte4 = codePoint >> 0 & 63 | 128;
+          encoded.push(byte1, byte2, byte3, byte4);
+          idx += 2;
+        } else
+          throw new Error("Invalid code point: 0x" + strings_1.toHexString(codePoint));
+      }
+      return new Uint8Array(encoded);
+    };
+    exports2.utf16Encode = function(input, byteOrderMark) {
+      if (byteOrderMark === void 0) {
+        byteOrderMark = true;
+      }
+      var encoded = [];
+      if (byteOrderMark)
+        encoded.push(65279);
+      for (var idx = 0, len = input.length; idx < len; ) {
+        var codePoint = input.codePointAt(idx);
+        if (codePoint < 65536) {
+          encoded.push(codePoint);
+          idx += 1;
+        } else if (codePoint < 1114112) {
+          encoded.push(exports2.highSurrogate(codePoint), exports2.lowSurrogate(codePoint));
+          idx += 2;
+        } else
+          throw new Error("Invalid code point: 0x" + strings_1.toHexString(codePoint));
+      }
+      return new Uint16Array(encoded);
+    };
+    exports2.isWithinBMP = function(codePoint) {
+      return codePoint >= 0 && codePoint <= 65535;
+    };
+    exports2.hasSurrogates = function(codePoint) {
+      return codePoint >= 65536 && codePoint <= 1114111;
+    };
+    exports2.highSurrogate = function(codePoint) {
+      return Math.floor((codePoint - 65536) / 1024) + 55296;
+    };
+    exports2.lowSurrogate = function(codePoint) {
+      return (codePoint - 65536) % 1024 + 56320;
+    };
+    var ByteOrder;
+    (function(ByteOrder2) {
+      ByteOrder2["BigEndian"] = "BigEndian";
+      ByteOrder2["LittleEndian"] = "LittleEndian";
+    })(ByteOrder || (ByteOrder = {}));
+    var REPLACEMENT = "\uFFFD".codePointAt(0);
+    exports2.utf16Decode = function(input, byteOrderMark) {
+      if (byteOrderMark === void 0) {
+        byteOrderMark = true;
+      }
+      if (input.length <= 1)
+        return String.fromCodePoint(REPLACEMENT);
+      var byteOrder = byteOrderMark ? readBOM(input) : ByteOrder.BigEndian;
+      var idx = byteOrderMark ? 2 : 0;
+      var codePoints = [];
+      while (input.length - idx >= 2) {
+        var first = decodeValues(input[idx++], input[idx++], byteOrder);
+        if (isHighSurrogate(first)) {
+          if (input.length - idx < 2) {
+            codePoints.push(REPLACEMENT);
+          } else {
+            var second = decodeValues(input[idx++], input[idx++], byteOrder);
+            if (isLowSurrogate(second)) {
+              codePoints.push(first, second);
+            } else {
+              codePoints.push(REPLACEMENT);
+            }
+          }
+        } else if (isLowSurrogate(first)) {
+          idx += 2;
+          codePoints.push(REPLACEMENT);
+        } else {
+          codePoints.push(first);
+        }
+      }
+      if (idx < input.length)
+        codePoints.push(REPLACEMENT);
+      return String.fromCodePoint.apply(String, codePoints);
+    };
+    var isHighSurrogate = function(codePoint) {
+      return codePoint >= 55296 && codePoint <= 56319;
+    };
+    var isLowSurrogate = function(codePoint) {
+      return codePoint >= 56320 && codePoint <= 57343;
+    };
+    var decodeValues = function(first, second, byteOrder) {
+      if (byteOrder === ByteOrder.LittleEndian)
+        return second << 8 | first;
+      if (byteOrder === ByteOrder.BigEndian)
+        return first << 8 | second;
+      throw new Error("Invalid byteOrder: " + byteOrder);
+    };
+    var readBOM = function(bytes) {
+      return hasUtf16BigEndianBOM(bytes) ? ByteOrder.BigEndian : hasUtf16LittleEndianBOM(bytes) ? ByteOrder.LittleEndian : ByteOrder.BigEndian;
+    };
+    var hasUtf16BigEndianBOM = function(bytes) {
+      return bytes[0] === 254 && bytes[1] === 255;
+    };
+    var hasUtf16LittleEndianBOM = function(bytes) {
+      return bytes[0] === 255 && bytes[1] === 254;
+    };
+    exports2.hasUtf16BOM = function(bytes) {
+      return hasUtf16BigEndianBOM(bytes) || hasUtf16LittleEndianBOM(bytes);
+    };
+  }
+});
+
+// node_modules/pdf-lib/cjs/utils/numbers.js
+var require_numbers = __commonJS({
+  "node_modules/pdf-lib/cjs/utils/numbers.js"(exports2) {
+    "use strict";
+    Object.defineProperty(exports2, "__esModule", { value: true });
+    exports2.bytesFor = exports2.sizeInBytes = exports2.numberToString = void 0;
+    exports2.numberToString = function(num) {
+      var numStr = String(num);
+      if (Math.abs(num) < 1) {
+        var e = parseInt(num.toString().split("e-")[1]);
+        if (e) {
+          var negative = num < 0;
+          if (negative)
+            num *= -1;
+          num *= Math.pow(10, e - 1);
+          numStr = "0." + new Array(e).join("0") + num.toString().substring(2);
+          if (negative)
+            numStr = "-" + numStr;
+        }
+      } else {
+        var e = parseInt(num.toString().split("+")[1]);
+        if (e > 20) {
+          e -= 20;
+          num /= Math.pow(10, e);
+          numStr = num.toString() + new Array(e + 1).join("0");
+        }
+      }
+      return numStr;
+    };
+    exports2.sizeInBytes = function(n) {
+      return Math.ceil(n.toString(2).length / 8);
+    };
+    exports2.bytesFor = function(n) {
+      var bytes = new Uint8Array(exports2.sizeInBytes(n));
+      for (var i = 1; i <= bytes.length; i++) {
+        bytes[i - 1] = n >> (bytes.length - i) * 8;
+      }
+      return bytes;
+    };
+  }
+});
+
+// node_modules/pdf-lib/cjs/utils/errors.js
+var require_errors = __commonJS({
+  "node_modules/pdf-lib/cjs/utils/errors.js"(exports2) {
+    "use strict";
+    Object.defineProperty(exports2, "__esModule", { value: true });
+    exports2.error = void 0;
+    exports2.error = function(msg) {
+      throw new Error(msg);
+    };
   }
 });
 
@@ -5690,7 +5690,7 @@ var require_pdfDocEncoding = __commonJS({
     "use strict";
     Object.defineProperty(exports2, "__esModule", { value: true });
     exports2.pdfDocEncodingDecode = void 0;
-    var strings_1 = require_strings();
+    var strings_1 = require_strings2();
     var pdfDocEncodingToUnicode = new Uint16Array(256);
     for (idx = 0; idx < 256; idx++) {
       pdfDocEncodingToUnicode[idx] = idx;
@@ -5791,7 +5791,7 @@ var require_utils2 = __commonJS({
     var tslib_1 = (init_tslib_es6(), __toCommonJS(tslib_es6_exports));
     tslib_1.__exportStar(require_arrays(), exports2);
     tslib_1.__exportStar(require_async(), exports2);
-    tslib_1.__exportStar(require_strings(), exports2);
+    tslib_1.__exportStar(require_strings2(), exports2);
     tslib_1.__exportStar(require_unicode(), exports2);
     tslib_1.__exportStar(require_numbers(), exports2);
     tslib_1.__exportStar(require_errors(), exports2);
@@ -22031,153 +22031,10 @@ module.exports = __toCommonJS(main_exports);
 var import_obsidian15 = require("obsidian");
 
 // src/notebook-modal.ts
+var import_obsidian2 = require("obsidian");
+
+// src/storage.ts
 var import_obsidian = require("obsidian");
-var NotebookSuggestModal = class extends import_obsidian.SuggestModal {
-  constructor(app, files, select, create, rename) {
-    super(app);
-    this.files = files;
-    this.select = select;
-    this.create = create;
-    this.rename = rename;
-    this.actions = null;
-    this.setPlaceholder("Search Ink notebooks");
-    this.emptyStateText = "No notebooks found";
-  }
-  onOpen() {
-    super.onOpen();
-    this.modalEl.addClass("ink-notebook-picker");
-    this.actions = this.modalEl.createDiv({ cls: "ink-notebook-picker-actions" });
-    this.modalEl.prepend(this.actions);
-    this.actions.createEl("span", { text: "Ink notebooks" });
-    const button3 = this.actions.createEl("button", { cls: "ink-notebook-create", attr: {
-      type: "button",
-      title: "Create Ink notebook",
-      "aria-label": "Create Ink notebook"
-    } });
-    (0, import_obsidian.setIcon)(button3.createSpan({ attr: { "aria-hidden": "true" } }), "plus");
-    button3.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") event.stopPropagation();
-    });
-    button3.addEventListener("click", () => {
-      this.close();
-      new NotebookNameModal(this.app, "Create Ink notebook", "Ink Notebook", "Create", this.create).open();
-    });
-  }
-  onClose() {
-    var _a;
-    (_a = this.actions) == null ? void 0 : _a.remove();
-    this.actions = null;
-    super.onClose();
-  }
-  getSuggestions(query) {
-    const search = query.trim().toLowerCase();
-    return this.files.filter((file) => !search || file.path.toLowerCase().includes(search));
-  }
-  renderSuggestion(file, el) {
-    el.addClass("ink-notebook-result");
-    const name = el.createDiv({ cls: "ink-notebook-result-name" });
-    name.createDiv({ text: file.basename });
-    name.createDiv({ text: file.path, cls: "ink-notebook-result-path" });
-    const rename = el.createEl("button", { cls: "ink-notebook-rename", attr: {
-      type: "button",
-      title: "Rename notebook",
-      "aria-label": `Rename ${file.basename}`
-    } });
-    (0, import_obsidian.setIcon)(rename.createSpan({ attr: { "aria-hidden": "true" } }), "pencil");
-    rename.addEventListener("keydown", (event) => {
-      if (event.key === "Enter" || event.key === " ") event.stopPropagation();
-    });
-    rename.addEventListener("click", (event) => {
-      event.preventDefault();
-      event.stopPropagation();
-      this.close();
-      new NotebookNameModal(
-        this.app,
-        "Rename Ink notebook",
-        file.basename,
-        "Rename",
-        (title) => this.rename(file, title)
-      ).open();
-    });
-  }
-  onChooseSuggestion(file, event) {
-    var _a, _b;
-    if ((_b = (_a = event.target) == null ? void 0 : _a.closest) == null ? void 0 : _b.call(_a, "button")) return;
-    this.select(file);
-  }
-};
-var NotebookNameModal = class extends import_obsidian.Modal {
-  constructor(app, heading, initialName, action, submitName) {
-    super(app);
-    this.heading = heading;
-    this.initialName = initialName;
-    this.action = action;
-    this.submitName = submitName;
-  }
-  onOpen() {
-    this.setTitle(this.heading);
-    this.modalEl.addClass("ink-notebook-name-modal");
-    const form = this.contentEl.createEl("form", { cls: "ink-notebook-name-form" });
-    const label = form.createEl("label", { text: "Notebook name" });
-    const input = label.createEl("input", { attr: { type: "text", required: "", maxlength: "80" } });
-    input.value = this.initialName;
-    const error = form.createDiv({ cls: "ink-notebook-name-error", attr: { role: "alert" } });
-    const actions = form.createDiv({ cls: "ink-notebook-name-actions" });
-    const cancel = actions.createEl("button", { text: "Cancel", attr: { type: "button" } });
-    const submit = actions.createEl("button", { text: this.action, cls: "mod-cta", attr: { type: "submit" } });
-    cancel.addEventListener("click", () => this.close());
-    let pending = false;
-    form.addEventListener("submit", (event) => {
-      event.preventDefault();
-      if (pending) return;
-      const title = input.value.trim();
-      if (!title || title.length > 80 || /[\\/:*?"<>|#^\[\]]/.test(title) || /\.$/.test(title)) {
-        error.setText("Enter a valid notebook name without path or reserved characters.");
-        input.focus();
-        return;
-      }
-      pending = true;
-      input.disabled = cancel.disabled = submit.disabled = true;
-      error.setText("");
-      void this.submitName(title).then(() => this.close()).catch((reason) => {
-        error.setText(`Could not ${this.action.toLowerCase()} notebook: ${reason instanceof Error ? reason.message : String(reason)}`);
-      }).finally(() => {
-        pending = false;
-        input.disabled = cancel.disabled = submit.disabled = false;
-      });
-    });
-    input.focus();
-    input.select();
-  }
-  onClose() {
-    this.contentEl.empty();
-  }
-};
-
-// src/view.ts
-var import_obsidian8 = require("obsidian");
-
-// src/diagnostics.ts
-function intervalStats(intervals) {
-  if (intervals.length === 0) return { count: 0, min: null, median: null, mean: null, max: null };
-  const sorted = [...intervals].sort((a, b) => a - b);
-  const middle = Math.floor(sorted.length / 2);
-  const median = sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
-  const total = sorted.reduce((sum, value) => sum + value, 0);
-  return {
-    count: sorted.length,
-    min: sorted[0],
-    median,
-    mean: total / sorted.length,
-    max: sorted[sorted.length - 1]
-  };
-}
-var MAX_RECORDED_STROKES = 8;
-var MAX_RAW_POINT_SAMPLES = 8192;
-function pushStrokeRecord(records, record) {
-  records.push(record);
-  if (records.length > MAX_RECORDED_STROKES) records.splice(0, records.length - MAX_RECORDED_STROKES);
-}
 
 // src/sticky-model.ts
 var STICKY_UNIT = 1e3;
@@ -22441,12 +22298,18 @@ function normalizeNotebook(value) {
   const raw = value;
   const pages = Array.isArray(raw.pages) ? raw.pages : [];
   const normalizedPages = pages.map(normalizePage).filter((page) => page !== null);
-  const pageIds = new Set(normalizedPages.map((page) => page.id));
-  const legacyOrder = [...normalizedPages].sort((a, b) => a.createdAt - b.createdAt).map((page) => page.id);
+  const mergedById = /* @__PURE__ */ new Map();
+  for (const page of normalizedPages) {
+    const existing = mergedById.get(page.id);
+    mergedById.set(page.id, existing ? mergePages(existing, page) : page);
+  }
+  const dedupedPages = [...mergedById.values()];
+  const pageIds = new Set(dedupedPages.map((page) => page.id));
+  const legacyOrder = [...dedupedPages].sort((a, b) => a.createdAt - b.createdAt).map((page) => page.id);
   const requestedOrder = Array.isArray(raw.pageOrder) ? raw.pageOrder.filter((id) => typeof id === "string") : legacyOrder;
   const pageOrder = [.../* @__PURE__ */ new Set([...requestedOrder.filter((id) => pageIds.has(id)), ...legacyOrder.filter((id) => !requestedOrder.includes(id))])];
   const deletedPages = raw.deletedPages && typeof raw.deletedPages === "object" ? Object.fromEntries(Object.entries(raw.deletedPages).filter((entry) => typeof entry[0] === "string" && typeof entry[1] === "number" && Number.isFinite(entry[1]))) : {};
-  const visiblePages = normalizedPages.filter((page) => !(page.id in deletedPages));
+  const visiblePages = dedupedPages.filter((page) => !(page.id in deletedPages));
   const visibleIds = new Set(visiblePages.map((page) => page.id));
   const byId = new Map(visiblePages.map((page) => [page.id, page]));
   const orderedPages = pageOrder.map((id) => byId.get(id)).filter((page) => page !== void 0);
@@ -22702,6 +22565,479 @@ function clamp(value, min, max) {
 }
 function isPaperStyle(value) {
   return value === "blank" || value === "ruled" || value === "grid" || value === "dot";
+}
+
+// src/storage-codec.ts
+var import_pako = __toESM(require_pako());
+var MAGIC = "INK-GZIP-1\n";
+var MIN_COMPRESS_LENGTH = 1024;
+var MAX_INFLATED_BYTES = 256 * 1024 * 1024;
+function serializeStoredJson(value) {
+  const plain = `${JSON.stringify(value)}
+`;
+  if (plain.length < MIN_COMPRESS_LENGTH) return plain;
+  const bytes = new TextEncoder().encode(plain);
+  if (bytes.length > MAX_INFLATED_BYTES) return plain;
+  const compressed = (0, import_pako.gzip)(plain, { level: 6 });
+  let binary = "";
+  for (let offset = 0; offset < compressed.length; offset += 8192)
+    binary += String.fromCharCode(...compressed.subarray(offset, offset + 8192));
+  const encoded = `${MAGIC}${btoa(binary)}
+`;
+  return encoded.length < bytes.length ? encoded : plain;
+}
+function parseStoredJson(raw) {
+  if (!raw.startsWith(MAGIC)) return JSON.parse(raw);
+  try {
+    const base64 = raw.slice(MAGIC.length).trim();
+    if (!base64 || base64.length > Math.ceil(MAX_INFLATED_BYTES / 3) * 4 || base64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) throw new Error("Invalid base64");
+    const binary = atob(base64), data = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index++) data[index] = binary.charCodeAt(index);
+    if (data.length < 18 || data[0] !== 31 || data[1] !== 139 || data[2] !== 8) throw new Error("Invalid gzip header");
+    if (new DataView(data.buffer).getUint32(data.length - 4, true) > MAX_INFLATED_BYTES) throw new Error("Notebook exceeds 256 MiB decompression limit");
+    const chunks = [];
+    let size = 0;
+    const inflate = new import_pako.Inflate({ chunkSize: 65536 });
+    inflate.onData = (chunk) => {
+      size += chunk.length;
+      if (size > MAX_INFLATED_BYTES) throw new Error("Notebook exceeds 256 MiB decompression limit");
+      chunks.push(chunk);
+    };
+    if (!inflate.push(data, false) || inflate.err || !inflate.ended || inflate.strm.avail_in !== 0) throw new Error(inflate.msg || "Incomplete or trailing gzip data");
+    const bytes = new Uint8Array(size);
+    let offset = 0;
+    for (const chunk of chunks) {
+      bytes.set(chunk, offset);
+      offset += chunk.length;
+    }
+    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
+  } catch (error) {
+    throw new SyntaxError(`Invalid compressed Ink Notes file: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+// src/storage.ts
+var INK_EXTENSION = "ink";
+var INK_FOLDER = "Ink Notes";
+var NotebookFormatError = class extends Error {
+  constructor(message = "Ink notebook contains invalid JSON") {
+    super(message);
+    this.name = "NotebookFormatError";
+  }
+};
+var NotebookStore = class {
+  constructor(app) {
+    this.selfWrites = /* @__PURE__ */ new Map();
+    this.app = app;
+    this.vault = app.vault;
+  }
+  async create(title, folder) {
+    const parent = this.resolveFolder(folder);
+    await this.ensureFolder(parent);
+    const safeTitle = title.trim().replace(/[\\/:*?"<>|#^\[\]]/g, "-").slice(0, 80) || "Ink Notebook";
+    let path = `${parent}/${safeTitle}.${INK_EXTENSION}`;
+    let count = 2;
+    while (this.vault.getAbstractFileByPath(path)) path = `${parent}/${safeTitle} ${count++}.${INK_EXTENSION}`;
+    const notebook = createNotebook(safeTitle);
+    return this.vault.create(path, serialize(notebook));
+  }
+  async read(file) {
+    const raw = await this.readRaw(file);
+    return normalizeNotebook(parseStoredJson(raw));
+  }
+  async readRaw(file) {
+    return this.vault.read(file);
+  }
+  async writeIfUnchanged(file, expectedRaw, nextRaw) {
+    let matched = false;
+    try {
+      await this.vault.process(file, (raw) => {
+        if (raw !== expectedRaw) return raw;
+        matched = true;
+        this.selfWrites.set(file.path, nextRaw);
+        return nextRaw;
+      });
+    } catch (error) {
+      if (this.selfWrites.get(file.path) === nextRaw) this.selfWrites.delete(file.path);
+      throw error;
+    }
+    return matched;
+  }
+  async save(file, notebook) {
+    const next = { ...notebook, updatedAt: Date.now() };
+    let merged = next;
+    let expectedWrite = null;
+    try {
+      await this.vault.process(file, (raw) => {
+        let latest;
+        try {
+          latest = normalizeNotebook(parseStoredJson(raw));
+        } catch (error) {
+          throw new NotebookFormatError(`Cannot save ${file.path || "notebook"}: existing file is corrupt or uses an unsupported encoding`);
+        }
+        merged = mergeNotebooks(latest, next);
+        expectedWrite = serialize(merged);
+        this.selfWrites.set(file.path, expectedWrite);
+        return expectedWrite;
+      });
+    } catch (error) {
+      if (expectedWrite !== null && this.selfWrites.get(file.path) === expectedWrite) this.selfWrites.delete(file.path);
+      throw error;
+    }
+    return merged;
+  }
+  /** Full-vault scan: every .ink file is a notebook regardless of folder, so
+   *  notebooks moved out of the default folder stay discoverable. The scan
+   *  reads vault.getFiles() — Obsidian's incrementally maintained in-memory
+   *  index — so one filter pass per picker open costs no disk I/O and needs no
+   *  second cache that could go stale. */
+  async list() {
+    return this.vault.getFiles().filter((file) => file.extension === INK_EXTENSION);
+  }
+  observe(onChange) {
+    const timers = /* @__PURE__ */ new Map();
+    const handler = (file) => {
+      if (!(file instanceof import_obsidian.TFile) || file.extension !== INK_EXTENSION) return;
+      const expected = this.selfWrites.get(file.path);
+      const notify = () => {
+        timers.delete(file.path);
+        onChange(file);
+      };
+      const existing = timers.get(file.path);
+      if (existing !== void 0) globalThis.clearTimeout(existing);
+      if (!expected) {
+        timers.set(file.path, globalThis.setTimeout(notify, 75));
+        return;
+      }
+      void this.vault.cachedRead(file).then((raw) => {
+        if (this.selfWrites.get(file.path) === expected) this.selfWrites.delete(file.path);
+        if (raw !== expected) timers.set(file.path, globalThis.setTimeout(notify, 75));
+      }).catch(() => {
+        this.selfWrites.delete(file.path);
+        timers.set(file.path, globalThis.setTimeout(notify, 75));
+      });
+    };
+    const ref = this.vault.on("modify", handler);
+    return () => {
+      for (const timer of timers.values()) globalThis.clearTimeout(timer);
+      timers.clear();
+      this.vault.offref(ref);
+    };
+  }
+  /** Custom creation folders follow Obsidian's forward-slash path semantics:
+   *  backslashes and duplicated slashes are normalized away, and reserved
+   *  filename characters are cleaned exactly like notebook titles so a pasted
+   *  path can never produce an invalid folder name. An empty result falls back
+   *  to the default folder for zero-perception compatibility. */
+  resolveFolder(folder) {
+    const cleaned = (folder != null ? folder : "").trim().replace(/\\/g, "/").replace(/\/+/g, "/").split("/").map((segment) => segment.trim().replace(/[:*?"<>|#^\[\]]/g, "-")).filter((segment) => segment && segment !== "." && segment !== "..").join("/");
+    return cleaned || INK_FOLDER;
+  }
+  async ensureFolder(path) {
+    let current = "";
+    for (const segment of path.split("/")) {
+      current = current ? `${current}/${segment}` : segment;
+      const existing = this.vault.getAbstractFileByPath(current);
+      if (existing) {
+        if (existing instanceof import_obsidian.TFile) throw new Error(`Cannot create notebook folder: a file already exists at ${current}`);
+        continue;
+      }
+      await this.vault.createFolder(current);
+    }
+  }
+};
+var MAX_HISTORY_ENTRIES = 200;
+var NotebookHistoryIndex = class _NotebookHistoryIndex {
+  constructor(saved) {
+    this.entries = /* @__PURE__ */ new Map();
+    if (!Array.isArray(saved)) return;
+    for (const item of saved) {
+      const entry = _NotebookHistoryIndex.coerce(item);
+      if (!entry) continue;
+      const previous = this.entries.get(entry.path);
+      if (!previous || previous.lastOpened < entry.lastOpened) this.entries.set(entry.path, entry);
+    }
+    this.trim();
+  }
+  record(path, title, openedAt = Date.now()) {
+    if (!path) return;
+    this.entries.set(path, { path, title, lastOpened: openedAt });
+    this.trim();
+  }
+  remove(path) {
+    this.entries.delete(path);
+  }
+  /** Manual bulk cleanup for entries whose files no longer exist: drops every
+   *  remembered path that is not among the given existing paths. */
+  removeMissing(existingPaths) {
+    let removed = 0;
+    for (const path of [...this.entries.keys()]) {
+      if (!existingPaths.has(path)) {
+        this.entries.delete(path);
+        removed++;
+      }
+    }
+    return removed;
+  }
+  list() {
+    return [...this.entries.values()].sort((left, right) => right.lastOpened - left.lastOpened || left.path.localeCompare(right.path));
+  }
+  trim() {
+    while (this.entries.size > MAX_HISTORY_ENTRIES) {
+      let oldest = null;
+      for (const [path, entry] of this.entries) {
+        if (oldest === null || entry.lastOpened < this.entries.get(oldest).lastOpened) oldest = path;
+      }
+      if (oldest === null) break;
+      this.entries.delete(oldest);
+    }
+  }
+  /** Field-level load: one malformed value is skipped instead of taking the
+   *  whole history down with it. */
+  static coerce(item) {
+    if (typeof item !== "object" || item === null) return null;
+    const path = item.path;
+    if (typeof path !== "string" || !path) return null;
+    const title = item.title;
+    const lastOpened = item.lastOpened;
+    return {
+      path,
+      title: typeof title === "string" && title ? title : path.slice(path.lastIndexOf("/") + 1),
+      lastOpened: typeof lastOpened === "number" && Number.isFinite(lastOpened) ? lastOpened : 0
+    };
+  }
+};
+function discoverNotebooks(files, history) {
+  var _a;
+  const remembered = new Map(history.map((entry) => [entry.path, entry]));
+  const merged = /* @__PURE__ */ new Map();
+  for (const file of files) {
+    merged.set(file.path, { path: file.path, title: file.basename, lastOpened: (_a = remembered.get(file.path)) == null ? void 0 : _a.lastOpened, file });
+  }
+  for (const entry of remembered.values()) {
+    if (!merged.has(entry.path)) merged.set(entry.path, { path: entry.path, title: entry.title, lastOpened: entry.lastOpened, file: null });
+  }
+  return [...merged.values()].sort((left, right) => {
+    var _a2, _b;
+    return (left.file ? 0 : 1) - (right.file ? 0 : 1) || ((_a2 = right.lastOpened) != null ? _a2 : 0) - ((_b = left.lastOpened) != null ? _b : 0) || left.path.localeCompare(right.path);
+  });
+}
+function serialize(notebook) {
+  return serializeStoredJson(notebook);
+}
+
+// src/notebook-modal.ts
+var NotebookSuggestModal = class extends import_obsidian2.SuggestModal {
+  constructor(app, entries, select, create, rename, clear) {
+    super(app);
+    this.entries = entries;
+    this.select = select;
+    this.create = create;
+    this.rename = rename;
+    this.clear = clear;
+    this.actions = null;
+    this.setPlaceholder("Search Ink notebooks");
+    this.emptyStateText = "No notebooks found";
+  }
+  onOpen() {
+    super.onOpen();
+    this.modalEl.addClass("ink-notebook-picker");
+    this.actions = this.modalEl.createDiv({ cls: "ink-notebook-picker-actions" });
+    this.modalEl.prepend(this.actions);
+    this.actions.createEl("span", { text: "Ink notebooks" });
+    const buttons = this.actions.createDiv({ cls: "ink-notebook-picker-buttons" });
+    const missing = this.entries.filter((entry) => !entry.file);
+    if (missing.length) {
+      const clearMissing = buttons.createEl("button", { text: "Clear missing", cls: "ink-notebook-clear-missing", attr: {
+        type: "button",
+        title: "Clear missing notebook entries",
+        "aria-label": "Clear missing notebook entries"
+      } });
+      clearMissing.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+      });
+      clearMissing.addEventListener("click", () => {
+        this.close();
+        void this.clear(missing);
+      });
+    }
+    const button3 = buttons.createEl("button", { cls: "ink-notebook-create", attr: {
+      type: "button",
+      title: "Create Ink notebook",
+      "aria-label": "Create Ink notebook"
+    } });
+    (0, import_obsidian2.setIcon)(button3.createSpan({ attr: { "aria-hidden": "true" } }), "plus");
+    button3.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+    });
+    button3.addEventListener("click", () => {
+      this.close();
+      new NotebookNameModal(this.app, "Create Ink notebook", "Ink Notebook", "Create", this.create, { folder: true }).open();
+    });
+  }
+  onClose() {
+    var _a;
+    (_a = this.actions) == null ? void 0 : _a.remove();
+    this.actions = null;
+    super.onClose();
+  }
+  getSuggestions(query) {
+    const search = query.trim().toLowerCase();
+    return this.entries.filter((entry) => !search || entry.path.toLowerCase().includes(search));
+  }
+  renderSuggestion(entry, el) {
+    el.addClass("ink-notebook-result");
+    if (!entry.file) el.addClass("ink-notebook-result-missing");
+    const name = el.createDiv({ cls: "ink-notebook-result-name" });
+    name.createDiv({ text: entry.title });
+    name.createDiv({ text: entry.path, cls: "ink-notebook-result-path" });
+    if (!entry.file) {
+      name.createDiv({ text: "File missing", cls: "ink-notebook-result-missing-label" });
+      const clear = el.createEl("button", { cls: "ink-notebook-clear", attr: {
+        type: "button",
+        title: `Clear ${entry.title} from history`,
+        "aria-label": `Clear ${entry.title} from history`
+      } });
+      (0, import_obsidian2.setIcon)(clear.createSpan({ attr: { "aria-hidden": "true" } }), "trash-2");
+      clear.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+      });
+      clear.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.close();
+        void this.clear([entry]);
+      });
+      return;
+    }
+    const rename = el.createEl("button", { cls: "ink-notebook-rename", attr: {
+      type: "button",
+      title: "Rename notebook",
+      "aria-label": `Rename ${entry.title}`
+    } });
+    (0, import_obsidian2.setIcon)(rename.createSpan({ attr: { "aria-hidden": "true" } }), "pencil");
+    rename.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+    });
+    rename.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.close();
+      new NotebookNameModal(
+        this.app,
+        "Rename Ink notebook",
+        entry.title,
+        "Rename",
+        (title) => this.rename(entry.file, title)
+      ).open();
+    });
+  }
+  onChooseSuggestion(entry, event) {
+    var _a, _b;
+    if (!entry.file) return;
+    if ((_b = (_a = event.target) == null ? void 0 : _a.closest) == null ? void 0 : _b.call(_a, "button")) return;
+    this.select(entry.file);
+  }
+};
+var NotebookNameModal = class extends import_obsidian2.Modal {
+  constructor(app, heading, initialName, action, submitName, options) {
+    super(app);
+    this.heading = heading;
+    this.initialName = initialName;
+    this.action = action;
+    this.submitName = submitName;
+    this.options = options;
+  }
+  onOpen() {
+    var _a;
+    this.setTitle(this.heading);
+    this.modalEl.addClass("ink-notebook-name-modal");
+    const form = this.contentEl.createEl("form", { cls: "ink-notebook-name-form" });
+    const label = form.createEl("label", { text: "Notebook name" });
+    const input = label.createEl("input", { attr: { type: "text", required: "", maxlength: "80" } });
+    input.value = this.initialName;
+    let folderInput = null;
+    if ((_a = this.options) == null ? void 0 : _a.folder) {
+      const folderLabel = form.createEl("label", { text: "Folder" });
+      folderInput = folderLabel.createEl("input", { attr: {
+        type: "text",
+        placeholder: `${INK_FOLDER} (default)`,
+        spellcheck: "false"
+      } });
+    }
+    const error = form.createDiv({ cls: "ink-notebook-name-error", attr: { role: "alert" } });
+    const actions = form.createDiv({ cls: "ink-notebook-name-actions" });
+    const cancel = actions.createEl("button", { text: "Cancel", attr: { type: "button" } });
+    const submit = actions.createEl("button", { text: this.action, cls: "mod-cta", attr: { type: "submit" } });
+    cancel.addEventListener("click", () => this.close());
+    let pending = false;
+    form.addEventListener("submit", (event) => {
+      var _a2;
+      event.preventDefault();
+      if (pending) return;
+      const title = input.value.trim();
+      if (!title || title.length > 80 || /[\\/:*?"<>|#^\[\]]/.test(title) || /\.$/.test(title)) {
+        error.setText("Enter a valid notebook name without path or reserved characters.");
+        input.focus();
+        return;
+      }
+      const folder = cleanedNotebookFolder((_a2 = folderInput == null ? void 0 : folderInput.value) != null ? _a2 : "");
+      if (folder === null) {
+        error.setText("Enter a valid folder path without reserved characters.");
+        folderInput.focus();
+        return;
+      }
+      pending = true;
+      input.disabled = cancel.disabled = submit.disabled = true;
+      if (folderInput) folderInput.disabled = true;
+      error.setText("");
+      void this.submitName(title, folder || void 0).then(() => this.close()).catch((reason) => {
+        error.setText(`Could not ${this.action.toLowerCase()} notebook: ${reason instanceof Error ? reason.message : String(reason)}`);
+      }).finally(() => {
+        pending = false;
+        input.disabled = cancel.disabled = submit.disabled = false;
+        if (folderInput) folderInput.disabled = false;
+      });
+    });
+    input.focus();
+    input.select();
+  }
+  onClose() {
+    this.contentEl.empty();
+  }
+};
+function cleanedNotebookFolder(raw) {
+  const collapsed = raw.trim().replace(/\\/g, "/").replace(/\/+/g, "/").replace(/^\/|\/$/g, "");
+  if (!collapsed) return "";
+  if (/[:*?"<>|#^\[\]]/.test(collapsed)) return null;
+  const segments = collapsed.split("/");
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) return null;
+  return collapsed;
+}
+
+// src/view.ts
+var import_obsidian9 = require("obsidian");
+
+// src/diagnostics.ts
+function intervalStats(intervals) {
+  if (intervals.length === 0) return { count: 0, min: null, median: null, mean: null, max: null };
+  const sorted = [...intervals].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  const median = sorted.length % 2 === 1 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) / 2;
+  const total = sorted.reduce((sum, value) => sum + value, 0);
+  return {
+    count: sorted.length,
+    min: sorted[0],
+    median,
+    mean: total / sorted.length,
+    max: sorted[sorted.length - 1]
+  };
+}
+var MAX_RECORDED_STROKES = 8;
+var MAX_RAW_POINT_SAMPLES = 8192;
+function pushStrokeRecord(records, record) {
+  records.push(record);
+  if (records.length > MAX_RECORDED_STROKES) records.splice(0, records.length - MAX_RECORDED_STROKES);
 }
 
 // src/rendering.ts
@@ -23233,9 +23569,9 @@ function splitStickyStroke(stroke, notes, g) {
 }
 
 // src/sticky-rendering.ts
-var import_obsidian2 = require("obsidian");
+var import_obsidian3 = require("obsidian");
 async function markdownImage(note, context, viewportWidth, viewportHeight) {
-  const component = new import_obsidian2.Component();
+  const component = new import_obsidian3.Component();
   component.load();
   const el = document.createElement("div");
   try {
@@ -23250,7 +23586,7 @@ async function markdownImage(note, context, viewportWidth, viewportHeight) {
         font: stickyFont(box, true),
         ...box.height === void 0 ? {} : { height: `${box.height}px`, overflow: "hidden" }
       });
-      await import_obsidian2.MarkdownRenderer.render(context.app, box.text, content, context.source, component);
+      await import_obsidian3.MarkdownRenderer.render(context.app, box.text, content, context.source, component);
       frame.append(content);
       el.append(frame);
     }
@@ -23664,7 +24000,7 @@ function fmt(value) {
 }
 
 // src/image-library.ts
-var import_obsidian3 = require("obsidian");
+var import_obsidian4 = require("obsidian");
 var LIBRARY_PATH = "Ink Notes/Images/library.json";
 var EMPTY = () => ({ schema: 1, groups: [], assets: [] });
 var IMAGE_EXTENSIONS = /\.(png|jpe?g|webp|gif|bmp|avif|heic|heif)$/i;
@@ -23721,7 +24057,7 @@ var ImageLibraryStore = class {
   }
   async read() {
     const file = this.app.vault.getAbstractFileByPath(LIBRARY_PATH);
-    return file instanceof import_obsidian3.TFile ? parseImageLibrary(await this.app.vault.read(file)) : EMPTY();
+    return file instanceof import_obsidian4.TFile ? parseImageLibrary(await this.app.vault.read(file)) : EMPTY();
   }
   update(change) {
     return this.serial(async () => {
@@ -23735,7 +24071,7 @@ var ImageLibraryStore = class {
           if (!file) throw error;
         }
       }
-      if (!(file instanceof import_obsidian3.TFile)) throw new Error("Image library path is not a file");
+      if (!(file instanceof import_obsidian4.TFile)) throw new Error("Image library path is not a file");
       await this.app.vault.process(file, (text) => {
         const library = parseImageLibrary(text);
         change(library);
@@ -23787,8 +24123,8 @@ var ImageLibraryStore = class {
     const errors = [];
     for (const path of [...new Set(paths2)]) {
       try {
-        const file = this.app.vault.getAbstractFileByPath((0, import_obsidian3.normalizePath)(path.trim()));
-        if (!(file instanceof import_obsidian3.TFile) || !IMAGE_EXTENSIONS.test(file.path)) throw new Error("Image file not found");
+        const file = this.app.vault.getAbstractFileByPath((0, import_obsidian4.normalizePath)(path.trim()));
+        if (!(file instanceof import_obsidian4.TFile) || !IMAGE_EXTENSIONS.test(file.path)) throw new Error("Image file not found");
         await this.importBlob(new Blob([await this.app.vault.readBinary(file)]), file.name, groupId);
       } catch (error) {
         errors.push(`${path}: ${error instanceof Error ? error.message : String(error)}`);
@@ -23835,7 +24171,7 @@ var ImageLibraryStore = class {
   url(path) {
     if (!isManagedImagePath(path)) throw new Error("Invalid managed image path");
     const file = this.app.vault.getAbstractFileByPath(path);
-    if (!(file instanceof import_obsidian3.TFile)) throw new Error(`Image asset missing: ${path}`);
+    if (!(file instanceof import_obsidian4.TFile)) throw new Error(`Image asset missing: ${path}`);
     return this.app.vault.getResourcePath(file);
   }
   async image(path) {
@@ -23919,7 +24255,7 @@ function libraryMenu(parent, label) {
   });
   return panel;
 }
-var ImageLibraryModal = class extends import_obsidian3.Modal {
+var ImageLibraryModal = class extends import_obsidian4.Modal {
   constructor(store, insert) {
     super(store.app);
     this.store = store;
@@ -23976,7 +24312,7 @@ var ImageLibraryModal = class extends import_obsidian3.Modal {
     this.contentEl.empty();
   }
   report(error) {
-    new import_obsidian3.Notice(`Image library: ${error instanceof Error ? error.message : String(error)}`, 8e3);
+    new import_obsidian4.Notice(`Image library: ${error instanceof Error ? error.message : String(error)}`, 8e3);
   }
   async operation(run) {
     if (this.busy || this.closed) return;
@@ -24071,7 +24407,7 @@ var ImageLibraryModal = class extends import_obsidian3.Modal {
         void this.operation(async () => {
           await this.store.restore(this.lastDeleted);
           this.lastDeleted = [];
-          new import_obsidian3.Notice("Image library deletion undone");
+          new import_obsidian4.Notice("Image library deletion undone");
         });
       });
     }
@@ -24112,7 +24448,7 @@ var ImageLibraryModal = class extends import_obsidian3.Modal {
   }
   deleteDialog(assets) {
     if (!assets.length || this.closed || this.busy || this.deleteConfirmation) return;
-    const modal = new import_obsidian3.Modal(this.app);
+    const modal = new import_obsidian4.Modal(this.app);
     this.deleteConfirmation = modal;
     modal.setTitle("Delete library images");
     modal.modalEl.addClass("ink-image-library-confirm");
@@ -24136,7 +24472,7 @@ var ImageLibraryModal = class extends import_obsidian3.Modal {
         if (removed.length) this.lastDeleted = removed;
         assets.forEach((asset) => this.selected.delete(asset.id));
         modal.close();
-        new import_obsidian3.Notice(`Removed ${removed.length} images from the library`);
+        new import_obsidian4.Notice(`Removed ${removed.length} images from the library`);
       }).finally(() => {
         confirm.disabled = false;
         cancel.disabled = false;
@@ -24147,7 +24483,7 @@ var ImageLibraryModal = class extends import_obsidian3.Modal {
     cancel.focus();
   }
   groupDialog(id, name = "") {
-    const modal = new import_obsidian3.Modal(this.app);
+    const modal = new import_obsidian4.Modal(this.app);
     modal.setTitle(id ? "Rename group" : "New group");
     const input = modal.contentEl.createEl("input", { value: name, attr: { "aria-label": "Group name" } });
     button(modal.contentEl, "Save", () => {
@@ -24160,7 +24496,7 @@ var ImageLibraryModal = class extends import_obsidian3.Modal {
     input.focus();
   }
   pathDialog() {
-    const modal = new import_obsidian3.Modal(this.app);
+    const modal = new import_obsidian4.Modal(this.app);
     modal.setTitle("Import vault paths");
     const input = modal.contentEl.createEl("textarea", { placeholder: "One image path per line", attr: { "aria-label": "Image paths" } });
     button(modal.contentEl, "Import all", () => {
@@ -24175,7 +24511,7 @@ var ImageLibraryModal = class extends import_obsidian3.Modal {
     modal.open();
   }
   vaultDialog() {
-    const modal = new import_obsidian3.Modal(this.app);
+    const modal = new import_obsidian4.Modal(this.app);
     modal.setTitle("Import images from vault");
     const paths2 = /* @__PURE__ */ new Set();
     const list = modal.contentEl.createDiv({ cls: "ink-image-vault-list" });
@@ -24231,7 +24567,7 @@ function registerDocumentPointerEndEvents(element, register, onEnd) {
 }
 
 // src/ink-writing.ts
-var import_obsidian6 = require("obsidian");
+var import_obsidian7 = require("obsidian");
 
 // src/device-mode.ts
 function defaultReadingMode(platform, device) {
@@ -24282,6 +24618,11 @@ var DesktopWheelGesture = class {
     this.renewedPeak = 0;
     this.renewedIncreases = 0;
     this.renewalBlocked = false;
+    /** One-sample reprieve for a settled-band stall merged sample whose clamped
+     *  speed outran the envelope: the sample is frozen uncounted while the next
+     *  sample's slope decides between a real renewed flick (reset) and the same
+     *  flick delivered late (keep the gesture and its suppression). */
+    this.stallProbation = false;
     this.trackpadPages = 0;
     /** Pages already flipped on the x axis during the current contact. Unlike
      *  trackpadPages it survives beginRenewedGesture: a mid-tail renewal is
@@ -24309,6 +24650,7 @@ var DesktopWheelGesture = class {
     this.lastDelta = this.lastMagnitude = this.travel = this.notchCredit = 0;
     this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     this.renewalBlocked = false;
+    this.stallProbation = false;
     this.trackpadPages = this.zeroAxisPauses = 0;
     this.contactXPages = 0;
     this.flippedRun = 0;
@@ -24337,10 +24679,20 @@ var DesktopWheelGesture = class {
     } else if (axis !== this.axis || delta.mode !== this.mode || reversed) {
       this.reset();
       gap = 0;
-    } else if (renewed) {
-      if (normalized > Math.abs(this.lastDelta)) {
+    } else if (this.stallProbation) {
+      this.stallProbation = false;
+      if (gap >= 2 && normalized > Math.abs(this.lastDelta) && normalized > this.lastMagnitude && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO) {
         this.reset();
         gap = 0;
+      }
+    } else if (renewed) {
+      if (normalized > Math.abs(this.lastDelta)) {
+        if (!unclamped && gap > REF_DT_MS * 5 && magnitude * (REF_DT_MS / gap) <= Math.abs(this.lastDelta)) {
+          this.stallProbation = true;
+        } else {
+          this.reset();
+          gap = 0;
+        }
       }
     }
     this.zeroAxisPauses = movement === 0 && axis === this.axis ? this.zeroAxisPauses + 1 : 0;
@@ -24399,8 +24751,8 @@ var DesktopWheelGesture = class {
     this.flippedRun = this.flipped ? priorFlippedRun + 1 : 0;
     this.flippedPreviously = this.flipped;
     const pausedTail = movement === 0 && this.flipped && !this.discrete;
-    this.lastDelta = pausedTail ? this.lastDelta : this.flipped && !this.discrete ? Math.sign(movement) * Math.min(Math.abs(this.lastDelta), normalized) : Math.sign(movement) * normalized;
-    if (!pausedTail) this.lastMagnitude = normalized;
+    this.lastDelta = pausedTail || this.stallProbation ? this.lastDelta : this.flipped && !this.discrete ? Math.sign(movement) * Math.min(Math.abs(this.lastDelta), normalized) : Math.sign(movement) * normalized;
+    if (!pausedTail && !this.stallProbation) this.lastMagnitude = normalized;
     return {
       axis,
       movement,
@@ -24409,7 +24761,8 @@ var DesktopWheelGesture = class {
       gap,
       gestureId: this.gestureId,
       suppressed: !this.discrete && this.flipped,
-      renewedTravel
+      renewedTravel,
+      probation: this.stallProbation
     };
   }
   pageDelta(motion, scrolled) {
@@ -24418,6 +24771,7 @@ var DesktopWheelGesture = class {
       this.renewalBlocked = false;
       return 0;
     }
+    if (motion.probation) return 0;
     if (motion.suppressed) return 0;
     if (motion.renewedTravel !== void 0) this.travel = motion.renewedTravel;
     if (motion.discrete) {
@@ -24792,10 +25146,10 @@ var PageImageLayer = class {
 };
 
 // src/sticky-notes.ts
-var import_obsidian4 = require("obsidian");
+var import_obsidian5 = require("obsidian");
 function button2(parent, label, icon, run) {
   const el = parent.createEl("button", { attr: { type: "button", "aria-label": label, title: label } });
-  (0, import_obsidian4.setIcon)(el, icon);
+  (0, import_obsidian5.setIcon)(el, icon);
   el.onclick = run;
   return el;
 }
@@ -24834,7 +25188,7 @@ var StickyNoteLayer = class {
     this.context = context;
     this.events = new AbortController();
     this.cards = new AbortController();
-    this.markdown = new import_obsidian4.Component();
+    this.markdown = new import_obsidian5.Component();
     this.suppressTap = false;
     this.pendingTextRefresh = false;
     this.readFrames = /* @__PURE__ */ new Map();
@@ -25365,7 +25719,7 @@ var StickyNoteLayer = class {
     const baseBox = stickyTextBoxes(edit.base).find((box) => box.id === edit.boxId);
     if (!current || edit.boxId && !currentBox || (edit.boxId ? (currentBox == null ? void 0 : currentBox.text) !== (baseBox == null ? void 0 : baseBox.text) : current[edit.field] !== edit.base[edit.field])) {
       this.editing = edit;
-      new import_obsidian4.Notice("This text changed in another pane. Copy your draft before reopening it.");
+      new import_obsidian5.Notice("This text changed in another pane. Copy your draft before reopening it.");
       return;
     }
     if (edit.boxId) this.update(current, patchStickyTextBox(current, edit.boxId, { text: edit.input.value }));
@@ -25414,7 +25768,7 @@ var StickyNoteLayer = class {
     var _a;
     clearTimeout(this.hold);
     (_a = this.menu) == null ? void 0 : _a.hide();
-    const menu = new import_obsidian4.Menu();
+    const menu = new import_obsidian5.Menu();
     this.menu = menu;
     this.menuNote = note.id;
     menu.onHide(() => {
@@ -25425,11 +25779,11 @@ var StickyNoteLayer = class {
     });
     const addLinks = () => {
       menu.addItem((item) => item.setTitle(note.kind === "text" ? "Copy link to text box" : "Copy link to sticky note").setIcon("link").onClick(() => {
-        void navigator.clipboard.writeText(this.context.link(note)).catch(() => new import_obsidian4.Notice("Could not copy the note link"));
+        void navigator.clipboard.writeText(this.context.link(note)).catch(() => new import_obsidian5.Notice("Could not copy the note link"));
       }));
       for (const block of stickyText(note).matchAll(/(?:^|\s)\^([a-zA-Z0-9-]+)\s*$/gm)) {
         menu.addItem((item) => item.setTitle(`Copy paragraph link: ${block[1]}`).setIcon("link").onClick(() => {
-          void navigator.clipboard.writeText(this.context.link(note, block[1])).catch(() => new import_obsidian4.Notice("Could not copy the paragraph link"));
+          void navigator.clipboard.writeText(this.context.link(note, block[1])).catch(() => new import_obsidian5.Notice("Could not copy the paragraph link"));
         }));
       }
     };
@@ -25518,7 +25872,7 @@ var StickyNoteLayer = class {
     this.cards.abort();
     this.cards = new AbortController();
     this.markdown.unload();
-    this.markdown = new import_obsidian4.Component();
+    this.markdown = new import_obsidian5.Component();
     this.markdown.load();
     this.layer.empty();
     for (const stored of (_i = page.stickyNotes) != null ? _i : []) {
@@ -25701,7 +26055,7 @@ var StickyNoteLayer = class {
               event.stopPropagation();
             }
           }, { signal: this.cards.signal, capture: true });
-          void import_obsidian4.MarkdownRenderer.render(this.app, box.text, text, this.context.source(), this.markdown).then(() => {
+          void import_obsidian5.MarkdownRenderer.render(this.app, box.text, text, this.context.source(), this.markdown).then(() => {
             var _a2, _b2;
             if (!frame.isConnected) return;
             if (!this.drag) {
@@ -25894,7 +26248,7 @@ function markdownStickyLink(file, note, vault, block) {
 }
 
 // src/brush-popover.ts
-var import_obsidian5 = require("obsidian");
+var import_obsidian6 = require("obsidian");
 var INK_COLORS = [
   { value: "#1b1b1b", label: "Black" },
   { value: "#195bff", label: "Blue" },
@@ -26065,7 +26419,7 @@ var BrushPopoverController = class {
     const swatches = control.createDiv({ cls: "ink-color-swatches" });
     this.buildSwatches(swatches, spec);
     const custom = control.createEl("label", { cls: "ink-custom-color", attr: { title: "Add a preset color" } });
-    (0, import_obsidian5.setIcon)(custom.createSpan({ cls: "ink-button-icon" }), "plus");
+    (0, import_obsidian6.setIcon)(custom.createSpan({ cls: "ink-button-icon" }), "plus");
     const input = custom.createEl("input", { attr: {
       type: "color",
       value: settings.color,
@@ -26182,7 +26536,7 @@ var BrushPopoverController = class {
         var _a2;
         this.cancelPresetHold();
         (_a2 = this.presetMenu) == null ? void 0 : _a2.hide();
-        const menu = new import_obsidian5.Menu();
+        const menu = new import_obsidian6.Menu();
         this.presetMenu = menu;
         menu.addItem((item) => {
           var _a3, _b2, _c2;
@@ -26242,7 +26596,7 @@ var BrushPopoverController = class {
     if (settings.color.toLowerCase() === removed.toLowerCase()) settings.color = (_c = palette[0]) != null ? _c : removed;
     this.buildSwatchesInto(spec);
     this.update();
-    new import_obsidian5.Notice("Preset color removed");
+    new import_obsidian6.Notice("Preset color removed");
   }
   updateColorSwatches(tool, color) {
     this.root.querySelectorAll(`.ink-color-swatch[data-brush-tool="${tool}"]`).forEach((swatch) => {
@@ -26278,11 +26632,11 @@ var BrushPopoverController = class {
       }
     });
     const curveIcon = curveToggle.createSpan({ cls: "ink-button-icon" });
-    (0, import_obsidian5.setIcon)(curveIcon, this.curveOpen ? "chevron-up" : "chevron-down");
+    (0, import_obsidian6.setIcon)(curveIcon, this.curveOpen ? "chevron-up" : "chevron-down");
     curveToggle.addEventListener("click", () => {
       this.curveOpen = !this.curveOpen;
       curveToggle.setAttribute("aria-expanded", String(this.curveOpen));
-      (0, import_obsidian5.setIcon)(curveIcon, this.curveOpen ? "chevron-up" : "chevron-down");
+      (0, import_obsidian6.setIcon)(curveIcon, this.curveOpen ? "chevron-up" : "chevron-down");
       curveBody.toggleClass("is-collapsed", !this.curveOpen);
       if (this.curveOpen) requestAnimationFrame(() => this.drawPressureCurve(settings));
     });
@@ -27435,7 +27789,7 @@ function isPointerCaptureError(error) {
   const name = error.name;
   return name === "NotFoundError" || name === "InvalidStateError";
 }
-var InkWritingView = class extends import_obsidian6.FileView {
+var InkWritingView = class extends import_obsidian7.FileView {
   constructor() {
     super(...arguments);
     this.stickyCommands = null;
@@ -27711,7 +28065,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     if (this.inputLocked()) return;
     const pageId = (before != null ? before : after).pageId, id = (before != null ? before : after).id;
     if (before && ((_c = (_b = (_a = this.pageById(pageId)) == null ? void 0 : _a.stickyNotes) == null ? void 0 : _b.find((note) => note.id === id)) == null ? void 0 : _c.updatedAt) !== before.updatedAt) {
-      new import_obsidian6.Notice("This sticky note changed in another pane. Reopen it before editing.");
+      new import_obsidian7.Notice("This sticky note changed in another pane. Reopen it before editing.");
       return;
     }
     const restoredIds = /* @__PURE__ */ new Map();
@@ -27929,7 +28283,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     new ImageLibraryModal(this.imageLibrary, (assets) => {
       var _a;
       if (this.file !== file || this.currentNotebook() !== notebook || this.currentPage().id !== pageId || this.inputLocked()) {
-        new import_obsidian6.Notice("The page changed. Open the image library again to insert here.");
+        new import_obsidian7.Notice("The page changed. Open the image library again to insert here.");
         return;
       }
       const images = assets.map((asset, index) => placedImage(asset, pageId, this.canvasLogicalWidth / this.canvasLogicalHeight, index));
@@ -27987,7 +28341,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
   }
   initializeReadingMode() {
     if (!this.readingModeInitialized) {
-      this.readingMode = defaultReadingMode(import_obsidian6.Platform, {
+      this.readingMode = defaultReadingMode(import_obsidian7.Platform, {
         width: window.screen.width,
         height: window.screen.height
       });
@@ -28037,7 +28391,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
       button3.setAttribute("title", label);
       button3.setAttribute("aria-pressed", String(this.zoomLocked));
       button3.replaceChildren();
-      (0, import_obsidian6.setIcon)(button3, this.zoomLocked ? "lock-keyhole" : "lock-keyhole-open");
+      (0, import_obsidian7.setIcon)(button3, this.zoomLocked ? "lock-keyhole" : "lock-keyhole-open");
     }
   }
   showZoomHud() {
@@ -28104,7 +28458,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     stage.dataset.insert = "true";
     const hint = stage.createDiv({ cls: "ink-page-insert-hint", attr: { "aria-hidden": "true" } });
     hint.setCssStyles(side < 0 ? { right: "24px" } : { left: "24px" });
-    (0, import_obsidian6.setIcon)(hint, "plus");
+    (0, import_obsidian7.setIcon)(hint, "plus");
   }
   updatePageInsertPreview(stage, offset) {
     if (stage == null ? void 0 : stage.dataset.insert) stage.toggleClass("is-ready", Math.abs(offset) >= this.pageInsertThreshold());
@@ -28477,7 +28831,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
       return null;
     }
     this.closePageOptionsMenu();
-    const menu = new import_obsidian6.Menu();
+    const menu = new import_obsidian7.Menu();
     const opened = { menu, trigger };
     this.pageOptionsMenu = opened;
     trigger == null ? void 0 : trigger.setAttribute("aria-haspopup", "menu");
@@ -30162,6 +30516,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     const excluded = new Set((_c = this.stickyInput) == null ? void 0 : _c.proxies.keys());
     if (this.activeStroke) excluded.add(this.activeStroke.id);
     for (const stroke of this.pendingInkStrokes) if (!committing.has(stroke.id)) excluded.add(stroke.id);
+    if (this.lassoDrag) for (const id of this.selectedStrokeIds) excluded.add(id);
     return excluded.size > 0 ? excluded : void 0;
   }
   startPendingInkCommit(page) {
@@ -30982,7 +31337,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     this.workerSession = null;
     if (this.workerFallbackReported || ((_d = this.workers) == null ? void 0 : _d.isDisabled())) return;
     this.workerFallbackReported = true;
-    new import_obsidian6.Notice(`Ink Notes background processing is unavailable; using reduced-performance mode: ${error instanceof Error ? error.message : String(error)}`);
+    new import_obsidian7.Notice(`Ink Notes background processing is unavailable; using reduced-performance mode: ${error instanceof Error ? error.message : String(error)}`);
   }
   // --------------------------------------------------------------- brushes
   brushSettings(tool) {
@@ -31011,7 +31366,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     const modes = pop.createDiv({ cls: "ink-eraser-modes", attr: { role: "radiogroup", "aria-label": "Eraser mode" } });
     for (const [mode, label, shortLabel, iconName] of [["stroke", "Stroke eraser", "Stroke", "eraser"], ["circle", "Circle eraser", "Circle", "circle"], ["square", "Square eraser", "Square", "square"]]) {
       const modeButton = modes.createEl("button", { cls: "ink-eraser-mode", attr: { type: "button", role: "radio", title: label, "aria-label": label, "aria-checked": String(this.state.eraserMode === mode), "data-eraser-mode": mode } });
-      (0, import_obsidian6.setIcon)(modeButton.createSpan({ cls: "ink-button-icon" }), iconName);
+      (0, import_obsidian7.setIcon)(modeButton.createSpan({ cls: "ink-button-icon" }), iconName);
       modeButton.createSpan({ cls: "ink-eraser-mode-label", text: shortLabel });
       modeButton.addEventListener("click", () => {
         this.state.eraserMode = mode;
@@ -31136,7 +31491,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
         "aria-checked": String(this.state.lasso.mode === mode),
         "data-lasso-mode": mode
       } });
-      (0, import_obsidian6.setIcon)(button3.createSpan({ cls: "ink-button-icon" }), icon);
+      (0, import_obsidian7.setIcon)(button3.createSpan({ cls: "ink-button-icon" }), icon);
       button3.createSpan({ cls: "ink-eraser-mode-label", text: label });
       button3.addEventListener("click", () => {
         this.finishPointerInput(false);
@@ -31240,7 +31595,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     if (label === "Undo") button3.title = "Undo (Ctrl/Command+Z)";
     if (label === "Redo") button3.title = "Redo (Ctrl/Command+Shift+Z, Ctrl/Command+Y)";
     const iconHolder = button3.createSpan({ cls: "ink-button-icon" });
-    (0, import_obsidian6.setIcon)(iconHolder, icon);
+    (0, import_obsidian7.setIcon)(iconHolder, icon);
     button3.addEventListener("click", callback);
     return button3;
   }
@@ -31256,7 +31611,7 @@ var InkWritingView = class extends import_obsidian6.FileView {
     const shortcut = { pen: "B", highlighter: "H", eraser: "E", lasso: "V", pointer: "A", shape: "S" };
     button3.title = `${label} (${shortcut[tool]})`;
     const iconHolder = button3.createSpan({ cls: "ink-button-icon" });
-    (0, import_obsidian6.setIcon)(iconHolder, icon);
+    (0, import_obsidian7.setIcon)(iconHolder, icon);
     button3.addEventListener("click", () => {
       if (this.readingMode) return;
       this.finishPointerInput(false);
@@ -31366,7 +31721,7 @@ function applyRailWidth(rail, width) {
 }
 
 // src/page-tags.ts
-var import_obsidian7 = require("obsidian");
+var import_obsidian8 = require("obsidian");
 var PAGE_FLAGS = ["red", "yellow", "green"];
 function pageHasInk(page) {
   var _a, _b, _c, _d;
@@ -31417,7 +31772,7 @@ function openTagPopover(host, anchor, controller) {
       cls: flag === null ? "ink-flag-choice ink-flag-none" : `ink-flag-choice ink-flag-${flag}`,
       attr: { type: "button", "aria-label": label, title: label }
     });
-    (0, import_obsidian7.setIcon)(button3, flag === null ? "flag-off" : "flag");
+    (0, import_obsidian8.setIcon)(button3, flag === null ? "flag-off" : "flag");
     button3.addEventListener("click", () => {
       const page = controller.getPage();
       if (!page || controller.isLocked()) return;
@@ -31450,7 +31805,7 @@ function openTagPopover(host, anchor, controller) {
     }
   });
   const addButton = inputRow.createEl("button", { cls: "ink-icon-button", attr: { type: "button", "aria-label": "Add page tag" } });
-  (0, import_obsidian7.setIcon)(addButton, "plus");
+  (0, import_obsidian8.setIcon)(addButton, "plus");
   addButton.addEventListener("click", commitInput);
   function sync() {
     var _a, _b, _c;
@@ -31471,7 +31826,7 @@ function openTagPopover(host, anchor, controller) {
       const chip = tagList.createDiv({ cls: "ink-tag-chip" });
       chip.createSpan({ text: tag, cls: "ink-tag-chip-name" });
       const remove = chip.createEl("button", { cls: "ink-icon-button", attr: { type: "button", "aria-label": `Remove tag ${tag}`, title: "Remove" } });
-      (0, import_obsidian7.setIcon)(remove, "x");
+      (0, import_obsidian8.setIcon)(remove, "x");
       remove.disabled = locked;
       remove.addEventListener("click", () => {
         var _a2;
@@ -32317,7 +32672,7 @@ function isStaleRenderError(error) {
 }
 
 // ink-worker:ink-worker-source
-var ink_worker_source_default = '(() => {\n  var __create = Object.create;\n  var __defProp = Object.defineProperty;\n  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;\n  var __getOwnPropNames = Object.getOwnPropertyNames;\n  var __getProtoOf = Object.getPrototypeOf;\n  var __hasOwnProp = Object.prototype.hasOwnProperty;\n  var __commonJS = (cb, mod) => function __require() {\n    try {\n      return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;\n    } catch (e) {\n      throw mod = 0, e;\n    }\n  };\n  var __copyProps = (to, from, except, desc) => {\n    if (from && typeof from === "object" || typeof from === "function") {\n      for (let key of __getOwnPropNames(from))\n        if (!__hasOwnProp.call(to, key) && key !== except)\n          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });\n    }\n    return to;\n  };\n  var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(\n    // If the importer is in node compatibility mode or this is not an ESM\n    // file that has been converted to a CommonJS file using a Babel-\n    // compatible transform (i.e. "__esModule" has not been set), then set\n    // "default" to the CommonJS "module.exports" for node compatibility.\n    isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,\n    mod\n  ));\n\n  // node_modules/pako/lib/utils/common.js\n  var require_common = __commonJS({\n    "node_modules/pako/lib/utils/common.js"(exports) {\n      "use strict";\n      var TYPED_OK = typeof Uint8Array !== "undefined" && typeof Uint16Array !== "undefined" && typeof Int32Array !== "undefined";\n      function _has(obj, key) {\n        return Object.prototype.hasOwnProperty.call(obj, key);\n      }\n      exports.assign = function(obj) {\n        var sources = Array.prototype.slice.call(arguments, 1);\n        while (sources.length) {\n          var source = sources.shift();\n          if (!source) {\n            continue;\n          }\n          if (typeof source !== "object") {\n            throw new TypeError(source + "must be non-object");\n          }\n          for (var p in source) {\n            if (_has(source, p)) {\n              obj[p] = source[p];\n            }\n          }\n        }\n        return obj;\n      };\n      exports.shrinkBuf = function(buf, size) {\n        if (buf.length === size) {\n          return buf;\n        }\n        if (buf.subarray) {\n          return buf.subarray(0, size);\n        }\n        buf.length = size;\n        return buf;\n      };\n      var fnTyped = {\n        arraySet: function(dest, src, src_offs, len, dest_offs) {\n          if (src.subarray && dest.subarray) {\n            dest.set(src.subarray(src_offs, src_offs + len), dest_offs);\n            return;\n          }\n          for (var i = 0; i < len; i++) {\n            dest[dest_offs + i] = src[src_offs + i];\n          }\n        },\n        // Join array of chunks to single array.\n        flattenChunks: function(chunks) {\n          var i, l, len, pos, chunk, result;\n          len = 0;\n          for (i = 0, l = chunks.length; i < l; i++) {\n            len += chunks[i].length;\n          }\n          result = new Uint8Array(len);\n          pos = 0;\n          for (i = 0, l = chunks.length; i < l; i++) {\n            chunk = chunks[i];\n            result.set(chunk, pos);\n            pos += chunk.length;\n          }\n          return result;\n        }\n      };\n      var fnUntyped = {\n        arraySet: function(dest, src, src_offs, len, dest_offs) {\n          for (var i = 0; i < len; i++) {\n            dest[dest_offs + i] = src[src_offs + i];\n          }\n        },\n        // Join array of chunks to single array.\n        flattenChunks: function(chunks) {\n          return [].concat.apply([], chunks);\n        }\n      };\n      exports.setTyped = function(on) {\n        if (on) {\n          exports.Buf8 = Uint8Array;\n          exports.Buf16 = Uint16Array;\n          exports.Buf32 = Int32Array;\n          exports.assign(exports, fnTyped);\n        } else {\n          exports.Buf8 = Array;\n          exports.Buf16 = Array;\n          exports.Buf32 = Array;\n          exports.assign(exports, fnUntyped);\n        }\n      };\n      exports.setTyped(TYPED_OK);\n    }\n  });\n\n  // node_modules/pako/lib/zlib/trees.js\n  var require_trees = __commonJS({\n    "node_modules/pako/lib/zlib/trees.js"(exports) {\n      "use strict";\n      var utils = require_common();\n      var Z_FIXED = 4;\n      var Z_BINARY = 0;\n      var Z_TEXT = 1;\n      var Z_UNKNOWN = 2;\n      function zero(buf) {\n        var len = buf.length;\n        while (--len >= 0) {\n          buf[len] = 0;\n        }\n      }\n      var STORED_BLOCK = 0;\n      var STATIC_TREES = 1;\n      var DYN_TREES = 2;\n      var MIN_MATCH = 3;\n      var MAX_MATCH = 258;\n      var LENGTH_CODES = 29;\n      var LITERALS = 256;\n      var L_CODES = LITERALS + 1 + LENGTH_CODES;\n      var D_CODES = 30;\n      var BL_CODES = 19;\n      var HEAP_SIZE = 2 * L_CODES + 1;\n      var MAX_BITS = 15;\n      var Buf_size = 16;\n      var MAX_BL_BITS = 7;\n      var END_BLOCK = 256;\n      var REP_3_6 = 16;\n      var REPZ_3_10 = 17;\n      var REPZ_11_138 = 18;\n      var extra_lbits = (\n        /* extra bits for each length code */\n        [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0]\n      );\n      var extra_dbits = (\n        /* extra bits for each distance code */\n        [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13]\n      );\n      var extra_blbits = (\n        /* extra bits for each bit length code */\n        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 7]\n      );\n      var bl_order = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];\n      var DIST_CODE_LEN = 512;\n      var static_ltree = new Array((L_CODES + 2) * 2);\n      zero(static_ltree);\n      var static_dtree = new Array(D_CODES * 2);\n      zero(static_dtree);\n      var _dist_code = new Array(DIST_CODE_LEN);\n      zero(_dist_code);\n      var _length_code = new Array(MAX_MATCH - MIN_MATCH + 1);\n      zero(_length_code);\n      var base_length = new Array(LENGTH_CODES);\n      zero(base_length);\n      var base_dist = new Array(D_CODES);\n      zero(base_dist);\n      function StaticTreeDesc(static_tree, extra_bits, extra_base, elems, max_length) {\n        this.static_tree = static_tree;\n        this.extra_bits = extra_bits;\n        this.extra_base = extra_base;\n        this.elems = elems;\n        this.max_length = max_length;\n        this.has_stree = static_tree && static_tree.length;\n      }\n      var static_l_desc;\n      var static_d_desc;\n      var static_bl_desc;\n      function TreeDesc(dyn_tree, stat_desc) {\n        this.dyn_tree = dyn_tree;\n        this.max_code = 0;\n        this.stat_desc = stat_desc;\n      }\n      function d_code(dist) {\n        return dist < 256 ? _dist_code[dist] : _dist_code[256 + (dist >>> 7)];\n      }\n      function put_short(s, w) {\n        s.pending_buf[s.pending++] = w & 255;\n        s.pending_buf[s.pending++] = w >>> 8 & 255;\n      }\n      function send_bits(s, value, length) {\n        if (s.bi_valid > Buf_size - length) {\n          s.bi_buf |= value << s.bi_valid & 65535;\n          put_short(s, s.bi_buf);\n          s.bi_buf = value >> Buf_size - s.bi_valid;\n          s.bi_valid += length - Buf_size;\n        } else {\n          s.bi_buf |= value << s.bi_valid & 65535;\n          s.bi_valid += length;\n        }\n      }\n      function send_code(s, c, tree) {\n        send_bits(\n          s,\n          tree[c * 2],\n          tree[c * 2 + 1]\n          /*.Len*/\n        );\n      }\n      function bi_reverse(code, len) {\n        var res = 0;\n        do {\n          res |= code & 1;\n          code >>>= 1;\n          res <<= 1;\n        } while (--len > 0);\n        return res >>> 1;\n      }\n      function bi_flush(s) {\n        if (s.bi_valid === 16) {\n          put_short(s, s.bi_buf);\n          s.bi_buf = 0;\n          s.bi_valid = 0;\n        } else if (s.bi_valid >= 8) {\n          s.pending_buf[s.pending++] = s.bi_buf & 255;\n          s.bi_buf >>= 8;\n          s.bi_valid -= 8;\n        }\n      }\n      function gen_bitlen(s, desc) {\n        var tree = desc.dyn_tree;\n        var max_code = desc.max_code;\n        var stree = desc.stat_desc.static_tree;\n        var has_stree = desc.stat_desc.has_stree;\n        var extra = desc.stat_desc.extra_bits;\n        var base = desc.stat_desc.extra_base;\n        var max_length = desc.stat_desc.max_length;\n        var h;\n        var n, m;\n        var bits;\n        var xbits;\n        var f;\n        var overflow = 0;\n        for (bits = 0; bits <= MAX_BITS; bits++) {\n          s.bl_count[bits] = 0;\n        }\n        tree[s.heap[s.heap_max] * 2 + 1] = 0;\n        for (h = s.heap_max + 1; h < HEAP_SIZE; h++) {\n          n = s.heap[h];\n          bits = tree[tree[n * 2 + 1] * 2 + 1] + 1;\n          if (bits > max_length) {\n            bits = max_length;\n            overflow++;\n          }\n          tree[n * 2 + 1] = bits;\n          if (n > max_code) {\n            continue;\n          }\n          s.bl_count[bits]++;\n          xbits = 0;\n          if (n >= base) {\n            xbits = extra[n - base];\n          }\n          f = tree[n * 2];\n          s.opt_len += f * (bits + xbits);\n          if (has_stree) {\n            s.static_len += f * (stree[n * 2 + 1] + xbits);\n          }\n        }\n        if (overflow === 0) {\n          return;\n        }\n        do {\n          bits = max_length - 1;\n          while (s.bl_count[bits] === 0) {\n            bits--;\n          }\n          s.bl_count[bits]--;\n          s.bl_count[bits + 1] += 2;\n          s.bl_count[max_length]--;\n          overflow -= 2;\n        } while (overflow > 0);\n        for (bits = max_length; bits !== 0; bits--) {\n          n = s.bl_count[bits];\n          while (n !== 0) {\n            m = s.heap[--h];\n            if (m > max_code) {\n              continue;\n            }\n            if (tree[m * 2 + 1] !== bits) {\n              s.opt_len += (bits - tree[m * 2 + 1]) * tree[m * 2];\n              tree[m * 2 + 1] = bits;\n            }\n            n--;\n          }\n        }\n      }\n      function gen_codes(tree, max_code, bl_count) {\n        var next_code = new Array(MAX_BITS + 1);\n        var code = 0;\n        var bits;\n        var n;\n        for (bits = 1; bits <= MAX_BITS; bits++) {\n          next_code[bits] = code = code + bl_count[bits - 1] << 1;\n        }\n        for (n = 0; n <= max_code; n++) {\n          var len = tree[n * 2 + 1];\n          if (len === 0) {\n            continue;\n          }\n          tree[n * 2] = bi_reverse(next_code[len]++, len);\n        }\n      }\n      function tr_static_init() {\n        var n;\n        var bits;\n        var length;\n        var code;\n        var dist;\n        var bl_count = new Array(MAX_BITS + 1);\n        length = 0;\n        for (code = 0; code < LENGTH_CODES - 1; code++) {\n          base_length[code] = length;\n          for (n = 0; n < 1 << extra_lbits[code]; n++) {\n            _length_code[length++] = code;\n          }\n        }\n        _length_code[length - 1] = code;\n        dist = 0;\n        for (code = 0; code < 16; code++) {\n          base_dist[code] = dist;\n          for (n = 0; n < 1 << extra_dbits[code]; n++) {\n            _dist_code[dist++] = code;\n          }\n        }\n        dist >>= 7;\n        for (; code < D_CODES; code++) {\n          base_dist[code] = dist << 7;\n          for (n = 0; n < 1 << extra_dbits[code] - 7; n++) {\n            _dist_code[256 + dist++] = code;\n          }\n        }\n        for (bits = 0; bits <= MAX_BITS; bits++) {\n          bl_count[bits] = 0;\n        }\n        n = 0;\n        while (n <= 143) {\n          static_ltree[n * 2 + 1] = 8;\n          n++;\n          bl_count[8]++;\n        }\n        while (n <= 255) {\n          static_ltree[n * 2 + 1] = 9;\n          n++;\n          bl_count[9]++;\n        }\n        while (n <= 279) {\n          static_ltree[n * 2 + 1] = 7;\n          n++;\n          bl_count[7]++;\n        }\n        while (n <= 287) {\n          static_ltree[n * 2 + 1] = 8;\n          n++;\n          bl_count[8]++;\n        }\n        gen_codes(static_ltree, L_CODES + 1, bl_count);\n        for (n = 0; n < D_CODES; n++) {\n          static_dtree[n * 2 + 1] = 5;\n          static_dtree[n * 2] = bi_reverse(n, 5);\n        }\n        static_l_desc = new StaticTreeDesc(static_ltree, extra_lbits, LITERALS + 1, L_CODES, MAX_BITS);\n        static_d_desc = new StaticTreeDesc(static_dtree, extra_dbits, 0, D_CODES, MAX_BITS);\n        static_bl_desc = new StaticTreeDesc(new Array(0), extra_blbits, 0, BL_CODES, MAX_BL_BITS);\n      }\n      function init_block(s) {\n        var n;\n        for (n = 0; n < L_CODES; n++) {\n          s.dyn_ltree[n * 2] = 0;\n        }\n        for (n = 0; n < D_CODES; n++) {\n          s.dyn_dtree[n * 2] = 0;\n        }\n        for (n = 0; n < BL_CODES; n++) {\n          s.bl_tree[n * 2] = 0;\n        }\n        s.dyn_ltree[END_BLOCK * 2] = 1;\n        s.opt_len = s.static_len = 0;\n        s.last_lit = s.matches = 0;\n      }\n      function bi_windup(s) {\n        if (s.bi_valid > 8) {\n          put_short(s, s.bi_buf);\n        } else if (s.bi_valid > 0) {\n          s.pending_buf[s.pending++] = s.bi_buf;\n        }\n        s.bi_buf = 0;\n        s.bi_valid = 0;\n      }\n      function copy_block(s, buf, len, header) {\n        bi_windup(s);\n        if (header) {\n          put_short(s, len);\n          put_short(s, ~len);\n        }\n        utils.arraySet(s.pending_buf, s.window, buf, len, s.pending);\n        s.pending += len;\n      }\n      function smaller(tree, n, m, depth) {\n        var _n2 = n * 2;\n        var _m2 = m * 2;\n        return tree[_n2] < tree[_m2] || tree[_n2] === tree[_m2] && depth[n] <= depth[m];\n      }\n      function pqdownheap(s, tree, k) {\n        var v = s.heap[k];\n        var j = k << 1;\n        while (j <= s.heap_len) {\n          if (j < s.heap_len && smaller(tree, s.heap[j + 1], s.heap[j], s.depth)) {\n            j++;\n          }\n          if (smaller(tree, v, s.heap[j], s.depth)) {\n            break;\n          }\n          s.heap[k] = s.heap[j];\n          k = j;\n          j <<= 1;\n        }\n        s.heap[k] = v;\n      }\n      function compress_block(s, ltree, dtree) {\n        var dist;\n        var lc;\n        var lx = 0;\n        var code;\n        var extra;\n        if (s.last_lit !== 0) {\n          do {\n            dist = s.pending_buf[s.d_buf + lx * 2] << 8 | s.pending_buf[s.d_buf + lx * 2 + 1];\n            lc = s.pending_buf[s.l_buf + lx];\n            lx++;\n            if (dist === 0) {\n              send_code(s, lc, ltree);\n            } else {\n              code = _length_code[lc];\n              send_code(s, code + LITERALS + 1, ltree);\n              extra = extra_lbits[code];\n              if (extra !== 0) {\n                lc -= base_length[code];\n                send_bits(s, lc, extra);\n              }\n              dist--;\n              code = d_code(dist);\n              send_code(s, code, dtree);\n              extra = extra_dbits[code];\n              if (extra !== 0) {\n                dist -= base_dist[code];\n                send_bits(s, dist, extra);\n              }\n            }\n          } while (lx < s.last_lit);\n        }\n        send_code(s, END_BLOCK, ltree);\n      }\n      function build_tree(s, desc) {\n        var tree = desc.dyn_tree;\n        var stree = desc.stat_desc.static_tree;\n        var has_stree = desc.stat_desc.has_stree;\n        var elems = desc.stat_desc.elems;\n        var n, m;\n        var max_code = -1;\n        var node;\n        s.heap_len = 0;\n        s.heap_max = HEAP_SIZE;\n        for (n = 0; n < elems; n++) {\n          if (tree[n * 2] !== 0) {\n            s.heap[++s.heap_len] = max_code = n;\n            s.depth[n] = 0;\n          } else {\n            tree[n * 2 + 1] = 0;\n          }\n        }\n        while (s.heap_len < 2) {\n          node = s.heap[++s.heap_len] = max_code < 2 ? ++max_code : 0;\n          tree[node * 2] = 1;\n          s.depth[node] = 0;\n          s.opt_len--;\n          if (has_stree) {\n            s.static_len -= stree[node * 2 + 1];\n          }\n        }\n        desc.max_code = max_code;\n        for (n = s.heap_len >> 1; n >= 1; n--) {\n          pqdownheap(s, tree, n);\n        }\n        node = elems;\n        do {\n          n = s.heap[\n            1\n            /*SMALLEST*/\n          ];\n          s.heap[\n            1\n            /*SMALLEST*/\n          ] = s.heap[s.heap_len--];\n          pqdownheap(\n            s,\n            tree,\n            1\n            /*SMALLEST*/\n          );\n          m = s.heap[\n            1\n            /*SMALLEST*/\n          ];\n          s.heap[--s.heap_max] = n;\n          s.heap[--s.heap_max] = m;\n          tree[node * 2] = tree[n * 2] + tree[m * 2];\n          s.depth[node] = (s.depth[n] >= s.depth[m] ? s.depth[n] : s.depth[m]) + 1;\n          tree[n * 2 + 1] = tree[m * 2 + 1] = node;\n          s.heap[\n            1\n            /*SMALLEST*/\n          ] = node++;\n          pqdownheap(\n            s,\n            tree,\n            1\n            /*SMALLEST*/\n          );\n        } while (s.heap_len >= 2);\n        s.heap[--s.heap_max] = s.heap[\n          1\n          /*SMALLEST*/\n        ];\n        gen_bitlen(s, desc);\n        gen_codes(tree, max_code, s.bl_count);\n      }\n      function scan_tree(s, tree, max_code) {\n        var n;\n        var prevlen = -1;\n        var curlen;\n        var nextlen = tree[0 * 2 + 1];\n        var count = 0;\n        var max_count = 7;\n        var min_count = 4;\n        if (nextlen === 0) {\n          max_count = 138;\n          min_count = 3;\n        }\n        tree[(max_code + 1) * 2 + 1] = 65535;\n        for (n = 0; n <= max_code; n++) {\n          curlen = nextlen;\n          nextlen = tree[(n + 1) * 2 + 1];\n          if (++count < max_count && curlen === nextlen) {\n            continue;\n          } else if (count < min_count) {\n            s.bl_tree[curlen * 2] += count;\n          } else if (curlen !== 0) {\n            if (curlen !== prevlen) {\n              s.bl_tree[curlen * 2]++;\n            }\n            s.bl_tree[REP_3_6 * 2]++;\n          } else if (count <= 10) {\n            s.bl_tree[REPZ_3_10 * 2]++;\n          } else {\n            s.bl_tree[REPZ_11_138 * 2]++;\n          }\n          count = 0;\n          prevlen = curlen;\n          if (nextlen === 0) {\n            max_count = 138;\n            min_count = 3;\n          } else if (curlen === nextlen) {\n            max_count = 6;\n            min_count = 3;\n          } else {\n            max_count = 7;\n            min_count = 4;\n          }\n        }\n      }\n      function send_tree(s, tree, max_code) {\n        var n;\n        var prevlen = -1;\n        var curlen;\n        var nextlen = tree[0 * 2 + 1];\n        var count = 0;\n        var max_count = 7;\n        var min_count = 4;\n        if (nextlen === 0) {\n          max_count = 138;\n          min_count = 3;\n        }\n        for (n = 0; n <= max_code; n++) {\n          curlen = nextlen;\n          nextlen = tree[(n + 1) * 2 + 1];\n          if (++count < max_count && curlen === nextlen) {\n            continue;\n          } else if (count < min_count) {\n            do {\n              send_code(s, curlen, s.bl_tree);\n            } while (--count !== 0);\n          } else if (curlen !== 0) {\n            if (curlen !== prevlen) {\n              send_code(s, curlen, s.bl_tree);\n              count--;\n            }\n            send_code(s, REP_3_6, s.bl_tree);\n            send_bits(s, count - 3, 2);\n          } else if (count <= 10) {\n            send_code(s, REPZ_3_10, s.bl_tree);\n            send_bits(s, count - 3, 3);\n          } else {\n            send_code(s, REPZ_11_138, s.bl_tree);\n            send_bits(s, count - 11, 7);\n          }\n          count = 0;\n          prevlen = curlen;\n          if (nextlen === 0) {\n            max_count = 138;\n            min_count = 3;\n          } else if (curlen === nextlen) {\n            max_count = 6;\n            min_count = 3;\n          } else {\n            max_count = 7;\n            min_count = 4;\n          }\n        }\n      }\n      function build_bl_tree(s) {\n        var max_blindex;\n        scan_tree(s, s.dyn_ltree, s.l_desc.max_code);\n        scan_tree(s, s.dyn_dtree, s.d_desc.max_code);\n        build_tree(s, s.bl_desc);\n        for (max_blindex = BL_CODES - 1; max_blindex >= 3; max_blindex--) {\n          if (s.bl_tree[bl_order[max_blindex] * 2 + 1] !== 0) {\n            break;\n          }\n        }\n        s.opt_len += 3 * (max_blindex + 1) + 5 + 5 + 4;\n        return max_blindex;\n      }\n      function send_all_trees(s, lcodes, dcodes, blcodes) {\n        var rank;\n        send_bits(s, lcodes - 257, 5);\n        send_bits(s, dcodes - 1, 5);\n        send_bits(s, blcodes - 4, 4);\n        for (rank = 0; rank < blcodes; rank++) {\n          send_bits(s, s.bl_tree[bl_order[rank] * 2 + 1], 3);\n        }\n        send_tree(s, s.dyn_ltree, lcodes - 1);\n        send_tree(s, s.dyn_dtree, dcodes - 1);\n      }\n      function detect_data_type(s) {\n        var black_mask = 4093624447;\n        var n;\n        for (n = 0; n <= 31; n++, black_mask >>>= 1) {\n          if (black_mask & 1 && s.dyn_ltree[n * 2] !== 0) {\n            return Z_BINARY;\n          }\n        }\n        if (s.dyn_ltree[9 * 2] !== 0 || s.dyn_ltree[10 * 2] !== 0 || s.dyn_ltree[13 * 2] !== 0) {\n          return Z_TEXT;\n        }\n        for (n = 32; n < LITERALS; n++) {\n          if (s.dyn_ltree[n * 2] !== 0) {\n            return Z_TEXT;\n          }\n        }\n        return Z_BINARY;\n      }\n      var static_init_done = false;\n      function _tr_init(s) {\n        if (!static_init_done) {\n          tr_static_init();\n          static_init_done = true;\n        }\n        s.l_desc = new TreeDesc(s.dyn_ltree, static_l_desc);\n        s.d_desc = new TreeDesc(s.dyn_dtree, static_d_desc);\n        s.bl_desc = new TreeDesc(s.bl_tree, static_bl_desc);\n        s.bi_buf = 0;\n        s.bi_valid = 0;\n        init_block(s);\n      }\n      function _tr_stored_block(s, buf, stored_len, last) {\n        send_bits(s, (STORED_BLOCK << 1) + (last ? 1 : 0), 3);\n        copy_block(s, buf, stored_len, true);\n      }\n      function _tr_align(s) {\n        send_bits(s, STATIC_TREES << 1, 3);\n        send_code(s, END_BLOCK, static_ltree);\n        bi_flush(s);\n      }\n      function _tr_flush_block(s, buf, stored_len, last) {\n        var opt_lenb, static_lenb;\n        var max_blindex = 0;\n        if (s.level > 0) {\n          if (s.strm.data_type === Z_UNKNOWN) {\n            s.strm.data_type = detect_data_type(s);\n          }\n          build_tree(s, s.l_desc);\n          build_tree(s, s.d_desc);\n          max_blindex = build_bl_tree(s);\n          opt_lenb = s.opt_len + 3 + 7 >>> 3;\n          static_lenb = s.static_len + 3 + 7 >>> 3;\n          if (static_lenb <= opt_lenb) {\n            opt_lenb = static_lenb;\n          }\n        } else {\n          opt_lenb = static_lenb = stored_len + 5;\n        }\n        if (stored_len + 4 <= opt_lenb && buf !== -1) {\n          _tr_stored_block(s, buf, stored_len, last);\n        } else if (s.strategy === Z_FIXED || static_lenb === opt_lenb) {\n          send_bits(s, (STATIC_TREES << 1) + (last ? 1 : 0), 3);\n          compress_block(s, static_ltree, static_dtree);\n        } else {\n          send_bits(s, (DYN_TREES << 1) + (last ? 1 : 0), 3);\n          send_all_trees(s, s.l_desc.max_code + 1, s.d_desc.max_code + 1, max_blindex + 1);\n          compress_block(s, s.dyn_ltree, s.dyn_dtree);\n        }\n        init_block(s);\n        if (last) {\n          bi_windup(s);\n        }\n      }\n      function _tr_tally(s, dist, lc) {\n        s.pending_buf[s.d_buf + s.last_lit * 2] = dist >>> 8 & 255;\n        s.pending_buf[s.d_buf + s.last_lit * 2 + 1] = dist & 255;\n        s.pending_buf[s.l_buf + s.last_lit] = lc & 255;\n        s.last_lit++;\n        if (dist === 0) {\n          s.dyn_ltree[lc * 2]++;\n        } else {\n          s.matches++;\n          dist--;\n          s.dyn_ltree[(_length_code[lc] + LITERALS + 1) * 2]++;\n          s.dyn_dtree[d_code(dist) * 2]++;\n        }\n        return s.last_lit === s.lit_bufsize - 1;\n      }\n      exports._tr_init = _tr_init;\n      exports._tr_stored_block = _tr_stored_block;\n      exports._tr_flush_block = _tr_flush_block;\n      exports._tr_tally = _tr_tally;\n      exports._tr_align = _tr_align;\n    }\n  });\n\n  // node_modules/pako/lib/zlib/adler32.js\n  var require_adler32 = __commonJS({\n    "node_modules/pako/lib/zlib/adler32.js"(exports, module) {\n      "use strict";\n      function adler32(adler, buf, len, pos) {\n        var s1 = adler & 65535 | 0, s2 = adler >>> 16 & 65535 | 0, n = 0;\n        while (len !== 0) {\n          n = len > 2e3 ? 2e3 : len;\n          len -= n;\n          do {\n            s1 = s1 + buf[pos++] | 0;\n            s2 = s2 + s1 | 0;\n          } while (--n);\n          s1 %= 65521;\n          s2 %= 65521;\n        }\n        return s1 | s2 << 16 | 0;\n      }\n      module.exports = adler32;\n    }\n  });\n\n  // node_modules/pako/lib/zlib/crc32.js\n  var require_crc32 = __commonJS({\n    "node_modules/pako/lib/zlib/crc32.js"(exports, module) {\n      "use strict";\n      function makeTable() {\n        var c, table = [];\n        for (var n = 0; n < 256; n++) {\n          c = n;\n          for (var k = 0; k < 8; k++) {\n            c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;\n          }\n          table[n] = c;\n        }\n        return table;\n      }\n      var crcTable = makeTable();\n      function crc32(crc, buf, len, pos) {\n        var t = crcTable, end = pos + len;\n        crc ^= -1;\n        for (var i = pos; i < end; i++) {\n          crc = crc >>> 8 ^ t[(crc ^ buf[i]) & 255];\n        }\n        return crc ^ -1;\n      }\n      module.exports = crc32;\n    }\n  });\n\n  // node_modules/pako/lib/zlib/messages.js\n  var require_messages = __commonJS({\n    "node_modules/pako/lib/zlib/messages.js"(exports, module) {\n      "use strict";\n      module.exports = {\n        2: "need dictionary",\n        /* Z_NEED_DICT       2  */\n        1: "stream end",\n        /* Z_STREAM_END      1  */\n        0: "",\n        /* Z_OK              0  */\n        "-1": "file error",\n        /* Z_ERRNO         (-1) */\n        "-2": "stream error",\n        /* Z_STREAM_ERROR  (-2) */\n        "-3": "data error",\n        /* Z_DATA_ERROR    (-3) */\n        "-4": "insufficient memory",\n        /* Z_MEM_ERROR     (-4) */\n        "-5": "buffer error",\n        /* Z_BUF_ERROR     (-5) */\n        "-6": "incompatible version"\n        /* Z_VERSION_ERROR (-6) */\n      };\n    }\n  });\n\n  // node_modules/pako/lib/zlib/deflate.js\n  var require_deflate = __commonJS({\n    "node_modules/pako/lib/zlib/deflate.js"(exports) {\n      "use strict";\n      var utils = require_common();\n      var trees = require_trees();\n      var adler32 = require_adler32();\n      var crc32 = require_crc32();\n      var msg = require_messages();\n      var Z_NO_FLUSH = 0;\n      var Z_PARTIAL_FLUSH = 1;\n      var Z_FULL_FLUSH = 3;\n      var Z_FINISH = 4;\n      var Z_BLOCK = 5;\n      var Z_OK = 0;\n      var Z_STREAM_END = 1;\n      var Z_STREAM_ERROR = -2;\n      var Z_DATA_ERROR = -3;\n      var Z_BUF_ERROR = -5;\n      var Z_DEFAULT_COMPRESSION = -1;\n      var Z_FILTERED = 1;\n      var Z_HUFFMAN_ONLY = 2;\n      var Z_RLE = 3;\n      var Z_FIXED = 4;\n      var Z_DEFAULT_STRATEGY = 0;\n      var Z_UNKNOWN = 2;\n      var Z_DEFLATED = 8;\n      var MAX_MEM_LEVEL = 9;\n      var MAX_WBITS = 15;\n      var DEF_MEM_LEVEL = 8;\n      var LENGTH_CODES = 29;\n      var LITERALS = 256;\n      var L_CODES = LITERALS + 1 + LENGTH_CODES;\n      var D_CODES = 30;\n      var BL_CODES = 19;\n      var HEAP_SIZE = 2 * L_CODES + 1;\n      var MAX_BITS = 15;\n      var MIN_MATCH = 3;\n      var MAX_MATCH = 258;\n      var MIN_LOOKAHEAD = MAX_MATCH + MIN_MATCH + 1;\n      var PRESET_DICT = 32;\n      var INIT_STATE = 42;\n      var EXTRA_STATE = 69;\n      var NAME_STATE = 73;\n      var COMMENT_STATE = 91;\n      var HCRC_STATE = 103;\n      var BUSY_STATE = 113;\n      var FINISH_STATE = 666;\n      var BS_NEED_MORE = 1;\n      var BS_BLOCK_DONE = 2;\n      var BS_FINISH_STARTED = 3;\n      var BS_FINISH_DONE = 4;\n      var OS_CODE = 3;\n      function err(strm, errorCode) {\n        strm.msg = msg[errorCode];\n        return errorCode;\n      }\n      function rank(f) {\n        return (f << 1) - (f > 4 ? 9 : 0);\n      }\n      function zero(buf) {\n        var len = buf.length;\n        while (--len >= 0) {\n          buf[len] = 0;\n        }\n      }\n      function flush_pending(strm) {\n        var s = strm.state;\n        var len = s.pending;\n        if (len > strm.avail_out) {\n          len = strm.avail_out;\n        }\n        if (len === 0) {\n          return;\n        }\n        utils.arraySet(strm.output, s.pending_buf, s.pending_out, len, strm.next_out);\n        strm.next_out += len;\n        s.pending_out += len;\n        strm.total_out += len;\n        strm.avail_out -= len;\n        s.pending -= len;\n        if (s.pending === 0) {\n          s.pending_out = 0;\n        }\n      }\n      function flush_block_only(s, last) {\n        trees._tr_flush_block(s, s.block_start >= 0 ? s.block_start : -1, s.strstart - s.block_start, last);\n        s.block_start = s.strstart;\n        flush_pending(s.strm);\n      }\n      function put_byte(s, b) {\n        s.pending_buf[s.pending++] = b;\n      }\n      function putShortMSB(s, b) {\n        s.pending_buf[s.pending++] = b >>> 8 & 255;\n        s.pending_buf[s.pending++] = b & 255;\n      }\n      function read_buf(strm, buf, start, size) {\n        var len = strm.avail_in;\n        if (len > size) {\n          len = size;\n        }\n        if (len === 0) {\n          return 0;\n        }\n        strm.avail_in -= len;\n        utils.arraySet(buf, strm.input, strm.next_in, len, start);\n        if (strm.state.wrap === 1) {\n          strm.adler = adler32(strm.adler, buf, len, start);\n        } else if (strm.state.wrap === 2) {\n          strm.adler = crc32(strm.adler, buf, len, start);\n        }\n        strm.next_in += len;\n        strm.total_in += len;\n        return len;\n      }\n      function longest_match(s, cur_match) {\n        var chain_length = s.max_chain_length;\n        var scan = s.strstart;\n        var match;\n        var len;\n        var best_len = s.prev_length;\n        var nice_match = s.nice_match;\n        var limit = s.strstart > s.w_size - MIN_LOOKAHEAD ? s.strstart - (s.w_size - MIN_LOOKAHEAD) : 0;\n        var _win = s.window;\n        var wmask = s.w_mask;\n        var prev = s.prev;\n        var strend = s.strstart + MAX_MATCH;\n        var scan_end1 = _win[scan + best_len - 1];\n        var scan_end = _win[scan + best_len];\n        if (s.prev_length >= s.good_match) {\n          chain_length >>= 2;\n        }\n        if (nice_match > s.lookahead) {\n          nice_match = s.lookahead;\n        }\n        do {\n          match = cur_match;\n          if (_win[match + best_len] !== scan_end || _win[match + best_len - 1] !== scan_end1 || _win[match] !== _win[scan] || _win[++match] !== _win[scan + 1]) {\n            continue;\n          }\n          scan += 2;\n          match++;\n          do {\n          } while (_win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && scan < strend);\n          len = MAX_MATCH - (strend - scan);\n          scan = strend - MAX_MATCH;\n          if (len > best_len) {\n            s.match_start = cur_match;\n            best_len = len;\n            if (len >= nice_match) {\n              break;\n            }\n            scan_end1 = _win[scan + best_len - 1];\n            scan_end = _win[scan + best_len];\n          }\n        } while ((cur_match = prev[cur_match & wmask]) > limit && --chain_length !== 0);\n        if (best_len <= s.lookahead) {\n          return best_len;\n        }\n        return s.lookahead;\n      }\n      function fill_window(s) {\n        var _w_size = s.w_size;\n        var p, n, m, more, str;\n        do {\n          more = s.window_size - s.lookahead - s.strstart;\n          if (s.strstart >= _w_size + (_w_size - MIN_LOOKAHEAD)) {\n            utils.arraySet(s.window, s.window, _w_size, _w_size, 0);\n            s.match_start -= _w_size;\n            s.strstart -= _w_size;\n            s.block_start -= _w_size;\n            n = s.hash_size;\n            p = n;\n            do {\n              m = s.head[--p];\n              s.head[p] = m >= _w_size ? m - _w_size : 0;\n            } while (--n);\n            n = _w_size;\n            p = n;\n            do {\n              m = s.prev[--p];\n              s.prev[p] = m >= _w_size ? m - _w_size : 0;\n            } while (--n);\n            more += _w_size;\n          }\n          if (s.strm.avail_in === 0) {\n            break;\n          }\n          n = read_buf(s.strm, s.window, s.strstart + s.lookahead, more);\n          s.lookahead += n;\n          if (s.lookahead + s.insert >= MIN_MATCH) {\n            str = s.strstart - s.insert;\n            s.ins_h = s.window[str];\n            s.ins_h = (s.ins_h << s.hash_shift ^ s.window[str + 1]) & s.hash_mask;\n            while (s.insert) {\n              s.ins_h = (s.ins_h << s.hash_shift ^ s.window[str + MIN_MATCH - 1]) & s.hash_mask;\n              s.prev[str & s.w_mask] = s.head[s.ins_h];\n              s.head[s.ins_h] = str;\n              str++;\n              s.insert--;\n              if (s.lookahead + s.insert < MIN_MATCH) {\n                break;\n              }\n            }\n          }\n        } while (s.lookahead < MIN_LOOKAHEAD && s.strm.avail_in !== 0);\n      }\n      function deflate_stored(s, flush) {\n        var max_block_size = 65535;\n        if (max_block_size > s.pending_buf_size - 5) {\n          max_block_size = s.pending_buf_size - 5;\n        }\n        for (; ; ) {\n          if (s.lookahead <= 1) {\n            fill_window(s);\n            if (s.lookahead === 0 && flush === Z_NO_FLUSH) {\n              return BS_NEED_MORE;\n            }\n            if (s.lookahead === 0) {\n              break;\n            }\n          }\n          s.strstart += s.lookahead;\n          s.lookahead = 0;\n          var max_start = s.block_start + max_block_size;\n          if (s.strstart === 0 || s.strstart >= max_start) {\n            s.lookahead = s.strstart - max_start;\n            s.strstart = max_start;\n            flush_block_only(s, false);\n            if (s.strm.avail_out === 0) {\n              return BS_NEED_MORE;\n            }\n          }\n          if (s.strstart - s.block_start >= s.w_size - MIN_LOOKAHEAD) {\n            flush_block_only(s, false);\n            if (s.strm.avail_out === 0) {\n              return BS_NEED_MORE;\n            }\n          }\n        }\n        s.insert = 0;\n        if (flush === Z_FINISH) {\n          flush_block_only(s, true);\n          if (s.strm.avail_out === 0) {\n            return BS_FINISH_STARTED;\n          }\n          return BS_FINISH_DONE;\n        }\n        if (s.strstart > s.block_start) {\n          flush_block_only(s, false);\n          if (s.strm.avail_out === 0) {\n            return BS_NEED_MORE;\n          }\n        }\n        return BS_NEED_MORE;\n      }\n      function deflate_fast(s, flush) {\n        var hash_head;\n        var bflush;\n        for (; ; ) {\n          if (s.lookahead < MIN_LOOKAHEAD) {\n            fill_window(s);\n            if (s.lookahead < MIN_LOOKAHEAD && flush === Z_NO_FLUSH) {\n              return BS_NEED_MORE;\n            }\n            if (s.lookahead === 0) {\n              break;\n            }\n          }\n          hash_head = 0;\n          if (s.lookahead >= MIN_MATCH) {\n            s.ins_h = (s.ins_h << s.hash_shift ^ s.window[s.strstart + MIN_MATCH - 1]) & s.hash_mask;\n            hash_head = s.prev[s.strstart & s.w_mask] = s.head[s.ins_h];\n            s.head[s.ins_h] = s.strstart;\n          }\n          if (hash_head !== 0 && s.strstart - hash_head <= s.w_size - MIN_LOOKAHEAD) {\n            s.match_length = longest_match(s, hash_head);\n          }\n          if (s.match_length >= MIN_MATCH) {\n            bflush = trees._tr_tally(s, s.strstart - s.match_start, s.match_length - MIN_MATCH);\n            s.lookahead -= s.match_length;\n            if (s.match_length <= s.max_lazy_match && s.lookahead >= MIN_MATCH) {\n              s.match_length--;\n              do {\n                s.strstart++;\n                s.ins_h = (s.ins_h << s.hash_shift ^ s.window[s.strstart + MIN_MATCH - 1]) & s.hash_mask;\n                hash_head = s.prev[s.strstart & s.w_mask] = s.head[s.ins_h];\n                s.head[s.ins_h] = s.strstart;\n              } while (--s.match_length !== 0);\n              s.strstart++;\n            } else {\n              s.strstart += s.match_length;\n              s.match_length = 0;\n              s.ins_h = s.window[s.strstart];\n              s.ins_h = (s.ins_h << s.hash_shift ^ s.window[s.strstart + 1]) & s.hash_mask;\n            }\n          } else {\n            bflush = trees._tr_tally(s, 0, s.window[s.strstart]);\n            s.lookahead--;\n            s.strstart++;\n          }\n          if (bflush) {\n            flush_block_only(s, false);\n            if (s.strm.avail_out === 0) {\n              return BS_NEED_MORE;\n            }\n          }\n        }\n        s.insert = s.strstart < MIN_MATCH - 1 ? s.strstart : MIN_MATCH - 1;\n        if (flush === Z_FINISH) {\n          flush_block_only(s, true);\n          if (s.strm.avail_out === 0) {\n            return BS_FINISH_STARTED;\n          }\n          return BS_FINISH_DONE;\n        }\n        if (s.last_lit) {\n          flush_block_only(s, false);\n          if (s.strm.avail_out === 0) {\n            return BS_NEED_MORE;\n          }\n        }\n        return BS_BLOCK_DONE;\n      }\n      function deflate_slow(s, flush) {\n        var hash_head;\n        var bflush;\n        var max_insert;\n        for (; ; ) {\n          if (s.lookahead < MIN_LOOKAHEAD) {\n            fill_window(s);\n            if (s.lookahead < MIN_LOOKAHEAD && flush === Z_NO_FLUSH) {\n              return BS_NEED_MORE;\n            }\n            if (s.lookahead === 0) {\n              break;\n            }\n          }\n          hash_head = 0;\n          if (s.lookahead >= MIN_MATCH) {\n            s.ins_h = (s.ins_h << s.hash_shift ^ s.window[s.strstart + MIN_MATCH - 1]) & s.hash_mask;\n            hash_head = s.prev[s.strstart & s.w_mask] = s.head[s.ins_h];\n            s.head[s.ins_h] = s.strstart;\n          }\n          s.prev_length = s.match_length;\n          s.prev_match = s.match_start;\n          s.match_length = MIN_MATCH - 1;\n          if (hash_head !== 0 && s.prev_length < s.max_lazy_match && s.strstart - hash_head <= s.w_size - MIN_LOOKAHEAD) {\n            s.match_length = longest_match(s, hash_head);\n            if (s.match_length <= 5 && (s.strategy === Z_FILTERED || s.match_length === MIN_MATCH && s.strstart - s.match_start > 4096)) {\n              s.match_length = MIN_MATCH - 1;\n            }\n          }\n          if (s.prev_length >= MIN_MATCH && s.match_length <= s.prev_length) {\n            max_insert = s.strstart + s.lookahead - MIN_MATCH;\n            bflush = trees._tr_tally(s, s.strstart - 1 - s.prev_match, s.prev_length - MIN_MATCH);\n            s.lookahead -= s.prev_length - 1;\n            s.prev_length -= 2;\n            do {\n              if (++s.strstart <= max_insert) {\n                s.ins_h = (s.ins_h << s.hash_shift ^ s.window[s.strstart + MIN_MATCH - 1]) & s.hash_mask;\n                hash_head = s.prev[s.strstart & s.w_mask] = s.head[s.ins_h];\n                s.head[s.ins_h] = s.strstart;\n              }\n            } while (--s.prev_length !== 0);\n            s.match_available = 0;\n            s.match_length = MIN_MATCH - 1;\n            s.strstart++;\n            if (bflush) {\n              flush_block_only(s, false);\n              if (s.strm.avail_out === 0) {\n                return BS_NEED_MORE;\n              }\n            }\n          } else if (s.match_available) {\n            bflush = trees._tr_tally(s, 0, s.window[s.strstart - 1]);\n            if (bflush) {\n              flush_block_only(s, false);\n            }\n            s.strstart++;\n            s.lookahead--;\n            if (s.strm.avail_out === 0) {\n              return BS_NEED_MORE;\n            }\n          } else {\n            s.match_available = 1;\n            s.strstart++;\n            s.lookahead--;\n          }\n        }\n        if (s.match_available) {\n          bflush = trees._tr_tally(s, 0, s.window[s.strstart - 1]);\n          s.match_available = 0;\n        }\n        s.insert = s.strstart < MIN_MATCH - 1 ? s.strstart : MIN_MATCH - 1;\n        if (flush === Z_FINISH) {\n          flush_block_only(s, true);\n          if (s.strm.avail_out === 0) {\n            return BS_FINISH_STARTED;\n          }\n          return BS_FINISH_DONE;\n        }\n        if (s.last_lit) {\n          flush_block_only(s, false);\n          if (s.strm.avail_out === 0) {\n            return BS_NEED_MORE;\n          }\n        }\n        return BS_BLOCK_DONE;\n      }\n      function deflate_rle(s, flush) {\n        var bflush;\n        var prev;\n        var scan, strend;\n        var _win = s.window;\n        for (; ; ) {\n          if (s.lookahead <= MAX_MATCH) {\n            fill_window(s);\n            if (s.lookahead <= MAX_MATCH && flush === Z_NO_FLUSH) {\n              return BS_NEED_MORE;\n            }\n            if (s.lookahead === 0) {\n              break;\n            }\n          }\n          s.match_length = 0;\n          if (s.lookahead >= MIN_MATCH && s.strstart > 0) {\n            scan = s.strstart - 1;\n            prev = _win[scan];\n            if (prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan]) {\n              strend = s.strstart + MAX_MATCH;\n              do {\n              } while (prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && scan < strend);\n              s.match_length = MAX_MATCH - (strend - scan);\n              if (s.match_length > s.lookahead) {\n                s.match_length = s.lookahead;\n              }\n            }\n          }\n          if (s.match_length >= MIN_MATCH) {\n            bflush = trees._tr_tally(s, 1, s.match_length - MIN_MATCH);\n            s.lookahead -= s.match_length;\n            s.strstart += s.match_length;\n            s.match_length = 0;\n          } else {\n            bflush = trees._tr_tally(s, 0, s.window[s.strstart]);\n            s.lookahead--;\n            s.strstart++;\n          }\n          if (bflush) {\n            flush_block_only(s, false);\n            if (s.strm.avail_out === 0) {\n              return BS_NEED_MORE;\n            }\n          }\n        }\n        s.insert = 0;\n        if (flush === Z_FINISH) {\n          flush_block_only(s, true);\n          if (s.strm.avail_out === 0) {\n            return BS_FINISH_STARTED;\n          }\n          return BS_FINISH_DONE;\n        }\n        if (s.last_lit) {\n          flush_block_only(s, false);\n          if (s.strm.avail_out === 0) {\n            return BS_NEED_MORE;\n          }\n        }\n        return BS_BLOCK_DONE;\n      }\n      function deflate_huff(s, flush) {\n        var bflush;\n        for (; ; ) {\n          if (s.lookahead === 0) {\n            fill_window(s);\n            if (s.lookahead === 0) {\n              if (flush === Z_NO_FLUSH) {\n                return BS_NEED_MORE;\n              }\n              break;\n            }\n          }\n          s.match_length = 0;\n          bflush = trees._tr_tally(s, 0, s.window[s.strstart]);\n          s.lookahead--;\n          s.strstart++;\n          if (bflush) {\n            flush_block_only(s, false);\n            if (s.strm.avail_out === 0) {\n              return BS_NEED_MORE;\n            }\n          }\n        }\n        s.insert = 0;\n        if (flush === Z_FINISH) {\n          flush_block_only(s, true);\n          if (s.strm.avail_out === 0) {\n            return BS_FINISH_STARTED;\n          }\n          return BS_FINISH_DONE;\n        }\n        if (s.last_lit) {\n          flush_block_only(s, false);\n          if (s.strm.avail_out === 0) {\n            return BS_NEED_MORE;\n          }\n        }\n        return BS_BLOCK_DONE;\n      }\n      function Config(good_length, max_lazy, nice_length, max_chain, func) {\n        this.good_length = good_length;\n        this.max_lazy = max_lazy;\n        this.nice_length = nice_length;\n        this.max_chain = max_chain;\n        this.func = func;\n      }\n      var configuration_table;\n      configuration_table = [\n        /*      good lazy nice chain */\n        new Config(0, 0, 0, 0, deflate_stored),\n        /* 0 store only */\n        new Config(4, 4, 8, 4, deflate_fast),\n        /* 1 max speed, no lazy matches */\n        new Config(4, 5, 16, 8, deflate_fast),\n        /* 2 */\n        new Config(4, 6, 32, 32, deflate_fast),\n        /* 3 */\n        new Config(4, 4, 16, 16, deflate_slow),\n        /* 4 lazy matches */\n        new Config(8, 16, 32, 32, deflate_slow),\n        /* 5 */\n        new Config(8, 16, 128, 128, deflate_slow),\n        /* 6 */\n        new Config(8, 32, 128, 256, deflate_slow),\n        /* 7 */\n        new Config(32, 128, 258, 1024, deflate_slow),\n        /* 8 */\n        new Config(32, 258, 258, 4096, deflate_slow)\n        /* 9 max compression */\n      ];\n      function lm_init(s) {\n        s.window_size = 2 * s.w_size;\n        zero(s.head);\n        s.max_lazy_match = configuration_table[s.level].max_lazy;\n        s.good_match = configuration_table[s.level].good_length;\n        s.nice_match = configuration_table[s.level].nice_length;\n        s.max_chain_length = configuration_table[s.level].max_chain;\n        s.strstart = 0;\n        s.block_start = 0;\n        s.lookahead = 0;\n        s.insert = 0;\n        s.match_length = s.prev_length = MIN_MATCH - 1;\n        s.match_available = 0;\n        s.ins_h = 0;\n      }\n      function DeflateState() {\n        this.strm = null;\n        this.status = 0;\n        this.pending_buf = null;\n        this.pending_buf_size = 0;\n        this.pending_out = 0;\n        this.pending = 0;\n        this.wrap = 0;\n        this.gzhead = null;\n        this.gzindex = 0;\n        this.method = Z_DEFLATED;\n        this.last_flush = -1;\n        this.w_size = 0;\n        this.w_bits = 0;\n        this.w_mask = 0;\n        this.window = null;\n        this.window_size = 0;\n        this.prev = null;\n        this.head = null;\n        this.ins_h = 0;\n        this.hash_size = 0;\n        this.hash_bits = 0;\n        this.hash_mask = 0;\n        this.hash_shift = 0;\n        this.block_start = 0;\n        this.match_length = 0;\n        this.prev_match = 0;\n        this.match_available = 0;\n        this.strstart = 0;\n        this.match_start = 0;\n        this.lookahead = 0;\n        this.prev_length = 0;\n        this.max_chain_length = 0;\n        this.max_lazy_match = 0;\n        this.level = 0;\n        this.strategy = 0;\n        this.good_match = 0;\n        this.nice_match = 0;\n        this.dyn_ltree = new utils.Buf16(HEAP_SIZE * 2);\n        this.dyn_dtree = new utils.Buf16((2 * D_CODES + 1) * 2);\n        this.bl_tree = new utils.Buf16((2 * BL_CODES + 1) * 2);\n        zero(this.dyn_ltree);\n        zero(this.dyn_dtree);\n        zero(this.bl_tree);\n        this.l_desc = null;\n        this.d_desc = null;\n        this.bl_desc = null;\n        this.bl_count = new utils.Buf16(MAX_BITS + 1);\n        this.heap = new utils.Buf16(2 * L_CODES + 1);\n        zero(this.heap);\n        this.heap_len = 0;\n        this.heap_max = 0;\n        this.depth = new utils.Buf16(2 * L_CODES + 1);\n        zero(this.depth);\n        this.l_buf = 0;\n        this.lit_bufsize = 0;\n        this.last_lit = 0;\n        this.d_buf = 0;\n        this.opt_len = 0;\n        this.static_len = 0;\n        this.matches = 0;\n        this.insert = 0;\n        this.bi_buf = 0;\n        this.bi_valid = 0;\n      }\n      function deflateResetKeep(strm) {\n        var s;\n        if (!strm || !strm.state) {\n          return err(strm, Z_STREAM_ERROR);\n        }\n        strm.total_in = strm.total_out = 0;\n        strm.data_type = Z_UNKNOWN;\n        s = strm.state;\n        s.pending = 0;\n        s.pending_out = 0;\n        if (s.wrap < 0) {\n          s.wrap = -s.wrap;\n        }\n        s.status = s.wrap ? INIT_STATE : BUSY_STATE;\n        strm.adler = s.wrap === 2 ? 0 : 1;\n        s.last_flush = Z_NO_FLUSH;\n        trees._tr_init(s);\n        return Z_OK;\n      }\n      function deflateReset(strm) {\n        var ret = deflateResetKeep(strm);\n        if (ret === Z_OK) {\n          lm_init(strm.state);\n        }\n        return ret;\n      }\n      function deflateSetHeader(strm, head) {\n        if (!strm || !strm.state) {\n          return Z_STREAM_ERROR;\n        }\n        if (strm.state.wrap !== 2) {\n          return Z_STREAM_ERROR;\n        }\n        strm.state.gzhead = head;\n        return Z_OK;\n      }\n      function deflateInit2(strm, level, method, windowBits, memLevel, strategy) {\n        if (!strm) {\n          return Z_STREAM_ERROR;\n        }\n        var wrap = 1;\n        if (level === Z_DEFAULT_COMPRESSION) {\n          level = 6;\n        }\n        if (windowBits < 0) {\n          wrap = 0;\n          windowBits = -windowBits;\n        } else if (windowBits > 15) {\n          wrap = 2;\n          windowBits -= 16;\n        }\n        if (memLevel < 1 || memLevel > MAX_MEM_LEVEL || method !== Z_DEFLATED || windowBits < 8 || windowBits > 15 || level < 0 || level > 9 || strategy < 0 || strategy > Z_FIXED) {\n          return err(strm, Z_STREAM_ERROR);\n        }\n        if (windowBits === 8) {\n          windowBits = 9;\n        }\n        var s = new DeflateState();\n        strm.state = s;\n        s.strm = strm;\n        s.wrap = wrap;\n        s.gzhead = null;\n        s.w_bits = windowBits;\n        s.w_size = 1 << s.w_bits;\n        s.w_mask = s.w_size - 1;\n        s.hash_bits = memLevel + 7;\n        s.hash_size = 1 << s.hash_bits;\n        s.hash_mask = s.hash_size - 1;\n        s.hash_shift = ~~((s.hash_bits + MIN_MATCH - 1) / MIN_MATCH);\n        s.window = new utils.Buf8(s.w_size * 2);\n        s.head = new utils.Buf16(s.hash_size);\n        s.prev = new utils.Buf16(s.w_size);\n        s.lit_bufsize = 1 << memLevel + 6;\n        s.pending_buf_size = s.lit_bufsize * 4;\n        s.pending_buf = new utils.Buf8(s.pending_buf_size);\n        s.d_buf = 1 * s.lit_bufsize;\n        s.l_buf = (1 + 2) * s.lit_bufsize;\n        s.level = level;\n        s.strategy = strategy;\n        s.method = method;\n        return deflateReset(strm);\n      }\n      function deflateInit(strm, level) {\n        return deflateInit2(strm, level, Z_DEFLATED, MAX_WBITS, DEF_MEM_LEVEL, Z_DEFAULT_STRATEGY);\n      }\n      function deflate(strm, flush) {\n        var old_flush, s;\n        var beg, val;\n        if (!strm || !strm.state || flush > Z_BLOCK || flush < 0) {\n          return strm ? err(strm, Z_STREAM_ERROR) : Z_STREAM_ERROR;\n        }\n        s = strm.state;\n        if (!strm.output || !strm.input && strm.avail_in !== 0 || s.status === FINISH_STATE && flush !== Z_FINISH) {\n          return err(strm, strm.avail_out === 0 ? Z_BUF_ERROR : Z_STREAM_ERROR);\n        }\n        s.strm = strm;\n        old_flush = s.last_flush;\n        s.last_flush = flush;\n        if (s.status === INIT_STATE) {\n          if (s.wrap === 2) {\n            strm.adler = 0;\n            put_byte(s, 31);\n            put_byte(s, 139);\n            put_byte(s, 8);\n            if (!s.gzhead) {\n              put_byte(s, 0);\n              put_byte(s, 0);\n              put_byte(s, 0);\n              put_byte(s, 0);\n              put_byte(s, 0);\n              put_byte(s, s.level === 9 ? 2 : s.strategy >= Z_HUFFMAN_ONLY || s.level < 2 ? 4 : 0);\n              put_byte(s, OS_CODE);\n              s.status = BUSY_STATE;\n            } else {\n              put_byte(\n                s,\n                (s.gzhead.text ? 1 : 0) + (s.gzhead.hcrc ? 2 : 0) + (!s.gzhead.extra ? 0 : 4) + (!s.gzhead.name ? 0 : 8) + (!s.gzhead.comment ? 0 : 16)\n              );\n              put_byte(s, s.gzhead.time & 255);\n              put_byte(s, s.gzhead.time >> 8 & 255);\n              put_byte(s, s.gzhead.time >> 16 & 255);\n              put_byte(s, s.gzhead.time >> 24 & 255);\n              put_byte(s, s.level === 9 ? 2 : s.strategy >= Z_HUFFMAN_ONLY || s.level < 2 ? 4 : 0);\n              put_byte(s, s.gzhead.os & 255);\n              if (s.gzhead.extra && s.gzhead.extra.length) {\n                put_byte(s, s.gzhead.extra.length & 255);\n                put_byte(s, s.gzhead.extra.length >> 8 & 255);\n              }\n              if (s.gzhead.hcrc) {\n                strm.adler = crc32(strm.adler, s.pending_buf, s.pending, 0);\n              }\n              s.gzindex = 0;\n              s.status = EXTRA_STATE;\n            }\n          } else {\n            var header = Z_DEFLATED + (s.w_bits - 8 << 4) << 8;\n            var level_flags = -1;\n            if (s.strategy >= Z_HUFFMAN_ONLY || s.level < 2) {\n              level_flags = 0;\n            } else if (s.level < 6) {\n              level_flags = 1;\n            } else if (s.level === 6) {\n              level_flags = 2;\n            } else {\n              level_flags = 3;\n            }\n            header |= level_flags << 6;\n            if (s.strstart !== 0) {\n              header |= PRESET_DICT;\n            }\n            header += 31 - header % 31;\n            s.status = BUSY_STATE;\n            putShortMSB(s, header);\n            if (s.strstart !== 0) {\n              putShortMSB(s, strm.adler >>> 16);\n              putShortMSB(s, strm.adler & 65535);\n            }\n            strm.adler = 1;\n          }\n        }\n        if (s.status === EXTRA_STATE) {\n          if (s.gzhead.extra) {\n            beg = s.pending;\n            while (s.gzindex < (s.gzhead.extra.length & 65535)) {\n              if (s.pending === s.pending_buf_size) {\n                if (s.gzhead.hcrc && s.pending > beg) {\n                  strm.adler = crc32(strm.adler, s.pending_buf, s.pending - beg, beg);\n                }\n                flush_pending(strm);\n                beg = s.pending;\n                if (s.pending === s.pending_buf_size) {\n                  break;\n                }\n              }\n              put_byte(s, s.gzhead.extra[s.gzindex] & 255);\n              s.gzindex++;\n            }\n            if (s.gzhead.hcrc && s.pending > beg) {\n              strm.adler = crc32(strm.adler, s.pending_buf, s.pending - beg, beg);\n            }\n            if (s.gzindex === s.gzhead.extra.length) {\n              s.gzindex = 0;\n              s.status = NAME_STATE;\n            }\n          } else {\n            s.status = NAME_STATE;\n          }\n        }\n        if (s.status === NAME_STATE) {\n          if (s.gzhead.name) {\n            beg = s.pending;\n            do {\n              if (s.pending === s.pending_buf_size) {\n                if (s.gzhead.hcrc && s.pending > beg) {\n                  strm.adler = crc32(strm.adler, s.pending_buf, s.pending - beg, beg);\n                }\n                flush_pending(strm);\n                beg = s.pending;\n                if (s.pending === s.pending_buf_size) {\n                  val = 1;\n                  break;\n                }\n              }\n              if (s.gzindex < s.gzhead.name.length) {\n                val = s.gzhead.name.charCodeAt(s.gzindex++) & 255;\n              } else {\n                val = 0;\n              }\n              put_byte(s, val);\n            } while (val !== 0);\n            if (s.gzhead.hcrc && s.pending > beg) {\n              strm.adler = crc32(strm.adler, s.pending_buf, s.pending - beg, beg);\n            }\n            if (val === 0) {\n              s.gzindex = 0;\n              s.status = COMMENT_STATE;\n            }\n          } else {\n            s.status = COMMENT_STATE;\n          }\n        }\n        if (s.status === COMMENT_STATE) {\n          if (s.gzhead.comment) {\n            beg = s.pending;\n            do {\n              if (s.pending === s.pending_buf_size) {\n                if (s.gzhead.hcrc && s.pending > beg) {\n                  strm.adler = crc32(strm.adler, s.pending_buf, s.pending - beg, beg);\n                }\n                flush_pending(strm);\n                beg = s.pending;\n                if (s.pending === s.pending_buf_size) {\n                  val = 1;\n                  break;\n                }\n              }\n              if (s.gzindex < s.gzhead.comment.length) {\n                val = s.gzhead.comment.charCodeAt(s.gzindex++) & 255;\n              } else {\n                val = 0;\n              }\n              put_byte(s, val);\n            } while (val !== 0);\n            if (s.gzhead.hcrc && s.pending > beg) {\n              strm.adler = crc32(strm.adler, s.pending_buf, s.pending - beg, beg);\n            }\n            if (val === 0) {\n              s.status = HCRC_STATE;\n            }\n          } else {\n            s.status = HCRC_STATE;\n          }\n        }\n        if (s.status === HCRC_STATE) {\n          if (s.gzhead.hcrc) {\n            if (s.pending + 2 > s.pending_buf_size) {\n              flush_pending(strm);\n            }\n            if (s.pending + 2 <= s.pending_buf_size) {\n              put_byte(s, strm.adler & 255);\n              put_byte(s, strm.adler >> 8 & 255);\n              strm.adler = 0;\n              s.status = BUSY_STATE;\n            }\n          } else {\n            s.status = BUSY_STATE;\n          }\n        }\n        if (s.pending !== 0) {\n          flush_pending(strm);\n          if (strm.avail_out === 0) {\n            s.last_flush = -1;\n            return Z_OK;\n          }\n        } else if (strm.avail_in === 0 && rank(flush) <= rank(old_flush) && flush !== Z_FINISH) {\n          return err(strm, Z_BUF_ERROR);\n        }\n        if (s.status === FINISH_STATE && strm.avail_in !== 0) {\n          return err(strm, Z_BUF_ERROR);\n        }\n        if (strm.avail_in !== 0 || s.lookahead !== 0 || flush !== Z_NO_FLUSH && s.status !== FINISH_STATE) {\n          var bstate = s.strategy === Z_HUFFMAN_ONLY ? deflate_huff(s, flush) : s.strategy === Z_RLE ? deflate_rle(s, flush) : configuration_table[s.level].func(s, flush);\n          if (bstate === BS_FINISH_STARTED || bstate === BS_FINISH_DONE) {\n            s.status = FINISH_STATE;\n          }\n          if (bstate === BS_NEED_MORE || bstate === BS_FINISH_STARTED) {\n            if (strm.avail_out === 0) {\n              s.last_flush = -1;\n            }\n            return Z_OK;\n          }\n          if (bstate === BS_BLOCK_DONE) {\n            if (flush === Z_PARTIAL_FLUSH) {\n              trees._tr_align(s);\n            } else if (flush !== Z_BLOCK) {\n              trees._tr_stored_block(s, 0, 0, false);\n              if (flush === Z_FULL_FLUSH) {\n                zero(s.head);\n                if (s.lookahead === 0) {\n                  s.strstart = 0;\n                  s.block_start = 0;\n                  s.insert = 0;\n                }\n              }\n            }\n            flush_pending(strm);\n            if (strm.avail_out === 0) {\n              s.last_flush = -1;\n              return Z_OK;\n            }\n          }\n        }\n        if (flush !== Z_FINISH) {\n          return Z_OK;\n        }\n        if (s.wrap <= 0) {\n          return Z_STREAM_END;\n        }\n        if (s.wrap === 2) {\n          put_byte(s, strm.adler & 255);\n          put_byte(s, strm.adler >> 8 & 255);\n          put_byte(s, strm.adler >> 16 & 255);\n          put_byte(s, strm.adler >> 24 & 255);\n          put_byte(s, strm.total_in & 255);\n          put_byte(s, strm.total_in >> 8 & 255);\n          put_byte(s, strm.total_in >> 16 & 255);\n          put_byte(s, strm.total_in >> 24 & 255);\n        } else {\n          putShortMSB(s, strm.adler >>> 16);\n          putShortMSB(s, strm.adler & 65535);\n        }\n        flush_pending(strm);\n        if (s.wrap > 0) {\n          s.wrap = -s.wrap;\n        }\n        return s.pending !== 0 ? Z_OK : Z_STREAM_END;\n      }\n      function deflateEnd(strm) {\n        var status;\n        if (!strm || !strm.state) {\n          return Z_STREAM_ERROR;\n        }\n        status = strm.state.status;\n        if (status !== INIT_STATE && status !== EXTRA_STATE && status !== NAME_STATE && status !== COMMENT_STATE && status !== HCRC_STATE && status !== BUSY_STATE && status !== FINISH_STATE) {\n          return err(strm, Z_STREAM_ERROR);\n        }\n        strm.state = null;\n        return status === BUSY_STATE ? err(strm, Z_DATA_ERROR) : Z_OK;\n      }\n      function deflateSetDictionary(strm, dictionary) {\n        var dictLength = dictionary.length;\n        var s;\n        var str, n;\n        var wrap;\n        var avail;\n        var next;\n        var input;\n        var tmpDict;\n        if (!strm || !strm.state) {\n          return Z_STREAM_ERROR;\n        }\n        s = strm.state;\n        wrap = s.wrap;\n        if (wrap === 2 || wrap === 1 && s.status !== INIT_STATE || s.lookahead) {\n          return Z_STREAM_ERROR;\n        }\n        if (wrap === 1) {\n          strm.adler = adler32(strm.adler, dictionary, dictLength, 0);\n        }\n        s.wrap = 0;\n        if (dictLength >= s.w_size) {\n          if (wrap === 0) {\n            zero(s.head);\n            s.strstart = 0;\n            s.block_start = 0;\n            s.insert = 0;\n          }\n          tmpDict = new utils.Buf8(s.w_size);\n          utils.arraySet(tmpDict, dictionary, dictLength - s.w_size, s.w_size, 0);\n          dictionary = tmpDict;\n          dictLength = s.w_size;\n        }\n        avail = strm.avail_in;\n        next = strm.next_in;\n        input = strm.input;\n        strm.avail_in = dictLength;\n        strm.next_in = 0;\n        strm.input = dictionary;\n        fill_window(s);\n        while (s.lookahead >= MIN_MATCH) {\n          str = s.strstart;\n          n = s.lookahead - (MIN_MATCH - 1);\n          do {\n            s.ins_h = (s.ins_h << s.hash_shift ^ s.window[str + MIN_MATCH - 1]) & s.hash_mask;\n            s.prev[str & s.w_mask] = s.head[s.ins_h];\n            s.head[s.ins_h] = str;\n            str++;\n          } while (--n);\n          s.strstart = str;\n          s.lookahead = MIN_MATCH - 1;\n          fill_window(s);\n        }\n        s.strstart += s.lookahead;\n        s.block_start = s.strstart;\n        s.insert = s.lookahead;\n        s.lookahead = 0;\n        s.match_length = s.prev_length = MIN_MATCH - 1;\n        s.match_available = 0;\n        strm.next_in = next;\n        strm.input = input;\n        strm.avail_in = avail;\n        s.wrap = wrap;\n        return Z_OK;\n      }\n      exports.deflateInit = deflateInit;\n      exports.deflateInit2 = deflateInit2;\n      exports.deflateReset = deflateReset;\n      exports.deflateResetKeep = deflateResetKeep;\n      exports.deflateSetHeader = deflateSetHeader;\n      exports.deflate = deflate;\n      exports.deflateEnd = deflateEnd;\n      exports.deflateSetDictionary = deflateSetDictionary;\n      exports.deflateInfo = "pako deflate (from Nodeca project)";\n    }\n  });\n\n  // node_modules/pako/lib/utils/strings.js\n  var require_strings = __commonJS({\n    "node_modules/pako/lib/utils/strings.js"(exports) {\n      "use strict";\n      var utils = require_common();\n      var STR_APPLY_OK = true;\n      var STR_APPLY_UIA_OK = true;\n      try {\n        String.fromCharCode.apply(null, [0]);\n      } catch (__) {\n        STR_APPLY_OK = false;\n      }\n      try {\n        String.fromCharCode.apply(null, new Uint8Array(1));\n      } catch (__) {\n        STR_APPLY_UIA_OK = false;\n      }\n      var _utf8len = new utils.Buf8(256);\n      for (q = 0; q < 256; q++) {\n        _utf8len[q] = q >= 252 ? 6 : q >= 248 ? 5 : q >= 240 ? 4 : q >= 224 ? 3 : q >= 192 ? 2 : 1;\n      }\n      var q;\n      _utf8len[254] = _utf8len[254] = 1;\n      exports.string2buf = function(str) {\n        var buf, c, c2, m_pos, i, str_len = str.length, buf_len = 0;\n        for (m_pos = 0; m_pos < str_len; m_pos++) {\n          c = str.charCodeAt(m_pos);\n          if ((c & 64512) === 55296 && m_pos + 1 < str_len) {\n            c2 = str.charCodeAt(m_pos + 1);\n            if ((c2 & 64512) === 56320) {\n              c = 65536 + (c - 55296 << 10) + (c2 - 56320);\n              m_pos++;\n            }\n          }\n          buf_len += c < 128 ? 1 : c < 2048 ? 2 : c < 65536 ? 3 : 4;\n        }\n        buf = new utils.Buf8(buf_len);\n        for (i = 0, m_pos = 0; i < buf_len; m_pos++) {\n          c = str.charCodeAt(m_pos);\n          if ((c & 64512) === 55296 && m_pos + 1 < str_len) {\n            c2 = str.charCodeAt(m_pos + 1);\n            if ((c2 & 64512) === 56320) {\n              c = 65536 + (c - 55296 << 10) + (c2 - 56320);\n              m_pos++;\n            }\n          }\n          if (c < 128) {\n            buf[i++] = c;\n          } else if (c < 2048) {\n            buf[i++] = 192 | c >>> 6;\n            buf[i++] = 128 | c & 63;\n          } else if (c < 65536) {\n            buf[i++] = 224 | c >>> 12;\n            buf[i++] = 128 | c >>> 6 & 63;\n            buf[i++] = 128 | c & 63;\n          } else {\n            buf[i++] = 240 | c >>> 18;\n            buf[i++] = 128 | c >>> 12 & 63;\n            buf[i++] = 128 | c >>> 6 & 63;\n            buf[i++] = 128 | c & 63;\n          }\n        }\n        return buf;\n      };\n      function buf2binstring(buf, len) {\n        if (len < 65534) {\n          if (buf.subarray && STR_APPLY_UIA_OK || !buf.subarray && STR_APPLY_OK) {\n            return String.fromCharCode.apply(null, utils.shrinkBuf(buf, len));\n          }\n        }\n        var result = "";\n        for (var i = 0; i < len; i++) {\n          result += String.fromCharCode(buf[i]);\n        }\n        return result;\n      }\n      exports.buf2binstring = function(buf) {\n        return buf2binstring(buf, buf.length);\n      };\n      exports.binstring2buf = function(str) {\n        var buf = new utils.Buf8(str.length);\n        for (var i = 0, len = buf.length; i < len; i++) {\n          buf[i] = str.charCodeAt(i);\n        }\n        return buf;\n      };\n      exports.buf2string = function(buf, max) {\n        var i, out, c, c_len;\n        var len = max || buf.length;\n        var utf16buf = new Array(len * 2);\n        for (out = 0, i = 0; i < len; ) {\n          c = buf[i++];\n          if (c < 128) {\n            utf16buf[out++] = c;\n            continue;\n          }\n          c_len = _utf8len[c];\n          if (c_len > 4) {\n            utf16buf[out++] = 65533;\n            i += c_len - 1;\n            continue;\n          }\n          c &= c_len === 2 ? 31 : c_len === 3 ? 15 : 7;\n          while (c_len > 1 && i < len) {\n            c = c << 6 | buf[i++] & 63;\n            c_len--;\n          }\n          if (c_len > 1) {\n            utf16buf[out++] = 65533;\n            continue;\n          }\n          if (c < 65536) {\n            utf16buf[out++] = c;\n          } else {\n            c -= 65536;\n            utf16buf[out++] = 55296 | c >> 10 & 1023;\n            utf16buf[out++] = 56320 | c & 1023;\n          }\n        }\n        return buf2binstring(utf16buf, out);\n      };\n      exports.utf8border = function(buf, max) {\n        var pos;\n        max = max || buf.length;\n        if (max > buf.length) {\n          max = buf.length;\n        }\n        pos = max - 1;\n        while (pos >= 0 && (buf[pos] & 192) === 128) {\n          pos--;\n        }\n        if (pos < 0) {\n          return max;\n        }\n        if (pos === 0) {\n          return max;\n        }\n        return pos + _utf8len[buf[pos]] > max ? pos : max;\n      };\n    }\n  });\n\n  // node_modules/pako/lib/zlib/zstream.js\n  var require_zstream = __commonJS({\n    "node_modules/pako/lib/zlib/zstream.js"(exports, module) {\n      "use strict";\n      function ZStream() {\n        this.input = null;\n        this.next_in = 0;\n        this.avail_in = 0;\n        this.total_in = 0;\n        this.output = null;\n        this.next_out = 0;\n        this.avail_out = 0;\n        this.total_out = 0;\n        this.msg = "";\n        this.state = null;\n        this.data_type = 2;\n        this.adler = 0;\n      }\n      module.exports = ZStream;\n    }\n  });\n\n  // node_modules/pako/lib/deflate.js\n  var require_deflate2 = __commonJS({\n    "node_modules/pako/lib/deflate.js"(exports) {\n      "use strict";\n      var zlib_deflate = require_deflate();\n      var utils = require_common();\n      var strings = require_strings();\n      var msg = require_messages();\n      var ZStream = require_zstream();\n      var toString = Object.prototype.toString;\n      var Z_NO_FLUSH = 0;\n      var Z_FINISH = 4;\n      var Z_OK = 0;\n      var Z_STREAM_END = 1;\n      var Z_SYNC_FLUSH = 2;\n      var Z_DEFAULT_COMPRESSION = -1;\n      var Z_DEFAULT_STRATEGY = 0;\n      var Z_DEFLATED = 8;\n      function Deflate(options) {\n        if (!(this instanceof Deflate)) return new Deflate(options);\n        this.options = utils.assign({\n          level: Z_DEFAULT_COMPRESSION,\n          method: Z_DEFLATED,\n          chunkSize: 16384,\n          windowBits: 15,\n          memLevel: 8,\n          strategy: Z_DEFAULT_STRATEGY,\n          to: ""\n        }, options || {});\n        var opt = this.options;\n        if (opt.raw && opt.windowBits > 0) {\n          opt.windowBits = -opt.windowBits;\n        } else if (opt.gzip && opt.windowBits > 0 && opt.windowBits < 16) {\n          opt.windowBits += 16;\n        }\n        this.err = 0;\n        this.msg = "";\n        this.ended = false;\n        this.chunks = [];\n        this.strm = new ZStream();\n        this.strm.avail_out = 0;\n        var status = zlib_deflate.deflateInit2(\n          this.strm,\n          opt.level,\n          opt.method,\n          opt.windowBits,\n          opt.memLevel,\n          opt.strategy\n        );\n        if (status !== Z_OK) {\n          throw new Error(msg[status]);\n        }\n        if (opt.header) {\n          zlib_deflate.deflateSetHeader(this.strm, opt.header);\n        }\n        if (opt.dictionary) {\n          var dict;\n          if (typeof opt.dictionary === "string") {\n            dict = strings.string2buf(opt.dictionary);\n          } else if (toString.call(opt.dictionary) === "[object ArrayBuffer]") {\n            dict = new Uint8Array(opt.dictionary);\n          } else {\n            dict = opt.dictionary;\n          }\n          status = zlib_deflate.deflateSetDictionary(this.strm, dict);\n          if (status !== Z_OK) {\n            throw new Error(msg[status]);\n          }\n          this._dict_set = true;\n        }\n      }\n      Deflate.prototype.push = function(data, mode) {\n        var strm = this.strm;\n        var chunkSize = this.options.chunkSize;\n        var status, _mode;\n        if (this.ended) {\n          return false;\n        }\n        _mode = mode === ~~mode ? mode : mode === true ? Z_FINISH : Z_NO_FLUSH;\n        if (typeof data === "string") {\n          strm.input = strings.string2buf(data);\n        } else if (toString.call(data) === "[object ArrayBuffer]") {\n          strm.input = new Uint8Array(data);\n        } else {\n          strm.input = data;\n        }\n        strm.next_in = 0;\n        strm.avail_in = strm.input.length;\n        do {\n          if (strm.avail_out === 0) {\n            strm.output = new utils.Buf8(chunkSize);\n            strm.next_out = 0;\n            strm.avail_out = chunkSize;\n          }\n          status = zlib_deflate.deflate(strm, _mode);\n          if (status !== Z_STREAM_END && status !== Z_OK) {\n            this.onEnd(status);\n            this.ended = true;\n            return false;\n          }\n          if (strm.avail_out === 0 || strm.avail_in === 0 && (_mode === Z_FINISH || _mode === Z_SYNC_FLUSH)) {\n            if (this.options.to === "string") {\n              this.onData(strings.buf2binstring(utils.shrinkBuf(strm.output, strm.next_out)));\n            } else {\n              this.onData(utils.shrinkBuf(strm.output, strm.next_out));\n            }\n          }\n        } while ((strm.avail_in > 0 || strm.avail_out === 0) && status !== Z_STREAM_END);\n        if (_mode === Z_FINISH) {\n          status = zlib_deflate.deflateEnd(this.strm);\n          this.onEnd(status);\n          this.ended = true;\n          return status === Z_OK;\n        }\n        if (_mode === Z_SYNC_FLUSH) {\n          this.onEnd(Z_OK);\n          strm.avail_out = 0;\n          return true;\n        }\n        return true;\n      };\n      Deflate.prototype.onData = function(chunk) {\n        this.chunks.push(chunk);\n      };\n      Deflate.prototype.onEnd = function(status) {\n        if (status === Z_OK) {\n          if (this.options.to === "string") {\n            this.result = this.chunks.join("");\n          } else {\n            this.result = utils.flattenChunks(this.chunks);\n          }\n        }\n        this.chunks = [];\n        this.err = status;\n        this.msg = this.strm.msg;\n      };\n      function deflate(input, options) {\n        var deflator = new Deflate(options);\n        deflator.push(input, true);\n        if (deflator.err) {\n          throw deflator.msg || msg[deflator.err];\n        }\n        return deflator.result;\n      }\n      function deflateRaw(input, options) {\n        options = options || {};\n        options.raw = true;\n        return deflate(input, options);\n      }\n      function gzip2(input, options) {\n        options = options || {};\n        options.gzip = true;\n        return deflate(input, options);\n      }\n      exports.Deflate = Deflate;\n      exports.deflate = deflate;\n      exports.deflateRaw = deflateRaw;\n      exports.gzip = gzip2;\n    }\n  });\n\n  // node_modules/pako/lib/zlib/inffast.js\n  var require_inffast = __commonJS({\n    "node_modules/pako/lib/zlib/inffast.js"(exports, module) {\n      "use strict";\n      var BAD = 30;\n      var TYPE = 12;\n      module.exports = function inflate_fast(strm, start) {\n        var state;\n        var _in;\n        var last;\n        var _out;\n        var beg;\n        var end;\n        var dmax;\n        var wsize;\n        var whave;\n        var wnext;\n        var s_window;\n        var hold;\n        var bits;\n        var lcode;\n        var dcode;\n        var lmask;\n        var dmask;\n        var here;\n        var op;\n        var len;\n        var dist;\n        var from;\n        var from_source;\n        var input, output;\n        state = strm.state;\n        _in = strm.next_in;\n        input = strm.input;\n        last = _in + (strm.avail_in - 5);\n        _out = strm.next_out;\n        output = strm.output;\n        beg = _out - (start - strm.avail_out);\n        end = _out + (strm.avail_out - 257);\n        dmax = state.dmax;\n        wsize = state.wsize;\n        whave = state.whave;\n        wnext = state.wnext;\n        s_window = state.window;\n        hold = state.hold;\n        bits = state.bits;\n        lcode = state.lencode;\n        dcode = state.distcode;\n        lmask = (1 << state.lenbits) - 1;\n        dmask = (1 << state.distbits) - 1;\n        top:\n          do {\n            if (bits < 15) {\n              hold += input[_in++] << bits;\n              bits += 8;\n              hold += input[_in++] << bits;\n              bits += 8;\n            }\n            here = lcode[hold & lmask];\n            dolen:\n              for (; ; ) {\n                op = here >>> 24;\n                hold >>>= op;\n                bits -= op;\n                op = here >>> 16 & 255;\n                if (op === 0) {\n                  output[_out++] = here & 65535;\n                } else if (op & 16) {\n                  len = here & 65535;\n                  op &= 15;\n                  if (op) {\n                    if (bits < op) {\n                      hold += input[_in++] << bits;\n                      bits += 8;\n                    }\n                    len += hold & (1 << op) - 1;\n                    hold >>>= op;\n                    bits -= op;\n                  }\n                  if (bits < 15) {\n                    hold += input[_in++] << bits;\n                    bits += 8;\n                    hold += input[_in++] << bits;\n                    bits += 8;\n                  }\n                  here = dcode[hold & dmask];\n                  dodist:\n                    for (; ; ) {\n                      op = here >>> 24;\n                      hold >>>= op;\n                      bits -= op;\n                      op = here >>> 16 & 255;\n                      if (op & 16) {\n                        dist = here & 65535;\n                        op &= 15;\n                        if (bits < op) {\n                          hold += input[_in++] << bits;\n                          bits += 8;\n                          if (bits < op) {\n                            hold += input[_in++] << bits;\n                            bits += 8;\n                          }\n                        }\n                        dist += hold & (1 << op) - 1;\n                        if (dist > dmax) {\n                          strm.msg = "invalid distance too far back";\n                          state.mode = BAD;\n                          break top;\n                        }\n                        hold >>>= op;\n                        bits -= op;\n                        op = _out - beg;\n                        if (dist > op) {\n                          op = dist - op;\n                          if (op > whave) {\n                            if (state.sane) {\n                              strm.msg = "invalid distance too far back";\n                              state.mode = BAD;\n                              break top;\n                            }\n                          }\n                          from = 0;\n                          from_source = s_window;\n                          if (wnext === 0) {\n                            from += wsize - op;\n                            if (op < len) {\n                              len -= op;\n                              do {\n                                output[_out++] = s_window[from++];\n                              } while (--op);\n                              from = _out - dist;\n                              from_source = output;\n                            }\n                          } else if (wnext < op) {\n                            from += wsize + wnext - op;\n                            op -= wnext;\n                            if (op < len) {\n                              len -= op;\n                              do {\n                                output[_out++] = s_window[from++];\n                              } while (--op);\n                              from = 0;\n                              if (wnext < len) {\n                                op = wnext;\n                                len -= op;\n                                do {\n                                  output[_out++] = s_window[from++];\n                                } while (--op);\n                                from = _out - dist;\n                                from_source = output;\n                              }\n                            }\n                          } else {\n                            from += wnext - op;\n                            if (op < len) {\n                              len -= op;\n                              do {\n                                output[_out++] = s_window[from++];\n                              } while (--op);\n                              from = _out - dist;\n                              from_source = output;\n                            }\n                          }\n                          while (len > 2) {\n                            output[_out++] = from_source[from++];\n                            output[_out++] = from_source[from++];\n                            output[_out++] = from_source[from++];\n                            len -= 3;\n                          }\n                          if (len) {\n                            output[_out++] = from_source[from++];\n                            if (len > 1) {\n                              output[_out++] = from_source[from++];\n                            }\n                          }\n                        } else {\n                          from = _out - dist;\n                          do {\n                            output[_out++] = output[from++];\n                            output[_out++] = output[from++];\n                            output[_out++] = output[from++];\n                            len -= 3;\n                          } while (len > 2);\n                          if (len) {\n                            output[_out++] = output[from++];\n                            if (len > 1) {\n                              output[_out++] = output[from++];\n                            }\n                          }\n                        }\n                      } else if ((op & 64) === 0) {\n                        here = dcode[(here & 65535) + (hold & (1 << op) - 1)];\n                        continue dodist;\n                      } else {\n                        strm.msg = "invalid distance code";\n                        state.mode = BAD;\n                        break top;\n                      }\n                      break;\n                    }\n                } else if ((op & 64) === 0) {\n                  here = lcode[(here & 65535) + (hold & (1 << op) - 1)];\n                  continue dolen;\n                } else if (op & 32) {\n                  state.mode = TYPE;\n                  break top;\n                } else {\n                  strm.msg = "invalid literal/length code";\n                  state.mode = BAD;\n                  break top;\n                }\n                break;\n              }\n          } while (_in < last && _out < end);\n        len = bits >> 3;\n        _in -= len;\n        bits -= len << 3;\n        hold &= (1 << bits) - 1;\n        strm.next_in = _in;\n        strm.next_out = _out;\n        strm.avail_in = _in < last ? 5 + (last - _in) : 5 - (_in - last);\n        strm.avail_out = _out < end ? 257 + (end - _out) : 257 - (_out - end);\n        state.hold = hold;\n        state.bits = bits;\n        return;\n      };\n    }\n  });\n\n  // node_modules/pako/lib/zlib/inftrees.js\n  var require_inftrees = __commonJS({\n    "node_modules/pako/lib/zlib/inftrees.js"(exports, module) {\n      "use strict";\n      var utils = require_common();\n      var MAXBITS = 15;\n      var ENOUGH_LENS = 852;\n      var ENOUGH_DISTS = 592;\n      var CODES = 0;\n      var LENS = 1;\n      var DISTS = 2;\n      var lbase = [\n        /* Length codes 257..285 base */\n        3,\n        4,\n        5,\n        6,\n        7,\n        8,\n        9,\n        10,\n        11,\n        13,\n        15,\n        17,\n        19,\n        23,\n        27,\n        31,\n        35,\n        43,\n        51,\n        59,\n        67,\n        83,\n        99,\n        115,\n        131,\n        163,\n        195,\n        227,\n        258,\n        0,\n        0\n      ];\n      var lext = [\n        /* Length codes 257..285 extra */\n        16,\n        16,\n        16,\n        16,\n        16,\n        16,\n        16,\n        16,\n        17,\n        17,\n        17,\n        17,\n        18,\n        18,\n        18,\n        18,\n        19,\n        19,\n        19,\n        19,\n        20,\n        20,\n        20,\n        20,\n        21,\n        21,\n        21,\n        21,\n        16,\n        72,\n        78\n      ];\n      var dbase = [\n        /* Distance codes 0..29 base */\n        1,\n        2,\n        3,\n        4,\n        5,\n        7,\n        9,\n        13,\n        17,\n        25,\n        33,\n        49,\n        65,\n        97,\n        129,\n        193,\n        257,\n        385,\n        513,\n        769,\n        1025,\n        1537,\n        2049,\n        3073,\n        4097,\n        6145,\n        8193,\n        12289,\n        16385,\n        24577,\n        0,\n        0\n      ];\n      var dext = [\n        /* Distance codes 0..29 extra */\n        16,\n        16,\n        16,\n        16,\n        17,\n        17,\n        18,\n        18,\n        19,\n        19,\n        20,\n        20,\n        21,\n        21,\n        22,\n        22,\n        23,\n        23,\n        24,\n        24,\n        25,\n        25,\n        26,\n        26,\n        27,\n        27,\n        28,\n        28,\n        29,\n        29,\n        64,\n        64\n      ];\n      module.exports = function inflate_table(type, lens, lens_index, codes, table, table_index, work, opts) {\n        var bits = opts.bits;\n        var len = 0;\n        var sym = 0;\n        var min = 0, max = 0;\n        var root = 0;\n        var curr = 0;\n        var drop = 0;\n        var left = 0;\n        var used = 0;\n        var huff = 0;\n        var incr;\n        var fill;\n        var low;\n        var mask;\n        var next;\n        var base = null;\n        var base_index = 0;\n        var end;\n        var count = new utils.Buf16(MAXBITS + 1);\n        var offs = new utils.Buf16(MAXBITS + 1);\n        var extra = null;\n        var extra_index = 0;\n        var here_bits, here_op, here_val;\n        for (len = 0; len <= MAXBITS; len++) {\n          count[len] = 0;\n        }\n        for (sym = 0; sym < codes; sym++) {\n          count[lens[lens_index + sym]]++;\n        }\n        root = bits;\n        for (max = MAXBITS; max >= 1; max--) {\n          if (count[max] !== 0) {\n            break;\n          }\n        }\n        if (root > max) {\n          root = max;\n        }\n        if (max === 0) {\n          table[table_index++] = 1 << 24 | 64 << 16 | 0;\n          table[table_index++] = 1 << 24 | 64 << 16 | 0;\n          opts.bits = 1;\n          return 0;\n        }\n        for (min = 1; min < max; min++) {\n          if (count[min] !== 0) {\n            break;\n          }\n        }\n        if (root < min) {\n          root = min;\n        }\n        left = 1;\n        for (len = 1; len <= MAXBITS; len++) {\n          left <<= 1;\n          left -= count[len];\n          if (left < 0) {\n            return -1;\n          }\n        }\n        if (left > 0 && (type === CODES || max !== 1)) {\n          return -1;\n        }\n        offs[1] = 0;\n        for (len = 1; len < MAXBITS; len++) {\n          offs[len + 1] = offs[len] + count[len];\n        }\n        for (sym = 0; sym < codes; sym++) {\n          if (lens[lens_index + sym] !== 0) {\n            work[offs[lens[lens_index + sym]]++] = sym;\n          }\n        }\n        if (type === CODES) {\n          base = extra = work;\n          end = 19;\n        } else if (type === LENS) {\n          base = lbase;\n          base_index -= 257;\n          extra = lext;\n          extra_index -= 257;\n          end = 256;\n        } else {\n          base = dbase;\n          extra = dext;\n          end = -1;\n        }\n        huff = 0;\n        sym = 0;\n        len = min;\n        next = table_index;\n        curr = root;\n        drop = 0;\n        low = -1;\n        used = 1 << root;\n        mask = used - 1;\n        if (type === LENS && used > ENOUGH_LENS || type === DISTS && used > ENOUGH_DISTS) {\n          return 1;\n        }\n        for (; ; ) {\n          here_bits = len - drop;\n          if (work[sym] < end) {\n            here_op = 0;\n            here_val = work[sym];\n          } else if (work[sym] > end) {\n            here_op = extra[extra_index + work[sym]];\n            here_val = base[base_index + work[sym]];\n          } else {\n            here_op = 32 + 64;\n            here_val = 0;\n          }\n          incr = 1 << len - drop;\n          fill = 1 << curr;\n          min = fill;\n          do {\n            fill -= incr;\n            table[next + (huff >> drop) + fill] = here_bits << 24 | here_op << 16 | here_val | 0;\n          } while (fill !== 0);\n          incr = 1 << len - 1;\n          while (huff & incr) {\n            incr >>= 1;\n          }\n          if (incr !== 0) {\n            huff &= incr - 1;\n            huff += incr;\n          } else {\n            huff = 0;\n          }\n          sym++;\n          if (--count[len] === 0) {\n            if (len === max) {\n              break;\n            }\n            len = lens[lens_index + work[sym]];\n          }\n          if (len > root && (huff & mask) !== low) {\n            if (drop === 0) {\n              drop = root;\n            }\n            next += min;\n            curr = len - drop;\n            left = 1 << curr;\n            while (curr + drop < max) {\n              left -= count[curr + drop];\n              if (left <= 0) {\n                break;\n              }\n              curr++;\n              left <<= 1;\n            }\n            used += 1 << curr;\n            if (type === LENS && used > ENOUGH_LENS || type === DISTS && used > ENOUGH_DISTS) {\n              return 1;\n            }\n            low = huff & mask;\n            table[low] = root << 24 | curr << 16 | next - table_index | 0;\n          }\n        }\n        if (huff !== 0) {\n          table[next + huff] = len - drop << 24 | 64 << 16 | 0;\n        }\n        opts.bits = root;\n        return 0;\n      };\n    }\n  });\n\n  // node_modules/pako/lib/zlib/inflate.js\n  var require_inflate = __commonJS({\n    "node_modules/pako/lib/zlib/inflate.js"(exports) {\n      "use strict";\n      var utils = require_common();\n      var adler32 = require_adler32();\n      var crc32 = require_crc32();\n      var inflate_fast = require_inffast();\n      var inflate_table = require_inftrees();\n      var CODES = 0;\n      var LENS = 1;\n      var DISTS = 2;\n      var Z_FINISH = 4;\n      var Z_BLOCK = 5;\n      var Z_TREES = 6;\n      var Z_OK = 0;\n      var Z_STREAM_END = 1;\n      var Z_NEED_DICT = 2;\n      var Z_STREAM_ERROR = -2;\n      var Z_DATA_ERROR = -3;\n      var Z_MEM_ERROR = -4;\n      var Z_BUF_ERROR = -5;\n      var Z_DEFLATED = 8;\n      var HEAD = 1;\n      var FLAGS = 2;\n      var TIME = 3;\n      var OS = 4;\n      var EXLEN = 5;\n      var EXTRA = 6;\n      var NAME = 7;\n      var COMMENT = 8;\n      var HCRC = 9;\n      var DICTID = 10;\n      var DICT = 11;\n      var TYPE = 12;\n      var TYPEDO = 13;\n      var STORED = 14;\n      var COPY_ = 15;\n      var COPY = 16;\n      var TABLE = 17;\n      var LENLENS = 18;\n      var CODELENS = 19;\n      var LEN_ = 20;\n      var LEN = 21;\n      var LENEXT = 22;\n      var DIST = 23;\n      var DISTEXT = 24;\n      var MATCH = 25;\n      var LIT = 26;\n      var CHECK = 27;\n      var LENGTH = 28;\n      var DONE = 29;\n      var BAD = 30;\n      var MEM = 31;\n      var SYNC = 32;\n      var ENOUGH_LENS = 852;\n      var ENOUGH_DISTS = 592;\n      var MAX_WBITS = 15;\n      var DEF_WBITS = MAX_WBITS;\n      function zswap32(q) {\n        return (q >>> 24 & 255) + (q >>> 8 & 65280) + ((q & 65280) << 8) + ((q & 255) << 24);\n      }\n      function InflateState() {\n        this.mode = 0;\n        this.last = false;\n        this.wrap = 0;\n        this.havedict = false;\n        this.flags = 0;\n        this.dmax = 0;\n        this.check = 0;\n        this.total = 0;\n        this.head = null;\n        this.wbits = 0;\n        this.wsize = 0;\n        this.whave = 0;\n        this.wnext = 0;\n        this.window = null;\n        this.hold = 0;\n        this.bits = 0;\n        this.length = 0;\n        this.offset = 0;\n        this.extra = 0;\n        this.lencode = null;\n        this.distcode = null;\n        this.lenbits = 0;\n        this.distbits = 0;\n        this.ncode = 0;\n        this.nlen = 0;\n        this.ndist = 0;\n        this.have = 0;\n        this.next = null;\n        this.lens = new utils.Buf16(320);\n        this.work = new utils.Buf16(288);\n        this.lendyn = null;\n        this.distdyn = null;\n        this.sane = 0;\n        this.back = 0;\n        this.was = 0;\n      }\n      function inflateResetKeep(strm) {\n        var state;\n        if (!strm || !strm.state) {\n          return Z_STREAM_ERROR;\n        }\n        state = strm.state;\n        strm.total_in = strm.total_out = state.total = 0;\n        strm.msg = "";\n        if (state.wrap) {\n          strm.adler = state.wrap & 1;\n        }\n        state.mode = HEAD;\n        state.last = 0;\n        state.havedict = 0;\n        state.dmax = 32768;\n        state.head = null;\n        state.hold = 0;\n        state.bits = 0;\n        state.lencode = state.lendyn = new utils.Buf32(ENOUGH_LENS);\n        state.distcode = state.distdyn = new utils.Buf32(ENOUGH_DISTS);\n        state.sane = 1;\n        state.back = -1;\n        return Z_OK;\n      }\n      function inflateReset(strm) {\n        var state;\n        if (!strm || !strm.state) {\n          return Z_STREAM_ERROR;\n        }\n        state = strm.state;\n        state.wsize = 0;\n        state.whave = 0;\n        state.wnext = 0;\n        return inflateResetKeep(strm);\n      }\n      function inflateReset2(strm, windowBits) {\n        var wrap;\n        var state;\n        if (!strm || !strm.state) {\n          return Z_STREAM_ERROR;\n        }\n        state = strm.state;\n        if (windowBits < 0) {\n          wrap = 0;\n          windowBits = -windowBits;\n        } else {\n          wrap = (windowBits >> 4) + 1;\n          if (windowBits < 48) {\n            windowBits &= 15;\n          }\n        }\n        if (windowBits && (windowBits < 8 || windowBits > 15)) {\n          return Z_STREAM_ERROR;\n        }\n        if (state.window !== null && state.wbits !== windowBits) {\n          state.window = null;\n        }\n        state.wrap = wrap;\n        state.wbits = windowBits;\n        return inflateReset(strm);\n      }\n      function inflateInit2(strm, windowBits) {\n        var ret;\n        var state;\n        if (!strm) {\n          return Z_STREAM_ERROR;\n        }\n        state = new InflateState();\n        strm.state = state;\n        state.window = null;\n        ret = inflateReset2(strm, windowBits);\n        if (ret !== Z_OK) {\n          strm.state = null;\n        }\n        return ret;\n      }\n      function inflateInit(strm) {\n        return inflateInit2(strm, DEF_WBITS);\n      }\n      var virgin = true;\n      var lenfix;\n      var distfix;\n      function fixedtables(state) {\n        if (virgin) {\n          var sym;\n          lenfix = new utils.Buf32(512);\n          distfix = new utils.Buf32(32);\n          sym = 0;\n          while (sym < 144) {\n            state.lens[sym++] = 8;\n          }\n          while (sym < 256) {\n            state.lens[sym++] = 9;\n          }\n          while (sym < 280) {\n            state.lens[sym++] = 7;\n          }\n          while (sym < 288) {\n            state.lens[sym++] = 8;\n          }\n          inflate_table(LENS, state.lens, 0, 288, lenfix, 0, state.work, { bits: 9 });\n          sym = 0;\n          while (sym < 32) {\n            state.lens[sym++] = 5;\n          }\n          inflate_table(DISTS, state.lens, 0, 32, distfix, 0, state.work, { bits: 5 });\n          virgin = false;\n        }\n        state.lencode = lenfix;\n        state.lenbits = 9;\n        state.distcode = distfix;\n        state.distbits = 5;\n      }\n      function updatewindow(strm, src, end, copy) {\n        var dist;\n        var state = strm.state;\n        if (state.window === null) {\n          state.wsize = 1 << state.wbits;\n          state.wnext = 0;\n          state.whave = 0;\n          state.window = new utils.Buf8(state.wsize);\n        }\n        if (copy >= state.wsize) {\n          utils.arraySet(state.window, src, end - state.wsize, state.wsize, 0);\n          state.wnext = 0;\n          state.whave = state.wsize;\n        } else {\n          dist = state.wsize - state.wnext;\n          if (dist > copy) {\n            dist = copy;\n          }\n          utils.arraySet(state.window, src, end - copy, dist, state.wnext);\n          copy -= dist;\n          if (copy) {\n            utils.arraySet(state.window, src, end - copy, copy, 0);\n            state.wnext = copy;\n            state.whave = state.wsize;\n          } else {\n            state.wnext += dist;\n            if (state.wnext === state.wsize) {\n              state.wnext = 0;\n            }\n            if (state.whave < state.wsize) {\n              state.whave += dist;\n            }\n          }\n        }\n        return 0;\n      }\n      function inflate(strm, flush) {\n        var state;\n        var input, output;\n        var next;\n        var put;\n        var have, left;\n        var hold;\n        var bits;\n        var _in, _out;\n        var copy;\n        var from;\n        var from_source;\n        var here = 0;\n        var here_bits, here_op, here_val;\n        var last_bits, last_op, last_val;\n        var len;\n        var ret;\n        var hbuf = new utils.Buf8(4);\n        var opts;\n        var n;\n        var order = (\n          /* permutation of code lengths */\n          [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]\n        );\n        if (!strm || !strm.state || !strm.output || !strm.input && strm.avail_in !== 0) {\n          return Z_STREAM_ERROR;\n        }\n        state = strm.state;\n        if (state.mode === TYPE) {\n          state.mode = TYPEDO;\n        }\n        put = strm.next_out;\n        output = strm.output;\n        left = strm.avail_out;\n        next = strm.next_in;\n        input = strm.input;\n        have = strm.avail_in;\n        hold = state.hold;\n        bits = state.bits;\n        _in = have;\n        _out = left;\n        ret = Z_OK;\n        inf_leave:\n          for (; ; ) {\n            switch (state.mode) {\n              case HEAD:\n                if (state.wrap === 0) {\n                  state.mode = TYPEDO;\n                  break;\n                }\n                while (bits < 16) {\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  have--;\n                  hold += input[next++] << bits;\n                  bits += 8;\n                }\n                if (state.wrap & 2 && hold === 35615) {\n                  state.check = 0;\n                  hbuf[0] = hold & 255;\n                  hbuf[1] = hold >>> 8 & 255;\n                  state.check = crc32(state.check, hbuf, 2, 0);\n                  hold = 0;\n                  bits = 0;\n                  state.mode = FLAGS;\n                  break;\n                }\n                state.flags = 0;\n                if (state.head) {\n                  state.head.done = false;\n                }\n                if (!(state.wrap & 1) || /* check if zlib header allowed */\n                (((hold & 255) << 8) + (hold >> 8)) % 31) {\n                  strm.msg = "incorrect header check";\n                  state.mode = BAD;\n                  break;\n                }\n                if ((hold & 15) !== Z_DEFLATED) {\n                  strm.msg = "unknown compression method";\n                  state.mode = BAD;\n                  break;\n                }\n                hold >>>= 4;\n                bits -= 4;\n                len = (hold & 15) + 8;\n                if (state.wbits === 0) {\n                  state.wbits = len;\n                } else if (len > state.wbits) {\n                  strm.msg = "invalid window size";\n                  state.mode = BAD;\n                  break;\n                }\n                state.dmax = 1 << len;\n                strm.adler = state.check = 1;\n                state.mode = hold & 512 ? DICTID : TYPE;\n                hold = 0;\n                bits = 0;\n                break;\n              case FLAGS:\n                while (bits < 16) {\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  have--;\n                  hold += input[next++] << bits;\n                  bits += 8;\n                }\n                state.flags = hold;\n                if ((state.flags & 255) !== Z_DEFLATED) {\n                  strm.msg = "unknown compression method";\n                  state.mode = BAD;\n                  break;\n                }\n                if (state.flags & 57344) {\n                  strm.msg = "unknown header flags set";\n                  state.mode = BAD;\n                  break;\n                }\n                if (state.head) {\n                  state.head.text = hold >> 8 & 1;\n                }\n                if (state.flags & 512) {\n                  hbuf[0] = hold & 255;\n                  hbuf[1] = hold >>> 8 & 255;\n                  state.check = crc32(state.check, hbuf, 2, 0);\n                }\n                hold = 0;\n                bits = 0;\n                state.mode = TIME;\n              /* falls through */\n              case TIME:\n                while (bits < 32) {\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  have--;\n                  hold += input[next++] << bits;\n                  bits += 8;\n                }\n                if (state.head) {\n                  state.head.time = hold;\n                }\n                if (state.flags & 512) {\n                  hbuf[0] = hold & 255;\n                  hbuf[1] = hold >>> 8 & 255;\n                  hbuf[2] = hold >>> 16 & 255;\n                  hbuf[3] = hold >>> 24 & 255;\n                  state.check = crc32(state.check, hbuf, 4, 0);\n                }\n                hold = 0;\n                bits = 0;\n                state.mode = OS;\n              /* falls through */\n              case OS:\n                while (bits < 16) {\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  have--;\n                  hold += input[next++] << bits;\n                  bits += 8;\n                }\n                if (state.head) {\n                  state.head.xflags = hold & 255;\n                  state.head.os = hold >> 8;\n                }\n                if (state.flags & 512) {\n                  hbuf[0] = hold & 255;\n                  hbuf[1] = hold >>> 8 & 255;\n                  state.check = crc32(state.check, hbuf, 2, 0);\n                }\n                hold = 0;\n                bits = 0;\n                state.mode = EXLEN;\n              /* falls through */\n              case EXLEN:\n                if (state.flags & 1024) {\n                  while (bits < 16) {\n                    if (have === 0) {\n                      break inf_leave;\n                    }\n                    have--;\n                    hold += input[next++] << bits;\n                    bits += 8;\n                  }\n                  state.length = hold;\n                  if (state.head) {\n                    state.head.extra_len = hold;\n                  }\n                  if (state.flags & 512) {\n                    hbuf[0] = hold & 255;\n                    hbuf[1] = hold >>> 8 & 255;\n                    state.check = crc32(state.check, hbuf, 2, 0);\n                  }\n                  hold = 0;\n                  bits = 0;\n                } else if (state.head) {\n                  state.head.extra = null;\n                }\n                state.mode = EXTRA;\n              /* falls through */\n              case EXTRA:\n                if (state.flags & 1024) {\n                  copy = state.length;\n                  if (copy > have) {\n                    copy = have;\n                  }\n                  if (copy) {\n                    if (state.head) {\n                      len = state.head.extra_len - state.length;\n                      if (!state.head.extra) {\n                        state.head.extra = new Array(state.head.extra_len);\n                      }\n                      utils.arraySet(\n                        state.head.extra,\n                        input,\n                        next,\n                        // extra field is limited to 65536 bytes\n                        // - no need for additional size check\n                        copy,\n                        /*len + copy > state.head.extra_max - len ? state.head.extra_max : copy,*/\n                        len\n                      );\n                    }\n                    if (state.flags & 512) {\n                      state.check = crc32(state.check, input, copy, next);\n                    }\n                    have -= copy;\n                    next += copy;\n                    state.length -= copy;\n                  }\n                  if (state.length) {\n                    break inf_leave;\n                  }\n                }\n                state.length = 0;\n                state.mode = NAME;\n              /* falls through */\n              case NAME:\n                if (state.flags & 2048) {\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  copy = 0;\n                  do {\n                    len = input[next + copy++];\n                    if (state.head && len && state.length < 65536) {\n                      state.head.name += String.fromCharCode(len);\n                    }\n                  } while (len && copy < have);\n                  if (state.flags & 512) {\n                    state.check = crc32(state.check, input, copy, next);\n                  }\n                  have -= copy;\n                  next += copy;\n                  if (len) {\n                    break inf_leave;\n                  }\n                } else if (state.head) {\n                  state.head.name = null;\n                }\n                state.length = 0;\n                state.mode = COMMENT;\n              /* falls through */\n              case COMMENT:\n                if (state.flags & 4096) {\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  copy = 0;\n                  do {\n                    len = input[next + copy++];\n                    if (state.head && len && state.length < 65536) {\n                      state.head.comment += String.fromCharCode(len);\n                    }\n                  } while (len && copy < have);\n                  if (state.flags & 512) {\n                    state.check = crc32(state.check, input, copy, next);\n                  }\n                  have -= copy;\n                  next += copy;\n                  if (len) {\n                    break inf_leave;\n                  }\n                } else if (state.head) {\n                  state.head.comment = null;\n                }\n                state.mode = HCRC;\n              /* falls through */\n              case HCRC:\n                if (state.flags & 512) {\n                  while (bits < 16) {\n                    if (have === 0) {\n                      break inf_leave;\n                    }\n                    have--;\n                    hold += input[next++] << bits;\n                    bits += 8;\n                  }\n                  if (hold !== (state.check & 65535)) {\n                    strm.msg = "header crc mismatch";\n                    state.mode = BAD;\n                    break;\n                  }\n                  hold = 0;\n                  bits = 0;\n                }\n                if (state.head) {\n                  state.head.hcrc = state.flags >> 9 & 1;\n                  state.head.done = true;\n                }\n                strm.adler = state.check = 0;\n                state.mode = TYPE;\n                break;\n              case DICTID:\n                while (bits < 32) {\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  have--;\n                  hold += input[next++] << bits;\n                  bits += 8;\n                }\n                strm.adler = state.check = zswap32(hold);\n                hold = 0;\n                bits = 0;\n                state.mode = DICT;\n              /* falls through */\n              case DICT:\n                if (state.havedict === 0) {\n                  strm.next_out = put;\n                  strm.avail_out = left;\n                  strm.next_in = next;\n                  strm.avail_in = have;\n                  state.hold = hold;\n                  state.bits = bits;\n                  return Z_NEED_DICT;\n                }\n                strm.adler = state.check = 1;\n                state.mode = TYPE;\n              /* falls through */\n              case TYPE:\n                if (flush === Z_BLOCK || flush === Z_TREES) {\n                  break inf_leave;\n                }\n              /* falls through */\n              case TYPEDO:\n                if (state.last) {\n                  hold >>>= bits & 7;\n                  bits -= bits & 7;\n                  state.mode = CHECK;\n                  break;\n                }\n                while (bits < 3) {\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  have--;\n                  hold += input[next++] << bits;\n                  bits += 8;\n                }\n                state.last = hold & 1;\n                hold >>>= 1;\n                bits -= 1;\n                switch (hold & 3) {\n                  case 0:\n                    state.mode = STORED;\n                    break;\n                  case 1:\n                    fixedtables(state);\n                    state.mode = LEN_;\n                    if (flush === Z_TREES) {\n                      hold >>>= 2;\n                      bits -= 2;\n                      break inf_leave;\n                    }\n                    break;\n                  case 2:\n                    state.mode = TABLE;\n                    break;\n                  case 3:\n                    strm.msg = "invalid block type";\n                    state.mode = BAD;\n                }\n                hold >>>= 2;\n                bits -= 2;\n                break;\n              case STORED:\n                hold >>>= bits & 7;\n                bits -= bits & 7;\n                while (bits < 32) {\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  have--;\n                  hold += input[next++] << bits;\n                  bits += 8;\n                }\n                if ((hold & 65535) !== (hold >>> 16 ^ 65535)) {\n                  strm.msg = "invalid stored block lengths";\n                  state.mode = BAD;\n                  break;\n                }\n                state.length = hold & 65535;\n                hold = 0;\n                bits = 0;\n                state.mode = COPY_;\n                if (flush === Z_TREES) {\n                  break inf_leave;\n                }\n              /* falls through */\n              case COPY_:\n                state.mode = COPY;\n              /* falls through */\n              case COPY:\n                copy = state.length;\n                if (copy) {\n                  if (copy > have) {\n                    copy = have;\n                  }\n                  if (copy > left) {\n                    copy = left;\n                  }\n                  if (copy === 0) {\n                    break inf_leave;\n                  }\n                  utils.arraySet(output, input, next, copy, put);\n                  have -= copy;\n                  next += copy;\n                  left -= copy;\n                  put += copy;\n                  state.length -= copy;\n                  break;\n                }\n                state.mode = TYPE;\n                break;\n              case TABLE:\n                while (bits < 14) {\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  have--;\n                  hold += input[next++] << bits;\n                  bits += 8;\n                }\n                state.nlen = (hold & 31) + 257;\n                hold >>>= 5;\n                bits -= 5;\n                state.ndist = (hold & 31) + 1;\n                hold >>>= 5;\n                bits -= 5;\n                state.ncode = (hold & 15) + 4;\n                hold >>>= 4;\n                bits -= 4;\n                if (state.nlen > 286 || state.ndist > 30) {\n                  strm.msg = "too many length or distance symbols";\n                  state.mode = BAD;\n                  break;\n                }\n                state.have = 0;\n                state.mode = LENLENS;\n              /* falls through */\n              case LENLENS:\n                while (state.have < state.ncode) {\n                  while (bits < 3) {\n                    if (have === 0) {\n                      break inf_leave;\n                    }\n                    have--;\n                    hold += input[next++] << bits;\n                    bits += 8;\n                  }\n                  state.lens[order[state.have++]] = hold & 7;\n                  hold >>>= 3;\n                  bits -= 3;\n                }\n                while (state.have < 19) {\n                  state.lens[order[state.have++]] = 0;\n                }\n                state.lencode = state.lendyn;\n                state.lenbits = 7;\n                opts = { bits: state.lenbits };\n                ret = inflate_table(CODES, state.lens, 0, 19, state.lencode, 0, state.work, opts);\n                state.lenbits = opts.bits;\n                if (ret) {\n                  strm.msg = "invalid code lengths set";\n                  state.mode = BAD;\n                  break;\n                }\n                state.have = 0;\n                state.mode = CODELENS;\n              /* falls through */\n              case CODELENS:\n                while (state.have < state.nlen + state.ndist) {\n                  for (; ; ) {\n                    here = state.lencode[hold & (1 << state.lenbits) - 1];\n                    here_bits = here >>> 24;\n                    here_op = here >>> 16 & 255;\n                    here_val = here & 65535;\n                    if (here_bits <= bits) {\n                      break;\n                    }\n                    if (have === 0) {\n                      break inf_leave;\n                    }\n                    have--;\n                    hold += input[next++] << bits;\n                    bits += 8;\n                  }\n                  if (here_val < 16) {\n                    hold >>>= here_bits;\n                    bits -= here_bits;\n                    state.lens[state.have++] = here_val;\n                  } else {\n                    if (here_val === 16) {\n                      n = here_bits + 2;\n                      while (bits < n) {\n                        if (have === 0) {\n                          break inf_leave;\n                        }\n                        have--;\n                        hold += input[next++] << bits;\n                        bits += 8;\n                      }\n                      hold >>>= here_bits;\n                      bits -= here_bits;\n                      if (state.have === 0) {\n                        strm.msg = "invalid bit length repeat";\n                        state.mode = BAD;\n                        break;\n                      }\n                      len = state.lens[state.have - 1];\n                      copy = 3 + (hold & 3);\n                      hold >>>= 2;\n                      bits -= 2;\n                    } else if (here_val === 17) {\n                      n = here_bits + 3;\n                      while (bits < n) {\n                        if (have === 0) {\n                          break inf_leave;\n                        }\n                        have--;\n                        hold += input[next++] << bits;\n                        bits += 8;\n                      }\n                      hold >>>= here_bits;\n                      bits -= here_bits;\n                      len = 0;\n                      copy = 3 + (hold & 7);\n                      hold >>>= 3;\n                      bits -= 3;\n                    } else {\n                      n = here_bits + 7;\n                      while (bits < n) {\n                        if (have === 0) {\n                          break inf_leave;\n                        }\n                        have--;\n                        hold += input[next++] << bits;\n                        bits += 8;\n                      }\n                      hold >>>= here_bits;\n                      bits -= here_bits;\n                      len = 0;\n                      copy = 11 + (hold & 127);\n                      hold >>>= 7;\n                      bits -= 7;\n                    }\n                    if (state.have + copy > state.nlen + state.ndist) {\n                      strm.msg = "invalid bit length repeat";\n                      state.mode = BAD;\n                      break;\n                    }\n                    while (copy--) {\n                      state.lens[state.have++] = len;\n                    }\n                  }\n                }\n                if (state.mode === BAD) {\n                  break;\n                }\n                if (state.lens[256] === 0) {\n                  strm.msg = "invalid code -- missing end-of-block";\n                  state.mode = BAD;\n                  break;\n                }\n                state.lenbits = 9;\n                opts = { bits: state.lenbits };\n                ret = inflate_table(LENS, state.lens, 0, state.nlen, state.lencode, 0, state.work, opts);\n                state.lenbits = opts.bits;\n                if (ret) {\n                  strm.msg = "invalid literal/lengths set";\n                  state.mode = BAD;\n                  break;\n                }\n                state.distbits = 6;\n                state.distcode = state.distdyn;\n                opts = { bits: state.distbits };\n                ret = inflate_table(DISTS, state.lens, state.nlen, state.ndist, state.distcode, 0, state.work, opts);\n                state.distbits = opts.bits;\n                if (ret) {\n                  strm.msg = "invalid distances set";\n                  state.mode = BAD;\n                  break;\n                }\n                state.mode = LEN_;\n                if (flush === Z_TREES) {\n                  break inf_leave;\n                }\n              /* falls through */\n              case LEN_:\n                state.mode = LEN;\n              /* falls through */\n              case LEN:\n                if (have >= 6 && left >= 258) {\n                  strm.next_out = put;\n                  strm.avail_out = left;\n                  strm.next_in = next;\n                  strm.avail_in = have;\n                  state.hold = hold;\n                  state.bits = bits;\n                  inflate_fast(strm, _out);\n                  put = strm.next_out;\n                  output = strm.output;\n                  left = strm.avail_out;\n                  next = strm.next_in;\n                  input = strm.input;\n                  have = strm.avail_in;\n                  hold = state.hold;\n                  bits = state.bits;\n                  if (state.mode === TYPE) {\n                    state.back = -1;\n                  }\n                  break;\n                }\n                state.back = 0;\n                for (; ; ) {\n                  here = state.lencode[hold & (1 << state.lenbits) - 1];\n                  here_bits = here >>> 24;\n                  here_op = here >>> 16 & 255;\n                  here_val = here & 65535;\n                  if (here_bits <= bits) {\n                    break;\n                  }\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  have--;\n                  hold += input[next++] << bits;\n                  bits += 8;\n                }\n                if (here_op && (here_op & 240) === 0) {\n                  last_bits = here_bits;\n                  last_op = here_op;\n                  last_val = here_val;\n                  for (; ; ) {\n                    here = state.lencode[last_val + ((hold & (1 << last_bits + last_op) - 1) >> last_bits)];\n                    here_bits = here >>> 24;\n                    here_op = here >>> 16 & 255;\n                    here_val = here & 65535;\n                    if (last_bits + here_bits <= bits) {\n                      break;\n                    }\n                    if (have === 0) {\n                      break inf_leave;\n                    }\n                    have--;\n                    hold += input[next++] << bits;\n                    bits += 8;\n                  }\n                  hold >>>= last_bits;\n                  bits -= last_bits;\n                  state.back += last_bits;\n                }\n                hold >>>= here_bits;\n                bits -= here_bits;\n                state.back += here_bits;\n                state.length = here_val;\n                if (here_op === 0) {\n                  state.mode = LIT;\n                  break;\n                }\n                if (here_op & 32) {\n                  state.back = -1;\n                  state.mode = TYPE;\n                  break;\n                }\n                if (here_op & 64) {\n                  strm.msg = "invalid literal/length code";\n                  state.mode = BAD;\n                  break;\n                }\n                state.extra = here_op & 15;\n                state.mode = LENEXT;\n              /* falls through */\n              case LENEXT:\n                if (state.extra) {\n                  n = state.extra;\n                  while (bits < n) {\n                    if (have === 0) {\n                      break inf_leave;\n                    }\n                    have--;\n                    hold += input[next++] << bits;\n                    bits += 8;\n                  }\n                  state.length += hold & (1 << state.extra) - 1;\n                  hold >>>= state.extra;\n                  bits -= state.extra;\n                  state.back += state.extra;\n                }\n                state.was = state.length;\n                state.mode = DIST;\n              /* falls through */\n              case DIST:\n                for (; ; ) {\n                  here = state.distcode[hold & (1 << state.distbits) - 1];\n                  here_bits = here >>> 24;\n                  here_op = here >>> 16 & 255;\n                  here_val = here & 65535;\n                  if (here_bits <= bits) {\n                    break;\n                  }\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  have--;\n                  hold += input[next++] << bits;\n                  bits += 8;\n                }\n                if ((here_op & 240) === 0) {\n                  last_bits = here_bits;\n                  last_op = here_op;\n                  last_val = here_val;\n                  for (; ; ) {\n                    here = state.distcode[last_val + ((hold & (1 << last_bits + last_op) - 1) >> last_bits)];\n                    here_bits = here >>> 24;\n                    here_op = here >>> 16 & 255;\n                    here_val = here & 65535;\n                    if (last_bits + here_bits <= bits) {\n                      break;\n                    }\n                    if (have === 0) {\n                      break inf_leave;\n                    }\n                    have--;\n                    hold += input[next++] << bits;\n                    bits += 8;\n                  }\n                  hold >>>= last_bits;\n                  bits -= last_bits;\n                  state.back += last_bits;\n                }\n                hold >>>= here_bits;\n                bits -= here_bits;\n                state.back += here_bits;\n                if (here_op & 64) {\n                  strm.msg = "invalid distance code";\n                  state.mode = BAD;\n                  break;\n                }\n                state.offset = here_val;\n                state.extra = here_op & 15;\n                state.mode = DISTEXT;\n              /* falls through */\n              case DISTEXT:\n                if (state.extra) {\n                  n = state.extra;\n                  while (bits < n) {\n                    if (have === 0) {\n                      break inf_leave;\n                    }\n                    have--;\n                    hold += input[next++] << bits;\n                    bits += 8;\n                  }\n                  state.offset += hold & (1 << state.extra) - 1;\n                  hold >>>= state.extra;\n                  bits -= state.extra;\n                  state.back += state.extra;\n                }\n                if (state.offset > state.dmax) {\n                  strm.msg = "invalid distance too far back";\n                  state.mode = BAD;\n                  break;\n                }\n                state.mode = MATCH;\n              /* falls through */\n              case MATCH:\n                if (left === 0) {\n                  break inf_leave;\n                }\n                copy = _out - left;\n                if (state.offset > copy) {\n                  copy = state.offset - copy;\n                  if (copy > state.whave) {\n                    if (state.sane) {\n                      strm.msg = "invalid distance too far back";\n                      state.mode = BAD;\n                      break;\n                    }\n                  }\n                  if (copy > state.wnext) {\n                    copy -= state.wnext;\n                    from = state.wsize - copy;\n                  } else {\n                    from = state.wnext - copy;\n                  }\n                  if (copy > state.length) {\n                    copy = state.length;\n                  }\n                  from_source = state.window;\n                } else {\n                  from_source = output;\n                  from = put - state.offset;\n                  copy = state.length;\n                }\n                if (copy > left) {\n                  copy = left;\n                }\n                left -= copy;\n                state.length -= copy;\n                do {\n                  output[put++] = from_source[from++];\n                } while (--copy);\n                if (state.length === 0) {\n                  state.mode = LEN;\n                }\n                break;\n              case LIT:\n                if (left === 0) {\n                  break inf_leave;\n                }\n                output[put++] = state.length;\n                left--;\n                state.mode = LEN;\n                break;\n              case CHECK:\n                if (state.wrap) {\n                  while (bits < 32) {\n                    if (have === 0) {\n                      break inf_leave;\n                    }\n                    have--;\n                    hold |= input[next++] << bits;\n                    bits += 8;\n                  }\n                  _out -= left;\n                  strm.total_out += _out;\n                  state.total += _out;\n                  if (_out) {\n                    strm.adler = state.check = /*UPDATE(state.check, put - _out, _out);*/\n                    state.flags ? crc32(state.check, output, _out, put - _out) : adler32(state.check, output, _out, put - _out);\n                  }\n                  _out = left;\n                  if ((state.flags ? hold : zswap32(hold)) !== state.check) {\n                    strm.msg = "incorrect data check";\n                    state.mode = BAD;\n                    break;\n                  }\n                  hold = 0;\n                  bits = 0;\n                }\n                state.mode = LENGTH;\n              /* falls through */\n              case LENGTH:\n                if (state.wrap && state.flags) {\n                  while (bits < 32) {\n                    if (have === 0) {\n                      break inf_leave;\n                    }\n                    have--;\n                    hold += input[next++] << bits;\n                    bits += 8;\n                  }\n                  if (hold !== (state.total & 4294967295)) {\n                    strm.msg = "incorrect length check";\n                    state.mode = BAD;\n                    break;\n                  }\n                  hold = 0;\n                  bits = 0;\n                }\n                state.mode = DONE;\n              /* falls through */\n              case DONE:\n                ret = Z_STREAM_END;\n                break inf_leave;\n              case BAD:\n                ret = Z_DATA_ERROR;\n                break inf_leave;\n              case MEM:\n                return Z_MEM_ERROR;\n              case SYNC:\n              /* falls through */\n              default:\n                return Z_STREAM_ERROR;\n            }\n          }\n        strm.next_out = put;\n        strm.avail_out = left;\n        strm.next_in = next;\n        strm.avail_in = have;\n        state.hold = hold;\n        state.bits = bits;\n        if (state.wsize || _out !== strm.avail_out && state.mode < BAD && (state.mode < CHECK || flush !== Z_FINISH)) {\n          if (updatewindow(strm, strm.output, strm.next_out, _out - strm.avail_out)) {\n            state.mode = MEM;\n            return Z_MEM_ERROR;\n          }\n        }\n        _in -= strm.avail_in;\n        _out -= strm.avail_out;\n        strm.total_in += _in;\n        strm.total_out += _out;\n        state.total += _out;\n        if (state.wrap && _out) {\n          strm.adler = state.check = /*UPDATE(state.check, strm.next_out - _out, _out);*/\n          state.flags ? crc32(state.check, output, _out, strm.next_out - _out) : adler32(state.check, output, _out, strm.next_out - _out);\n        }\n        strm.data_type = state.bits + (state.last ? 64 : 0) + (state.mode === TYPE ? 128 : 0) + (state.mode === LEN_ || state.mode === COPY_ ? 256 : 0);\n        if ((_in === 0 && _out === 0 || flush === Z_FINISH) && ret === Z_OK) {\n          ret = Z_BUF_ERROR;\n        }\n        return ret;\n      }\n      function inflateEnd(strm) {\n        if (!strm || !strm.state) {\n          return Z_STREAM_ERROR;\n        }\n        var state = strm.state;\n        if (state.window) {\n          state.window = null;\n        }\n        strm.state = null;\n        return Z_OK;\n      }\n      function inflateGetHeader(strm, head) {\n        var state;\n        if (!strm || !strm.state) {\n          return Z_STREAM_ERROR;\n        }\n        state = strm.state;\n        if ((state.wrap & 2) === 0) {\n          return Z_STREAM_ERROR;\n        }\n        state.head = head;\n        head.done = false;\n        return Z_OK;\n      }\n      function inflateSetDictionary(strm, dictionary) {\n        var dictLength = dictionary.length;\n        var state;\n        var dictid;\n        var ret;\n        if (!strm || !strm.state) {\n          return Z_STREAM_ERROR;\n        }\n        state = strm.state;\n        if (state.wrap !== 0 && state.mode !== DICT) {\n          return Z_STREAM_ERROR;\n        }\n        if (state.mode === DICT) {\n          dictid = 1;\n          dictid = adler32(dictid, dictionary, dictLength, 0);\n          if (dictid !== state.check) {\n            return Z_DATA_ERROR;\n          }\n        }\n        ret = updatewindow(strm, dictionary, dictLength, dictLength);\n        if (ret) {\n          state.mode = MEM;\n          return Z_MEM_ERROR;\n        }\n        state.havedict = 1;\n        return Z_OK;\n      }\n      exports.inflateReset = inflateReset;\n      exports.inflateReset2 = inflateReset2;\n      exports.inflateResetKeep = inflateResetKeep;\n      exports.inflateInit = inflateInit;\n      exports.inflateInit2 = inflateInit2;\n      exports.inflate = inflate;\n      exports.inflateEnd = inflateEnd;\n      exports.inflateGetHeader = inflateGetHeader;\n      exports.inflateSetDictionary = inflateSetDictionary;\n      exports.inflateInfo = "pako inflate (from Nodeca project)";\n    }\n  });\n\n  // node_modules/pako/lib/zlib/constants.js\n  var require_constants = __commonJS({\n    "node_modules/pako/lib/zlib/constants.js"(exports, module) {\n      "use strict";\n      module.exports = {\n        /* Allowed flush values; see deflate() and inflate() below for details */\n        Z_NO_FLUSH: 0,\n        Z_PARTIAL_FLUSH: 1,\n        Z_SYNC_FLUSH: 2,\n        Z_FULL_FLUSH: 3,\n        Z_FINISH: 4,\n        Z_BLOCK: 5,\n        Z_TREES: 6,\n        /* Return codes for the compression/decompression functions. Negative values\n        * are errors, positive values are used for special but normal events.\n        */\n        Z_OK: 0,\n        Z_STREAM_END: 1,\n        Z_NEED_DICT: 2,\n        Z_ERRNO: -1,\n        Z_STREAM_ERROR: -2,\n        Z_DATA_ERROR: -3,\n        //Z_MEM_ERROR:     -4,\n        Z_BUF_ERROR: -5,\n        //Z_VERSION_ERROR: -6,\n        /* compression levels */\n        Z_NO_COMPRESSION: 0,\n        Z_BEST_SPEED: 1,\n        Z_BEST_COMPRESSION: 9,\n        Z_DEFAULT_COMPRESSION: -1,\n        Z_FILTERED: 1,\n        Z_HUFFMAN_ONLY: 2,\n        Z_RLE: 3,\n        Z_FIXED: 4,\n        Z_DEFAULT_STRATEGY: 0,\n        /* Possible values of the data_type field (though see inflate()) */\n        Z_BINARY: 0,\n        Z_TEXT: 1,\n        //Z_ASCII:                1, // = Z_TEXT (deprecated)\n        Z_UNKNOWN: 2,\n        /* The deflate compression method */\n        Z_DEFLATED: 8\n        //Z_NULL:                 null // Use -1 or null inline, depending on var type\n      };\n    }\n  });\n\n  // node_modules/pako/lib/zlib/gzheader.js\n  var require_gzheader = __commonJS({\n    "node_modules/pako/lib/zlib/gzheader.js"(exports, module) {\n      "use strict";\n      function GZheader() {\n        this.text = 0;\n        this.time = 0;\n        this.xflags = 0;\n        this.os = 0;\n        this.extra = null;\n        this.extra_len = 0;\n        this.name = "";\n        this.comment = "";\n        this.hcrc = 0;\n        this.done = false;\n      }\n      module.exports = GZheader;\n    }\n  });\n\n  // node_modules/pako/lib/inflate.js\n  var require_inflate2 = __commonJS({\n    "node_modules/pako/lib/inflate.js"(exports) {\n      "use strict";\n      var zlib_inflate = require_inflate();\n      var utils = require_common();\n      var strings = require_strings();\n      var c = require_constants();\n      var msg = require_messages();\n      var ZStream = require_zstream();\n      var GZheader = require_gzheader();\n      var toString = Object.prototype.toString;\n      function Inflate2(options) {\n        if (!(this instanceof Inflate2)) return new Inflate2(options);\n        this.options = utils.assign({\n          chunkSize: 16384,\n          windowBits: 0,\n          to: ""\n        }, options || {});\n        var opt = this.options;\n        if (opt.raw && opt.windowBits >= 0 && opt.windowBits < 16) {\n          opt.windowBits = -opt.windowBits;\n          if (opt.windowBits === 0) {\n            opt.windowBits = -15;\n          }\n        }\n        if (opt.windowBits >= 0 && opt.windowBits < 16 && !(options && options.windowBits)) {\n          opt.windowBits += 32;\n        }\n        if (opt.windowBits > 15 && opt.windowBits < 48) {\n          if ((opt.windowBits & 15) === 0) {\n            opt.windowBits |= 15;\n          }\n        }\n        this.err = 0;\n        this.msg = "";\n        this.ended = false;\n        this.chunks = [];\n        this.strm = new ZStream();\n        this.strm.avail_out = 0;\n        var status = zlib_inflate.inflateInit2(\n          this.strm,\n          opt.windowBits\n        );\n        if (status !== c.Z_OK) {\n          throw new Error(msg[status]);\n        }\n        this.header = new GZheader();\n        zlib_inflate.inflateGetHeader(this.strm, this.header);\n        if (opt.dictionary) {\n          if (typeof opt.dictionary === "string") {\n            opt.dictionary = strings.string2buf(opt.dictionary);\n          } else if (toString.call(opt.dictionary) === "[object ArrayBuffer]") {\n            opt.dictionary = new Uint8Array(opt.dictionary);\n          }\n          if (opt.raw) {\n            status = zlib_inflate.inflateSetDictionary(this.strm, opt.dictionary);\n            if (status !== c.Z_OK) {\n              throw new Error(msg[status]);\n            }\n          }\n        }\n      }\n      Inflate2.prototype.push = function(data, mode) {\n        var strm = this.strm;\n        var chunkSize = this.options.chunkSize;\n        var dictionary = this.options.dictionary;\n        var status, _mode;\n        var next_out_utf8, tail, utf8str;\n        var allowBufError = false;\n        if (this.ended) {\n          return false;\n        }\n        _mode = mode === ~~mode ? mode : mode === true ? c.Z_FINISH : c.Z_NO_FLUSH;\n        if (typeof data === "string") {\n          strm.input = strings.binstring2buf(data);\n        } else if (toString.call(data) === "[object ArrayBuffer]") {\n          strm.input = new Uint8Array(data);\n        } else {\n          strm.input = data;\n        }\n        strm.next_in = 0;\n        strm.avail_in = strm.input.length;\n        do {\n          if (strm.avail_out === 0) {\n            strm.output = new utils.Buf8(chunkSize);\n            strm.next_out = 0;\n            strm.avail_out = chunkSize;\n          }\n          status = zlib_inflate.inflate(strm, c.Z_NO_FLUSH);\n          if (status === c.Z_NEED_DICT && dictionary) {\n            status = zlib_inflate.inflateSetDictionary(this.strm, dictionary);\n          }\n          if (status === c.Z_BUF_ERROR && allowBufError === true) {\n            status = c.Z_OK;\n            allowBufError = false;\n          }\n          if (status !== c.Z_STREAM_END && status !== c.Z_OK) {\n            this.onEnd(status);\n            this.ended = true;\n            return false;\n          }\n          if (strm.next_out) {\n            if (strm.avail_out === 0 || status === c.Z_STREAM_END || strm.avail_in === 0 && (_mode === c.Z_FINISH || _mode === c.Z_SYNC_FLUSH)) {\n              if (this.options.to === "string") {\n                next_out_utf8 = strings.utf8border(strm.output, strm.next_out);\n                tail = strm.next_out - next_out_utf8;\n                utf8str = strings.buf2string(strm.output, next_out_utf8);\n                strm.next_out = tail;\n                strm.avail_out = chunkSize - tail;\n                if (tail) {\n                  utils.arraySet(strm.output, strm.output, next_out_utf8, tail, 0);\n                }\n                this.onData(utf8str);\n              } else {\n                this.onData(utils.shrinkBuf(strm.output, strm.next_out));\n              }\n            }\n          }\n          if (strm.avail_in === 0 && strm.avail_out === 0) {\n            allowBufError = true;\n          }\n        } while ((strm.avail_in > 0 || strm.avail_out === 0) && status !== c.Z_STREAM_END);\n        if (status === c.Z_STREAM_END) {\n          _mode = c.Z_FINISH;\n        }\n        if (_mode === c.Z_FINISH) {\n          status = zlib_inflate.inflateEnd(this.strm);\n          this.onEnd(status);\n          this.ended = true;\n          return status === c.Z_OK;\n        }\n        if (_mode === c.Z_SYNC_FLUSH) {\n          this.onEnd(c.Z_OK);\n          strm.avail_out = 0;\n          return true;\n        }\n        return true;\n      };\n      Inflate2.prototype.onData = function(chunk) {\n        this.chunks.push(chunk);\n      };\n      Inflate2.prototype.onEnd = function(status) {\n        if (status === c.Z_OK) {\n          if (this.options.to === "string") {\n            this.result = this.chunks.join("");\n          } else {\n            this.result = utils.flattenChunks(this.chunks);\n          }\n        }\n        this.chunks = [];\n        this.err = status;\n        this.msg = this.strm.msg;\n      };\n      function inflate(input, options) {\n        var inflator = new Inflate2(options);\n        inflator.push(input, true);\n        if (inflator.err) {\n          throw inflator.msg || msg[inflator.err];\n        }\n        return inflator.result;\n      }\n      function inflateRaw(input, options) {\n        options = options || {};\n        options.raw = true;\n        return inflate(input, options);\n      }\n      exports.Inflate = Inflate2;\n      exports.inflate = inflate;\n      exports.inflateRaw = inflateRaw;\n      exports.ungzip = inflate;\n    }\n  });\n\n  // node_modules/pako/index.js\n  var require_pako = __commonJS({\n    "node_modules/pako/index.js"(exports, module) {\n      "use strict";\n      var assign = require_common().assign;\n      var deflate = require_deflate2();\n      var inflate = require_inflate2();\n      var constants = require_constants();\n      var pako = {};\n      assign(pako, deflate, inflate, constants);\n      module.exports = pako;\n    }\n  });\n\n  // src/sticky-model.ts\n  var STICKY_UNIT = 1e3;\n  var PRIMARY_TEXT_BOX = "primary";\n  var STICKY_FONTS = {\n    sans: { label: "Sans serif", family: "sans-serif" },\n    serif: { label: "Serif", family: "serif" },\n    mono: { label: "Monospace", family: "monospace" },\n    song: { label: "Song / \\u5B8B\\u4F53", family: \'"Songti SC", SimSun, serif\' },\n    kai: { label: "Kai / \\u6977\\u4F53", family: "KaiTi, STKaiti, serif" }\n  };\n  function stickyFontSize(size) {\n    return typeof size === "number" && Number.isFinite(size) ? Math.round(Math.max(8, Math.min(144, size)) * 10) / 10 : 20;\n  }\n  function normalizeTextStyle(style) {\n    return {\n      fontSize: style.fontSize === void 0 ? void 0 : stickyFontSize(style.fontSize),\n      fontFamily: style.fontFamily && Object.prototype.hasOwnProperty.call(STICKY_FONTS, style.fontFamily) ? style.fontFamily : void 0,\n      bold: style.bold === true,\n      italic: style.italic === true,\n      scaleText: style.scaleText === true\n    };\n  }\n  function compareStickyOrder(a, b) {\n    return a.createdAt - b.createdAt || a.id.localeCompare(b.id);\n  }\n  function stickyTextBoxes(note) {\n    var _a, _b, _c, _d;\n    return [{\n      id: PRIMARY_TEXT_BOX,\n      text: note.text,\n      x: (_a = note.textX) != null ? _a : 16,\n      y: (_b = note.textY) != null ? _b : 16,\n      width: (_c = note.textWidth) != null ? _c : Math.max(60, note.width * note.boardPageWidth - 32),\n      height: note.textHeight,\n      fontSize: note.textFontSize,\n      fontFamily: note.textFontFamily,\n      bold: note.textBold,\n      italic: note.textItalic,\n      scaleText: note.textScaleText,\n      createdAt: note.createdAt,\n      updatedAt: note.textUpdatedAt\n    }, ...(_d = note.textBoxes) != null ? _d : []];\n  }\n  function cloneSticky(note) {\n    var _a;\n    return {\n      ...note,\n      textBoxes: (_a = note.textBoxes) == null ? void 0 : _a.map((box) => ({ ...box })),\n      deletedTextBoxes: { ...note.deletedTextBoxes },\n      deletedStrokeIds: [...note.deletedStrokeIds],\n      strokes: note.strokes.map((stroke) => {\n        var _a2;\n        return {\n          ...stroke,\n          points: stroke.points.map((point) => ({ ...point })),\n          dynamics: stroke.dynamics ? {\n            ...stroke.dynamics,\n            pressureCurve: (_a2 = stroke.dynamics.pressureCurve) == null ? void 0 : _a2.map((point) => [...point])\n          } : void 0\n        };\n      })\n    };\n  }\n  function mergeSticky(a, b) {\n    var _a, _b, _c, _d;\n    const latest = b.updatedAt > a.updatedAt || b.updatedAt === a.updatedAt && JSON.stringify(b) > JSON.stringify(a) ? b : a;\n    const text = b.textUpdatedAt > a.textUpdatedAt || b.textUpdatedAt === a.textUpdatedAt && JSON.stringify(stickyTextBoxes(b)[0]) > JSON.stringify(stickyTextBoxes(a)[0]) ? b : a;\n    const deletedTextBoxes = { ...a.deletedTextBoxes };\n    for (const [id, time] of Object.entries((_a = b.deletedTextBoxes) != null ? _a : {})) deletedTextBoxes[id] = Math.max((_b = deletedTextBoxes[id]) != null ? _b : 0, time);\n    const boxes = /* @__PURE__ */ new Map();\n    for (const box of [...(_c = a.textBoxes) != null ? _c : [], ...(_d = b.textBoxes) != null ? _d : []]) {\n      const previous = boxes.get(box.id);\n      if (!deletedTextBoxes[box.id] && (!previous || box.updatedAt > previous.updatedAt || box.updatedAt === previous.updatedAt && JSON.stringify(box) > JSON.stringify(previous))) boxes.set(box.id, { ...box });\n    }\n    const removed = /* @__PURE__ */ new Set([...a.deletedStrokeIds, ...b.deletedStrokeIds]);\n    const strokes = /* @__PURE__ */ new Map();\n    for (const stroke of [...a.strokes, ...b.strokes]) {\n      const previous = strokes.get(stroke.id);\n      if (!removed.has(stroke.id) && (!previous || stroke.updatedAt > previous.updatedAt || stroke.updatedAt === previous.updatedAt && JSON.stringify(stroke) > JSON.stringify(previous))) strokes.set(stroke.id, stroke);\n    }\n    return {\n      ...latest,\n      text: text.text,\n      textUpdatedAt: text.textUpdatedAt,\n      textX: text.textX,\n      textY: text.textY,\n      textWidth: text.textWidth,\n      textHeight: text.textHeight,\n      textFontSize: text.textFontSize,\n      textFontFamily: text.textFontFamily,\n      textBold: text.textBold,\n      textItalic: text.textItalic,\n      textScaleText: text.textScaleText,\n      textBoxes: [...boxes.values()].sort((x, y) => x.createdAt - y.createdAt || x.id.localeCompare(y.id)),\n      deletedTextBoxes,\n      strokes: [...strokes.values()].sort((x, y) => x.createdAt - y.createdAt || x.id.localeCompare(y.id)),\n      deletedStrokeIds: [...removed]\n    };\n  }\n  function normalizeSticky(value, pageId) {\n    var _a;\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    if (typeof raw.id !== "string" || ![raw.x, raw.y, raw.width, raw.height].every((n) => typeof n === "number" && Number.isFinite(n))) return null;\n    const positive = (n, fallback) => typeof n === "number" && Number.isFinite(n) && n > 0 ? n : fallback;\n    const string = (n) => typeof n === "string" ? n : "";\n    const position = (n, fallback) => typeof n === "number" && Number.isFinite(n) ? Math.max(0, n) : fallback;\n    const deletedTextBoxes = Object.fromEntries(Object.entries((_a = raw.deletedTextBoxes) != null ? _a : {}).filter(([id, time]) => id !== PRIMARY_TEXT_BOX && typeof time === "number" && Number.isFinite(time) && time > 0));\n    const boxes = /* @__PURE__ */ new Map();\n    for (const box of Array.isArray(raw.textBoxes) ? raw.textBoxes : []) {\n      if (!box || typeof box.id !== "string" || box.id === PRIMARY_TEXT_BOX || typeof box.text !== "string") continue;\n      const normalized = {\n        ...normalizeTextStyle(box),\n        id: box.id,\n        text: box.text,\n        x: position(box.x, 16),\n        y: position(box.y, 16),\n        width: Math.max(60, positive(box.width, 240)),\n        height: box.height === void 0 ? void 0 : Math.max(60, positive(box.height, 120)),\n        createdAt: positive(box.createdAt, 1),\n        updatedAt: positive(box.updatedAt, 1)\n      };\n      const previous = boxes.get(box.id);\n      if (!deletedTextBoxes[box.id] && (!previous || normalized.updatedAt > previous.updatedAt || normalized.updatedAt === previous.updatedAt && JSON.stringify(normalized) > JSON.stringify(previous))) boxes.set(box.id, normalized);\n    }\n    const textOnly = raw.kind === "text";\n    const width = Math.min(1, Math.max(textOnly ? 0.01 : 0.05, raw.width)), height = Math.min(1, Math.max(textOnly ? 0.01 : 0.05, raw.height));\n    const textStyle = normalizeTextStyle({ fontSize: raw.textFontSize, fontFamily: raw.textFontFamily, bold: raw.textBold, italic: raw.textItalic, scaleText: raw.textScaleText });\n    const removed = Array.isArray(raw.deletedStrokeIds) ? raw.deletedStrokeIds.filter((id) => typeof id === "string") : [];\n    const strokes = (Array.isArray(raw.strokes) ? raw.strokes : []).filter((stroke) => stroke && typeof stroke.id === "string" && Array.isArray(stroke.points)).map((stroke) => ({\n      ...stroke,\n      pageId: raw.id,\n      tool: stroke.tool === "highlighter" ? "highlighter" : "pen",\n      color: /^#[0-9a-f]{6}$/i.test(stroke.color) ? stroke.color : "#202020",\n      width: positive(stroke.width, 3),\n      opacity: Math.min(1, positive(stroke.opacity, 1)),\n      dynamics: normalizeDynamics(stroke.dynamics),\n      points: stroke.points.filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y)).map((point) => ({\n        x: Math.max(0, point.x),\n        y: Math.max(0, point.y),\n        pressure: Math.min(1, Math.max(0.05, positive(point.pressure, 0.5))),\n        t: positive(point.t, 1),\n        tiltX: typeof point.tiltX === "number" && Number.isFinite(point.tiltX) ? point.tiltX : void 0,\n        tiltY: typeof point.tiltY === "number" && Number.isFinite(point.tiltY) ? point.tiltY : void 0\n      })),\n      createdAt: positive(stroke.createdAt, 1),\n      updatedAt: positive(stroke.updatedAt, 1)\n    })).filter((stroke) => !removed.includes(stroke.id));\n    return {\n      id: raw.id,\n      pageId,\n      ...textOnly ? { kind: "text" } : {},\n      x: Math.max(0, Math.min(1, raw.x)),\n      y: Math.max(0, Math.min(1, raw.y)),\n      width,\n      height,\n      title: string(raw.title),\n      keywords: string(raw.keywords),\n      text: string(raw.text),\n      textUpdatedAt: positive(raw.textUpdatedAt, 1),\n      textWidth: Math.max(60, positive(raw.textWidth, width * positive(raw.boardPageWidth, STICKY_UNIT) - 32)),\n      textX: textOnly ? 0 : position(raw.textX, 16),\n      textY: textOnly ? 0 : position(raw.textY, 16),\n      textHeight: raw.textHeight === void 0 ? void 0 : Math.max(60, positive(raw.textHeight, 120)),\n      textFontSize: textStyle.fontSize,\n      textFontFamily: textStyle.fontFamily,\n      textBold: textStyle.bold,\n      textItalic: textStyle.italic,\n      textScaleText: textStyle.scaleText,\n      textBoxes: [...boxes.values()].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)),\n      deletedTextBoxes,\n      color: typeof raw.color === "string" && /^#[0-9a-f]{6}$/i.test(raw.color) ? raw.color : "#fff1a8",\n      collapsed: !textOnly && raw.collapsed === true,\n      preview: raw.preview !== false,\n      scrollX: textOnly ? 0 : Math.max(0, positive(raw.scrollX, 0)),\n      scrollY: textOnly ? 0 : Math.max(0, positive(raw.scrollY, 0)),\n      boardPageWidth: positive(raw.boardPageWidth, STICKY_UNIT),\n      strokes,\n      deletedStrokeIds: removed,\n      createdAt: positive(raw.createdAt, 1),\n      updatedAt: positive(raw.updatedAt, 1)\n    };\n  }\n\n  // src/model.ts\n  var DEFAULT_PAGE_WIDTH = 1600;\n  var DEFAULT_PAGE_HEIGHT = 2200;\n  function newId(prefix) {\n    const random = Math.random().toString(36).slice(2, 10);\n    return `${prefix}-${Date.now().toString(36)}-${random}`;\n  }\n  function createNotebook(title = "Ink Notebook") {\n    const now = Date.now();\n    const page = createPage("Page 1", "ruled", now);\n    return {\n      schema: 2,\n      title,\n      pageWidth: DEFAULT_PAGE_WIDTH,\n      pageHeight: DEFAULT_PAGE_HEIGHT,\n      pages: [page],\n      pageOrder: [page.id],\n      deletedPages: {},\n      pageOrderUpdatedAt: now,\n      updatedAt: now\n    };\n  }\n  function createPage(title, paper = "ruled", now = Date.now()) {\n    return { id: newId("page"), title, paper, strokes: [], deletedStrokeIds: [], createdAt: now, updatedAt: now };\n  }\n  function normalizeNotebook(value) {\n    if (!value || typeof value !== "object") return createNotebook();\n    const raw = value;\n    const pages = Array.isArray(raw.pages) ? raw.pages : [];\n    const normalizedPages = pages.map(normalizePage).filter((page) => page !== null);\n    const pageIds = new Set(normalizedPages.map((page) => page.id));\n    const legacyOrder = [...normalizedPages].sort((a, b) => a.createdAt - b.createdAt).map((page) => page.id);\n    const requestedOrder = Array.isArray(raw.pageOrder) ? raw.pageOrder.filter((id) => typeof id === "string") : legacyOrder;\n    const pageOrder = [.../* @__PURE__ */ new Set([...requestedOrder.filter((id) => pageIds.has(id)), ...legacyOrder.filter((id) => !requestedOrder.includes(id))])];\n    const deletedPages = raw.deletedPages && typeof raw.deletedPages === "object" ? Object.fromEntries(Object.entries(raw.deletedPages).filter((entry) => typeof entry[0] === "string" && typeof entry[1] === "number" && Number.isFinite(entry[1]))) : {};\n    const visiblePages = normalizedPages.filter((page) => !(page.id in deletedPages));\n    const visibleIds = new Set(visiblePages.map((page) => page.id));\n    const byId = new Map(visiblePages.map((page) => [page.id, page]));\n    const orderedPages = pageOrder.map((id) => byId.get(id)).filter((page) => page !== void 0);\n    if (orderedPages.length === 0) orderedPages.push(createPage("Page 1"));\n    return {\n      schema: 2,\n      title: typeof raw.title === "string" ? raw.title : "Ink Notebook",\n      pageWidth: finitePositive(raw.pageWidth, DEFAULT_PAGE_WIDTH),\n      pageHeight: finitePositive(raw.pageHeight, DEFAULT_PAGE_HEIGHT),\n      pages: orderedPages,\n      pageOrder: orderedPages.map((page) => page.id).filter((id) => visibleIds.has(id) || orderedPages.length === 1),\n      deletedPages,\n      pageOrderUpdatedAt: finitePositive(raw.pageOrderUpdatedAt, finitePositive(raw.updatedAt, Date.now())),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function mergeNotebooks(base, incoming) {\n    var _a, _b, _c, _d, _e, _f, _g;\n    const pages = /* @__PURE__ */ new Map();\n    for (const page of base.pages) pages.set(page.id, page);\n    for (const page of incoming.pages) {\n      const existing = pages.get(page.id);\n      pages.set(page.id, existing ? mergePages(existing, page) : page);\n    }\n    const deletedPages = { ...(_a = base.deletedPages) != null ? _a : {} };\n    for (const [id, timestamp] of Object.entries((_b = incoming.deletedPages) != null ? _b : {})) deletedPages[id] = Math.max((_c = deletedPages[id]) != null ? _c : 0, timestamp);\n    for (const id of Object.keys(deletedPages)) pages.delete(id);\n    const orderSource = incoming.pageOrderUpdatedAt > base.pageOrderUpdatedAt || incoming.pageOrderUpdatedAt === base.pageOrderUpdatedAt && compareNotebookOrder(incoming, base) >= 0 ? incoming : base;\n    const preferred = (_d = orderSource.pageOrder) != null ? _d : [];\n    const known = preferred.map((id) => pages.get(id)).filter((page) => page !== void 0);\n    const additions = [...pages.values()].filter((page) => !preferred.includes(page.id)).sort((a, b) => a.createdAt - b.createdAt);\n    const ordered = [...known];\n    for (const page of additions) {\n      const inBase = ((_e = base.pageOrder) != null ? _e : []).includes(page.id);\n      const inIncoming = ((_f = incoming.pageOrder) != null ? _f : []).includes(page.id);\n      const source = inBase && !inIncoming ? base : incoming;\n      const sourceOrder = (_g = source.pageOrder) != null ? _g : source.pages.map((candidate) => candidate.id);\n      const sourceIndex = sourceOrder.indexOf(page.id);\n      let inserted = false;\n      for (let index = sourceIndex - 1; index >= 0; index--) {\n        const anchor = ordered.findIndex((candidate) => candidate.id === sourceOrder[index]);\n        if (anchor >= 0) {\n          ordered.splice(anchor + 1, 0, page);\n          inserted = true;\n          break;\n        }\n      }\n      if (!inserted) for (let index = sourceIndex + 1; index < sourceOrder.length; index++) {\n        const anchor = ordered.findIndex((candidate) => candidate.id === sourceOrder[index]);\n        if (anchor >= 0) {\n          ordered.splice(anchor, 0, page);\n          inserted = true;\n          break;\n        }\n      }\n      if (!inserted) {\n        const at = ordered.findIndex((candidate) => page.createdAt < candidate.createdAt);\n        ordered.splice(at < 0 ? ordered.length : at, 0, page);\n      }\n    }\n    const safePages = ordered.length ? ordered : [createPage("Page 1")];\n    const pageOrder = safePages.map((page) => page.id);\n    return {\n      ...incoming,\n      schema: 2,\n      title: incoming.updatedAt >= base.updatedAt ? incoming.title : base.title,\n      pageWidth: incoming.pageWidth || base.pageWidth,\n      pageHeight: incoming.pageHeight || base.pageHeight,\n      pages: safePages,\n      pageOrder,\n      deletedPages,\n      pageOrderUpdatedAt: Math.max(base.pageOrderUpdatedAt, incoming.pageOrderUpdatedAt),\n      updatedAt: Math.max(base.updatedAt, incoming.updatedAt)\n    };\n  }\n  function compareNotebookOrder(left, right) {\n    var _a, _b;\n    const leftOrder = JSON.stringify((_a = left.pageOrder) != null ? _a : []);\n    const rightOrder = JSON.stringify((_b = right.pageOrder) != null ? _b : []);\n    return leftOrder < rightOrder ? -1 : leftOrder > rightOrder ? 1 : 0;\n  }\n  function mergePages(base, incoming) {\n    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;\n    const stickyNotes = /* @__PURE__ */ new Map();\n    for (const note of [...(_a = base.stickyNotes) != null ? _a : [], ...(_b = incoming.stickyNotes) != null ? _b : []]) {\n      const previous = stickyNotes.get(note.id);\n      stickyNotes.set(note.id, previous ? mergeSticky(previous, note) : note);\n    }\n    const deletedStickyNotes = { ...base.deletedStickyNotes };\n    for (const [id, time] of Object.entries((_c = incoming.deletedStickyNotes) != null ? _c : {})) deletedStickyNotes[id] = Math.max((_d = deletedStickyNotes[id]) != null ? _d : 0, time);\n    for (const [id, note] of stickyNotes) if (note.updatedAt <= ((_e = deletedStickyNotes[id]) != null ? _e : 0)) stickyNotes.delete(id);\n    const images = /* @__PURE__ */ new Map();\n    for (const image of [...(_f = base.images) != null ? _f : [], ...(_g = incoming.images) != null ? _g : []]) {\n      const previous = images.get(image.id);\n      if (!previous || image.updatedAt > previous.updatedAt || image.updatedAt === previous.updatedAt && JSON.stringify(image) > JSON.stringify(previous)) images.set(image.id, image);\n    }\n    const deletedImageIds = [.../* @__PURE__ */ new Set([...(_h = base.deletedImageIds) != null ? _h : [], ...(_i = incoming.deletedImageIds) != null ? _i : []])];\n    for (const id of deletedImageIds) images.delete(id);\n    const strokes = /* @__PURE__ */ new Map();\n    for (const stroke of base.strokes) strokes.set(stroke.id, stroke);\n    for (const stroke of incoming.strokes) {\n      const existing = strokes.get(stroke.id);\n      if (!existing || stroke.updatedAt >= existing.updatedAt) strokes.set(stroke.id, stroke);\n    }\n    const deletedStrokeIds = [.../* @__PURE__ */ new Set([...(_j = base.deletedStrokeIds) != null ? _j : [], ...(_k = incoming.deletedStrokeIds) != null ? _k : []])];\n    for (const id of deletedStrokeIds) strokes.delete(id);\n    const tags = incoming.updatedAt >= base.updatedAt ? incoming.tags : base.tags;\n    return {\n      ...base,\n      ...incoming,\n      title: incoming.updatedAt >= base.updatedAt ? incoming.title : base.title,\n      paper: incoming.updatedAt >= base.updatedAt ? incoming.paper : base.paper,\n      // Flag is single-valued; the newest side decides, including "cleared"\n      // (an absent flag on the newer side must override the older flag).\n      flag: incoming.updatedAt >= base.updatedAt ? incoming.flag : base.flag,\n      strokes: [...strokes.values()].sort((a, b) => a.createdAt - b.createdAt),\n      deletedStrokeIds,\n      // Either side carrying tags forces the key so the spread above cannot\n      // leak the loser\'s list; undefined clears it and JSON-drops on disk,\n      // keeping untagged pages key-free after a normalize round-trip.\n      ...base.tags || incoming.tags ? { tags: (tags == null ? void 0 : tags.length) ? [...tags] : void 0 } : {},\n      ...base.stickyNotes || incoming.stickyNotes || base.deletedStickyNotes || incoming.deletedStickyNotes ? {\n        stickyNotes: [...stickyNotes.values()].sort(compareStickyOrder),\n        deletedStickyNotes\n      } : {},\n      ...base.images || incoming.images || base.deletedImageIds || incoming.deletedImageIds ? {\n        images: [...images.values()].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)),\n        deletedImageIds\n      } : {},\n      updatedAt: Math.max(base.updatedAt, incoming.updatedAt)\n    };\n  }\n  function normalizePage(value) {\n    var _a;\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    const strokes = Array.isArray(raw.strokes) ? raw.strokes : [];\n    const deletedStrokeIds = Array.isArray(raw.deletedStrokeIds) ? raw.deletedStrokeIds.filter((id) => typeof id === "string") : [];\n    const deleted = new Set(deletedStrokeIds);\n    const pageId = typeof raw.id === "string" ? raw.id : newId("page");\n    const deletedImageIds = Array.isArray(raw.deletedImageIds) ? raw.deletedImageIds.filter((id) => typeof id === "string") : [];\n    const deletedStickyNotes = Object.fromEntries(Object.entries((_a = raw.deletedStickyNotes) != null ? _a : {}).filter(([id, time]) => typeof id === "string" && Number.isFinite(time)));\n    return {\n      id: pageId,\n      title: typeof raw.title === "string" ? raw.title : "Untitled",\n      paper: isPaperStyle(raw.paper) ? raw.paper : "ruled",\n      strokes: strokes.map(normalizeStroke).filter((stroke) => stroke !== null && !deleted.has(stroke.id)),\n      deletedStrokeIds,\n      ...Array.isArray(raw.stickyNotes) || raw.deletedStickyNotes ? {\n        stickyNotes: (Array.isArray(raw.stickyNotes) ? raw.stickyNotes : []).map((note) => normalizeSticky(note, pageId)).filter((note) => {\n          var _a2;\n          return !!note && note.updatedAt > ((_a2 = deletedStickyNotes[note.id]) != null ? _a2 : 0);\n        }).sort(compareStickyOrder),\n        deletedStickyNotes\n      } : {},\n      ...Array.isArray(raw.images) || Array.isArray(raw.deletedImageIds) ? {\n        images: (Array.isArray(raw.images) ? raw.images : []).map((image) => normalizeImage(image, pageId)).filter((image) => !!image && !deletedImageIds.includes(image.id)),\n        deletedImageIds\n      } : {},\n      // Legacy files carry neither field; garbage values are dropped instead of\n      // being round-tripped, so an unknown writer can never poison the model.\n      ...Array.isArray(raw.tags) ? { tags: normalizeTagList(raw.tags) } : {},\n      ...isPageFlag(raw.flag) ? { flag: raw.flag } : {},\n      createdAt: finitePositive(raw.createdAt, Date.now()),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function normalizeTagList(value) {\n    const tags = [];\n    for (const tag of value) {\n      if (typeof tag !== "string") continue;\n      const trimmed = tag.trim();\n      if (trimmed && !tags.includes(trimmed)) tags.push(trimmed);\n    }\n    return tags;\n  }\n  function isPageFlag(value) {\n    return value === "red" || value === "yellow" || value === "green";\n  }\n  function isManagedImagePath(path) {\n    return typeof path === "string" && /^Ink Notes\\/Images\\/assets\\/[a-zA-Z0-9-]+\\.png$/.test(path);\n  }\n  function normalizeImage(value, pageId) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    if (typeof raw.id !== "string" || !isManagedImagePath(raw.assetPath)) return null;\n    if (![raw.x, raw.y, raw.width, raw.height].every((n) => typeof n === "number" && Number.isFinite(n))) return null;\n    const width = clamp(raw.width, 0.01, 1), height = clamp(raw.height, 0.01, 1);\n    return {\n      id: raw.id,\n      pageId,\n      assetPath: raw.assetPath,\n      x: clamp(raw.x, 0, 1 - width),\n      y: clamp(raw.y, 0, 1 - height),\n      width,\n      height,\n      foreground: raw.foreground === true,\n      createdAt: finitePositive(raw.createdAt, Date.now()),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function normalizeStroke(value) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    if (typeof raw.id !== "string" || typeof raw.pageId !== "string") return null;\n    const points = Array.isArray(raw.points) ? raw.points : [];\n    return {\n      id: raw.id,\n      pageId: raw.pageId,\n      tool: raw.tool === "highlighter" ? "highlighter" : "pen",\n      color: typeof raw.color === "string" ? raw.color : "#1b1b1b",\n      width: finitePositive(raw.width, 3),\n      opacity: clamp(finitePositive(raw.opacity, 1), 0.05, 1),\n      points: points.map(normalizePoint).filter((point) => point !== null),\n      dynamics: normalizeDynamics(raw.dynamics),\n      createdAt: finitePositive(raw.createdAt, Date.now()),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function normalizeDynamics(value) {\n    if (!value || typeof value !== "object") return void 0;\n    const raw = value;\n    const percent = (candidate, fallback) => typeof candidate === "number" && Number.isFinite(candidate) ? clamp(Math.round(candidate), 0, 100) : fallback;\n    const curve = Array.isArray(raw.pressureCurve) && raw.pressureCurve.length >= 2 ? raw.pressureCurve.map((point) => Array.isArray(point) ? [Number(point[0]), Number(point[1])] : [NaN, NaN]) : void 0;\n    const dynamics = {\n      taper: percent(raw.taper, 0),\n      pressure: percent(raw.pressure, 100),\n      speed: percent(raw.speed, 0)\n    };\n    if (curve) dynamics.pressureCurve = curve;\n    const defaults = { taper: 0, pressure: 100, speed: 0 };\n    const plain = dynamics.taper === defaults.taper && dynamics.pressure === defaults.pressure && dynamics.speed === defaults.speed;\n    return plain && !curve ? void 0 : dynamics;\n  }\n  function normalizePoint(value) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    if (typeof raw.x !== "number" || typeof raw.y !== "number") return null;\n    return {\n      x: clamp(raw.x, 0, 1),\n      y: clamp(raw.y, 0, 1),\n      pressure: clamp(typeof raw.pressure === "number" ? raw.pressure : 0.5, 0.05, 1),\n      tiltX: typeof raw.tiltX === "number" ? raw.tiltX : void 0,\n      tiltY: typeof raw.tiltY === "number" ? raw.tiltY : void 0,\n      t: finitePositive(raw.t, Date.now())\n    };\n  }\n  function finitePositive(value, fallback) {\n    return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;\n  }\n  function clamp(value, min, max) {\n    return Math.max(min, Math.min(max, value));\n  }\n  function isPaperStyle(value) {\n    return value === "blank" || value === "ruled" || value === "grid" || value === "dot";\n  }\n\n  // src/storage-codec.ts\n  var import_pako = __toESM(require_pako());\n  var MAGIC = "INK-GZIP-1\\n";\n  var MIN_COMPRESS_LENGTH = 1024;\n  var MAX_INFLATED_BYTES = 256 * 1024 * 1024;\n  function serializeStoredJson(value) {\n    const plain = `${JSON.stringify(value)}\n`;\n    if (plain.length < MIN_COMPRESS_LENGTH) return plain;\n    const bytes = new TextEncoder().encode(plain);\n    if (bytes.length > MAX_INFLATED_BYTES) return plain;\n    const compressed = (0, import_pako.gzip)(plain, { level: 6 });\n    let binary = "";\n    for (let offset = 0; offset < compressed.length; offset += 8192)\n      binary += String.fromCharCode(...compressed.subarray(offset, offset + 8192));\n    const encoded = `${MAGIC}${btoa(binary)}\n`;\n    return encoded.length < bytes.length ? encoded : plain;\n  }\n  function parseStoredJson(raw) {\n    if (!raw.startsWith(MAGIC)) return JSON.parse(raw);\n    try {\n      const base64 = raw.slice(MAGIC.length).trim();\n      if (!base64 || base64.length > Math.ceil(MAX_INFLATED_BYTES / 3) * 4 || base64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) throw new Error("Invalid base64");\n      const binary = atob(base64), data = new Uint8Array(binary.length);\n      for (let index = 0; index < binary.length; index++) data[index] = binary.charCodeAt(index);\n      if (data.length < 18 || data[0] !== 31 || data[1] !== 139 || data[2] !== 8) throw new Error("Invalid gzip header");\n      if (new DataView(data.buffer).getUint32(data.length - 4, true) > MAX_INFLATED_BYTES) throw new Error("Notebook exceeds 256 MiB decompression limit");\n      const chunks = [];\n      let size = 0;\n      const inflate = new import_pako.Inflate({ chunkSize: 65536 });\n      inflate.onData = (chunk) => {\n        size += chunk.length;\n        if (size > MAX_INFLATED_BYTES) throw new Error("Notebook exceeds 256 MiB decompression limit");\n        chunks.push(chunk);\n      };\n      if (!inflate.push(data, false) || inflate.err || !inflate.ended || inflate.strm.avail_in !== 0) throw new Error(inflate.msg || "Incomplete or trailing gzip data");\n      const bytes = new Uint8Array(size);\n      let offset = 0;\n      for (const chunk of chunks) {\n        bytes.set(chunk, offset);\n        offset += chunk.length;\n      }\n      return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));\n    } catch (error) {\n      throw new SyntaxError(`Invalid compressed Ink Notes file: ${error instanceof Error ? error.message : String(error)}`);\n    }\n  }\n\n  // src/rendering.ts\n  var STROKE_WIDTH_REFERENCE = 980;\n  var paths = /* @__PURE__ */ new WeakMap();\n  function penOutlineRings(stroke, width, height, referenceWidth = STROKE_WIDTH_REFERENCE) {\n    const geometry = penStampGeometry(stroke, width, height, referenceWidth);\n    if (geometry.count === 0) return [];\n    return geometry.ringsFor(0, geometry.count, false);\n  }\n  function penStampGeometry(stroke, width, height, referenceWidth = STROKE_WIDTH_REFERENCE) {\n    var _a, _b, _c, _d;\n    const widthScale = width / referenceWidth;\n    const pressures = smoothPenPressures(stroke.points);\n    const centerline = smoothOutlineCenterline(\n      stroke.points.map((point, index) => [point.x * width, point.y * height, pressures[index], point.t]),\n      stroke.width * widthScale * 0.925\n    );\n    const count = centerline.length;\n    if (count === 0) return { count, ringsFor: () => [] };\n    const speeds = new Array(count);\n    for (let index = 0; index < count; index++) {\n      const previous = centerline[Math.max(0, index - 1)];\n      const following = centerline[Math.min(count - 1, index + 1)];\n      const distance = Math.hypot(following[0] - previous[0], following[1] - previous[1]);\n      const dt = Math.max(1, (following[3] - previous[3]) / 2);\n      speeds[index] = distance / (dt / 1e3);\n    }\n    const sortedSpeeds = [...speeds].sort((a, b) => a - b);\n    const medianSpeed = sortedSpeeds[Math.floor(sortedSpeeds.length / 2)] || 0;\n    const speedReference = Math.max(medianSpeed * 2.5, 60);\n    const pressureGain = clampPercent((_a = stroke.dynamics) == null ? void 0 : _a.pressure, 100) / 100;\n    const speedGain = clampPercent((_b = stroke.dynamics) == null ? void 0 : _b.speed, 0) / 100;\n    const pressureCurve = normalizePressureCurve((_c = stroke.dynamics) == null ? void 0 : _c.pressureCurve);\n    const taper = clampPercent((_d = stroke.dynamics) == null ? void 0 : _d.taper, 0) / 100;\n    const brushWidth = stroke.width * widthScale;\n    const fullDiameter = brushWidth * 1.3;\n    let totalLength = 0;\n    const cumulative = new Array(count);\n    cumulative[0] = 0;\n    for (let index = 1; index < count; index++) {\n      totalLength += Math.hypot(centerline[index][0] - centerline[index - 1][0], centerline[index][1] - centerline[index - 1][1]);\n      cumulative[index] = totalLength;\n    }\n    const rampLength = taper * Math.min(totalLength * 0.25, brushWidth * 2);\n    const envelopeAt = (distanceFromEnd) => {\n      if (rampLength <= 0) return 1;\n      const m = Math.min(1, distanceFromEnd / rampLength);\n      const smoothstep = m * m * (3 - 2 * m);\n      return 1 - taper * (1 - smoothstep);\n    };\n    const halfWidthAt = (index) => {\n      const point = centerline[index];\n      const pressure = samplePressureCurve(Math.max(0, Math.min(1, point[2])), pressureCurve);\n      const effectivePressure = 0.5 + (pressure - 0.5) * pressureGain;\n      const modulation = (0.55 + 0.75 * effectivePressure) / 1.3;\n      const speedNorm = Math.min(speeds[index] / speedReference, 1);\n      const speedFactor = 1 - speedGain * speedNorm * speedNorm * 0.35;\n      const envelope = envelopeAt(Math.min(cumulative[index], totalLength - cumulative[index]));\n      return Math.max(0.3 * widthScale, fullDiameter / 2 * envelope * modulation * speedFactor);\n    };\n    const normals = new Array(count);\n    for (let index = 0; index < count; index++) {\n      const point = centerline[index];\n      const previous = centerline[Math.max(0, index - 1)];\n      const following = centerline[Math.min(count - 1, index + 1)];\n      let dx = following[0] - previous[0];\n      let dy = following[1] - previous[1];\n      if (index === 0 && count > 1) {\n        dx = centerline[1][0] - point[0];\n        dy = centerline[1][1] - point[1];\n      } else if (index === count - 1 && count > 1) {\n        dx = point[0] - centerline[index - 1][0];\n        dy = point[1] - centerline[index - 1][1];\n      }\n      let length = Math.hypot(dx, dy);\n      if (length < 1e-6) {\n        dx = 1;\n        dy = 0;\n        length = 1;\n      }\n      normals[index] = [-dy / length, dx / length];\n    }\n    const discSegments = 12;\n    const ringsFor = (from, to, linkAcrossEnd) => {\n      const rings = [];\n      const emitRing = (ring) => {\n        if (ring.length < 3) return;\n        let area = 0;\n        for (let index = 0; index < ring.length; index++) {\n          const a = ring[index];\n          const b = ring[(index + 1) % ring.length];\n          area += a[0] * b[1] - b[0] * a[1];\n        }\n        rings.push(area < 0 ? ring.slice().reverse() : ring);\n      };\n      const lastLink = linkAcrossEnd ? to : to - 1;\n      for (let index = from; index < to; index++) {\n        const point = centerline[index];\n        const radius = halfWidthAt(index);\n        const [nx, ny] = normals[index];\n        const ring = [];\n        for (let sample = 0; sample < discSegments; sample++) {\n          const angle = sample / discSegments * Math.PI * 2;\n          ring.push([point[0] + Math.cos(angle) * radius, point[1] + Math.sin(angle) * radius]);\n        }\n        emitRing(ring);\n        if (index >= lastLink) continue;\n        const following = centerline[index + 1];\n        const followingRadius = halfWidthAt(index + 1);\n        const [fnx, fny] = normals[index + 1];\n        emitRing([\n          [point[0] + nx * radius, point[1] + ny * radius],\n          [following[0] + fnx * followingRadius, following[1] + fny * followingRadius],\n          [following[0] - fnx * followingRadius, following[1] - fny * followingRadius],\n          [point[0] - nx * radius, point[1] - ny * radius]\n        ]);\n      }\n      return rings;\n    };\n    return { count, ringsFor };\n  }\n  function clampPercent(value, fallback) {\n    return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : fallback;\n  }\n  function normalizePressureCurve(raw) {\n    if (!Array.isArray(raw)) return void 0;\n    const cleaned = raw.filter((point) => Array.isArray(point) && point.length >= 2 && typeof point[0] === "number" && Number.isFinite(point[0]) && typeof point[1] === "number" && Number.isFinite(point[1])).map((point) => [Math.max(0, Math.min(1, point[0])), Math.max(0, Math.min(1, point[1]))].map((value) => Math.round(value * 1e3) / 1e3)).sort((a, b) => a[0] - b[0]);\n    if (cleaned.length < 2) return void 0;\n    cleaned[0][0] = 0;\n    cleaned[cleaned.length - 1][0] = 1;\n    const monotonic = [cleaned[0]];\n    for (let index = 1; index < cleaned.length; index++) {\n      if (cleaned[index][0] <= monotonic[monotonic.length - 1][0]) continue;\n      monotonic.push(cleaned[index]);\n    }\n    if (monotonic.length < 2) return void 0;\n    for (let index = 1; index < monotonic.length; index++) {\n      monotonic[index][1] = Math.max(monotonic[index][1], monotonic[index - 1][1]);\n    }\n    const identity = monotonic.every(([x, y]) => Math.abs(x - y) <= 1e-3);\n    return identity ? void 0 : monotonic;\n  }\n  function samplePressureCurve(pressure, curve) {\n    if (!curve || curve.length < 2) return pressure;\n    if (pressure <= curve[0][0]) return curve[0][1];\n    for (let index = 1; index < curve.length; index++) {\n      if (pressure <= curve[index][0]) {\n        const span = curve[index][0] - curve[index - 1][0];\n        const amount = span > 0 ? (pressure - curve[index - 1][0]) / span : 0;\n        return curve[index - 1][1] + (curve[index][1] - curve[index - 1][1]) * amount;\n      }\n    }\n    return curve[curve.length - 1][1];\n  }\n  function smoothOutlineCenterline(points, nib) {\n    if (points.length < 3) return points;\n    const maxSegment = nib * 0.75;\n    let current = points;\n    for (let pass = 0; pass < 2; pass++) {\n      const next = current.map((point) => point.slice());\n      for (let index = 1; index < current.length - 1; index++) {\n        const point = current[index];\n        const previous = current[index - 1];\n        const following = current[index + 1];\n        if (Math.hypot(point[0] - previous[0], point[1] - previous[1]) > maxSegment) continue;\n        if (Math.hypot(following[0] - point[0], following[1] - point[1]) > maxSegment) continue;\n        next[index][0] = (previous[0] + 2 * point[0] + following[0]) / 4;\n        next[index][1] = (previous[1] + 2 * point[1] + following[1]) / 4;\n        next[index][2] = (previous[2] + 2 * point[2] + following[2]) / 4;\n      }\n      current = next;\n    }\n    return current;\n  }\n  function smoothPenPressures(points) {\n    if (points.length < 3) return points.map((point) => point.pressure);\n    return points.map((point, index) => {\n      if (index === 0 || index === points.length - 1) return point.pressure;\n      return median3(points[index - 1].pressure, point.pressure, points[index + 1].pressure);\n    });\n  }\n  function median3(a, b, c) {\n    return Math.max(Math.min(a, b), Math.min(Math.max(a, b), c));\n  }\n  function applyStrokeStyle(ctx, stroke) {\n    ctx.globalAlpha = stroke.opacity;\n    ctx.fillStyle = stroke.color;\n    ctx.strokeStyle = stroke.color;\n    ctx.lineCap = "round";\n    ctx.lineJoin = "round";\n    ctx.globalCompositeOperation = stroke.tool === "highlighter" ? "multiply" : "source-over";\n  }\n  function drawSampleDot(ctx, stroke, width, height, referenceWidth = STROKE_WIDTH_REFERENCE) {\n    var _a;\n    const point = stroke.points[0];\n    const gain = clampPercent((_a = stroke.dynamics) == null ? void 0 : _a.pressure, 100) / 100;\n    const effectivePressure = 0.5 + (point.pressure - 0.5) * gain;\n    const diameter = (stroke.tool === "highlighter" ? stroke.width : stroke.width * (0.55 + effectivePressure * 0.75)) * width / referenceWidth;\n    ctx.beginPath();\n    ctx.arc(point.x * width, point.y * height, diameter / 2, 0, Math.PI * 2);\n    ctx.fill();\n  }\n  function drawInkStroke(ctx, stroke, width, height, referenceWidth = STROKE_WIDTH_REFERENCE) {\n    if (stroke.points.length === 0) return;\n    ctx.save();\n    applyStrokeStyle(ctx, stroke);\n    if (stroke.points.length === 1) {\n      drawSampleDot(ctx, stroke, width, height, referenceWidth);\n    } else if (stroke.tool === "highlighter") {\n      ctx.lineWidth = stroke.width * width / referenceWidth;\n      drawSmoothPath(ctx, stroke.points, width, height);\n      ctx.stroke();\n    } else {\n      let cached = paths.get(stroke);\n      if (!cached || cached.points !== stroke.points || cached.count !== stroke.points.length || cached.updatedAt !== stroke.updatedAt || cached.size !== stroke.width || cached.width !== width || cached.height !== height) {\n        cached = {\n          points: stroke.points,\n          count: stroke.points.length,\n          updatedAt: stroke.updatedAt,\n          size: stroke.width,\n          width,\n          height,\n          path: createPenPath(stroke, width, height, referenceWidth)\n        };\n        paths.set(stroke, cached);\n      }\n      ctx.fill(cached.path);\n    }\n    ctx.restore();\n  }\n  function traceRings(path, rings) {\n    for (const ring of rings) {\n      path.moveTo(ring[0][0], ring[0][1]);\n      for (let index = 1; index < ring.length; index++) path.lineTo(ring[index][0], ring[index][1]);\n      path.closePath();\n    }\n  }\n  function createPenPath(stroke, width, height, referenceWidth = STROKE_WIDTH_REFERENCE) {\n    const path = new Path2D();\n    traceRings(path, penOutlineRings(stroke, width, height, referenceWidth));\n    return path;\n  }\n  function drawSmoothPath(ctx, points, width, height, from = 0, to = points.length) {\n    ctx.beginPath();\n    ctx.moveTo(points[from].x * width, points[from].y * height);\n    for (let index = from + 1; index < to; index++) {\n      const previous = points[index - 1];\n      const point = points[index];\n      const end = index === to - 1 ? point : { x: (previous.x + point.x) / 2, y: (previous.y + point.y) / 2 };\n      ctx.quadraticCurveTo(previous.x * width, previous.y * height, end.x * width, end.y * height);\n    }\n    const last = points[to - 1];\n    ctx.lineTo(last.x * width, last.y * height);\n  }\n\n  // src/worker-protocol.ts\n  function serializeNotebook(notebook) {\n    return serializeStoredJson(notebook);\n  }\n  function cloneStrokeValue(stroke) {\n    return { ...stroke, points: stroke.points.map((point) => ({ ...point })) };\n  }\n  function clonePageValue(page) {\n    var _a, _b, _c;\n    return { ...page, stickyNotes: (_a = page.stickyNotes) == null ? void 0 : _a.map(cloneSticky), deletedStickyNotes: { ...page.deletedStickyNotes }, images: (_b = page.images) == null ? void 0 : _b.map((image) => ({ ...image })), deletedImageIds: [...(_c = page.deletedImageIds) != null ? _c : []], strokes: page.strokes.map(cloneStrokeValue), deletedStrokeIds: [...page.deletedStrokeIds] };\n  }\n\n  // src/worker-core.ts\n  var WorkerPageIndex = class {\n    constructor(width, height) {\n      this.width = width;\n      this.height = height;\n      this.entries = /* @__PURE__ */ new Map();\n      this.cells = /* @__PURE__ */ new Map();\n      this.strokeWidths = /* @__PURE__ */ new Map();\n      this.maximumStrokeWidth = 0;\n    }\n    sync(page) {\n      this.entries.clear();\n      this.cells.clear();\n      this.strokeWidths.clear();\n      this.maximumStrokeWidth = 0;\n      page.strokes.forEach((stroke, order) => this.upsert(stroke, order));\n    }\n    upsert(stroke, order) {\n      var _a;\n      this.remove(stroke.id);\n      const entry = { stroke, order, cells: workerStrokeCells(stroke, this.width, this.height) };\n      this.entries.set(stroke.id, entry);\n      this.strokeWidths.set(stroke.width, ((_a = this.strokeWidths.get(stroke.width)) != null ? _a : 0) + 1);\n      this.maximumStrokeWidth = Math.max(this.maximumStrokeWidth, stroke.width);\n      for (const cell of entry.cells) {\n        let bucket = this.cells.get(cell);\n        if (!bucket) this.cells.set(cell, bucket = /* @__PURE__ */ new Set());\n        bucket.add(entry);\n      }\n    }\n    remove(strokeId) {\n      var _a;\n      const entry = this.entries.get(strokeId);\n      if (!entry) return;\n      this.entries.delete(strokeId);\n      const widthCount = ((_a = this.strokeWidths.get(entry.stroke.width)) != null ? _a : 1) - 1;\n      if (widthCount > 0) this.strokeWidths.set(entry.stroke.width, widthCount);\n      else this.strokeWidths.delete(entry.stroke.width);\n      if (entry.stroke.width === this.maximumStrokeWidth && widthCount <= 0) {\n        this.maximumStrokeWidth = 0;\n        for (const width of this.strokeWidths.keys()) this.maximumStrokeWidth = Math.max(this.maximumStrokeWidth, width);\n      }\n      for (const cell of entry.cells) {\n        const bucket = this.cells.get(cell);\n        bucket == null ? void 0 : bucket.delete(entry);\n        if ((bucket == null ? void 0 : bucket.size) === 0) this.cells.delete(cell);\n      }\n    }\n    updateOrder(page) {\n      page.strokes.forEach((stroke, order) => {\n        const entry = this.entries.get(stroke.id);\n        if (entry) entry.order = order;\n      });\n    }\n    getStroke(strokeId) {\n      var _a;\n      return (_a = this.entries.get(strokeId)) == null ? void 0 : _a.stroke;\n    }\n    getOrder(strokeId) {\n      var _a;\n      return (_a = this.entries.get(strokeId)) == null ? void 0 : _a.order;\n    }\n    query(cell, queryWidth = this.width, queryHeight = this.height) {\n      var _a, _b;\n      if (queryWidth === this.width && queryHeight === this.height) {\n        return [...(_a = this.cells.get(cell)) != null ? _a : []].sort((left, right) => left.order - right.order).map((entry) => entry.stroke);\n      }\n      const [column, row] = cell.split(":").map(Number);\n      const x = column * 128;\n      const y = row * 128;\n      const padding = this.maximumStrokeWidth * 0.7 + 4;\n      const paddingX = padding * this.width / queryWidth;\n      const paddingY = padding * this.height / queryHeight;\n      const keys = workerCellKeys({\n        x: x * this.width / queryWidth - paddingX,\n        y: y * this.height / queryHeight - paddingY,\n        width: Math.min(128, queryWidth - x) * this.width / queryWidth + paddingX * 2,\n        height: Math.min(128, queryHeight - y) * this.height / queryHeight + paddingY * 2\n      }, this.width, this.height);\n      const found = /* @__PURE__ */ new Set();\n      for (const key of keys) for (const entry of (_b = this.cells.get(key)) != null ? _b : []) found.add(entry);\n      return [...found].sort((left, right) => left.order - right.order).map((entry) => entry.stroke);\n    }\n  };\n  var OUTLINE_CACHE_LIMIT = 512;\n  var ProtocolError = class extends Error {\n    constructor(code, message) {\n      super(message);\n      this.code = code;\n    }\n  };\n  var InkWorkerCore = class {\n    constructor(capabilities) {\n      this.capabilities = capabilities;\n      this.sessions = /* @__PURE__ */ new Map();\n    }\n    ready() {\n      return { type: "ready", requestId: 0, sessionId: "", generation: 0, notebookRevision: 0, capabilities: this.capabilities };\n    }\n    async handle(request) {\n      var _a, _b;\n      try {\n        const response = await this.dispatch(request);\n        return response.type === "tile-rendered" ? { response, transfer: [response.bitmap] } : response.type === "operation-applied" && response.outline ? { response, transfer: [response.outline.buffer] } : { response };\n      } catch (error) {\n        return { response: {\n          type: "error",\n          requestId: request.requestId,\n          sessionId: request.sessionId,\n          generation: request.generation,\n          notebookRevision: (_b = (_a = this.sessions.get(request.sessionId)) == null ? void 0 : _a.revision) != null ? _b : request.notebookRevision,\n          code: error instanceof ProtocolError ? error.code : "internal",\n          message: error instanceof Error ? error.message : String(error)\n        } };\n      }\n    }\n    async dispatch(request) {\n      if (request.type === "initialize-raw") {\n        if (request.notebookRevision !== request.revision) {\n          throw new ProtocolError("revision-gap", "Initialize request revision metadata does not match its notebook revision");\n        }\n        const notebook = parseNotebook(request.raw);\n        this.sessions.set(request.sessionId, {\n          generation: request.generation,\n          notebook,\n          revision: request.revision,\n          pendingSave: /* @__PURE__ */ new Map(),\n          indexes: workerIndexes(notebook),\n          outlineCache: /* @__PURE__ */ new Map()\n        });\n        return this.response(request, { type: "initialized", notebook, revision: request.revision });\n      }\n      if (request.type === "initialize-notebook") {\n        if (request.notebookRevision !== request.revision) {\n          throw new ProtocolError("revision-gap", "Initialize request revision metadata does not match its notebook revision");\n        }\n        const notebook = normalizeNotebook(request.notebook);\n        this.sessions.set(request.sessionId, {\n          generation: request.generation,\n          notebook,\n          revision: request.revision,\n          pendingSave: /* @__PURE__ */ new Map(),\n          indexes: workerIndexes(notebook),\n          outlineCache: /* @__PURE__ */ new Map()\n        });\n        return this.response(request, { type: "initialized", notebook, revision: request.revision });\n      }\n      const session = this.sessions.get(request.sessionId);\n      if (!session) throw new ProtocolError("missing-session", "Ink worker session is not initialized");\n      if (session.generation !== request.generation) throw new ProtocolError("stale-generation", "Ink worker request belongs to a stale file generation");\n      if (request.type !== "apply-operation" && request.notebookRevision > session.revision) {\n        throw new ProtocolError("revision-gap", `Worker revision ${session.revision} is behind request revision ${request.notebookRevision}`);\n      }\n      if (request.type === "serialize-storage") {\n        return this.response(request, { type: "storage-serialized", content: serializeStoredJson(request.value) });\n      }\n      if (request.type === "apply-operation") {\n        if (request.notebookRevision !== request.revision) {\n          throw new ProtocolError("revision-gap", "Operation revision metadata does not match its notebook revision");\n        }\n        if (request.revision !== session.revision + 1) {\n          throw new ProtocolError("revision-gap", `Expected revision ${session.revision + 1}, received ${request.revision}`);\n        }\n        const operation = request.operation;\n        invalidateOperationOutlines(session.outlineCache, operation);\n        const operationIndex = "pageId" in operation && typeof operation.pageId === "string" ? session.indexes.get(operation.pageId) : void 0;\n        const outline = applyNotebookOperation(session.notebook, operation, session.outlineCache, operationIndex);\n        if (operation.type === "replace-notebook" || operation.type === "history-restore" || operation.type === "page-operation") {\n          session.indexes = workerIndexes(session.notebook);\n          session.outlineCache.clear();\n        } else {\n          const pageId = operation.pageId;\n          const page = session.notebook.pages.find((candidate) => candidate.id === pageId);\n          if (page) {\n            let index = session.indexes.get(pageId);\n            if (!index) session.indexes.set(pageId, index = new WorkerPageIndex(session.notebook.pageWidth, session.notebook.pageHeight));\n            updateWorkerIndex(index, page, operation, outline == null ? void 0 : outline.stroke);\n          }\n        }\n        session.revision = request.revision;\n        return this.response(request, {\n          type: "operation-applied",\n          revision: session.revision,\n          ...outline ? { strokeId: outline.strokeId, sampleCount: outline.sampleCount, outline: outline.points, outlineMode: outline.mode } : {}\n        });\n      }\n      if (request.type === "barrier") {\n        if (session.revision < request.minimumRevision) {\n          throw new ProtocolError("revision-gap", `Worker revision ${session.revision} is behind ${request.minimumRevision}`);\n        }\n        return this.response(request, { type: "barrier-complete", revision: session.revision });\n      }\n      if (request.type === "prepare-save") {\n        if (session.revision < request.minimumRevision) {\n          throw new ProtocolError("revision-gap", `Worker revision ${session.revision} is behind ${request.minimumRevision}`);\n        }\n        const disk = parseNotebook(request.raw);\n        const local = normalizeNotebook(session.notebook);\n        const merged = mergeNotebooks(disk, local);\n        const token = `${request.sessionId}:${request.generation}:${request.requestId}`;\n        session.pendingSave.clear();\n        session.pendingSave.set(token, {\n          notebook: normalizeNotebook(merged),\n          revision: session.revision,\n          reconcile: JSON.stringify(merged) !== JSON.stringify(local)\n        });\n        return this.response(request, { type: "save-prepared", token, content: serializeNotebook(merged), revision: session.revision });\n      }\n      if (request.type === "render-tile") {\n        const rendered = renderTile(\n          session.notebook,\n          session.indexes.get(request.pageId),\n          session.outlineCache,\n          request.pageId,\n          request.cell,\n          request.density,\n          request.revision,\n          request.renderGeneration,\n          request.width,\n          request.height,\n          request.excludedStrokeIds\n        );\n        return this.response(request, { type: "tile-rendered", ...rendered });\n      }\n      if (request.type === "cancel-render-generation") {\n        return this.response(request, { type: "renders-cancelled", renderGeneration: request.renderGeneration });\n      }\n      if (request.type === "commit-save") {\n        const candidate = session.pendingSave.get(request.token);\n        if (!candidate) throw new ProtocolError("missing-session", "Prepared save is no longer available");\n        session.pendingSave.delete(request.token);\n        session.notebook = mergeNotebooks(candidate.notebook, session.notebook);\n        session.indexes = workerIndexes(session.notebook);\n        session.outlineCache.clear();\n        return this.response(request, {\n          type: "save-committed",\n          revision: candidate.revision,\n          merged: candidate.reconcile ? candidate.notebook : void 0\n        });\n      }\n      if (request.type === "abort-save") {\n        session.pendingSave.delete(request.token);\n        return this.response(request, { type: "save-aborted" });\n      }\n      if (request.type === "merge-external") {\n        const merged = mergeNotebooks(parseNotebook(request.raw), session.notebook);\n        const changed = JSON.stringify(merged) !== JSON.stringify(session.notebook);\n        session.notebook = normalizeNotebook(merged);\n        session.indexes = workerIndexes(session.notebook);\n        session.outlineCache.clear();\n        return this.response(request, { type: "external-merged", notebook: changed ? session.notebook : void 0, revision: session.revision });\n      }\n      this.sessions.delete(request.sessionId);\n      return this.response(request, { type: "session-disposed" });\n    }\n    response(request, response) {\n      var _a, _b;\n      return {\n        ...response,\n        requestId: request.requestId,\n        sessionId: request.sessionId,\n        generation: request.generation,\n        notebookRevision: (_b = (_a = this.sessions.get(request.sessionId)) == null ? void 0 : _a.revision) != null ? _b : request.notebookRevision\n      };\n    }\n  };\n  function renderTile(notebook, index, outlineCache, pageId, cell, density, revision, renderGeneration, pageWidth, pageHeight, excludedStrokeIds) {\n    var _a;\n    const page = notebook.pages.find((candidate) => candidate.id === pageId);\n    if (!page) throw new Error(`Ink worker page is unavailable: ${pageId}`);\n    const Canvas = globalThis.OffscreenCanvas;\n    if (!Canvas) throw new Error("OffscreenCanvas is not supported by this device");\n    const [column, row] = cell.split(":").map(Number);\n    const x = column * 128;\n    const y = row * 128;\n    const width = Math.min(128, pageWidth - x);\n    const height = Math.min(128, pageHeight - y);\n    if (width <= 0 || height <= 0) throw new Error(`Ink worker tile is outside page bounds: ${cell}`);\n    const safeDensity = Math.max(0.5, Math.min(9, density));\n    const bleedPixels = Math.ceil(4 * safeDensity);\n    const canvasWidth = Math.ceil(width * safeDensity) + bleedPixels * 2;\n    const canvasHeight = Math.ceil(height * safeDensity) + bleedPixels * 2;\n    const canvas = new Canvas(canvasWidth, canvasHeight);\n    const ctx = canvas.getContext("2d");\n    if (!ctx) throw new Error("Ink worker could not create a 2D tile context");\n    ctx.setTransform(safeDensity, 0, 0, safeDensity, bleedPixels - x * safeDensity, bleedPixels - y * safeDensity);\n    const candidates = (_a = index == null ? void 0 : index.query(cell, pageWidth, pageHeight)) != null ? _a : [];\n    for (const stroke of candidates) {\n      if (excludedStrokeIds == null ? void 0 : excludedStrokeIds.includes(stroke.id)) continue;\n      drawWorkerStroke(ctx, stroke, pageWidth, pageHeight, outlineCache);\n    }\n    return {\n      pageId,\n      cell,\n      density: safeDensity,\n      revision,\n      renderGeneration,\n      x,\n      y,\n      width,\n      height,\n      canvasWidth,\n      canvasHeight,\n      bitmap: canvas.transferToImageBitmap()\n    };\n  }\n  function workerIndexes(notebook) {\n    const indexes = /* @__PURE__ */ new Map();\n    for (const page of notebook.pages) {\n      const index = new WorkerPageIndex(notebook.pageWidth, notebook.pageHeight);\n      index.sync(page);\n      indexes.set(page.id, index);\n    }\n    return indexes;\n  }\n  function workerStrokeCells(stroke, pageWidth, pageHeight) {\n    if (stroke.points.length === 0) return [];\n    const padding = stroke.width * 0.7 + 4;\n    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;\n    for (const point of stroke.points) {\n      minX = Math.min(minX, point.x * pageWidth);\n      minY = Math.min(minY, point.y * pageHeight);\n      maxX = Math.max(maxX, point.x * pageWidth);\n      maxY = Math.max(maxY, point.y * pageHeight);\n    }\n    return workerCellKeys({ x: minX - padding, y: minY - padding, width: maxX - minX + padding * 2, height: maxY - minY + padding * 2 }, pageWidth, pageHeight);\n  }\n  function workerCellKeys(rect, pageWidth, pageHeight) {\n    if (!Number.isFinite(rect.x + rect.y + rect.width + rect.height) || rect.width <= 0 || rect.height <= 0 || rect.x >= pageWidth || rect.y >= pageHeight || rect.x + rect.width <= 0 || rect.y + rect.height <= 0) return [];\n    const cells = [];\n    for (let row = Math.floor(Math.max(0, rect.y) / 128); row < Math.ceil(Math.min(pageHeight, rect.y + rect.height) / 128); row++) {\n      for (let column = Math.floor(Math.max(0, rect.x) / 128); column < Math.ceil(Math.min(pageWidth, rect.x + rect.width) / 128); column++) {\n        cells.push(`${column}:${row}`);\n      }\n    }\n    return cells;\n  }\n  function drawWorkerStroke(ctx, stroke, width, height, cache) {\n    if (stroke.tool !== "pen") {\n      drawInkStroke(ctx, stroke, width, height);\n      return;\n    }\n    const signature = `${stroke.updatedAt}:${stroke.points.length}:${stroke.width}:${width}:${height}`;\n    let cached = cache.get(stroke.id);\n    let outline = (cached == null ? void 0 : cached.signature) === signature ? cached.points : void 0;\n    if (!outline) {\n      const generated = penOutlineRings(stroke, width, height);\n      const separators = Math.max(0, generated.length - 1);\n      const buffer = new Float32Array((generated.reduce((total, ring) => total + ring.length, 0) + separators) * 2);\n      let cursor = 0;\n      generated.forEach((ring, ringIndex) => {\n        if (ringIndex > 0) {\n          buffer[cursor] = Number.NaN;\n          buffer[cursor + 1] = Number.NaN;\n          cursor += 2;\n        }\n        for (const [x, y] of ring) {\n          buffer[cursor] = x;\n          buffer[cursor + 1] = y;\n          cursor += 2;\n        }\n      });\n      outline = buffer;\n      cache.delete(stroke.id);\n      cache.set(stroke.id, { signature, points: outline });\n      while (cache.size > OUTLINE_CACHE_LIMIT) cache.delete(cache.keys().next().value);\n    } else {\n      cache.delete(stroke.id);\n      cache.set(stroke.id, cached);\n    }\n    ctx.save();\n    ctx.globalAlpha = stroke.opacity;\n    ctx.fillStyle = stroke.color;\n    ctx.globalCompositeOperation = "source-over";\n    if (outline.length >= 2) {\n      ctx.beginPath();\n      let tracing = false;\n      for (let index = 0; index < outline.length; index += 2) {\n        const x = outline[index];\n        const y = outline[index + 1];\n        if (!Number.isFinite(x) || !Number.isFinite(y)) {\n          tracing = false;\n          continue;\n        }\n        if (!tracing) {\n          tracing = true;\n          ctx.moveTo(x, y);\n          continue;\n        }\n        ctx.lineTo(x, y);\n      }\n      ctx.fill();\n    }\n    ctx.restore();\n  }\n  function parseNotebook(raw) {\n    try {\n      return normalizeNotebook(parseStoredJson(raw));\n    } catch (e) {\n      throw new ProtocolError("invalid-format", "Existing ink notebook is corrupt or uses an unsupported encoding");\n    }\n  }\n  function applyNotebookOperation(notebook, operation, cache, index) {\n    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;\n    if (operation.type === "replace-notebook" || operation.type === "history-restore") {\n      Object.assign(notebook, normalizeNotebook(operation.notebook));\n      return void 0;\n    }\n    if (operation.type === "page-operation") {\n      const page2 = operation.page;\n      if ((operation.action === "add" || operation.action === "duplicate" || operation.action === "restore") && page2) {\n        if (!(page2.id in notebook.deletedPages)) {\n          notebook.pages = notebook.pages.filter((candidate) => candidate.id !== page2.id);\n          notebook.pages.push(clonePageValue(page2));\n        }\n      } else if (operation.action === "delete" && operation.pageId) {\n        if (notebook.pages.length > 1) {\n          notebook.pages = notebook.pages.filter((candidate) => candidate.id !== operation.pageId);\n          notebook.deletedPages[operation.pageId] = Math.max((_a = notebook.deletedPages[operation.pageId]) != null ? _a : 0, (_b = operation.deletedAt) != null ? _b : Date.now());\n        }\n      }\n      const order = new Map(operation.pageOrder.map((id, index2) => [id, index2]));\n      notebook.pages.sort((left, right) => {\n        var _a2, _b2;\n        return ((_a2 = order.get(left.id)) != null ? _a2 : Number.MAX_SAFE_INTEGER) - ((_b2 = order.get(right.id)) != null ? _b2 : Number.MAX_SAFE_INTEGER);\n      });\n      notebook.pageOrder = notebook.pages.map((candidate) => candidate.id);\n      notebook.pageOrderUpdatedAt = operation.pageOrderUpdatedAt;\n      notebook.updatedAt = operation.notebookUpdatedAt;\n      return void 0;\n    }\n    const page = notebook.pages.find((candidate) => candidate.id === operation.pageId);\n    if (!page) return void 0;\n    let outlinedStroke;\n    if (operation.type === "start-stroke") {\n      const position = (_c = index == null ? void 0 : index.getOrder(operation.stroke.id)) != null ? _c : -1;\n      const stroke = cloneStrokeValue(operation.stroke);\n      if (position >= 0) page.strokes[position] = stroke;\n      else page.strokes.push(stroke);\n      outlinedStroke = stroke;\n    } else if (operation.type === "append-stroke-points") {\n      const stroke = (_d = index == null ? void 0 : index.getStroke(operation.strokeId)) != null ? _d : page.strokes.find((candidate) => candidate.id === operation.strokeId);\n      if (stroke) {\n        for (let index2 = 0; index2 + 5 < operation.points.length; index2 += 6) {\n          stroke.points.push({\n            x: operation.points[index2],\n            y: operation.points[index2 + 1],\n            pressure: operation.points[index2 + 2],\n            tiltX: Number.isNaN(operation.points[index2 + 3]) ? void 0 : operation.points[index2 + 3],\n            tiltY: Number.isNaN(operation.points[index2 + 4]) ? void 0 : operation.points[index2 + 4],\n            t: operation.points[index2 + 5]\n          });\n        }\n        outlinedStroke = stroke;\n      }\n    } else if (operation.type === "complete-stroke") {\n      const stroke = (_e = index == null ? void 0 : index.getStroke(operation.strokeId)) != null ? _e : page.strokes.find((candidate) => candidate.id === operation.strokeId);\n      if (stroke) stroke.updatedAt = operation.pageUpdatedAt;\n    } else if (operation.type === "finalize-stroke") {\n      const position = (_f = index == null ? void 0 : index.getOrder(operation.stroke.id)) != null ? _f : -1;\n      const stroke = cloneStrokeValue(operation.stroke);\n      if (position >= 0) page.strokes[position] = stroke;\n      else page.strokes.push(stroke);\n      page.strokes.sort((left, right) => left.createdAt - right.createdAt);\n      outlinedStroke = stroke;\n    } else if (operation.type === "patch-strokes") {\n      const removed = new Set(operation.remove);\n      const upsert = new Map(operation.upsert.map((stroke) => [stroke.id, cloneStrokeValue(stroke)]));\n      page.strokes = page.strokes.filter((stroke) => !removed.has(stroke.id) && !upsert.has(stroke.id));\n      page.strokes.push(...upsert.values());\n      page.strokes.sort((left, right) => left.createdAt - right.createdAt);\n      page.deletedStrokeIds = [.../* @__PURE__ */ new Set([...page.deletedStrokeIds, ...operation.deletedStrokeIds])];\n    } else if (operation.type === "translate-strokes") {\n      for (const strokeId of operation.strokeIds) {\n        const stroke = (_g = index == null ? void 0 : index.getStroke(strokeId)) != null ? _g : page.strokes.find((candidate) => candidate.id === strokeId);\n        if (!stroke) continue;\n        stroke.points = stroke.points.map((point) => ({ ...point, x: point.x + operation.dx, y: point.y + operation.dy }));\n        stroke.updatedAt = operation.pageUpdatedAt;\n      }\n    } else if (operation.type === "patch-sticky-notes") {\n      const removed = new Set(operation.remove), upsert = new Map(operation.upsert.map((note) => [note.id, cloneSticky(note)]));\n      page.deletedStickyNotes = { ...page.deletedStickyNotes };\n      for (const [id, time] of Object.entries(operation.deletedStickyNotes)) page.deletedStickyNotes[id] = Math.max((_h = page.deletedStickyNotes[id]) != null ? _h : 0, time);\n      page.stickyNotes = [...((_i = page.stickyNotes) != null ? _i : []).filter((note) => !removed.has(note.id) && !upsert.has(note.id)), ...upsert.values()].filter((note) => {\n        var _a2;\n        return note.updatedAt > ((_a2 = page.deletedStickyNotes[note.id]) != null ? _a2 : 0);\n      }).sort(compareStickyOrder);\n    } else if (operation.type === "patch-images") {\n      const removed = new Set(operation.remove);\n      const upsert = new Map(operation.upsert.map((image) => [image.id, { ...image }]));\n      page.deletedImageIds = [.../* @__PURE__ */ new Set([...(_j = page.deletedImageIds) != null ? _j : [], ...operation.deletedImageIds])];\n      page.images = [...((_k = page.images) != null ? _k : []).filter((image) => !removed.has(image.id) && !upsert.has(image.id)), ...upsert.values()].filter((image) => !page.deletedImageIds.includes(image.id));\n    } else {\n      if (operation.title !== void 0) page.title = operation.title;\n      if (operation.paper !== void 0) page.paper = operation.paper;\n      if (operation.tags !== void 0) page.tags = [...operation.tags];\n      if (operation.flag !== void 0) page.flag = (_l = operation.flag) != null ? _l : void 0;\n    }\n    page.updatedAt = operation.pageUpdatedAt;\n    notebook.updatedAt = operation.notebookUpdatedAt;\n    if (!outlinedStroke || outlinedStroke.tool !== "pen" && outlinedStroke.tool !== "highlighter") return void 0;\n    const previewWidth = operation.type === "start-stroke" || operation.type === "append-stroke-points" ? Math.max(1, (_m = operation.previewWidth) != null ? _m : notebook.pageWidth) : notebook.pageWidth;\n    const previewHeight = operation.type === "start-stroke" || operation.type === "append-stroke-points" ? Math.max(1, (_n = operation.previewHeight) != null ? _n : notebook.pageHeight) : notebook.pageHeight;\n    const signature = `${outlinedStroke.updatedAt}:${outlinedStroke.points.length}:${outlinedStroke.width}:${previewWidth}:${previewHeight}`;\n    if (outlinedStroke.tool === "highlighter") {\n      const line = new Float32Array(outlinedStroke.points.length * 2);\n      for (let index2 = 0; index2 < outlinedStroke.points.length; index2++) {\n        line[index2 * 2] = outlinedStroke.points[index2].x;\n        line[index2 * 2 + 1] = outlinedStroke.points[index2].y;\n      }\n      return { strokeId: outlinedStroke.id, sampleCount: outlinedStroke.points.length, points: line, mode: "highlighter", stroke: outlinedStroke };\n    }\n    const cached = cache == null ? void 0 : cache.get(outlinedStroke.id);\n    let outline = (cached == null ? void 0 : cached.signature) === signature ? cached.points : void 0;\n    if (!outline) {\n      const generated = penOutlineRings(outlinedStroke, previewWidth, previewHeight);\n      const separators = Math.max(0, generated.length - 1);\n      const buffer = new Float32Array((generated.reduce((total, ring) => total + ring.length, 0) + separators) * 2);\n      let cursor = 0;\n      generated.forEach((ring, ringIndex) => {\n        if (ringIndex > 0) {\n          buffer[cursor] = Number.NaN;\n          buffer[cursor + 1] = Number.NaN;\n          cursor += 2;\n        }\n        for (const [x, y] of ring) {\n          buffer[cursor] = x;\n          buffer[cursor + 1] = y;\n          cursor += 2;\n        }\n      });\n      outline = buffer;\n      if (cache) {\n        cache.delete(outlinedStroke.id);\n        cache.set(outlinedStroke.id, { signature, points: outline });\n        while (cache.size > OUTLINE_CACHE_LIMIT) cache.delete(cache.keys().next().value);\n      }\n    }\n    const normalized = new Float32Array(outline.length);\n    for (let index2 = 0; index2 < outline.length; index2 += 2) {\n      normalized[index2] = outline[index2] / previewWidth;\n      normalized[index2 + 1] = outline[index2 + 1] / previewHeight;\n    }\n    return { strokeId: outlinedStroke.id, sampleCount: outlinedStroke.points.length, points: normalized, mode: "pen", stroke: outlinedStroke };\n  }\n  function invalidateOperationOutlines(cache, operation) {\n    if (operation.type === "replace-notebook" || operation.type === "history-restore" || operation.type === "page-operation") {\n      cache.clear();\n      return;\n    }\n    if (operation.type === "start-stroke" || operation.type === "finalize-stroke") cache.delete(operation.stroke.id);\n    else if (operation.type === "append-stroke-points" || operation.type === "complete-stroke") cache.delete(operation.strokeId);\n    else if (operation.type === "patch-strokes") {\n      for (const id of operation.remove) cache.delete(id);\n      for (const stroke of operation.upsert) cache.delete(stroke.id);\n    } else if (operation.type === "translate-strokes") {\n      for (const id of operation.strokeIds) cache.delete(id);\n    }\n  }\n  function updateWorkerIndex(index, page, operation, outlinedStroke) {\n    var _a, _b, _c, _d;\n    if (operation.type === "start-stroke" || operation.type === "finalize-stroke") {\n      const stroke = outlinedStroke;\n      if (stroke) index.upsert(stroke, operation.type === "start-stroke" ? (_a = index.getOrder(stroke.id)) != null ? _a : page.strokes.length - 1 : Number.MAX_SAFE_INTEGER);\n      if (operation.type === "finalize-stroke") index.updateOrder(page);\n    } else if (operation.type === "complete-stroke") {\n      const stroke = outlinedStroke != null ? outlinedStroke : index.getStroke(operation.strokeId);\n      if (stroke) index.upsert(stroke, (_b = index.getOrder(operation.strokeId)) != null ? _b : page.strokes.length - 1);\n    } else if (operation.type === "append-stroke-points") {\n    } else if (operation.type === "patch-strokes") {\n      for (const id of operation.remove) index.remove(id);\n      const positions = new Map(page.strokes.map((stroke, position) => [stroke.id, position]));\n      const strokes = new Map(page.strokes.map((stroke) => [stroke.id, stroke]));\n      for (const replacement of operation.upsert) {\n        const stroke = strokes.get(replacement.id);\n        if (stroke) index.upsert(stroke, (_c = positions.get(stroke.id)) != null ? _c : Number.MAX_SAFE_INTEGER);\n      }\n      index.updateOrder(page);\n    } else if (operation.type === "translate-strokes") {\n      for (const id of operation.strokeIds) {\n        const stroke = index.getStroke(id);\n        if (stroke) index.upsert(stroke, (_d = index.getOrder(id)) != null ? _d : Number.MAX_SAFE_INTEGER);\n      }\n    }\n  }\n\n  // src/ink-worker.ts\n  var scope = self;\n  var core = new InkWorkerCore({\n    offscreenCanvas: typeof OffscreenCanvas !== "undefined",\n    imageBitmap: typeof ImageBitmap !== "undefined",\n    transferable: supportsTransferableBuffers()\n  });\n  var queue = [];\n  var running = false;\n  scope.onmessage = (event) => {\n    const request = event.data;\n    if (request.type === "cancel-render-generation") {\n      for (let index = queue.length - 1; index >= 0; index--) {\n        const queued = queue[index];\n        if (queued.type === "render-tile" && queued.sessionId === request.sessionId && queued.generation === request.generation && queued.renderGeneration < request.renderGeneration) {\n          queue.splice(index, 1);\n          scope.postMessage({\n            type: "error",\n            requestId: queued.requestId,\n            sessionId: queued.sessionId,\n            generation: queued.generation,\n            notebookRevision: queued.notebookRevision,\n            code: "stale-generation",\n            message: "Queued tile belongs to an obsolete render generation"\n          });\n        }\n      }\n    }\n    queue.push(request);\n    drain();\n  };\n  function drain() {\n    if (running || queue.length === 0) return;\n    queue.sort((left, right) => workerPriority(left) - workerPriority(right));\n    const request = queue.shift();\n    running = true;\n    void core.handle(request).then(({ response, transfer }) => scope.postMessage(response, transfer != null ? transfer : [])).finally(() => {\n      running = false;\n      drain();\n    });\n  }\n  function workerPriority(request) {\n    if (request.type === "cancel-render-generation" || request.type === "initialize-raw" || request.type === "initialize-notebook") return 0;\n    if (request.type === "apply-operation") return 1;\n    if (request.type === "render-tile") return request.priority === "visible" ? 2 : 3;\n    return 4;\n  }\n  scope.postMessage(core.ready());\n  function supportsTransferableBuffers() {\n    if (typeof MessageChannel === "undefined") return false;\n    try {\n      const channel = new MessageChannel();\n      const buffer = new ArrayBuffer(1);\n      channel.port1.postMessage(buffer, [buffer]);\n      channel.port1.close();\n      channel.port2.close();\n      return buffer.byteLength === 0;\n    } catch (e) {\n      return false;\n    }\n  }\n})();\n';
+var ink_worker_source_default = '(() => {\n  var __create = Object.create;\n  var __defProp = Object.defineProperty;\n  var __getOwnPropDesc = Object.getOwnPropertyDescriptor;\n  var __getOwnPropNames = Object.getOwnPropertyNames;\n  var __getProtoOf = Object.getPrototypeOf;\n  var __hasOwnProp = Object.prototype.hasOwnProperty;\n  var __commonJS = (cb, mod) => function __require() {\n    try {\n      return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;\n    } catch (e) {\n      throw mod = 0, e;\n    }\n  };\n  var __copyProps = (to, from, except, desc) => {\n    if (from && typeof from === "object" || typeof from === "function") {\n      for (let key of __getOwnPropNames(from))\n        if (!__hasOwnProp.call(to, key) && key !== except)\n          __defProp(to, key, { get: () => from[key], enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable });\n    }\n    return to;\n  };\n  var __toESM = (mod, isNodeMode, target) => (target = mod != null ? __create(__getProtoOf(mod)) : {}, __copyProps(\n    // If the importer is in node compatibility mode or this is not an ESM\n    // file that has been converted to a CommonJS file using a Babel-\n    // compatible transform (i.e. "__esModule" has not been set), then set\n    // "default" to the CommonJS "module.exports" for node compatibility.\n    isNodeMode || !mod || !mod.__esModule ? __defProp(target, "default", { value: mod, enumerable: true }) : target,\n    mod\n  ));\n\n  // node_modules/pako/lib/utils/common.js\n  var require_common = __commonJS({\n    "node_modules/pako/lib/utils/common.js"(exports) {\n      "use strict";\n      var TYPED_OK = typeof Uint8Array !== "undefined" && typeof Uint16Array !== "undefined" && typeof Int32Array !== "undefined";\n      function _has(obj, key) {\n        return Object.prototype.hasOwnProperty.call(obj, key);\n      }\n      exports.assign = function(obj) {\n        var sources = Array.prototype.slice.call(arguments, 1);\n        while (sources.length) {\n          var source = sources.shift();\n          if (!source) {\n            continue;\n          }\n          if (typeof source !== "object") {\n            throw new TypeError(source + "must be non-object");\n          }\n          for (var p in source) {\n            if (_has(source, p)) {\n              obj[p] = source[p];\n            }\n          }\n        }\n        return obj;\n      };\n      exports.shrinkBuf = function(buf, size) {\n        if (buf.length === size) {\n          return buf;\n        }\n        if (buf.subarray) {\n          return buf.subarray(0, size);\n        }\n        buf.length = size;\n        return buf;\n      };\n      var fnTyped = {\n        arraySet: function(dest, src, src_offs, len, dest_offs) {\n          if (src.subarray && dest.subarray) {\n            dest.set(src.subarray(src_offs, src_offs + len), dest_offs);\n            return;\n          }\n          for (var i = 0; i < len; i++) {\n            dest[dest_offs + i] = src[src_offs + i];\n          }\n        },\n        // Join array of chunks to single array.\n        flattenChunks: function(chunks) {\n          var i, l, len, pos, chunk, result;\n          len = 0;\n          for (i = 0, l = chunks.length; i < l; i++) {\n            len += chunks[i].length;\n          }\n          result = new Uint8Array(len);\n          pos = 0;\n          for (i = 0, l = chunks.length; i < l; i++) {\n            chunk = chunks[i];\n            result.set(chunk, pos);\n            pos += chunk.length;\n          }\n          return result;\n        }\n      };\n      var fnUntyped = {\n        arraySet: function(dest, src, src_offs, len, dest_offs) {\n          for (var i = 0; i < len; i++) {\n            dest[dest_offs + i] = src[src_offs + i];\n          }\n        },\n        // Join array of chunks to single array.\n        flattenChunks: function(chunks) {\n          return [].concat.apply([], chunks);\n        }\n      };\n      exports.setTyped = function(on) {\n        if (on) {\n          exports.Buf8 = Uint8Array;\n          exports.Buf16 = Uint16Array;\n          exports.Buf32 = Int32Array;\n          exports.assign(exports, fnTyped);\n        } else {\n          exports.Buf8 = Array;\n          exports.Buf16 = Array;\n          exports.Buf32 = Array;\n          exports.assign(exports, fnUntyped);\n        }\n      };\n      exports.setTyped(TYPED_OK);\n    }\n  });\n\n  // node_modules/pako/lib/zlib/trees.js\n  var require_trees = __commonJS({\n    "node_modules/pako/lib/zlib/trees.js"(exports) {\n      "use strict";\n      var utils = require_common();\n      var Z_FIXED = 4;\n      var Z_BINARY = 0;\n      var Z_TEXT = 1;\n      var Z_UNKNOWN = 2;\n      function zero(buf) {\n        var len = buf.length;\n        while (--len >= 0) {\n          buf[len] = 0;\n        }\n      }\n      var STORED_BLOCK = 0;\n      var STATIC_TREES = 1;\n      var DYN_TREES = 2;\n      var MIN_MATCH = 3;\n      var MAX_MATCH = 258;\n      var LENGTH_CODES = 29;\n      var LITERALS = 256;\n      var L_CODES = LITERALS + 1 + LENGTH_CODES;\n      var D_CODES = 30;\n      var BL_CODES = 19;\n      var HEAP_SIZE = 2 * L_CODES + 1;\n      var MAX_BITS = 15;\n      var Buf_size = 16;\n      var MAX_BL_BITS = 7;\n      var END_BLOCK = 256;\n      var REP_3_6 = 16;\n      var REPZ_3_10 = 17;\n      var REPZ_11_138 = 18;\n      var extra_lbits = (\n        /* extra bits for each length code */\n        [0, 0, 0, 0, 0, 0, 0, 0, 1, 1, 1, 1, 2, 2, 2, 2, 3, 3, 3, 3, 4, 4, 4, 4, 5, 5, 5, 5, 0]\n      );\n      var extra_dbits = (\n        /* extra bits for each distance code */\n        [0, 0, 0, 0, 1, 1, 2, 2, 3, 3, 4, 4, 5, 5, 6, 6, 7, 7, 8, 8, 9, 9, 10, 10, 11, 11, 12, 12, 13, 13]\n      );\n      var extra_blbits = (\n        /* extra bits for each bit length code */\n        [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 3, 7]\n      );\n      var bl_order = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15];\n      var DIST_CODE_LEN = 512;\n      var static_ltree = new Array((L_CODES + 2) * 2);\n      zero(static_ltree);\n      var static_dtree = new Array(D_CODES * 2);\n      zero(static_dtree);\n      var _dist_code = new Array(DIST_CODE_LEN);\n      zero(_dist_code);\n      var _length_code = new Array(MAX_MATCH - MIN_MATCH + 1);\n      zero(_length_code);\n      var base_length = new Array(LENGTH_CODES);\n      zero(base_length);\n      var base_dist = new Array(D_CODES);\n      zero(base_dist);\n      function StaticTreeDesc(static_tree, extra_bits, extra_base, elems, max_length) {\n        this.static_tree = static_tree;\n        this.extra_bits = extra_bits;\n        this.extra_base = extra_base;\n        this.elems = elems;\n        this.max_length = max_length;\n        this.has_stree = static_tree && static_tree.length;\n      }\n      var static_l_desc;\n      var static_d_desc;\n      var static_bl_desc;\n      function TreeDesc(dyn_tree, stat_desc) {\n        this.dyn_tree = dyn_tree;\n        this.max_code = 0;\n        this.stat_desc = stat_desc;\n      }\n      function d_code(dist) {\n        return dist < 256 ? _dist_code[dist] : _dist_code[256 + (dist >>> 7)];\n      }\n      function put_short(s, w) {\n        s.pending_buf[s.pending++] = w & 255;\n        s.pending_buf[s.pending++] = w >>> 8 & 255;\n      }\n      function send_bits(s, value, length) {\n        if (s.bi_valid > Buf_size - length) {\n          s.bi_buf |= value << s.bi_valid & 65535;\n          put_short(s, s.bi_buf);\n          s.bi_buf = value >> Buf_size - s.bi_valid;\n          s.bi_valid += length - Buf_size;\n        } else {\n          s.bi_buf |= value << s.bi_valid & 65535;\n          s.bi_valid += length;\n        }\n      }\n      function send_code(s, c, tree) {\n        send_bits(\n          s,\n          tree[c * 2],\n          tree[c * 2 + 1]\n          /*.Len*/\n        );\n      }\n      function bi_reverse(code, len) {\n        var res = 0;\n        do {\n          res |= code & 1;\n          code >>>= 1;\n          res <<= 1;\n        } while (--len > 0);\n        return res >>> 1;\n      }\n      function bi_flush(s) {\n        if (s.bi_valid === 16) {\n          put_short(s, s.bi_buf);\n          s.bi_buf = 0;\n          s.bi_valid = 0;\n        } else if (s.bi_valid >= 8) {\n          s.pending_buf[s.pending++] = s.bi_buf & 255;\n          s.bi_buf >>= 8;\n          s.bi_valid -= 8;\n        }\n      }\n      function gen_bitlen(s, desc) {\n        var tree = desc.dyn_tree;\n        var max_code = desc.max_code;\n        var stree = desc.stat_desc.static_tree;\n        var has_stree = desc.stat_desc.has_stree;\n        var extra = desc.stat_desc.extra_bits;\n        var base = desc.stat_desc.extra_base;\n        var max_length = desc.stat_desc.max_length;\n        var h;\n        var n, m;\n        var bits;\n        var xbits;\n        var f;\n        var overflow = 0;\n        for (bits = 0; bits <= MAX_BITS; bits++) {\n          s.bl_count[bits] = 0;\n        }\n        tree[s.heap[s.heap_max] * 2 + 1] = 0;\n        for (h = s.heap_max + 1; h < HEAP_SIZE; h++) {\n          n = s.heap[h];\n          bits = tree[tree[n * 2 + 1] * 2 + 1] + 1;\n          if (bits > max_length) {\n            bits = max_length;\n            overflow++;\n          }\n          tree[n * 2 + 1] = bits;\n          if (n > max_code) {\n            continue;\n          }\n          s.bl_count[bits]++;\n          xbits = 0;\n          if (n >= base) {\n            xbits = extra[n - base];\n          }\n          f = tree[n * 2];\n          s.opt_len += f * (bits + xbits);\n          if (has_stree) {\n            s.static_len += f * (stree[n * 2 + 1] + xbits);\n          }\n        }\n        if (overflow === 0) {\n          return;\n        }\n        do {\n          bits = max_length - 1;\n          while (s.bl_count[bits] === 0) {\n            bits--;\n          }\n          s.bl_count[bits]--;\n          s.bl_count[bits + 1] += 2;\n          s.bl_count[max_length]--;\n          overflow -= 2;\n        } while (overflow > 0);\n        for (bits = max_length; bits !== 0; bits--) {\n          n = s.bl_count[bits];\n          while (n !== 0) {\n            m = s.heap[--h];\n            if (m > max_code) {\n              continue;\n            }\n            if (tree[m * 2 + 1] !== bits) {\n              s.opt_len += (bits - tree[m * 2 + 1]) * tree[m * 2];\n              tree[m * 2 + 1] = bits;\n            }\n            n--;\n          }\n        }\n      }\n      function gen_codes(tree, max_code, bl_count) {\n        var next_code = new Array(MAX_BITS + 1);\n        var code = 0;\n        var bits;\n        var n;\n        for (bits = 1; bits <= MAX_BITS; bits++) {\n          next_code[bits] = code = code + bl_count[bits - 1] << 1;\n        }\n        for (n = 0; n <= max_code; n++) {\n          var len = tree[n * 2 + 1];\n          if (len === 0) {\n            continue;\n          }\n          tree[n * 2] = bi_reverse(next_code[len]++, len);\n        }\n      }\n      function tr_static_init() {\n        var n;\n        var bits;\n        var length;\n        var code;\n        var dist;\n        var bl_count = new Array(MAX_BITS + 1);\n        length = 0;\n        for (code = 0; code < LENGTH_CODES - 1; code++) {\n          base_length[code] = length;\n          for (n = 0; n < 1 << extra_lbits[code]; n++) {\n            _length_code[length++] = code;\n          }\n        }\n        _length_code[length - 1] = code;\n        dist = 0;\n        for (code = 0; code < 16; code++) {\n          base_dist[code] = dist;\n          for (n = 0; n < 1 << extra_dbits[code]; n++) {\n            _dist_code[dist++] = code;\n          }\n        }\n        dist >>= 7;\n        for (; code < D_CODES; code++) {\n          base_dist[code] = dist << 7;\n          for (n = 0; n < 1 << extra_dbits[code] - 7; n++) {\n            _dist_code[256 + dist++] = code;\n          }\n        }\n        for (bits = 0; bits <= MAX_BITS; bits++) {\n          bl_count[bits] = 0;\n        }\n        n = 0;\n        while (n <= 143) {\n          static_ltree[n * 2 + 1] = 8;\n          n++;\n          bl_count[8]++;\n        }\n        while (n <= 255) {\n          static_ltree[n * 2 + 1] = 9;\n          n++;\n          bl_count[9]++;\n        }\n        while (n <= 279) {\n          static_ltree[n * 2 + 1] = 7;\n          n++;\n          bl_count[7]++;\n        }\n        while (n <= 287) {\n          static_ltree[n * 2 + 1] = 8;\n          n++;\n          bl_count[8]++;\n        }\n        gen_codes(static_ltree, L_CODES + 1, bl_count);\n        for (n = 0; n < D_CODES; n++) {\n          static_dtree[n * 2 + 1] = 5;\n          static_dtree[n * 2] = bi_reverse(n, 5);\n        }\n        static_l_desc = new StaticTreeDesc(static_ltree, extra_lbits, LITERALS + 1, L_CODES, MAX_BITS);\n        static_d_desc = new StaticTreeDesc(static_dtree, extra_dbits, 0, D_CODES, MAX_BITS);\n        static_bl_desc = new StaticTreeDesc(new Array(0), extra_blbits, 0, BL_CODES, MAX_BL_BITS);\n      }\n      function init_block(s) {\n        var n;\n        for (n = 0; n < L_CODES; n++) {\n          s.dyn_ltree[n * 2] = 0;\n        }\n        for (n = 0; n < D_CODES; n++) {\n          s.dyn_dtree[n * 2] = 0;\n        }\n        for (n = 0; n < BL_CODES; n++) {\n          s.bl_tree[n * 2] = 0;\n        }\n        s.dyn_ltree[END_BLOCK * 2] = 1;\n        s.opt_len = s.static_len = 0;\n        s.last_lit = s.matches = 0;\n      }\n      function bi_windup(s) {\n        if (s.bi_valid > 8) {\n          put_short(s, s.bi_buf);\n        } else if (s.bi_valid > 0) {\n          s.pending_buf[s.pending++] = s.bi_buf;\n        }\n        s.bi_buf = 0;\n        s.bi_valid = 0;\n      }\n      function copy_block(s, buf, len, header) {\n        bi_windup(s);\n        if (header) {\n          put_short(s, len);\n          put_short(s, ~len);\n        }\n        utils.arraySet(s.pending_buf, s.window, buf, len, s.pending);\n        s.pending += len;\n      }\n      function smaller(tree, n, m, depth) {\n        var _n2 = n * 2;\n        var _m2 = m * 2;\n        return tree[_n2] < tree[_m2] || tree[_n2] === tree[_m2] && depth[n] <= depth[m];\n      }\n      function pqdownheap(s, tree, k) {\n        var v = s.heap[k];\n        var j = k << 1;\n        while (j <= s.heap_len) {\n          if (j < s.heap_len && smaller(tree, s.heap[j + 1], s.heap[j], s.depth)) {\n            j++;\n          }\n          if (smaller(tree, v, s.heap[j], s.depth)) {\n            break;\n          }\n          s.heap[k] = s.heap[j];\n          k = j;\n          j <<= 1;\n        }\n        s.heap[k] = v;\n      }\n      function compress_block(s, ltree, dtree) {\n        var dist;\n        var lc;\n        var lx = 0;\n        var code;\n        var extra;\n        if (s.last_lit !== 0) {\n          do {\n            dist = s.pending_buf[s.d_buf + lx * 2] << 8 | s.pending_buf[s.d_buf + lx * 2 + 1];\n            lc = s.pending_buf[s.l_buf + lx];\n            lx++;\n            if (dist === 0) {\n              send_code(s, lc, ltree);\n            } else {\n              code = _length_code[lc];\n              send_code(s, code + LITERALS + 1, ltree);\n              extra = extra_lbits[code];\n              if (extra !== 0) {\n                lc -= base_length[code];\n                send_bits(s, lc, extra);\n              }\n              dist--;\n              code = d_code(dist);\n              send_code(s, code, dtree);\n              extra = extra_dbits[code];\n              if (extra !== 0) {\n                dist -= base_dist[code];\n                send_bits(s, dist, extra);\n              }\n            }\n          } while (lx < s.last_lit);\n        }\n        send_code(s, END_BLOCK, ltree);\n      }\n      function build_tree(s, desc) {\n        var tree = desc.dyn_tree;\n        var stree = desc.stat_desc.static_tree;\n        var has_stree = desc.stat_desc.has_stree;\n        var elems = desc.stat_desc.elems;\n        var n, m;\n        var max_code = -1;\n        var node;\n        s.heap_len = 0;\n        s.heap_max = HEAP_SIZE;\n        for (n = 0; n < elems; n++) {\n          if (tree[n * 2] !== 0) {\n            s.heap[++s.heap_len] = max_code = n;\n            s.depth[n] = 0;\n          } else {\n            tree[n * 2 + 1] = 0;\n          }\n        }\n        while (s.heap_len < 2) {\n          node = s.heap[++s.heap_len] = max_code < 2 ? ++max_code : 0;\n          tree[node * 2] = 1;\n          s.depth[node] = 0;\n          s.opt_len--;\n          if (has_stree) {\n            s.static_len -= stree[node * 2 + 1];\n          }\n        }\n        desc.max_code = max_code;\n        for (n = s.heap_len >> 1; n >= 1; n--) {\n          pqdownheap(s, tree, n);\n        }\n        node = elems;\n        do {\n          n = s.heap[\n            1\n            /*SMALLEST*/\n          ];\n          s.heap[\n            1\n            /*SMALLEST*/\n          ] = s.heap[s.heap_len--];\n          pqdownheap(\n            s,\n            tree,\n            1\n            /*SMALLEST*/\n          );\n          m = s.heap[\n            1\n            /*SMALLEST*/\n          ];\n          s.heap[--s.heap_max] = n;\n          s.heap[--s.heap_max] = m;\n          tree[node * 2] = tree[n * 2] + tree[m * 2];\n          s.depth[node] = (s.depth[n] >= s.depth[m] ? s.depth[n] : s.depth[m]) + 1;\n          tree[n * 2 + 1] = tree[m * 2 + 1] = node;\n          s.heap[\n            1\n            /*SMALLEST*/\n          ] = node++;\n          pqdownheap(\n            s,\n            tree,\n            1\n            /*SMALLEST*/\n          );\n        } while (s.heap_len >= 2);\n        s.heap[--s.heap_max] = s.heap[\n          1\n          /*SMALLEST*/\n        ];\n        gen_bitlen(s, desc);\n        gen_codes(tree, max_code, s.bl_count);\n      }\n      function scan_tree(s, tree, max_code) {\n        var n;\n        var prevlen = -1;\n        var curlen;\n        var nextlen = tree[0 * 2 + 1];\n        var count = 0;\n        var max_count = 7;\n        var min_count = 4;\n        if (nextlen === 0) {\n          max_count = 138;\n          min_count = 3;\n        }\n        tree[(max_code + 1) * 2 + 1] = 65535;\n        for (n = 0; n <= max_code; n++) {\n          curlen = nextlen;\n          nextlen = tree[(n + 1) * 2 + 1];\n          if (++count < max_count && curlen === nextlen) {\n            continue;\n          } else if (count < min_count) {\n            s.bl_tree[curlen * 2] += count;\n          } else if (curlen !== 0) {\n            if (curlen !== prevlen) {\n              s.bl_tree[curlen * 2]++;\n            }\n            s.bl_tree[REP_3_6 * 2]++;\n          } else if (count <= 10) {\n            s.bl_tree[REPZ_3_10 * 2]++;\n          } else {\n            s.bl_tree[REPZ_11_138 * 2]++;\n          }\n          count = 0;\n          prevlen = curlen;\n          if (nextlen === 0) {\n            max_count = 138;\n            min_count = 3;\n          } else if (curlen === nextlen) {\n            max_count = 6;\n            min_count = 3;\n          } else {\n            max_count = 7;\n            min_count = 4;\n          }\n        }\n      }\n      function send_tree(s, tree, max_code) {\n        var n;\n        var prevlen = -1;\n        var curlen;\n        var nextlen = tree[0 * 2 + 1];\n        var count = 0;\n        var max_count = 7;\n        var min_count = 4;\n        if (nextlen === 0) {\n          max_count = 138;\n          min_count = 3;\n        }\n        for (n = 0; n <= max_code; n++) {\n          curlen = nextlen;\n          nextlen = tree[(n + 1) * 2 + 1];\n          if (++count < max_count && curlen === nextlen) {\n            continue;\n          } else if (count < min_count) {\n            do {\n              send_code(s, curlen, s.bl_tree);\n            } while (--count !== 0);\n          } else if (curlen !== 0) {\n            if (curlen !== prevlen) {\n              send_code(s, curlen, s.bl_tree);\n              count--;\n            }\n            send_code(s, REP_3_6, s.bl_tree);\n            send_bits(s, count - 3, 2);\n          } else if (count <= 10) {\n            send_code(s, REPZ_3_10, s.bl_tree);\n            send_bits(s, count - 3, 3);\n          } else {\n            send_code(s, REPZ_11_138, s.bl_tree);\n            send_bits(s, count - 11, 7);\n          }\n          count = 0;\n          prevlen = curlen;\n          if (nextlen === 0) {\n            max_count = 138;\n            min_count = 3;\n          } else if (curlen === nextlen) {\n            max_count = 6;\n            min_count = 3;\n          } else {\n            max_count = 7;\n            min_count = 4;\n          }\n        }\n      }\n      function build_bl_tree(s) {\n        var max_blindex;\n        scan_tree(s, s.dyn_ltree, s.l_desc.max_code);\n        scan_tree(s, s.dyn_dtree, s.d_desc.max_code);\n        build_tree(s, s.bl_desc);\n        for (max_blindex = BL_CODES - 1; max_blindex >= 3; max_blindex--) {\n          if (s.bl_tree[bl_order[max_blindex] * 2 + 1] !== 0) {\n            break;\n          }\n        }\n        s.opt_len += 3 * (max_blindex + 1) + 5 + 5 + 4;\n        return max_blindex;\n      }\n      function send_all_trees(s, lcodes, dcodes, blcodes) {\n        var rank;\n        send_bits(s, lcodes - 257, 5);\n        send_bits(s, dcodes - 1, 5);\n        send_bits(s, blcodes - 4, 4);\n        for (rank = 0; rank < blcodes; rank++) {\n          send_bits(s, s.bl_tree[bl_order[rank] * 2 + 1], 3);\n        }\n        send_tree(s, s.dyn_ltree, lcodes - 1);\n        send_tree(s, s.dyn_dtree, dcodes - 1);\n      }\n      function detect_data_type(s) {\n        var black_mask = 4093624447;\n        var n;\n        for (n = 0; n <= 31; n++, black_mask >>>= 1) {\n          if (black_mask & 1 && s.dyn_ltree[n * 2] !== 0) {\n            return Z_BINARY;\n          }\n        }\n        if (s.dyn_ltree[9 * 2] !== 0 || s.dyn_ltree[10 * 2] !== 0 || s.dyn_ltree[13 * 2] !== 0) {\n          return Z_TEXT;\n        }\n        for (n = 32; n < LITERALS; n++) {\n          if (s.dyn_ltree[n * 2] !== 0) {\n            return Z_TEXT;\n          }\n        }\n        return Z_BINARY;\n      }\n      var static_init_done = false;\n      function _tr_init(s) {\n        if (!static_init_done) {\n          tr_static_init();\n          static_init_done = true;\n        }\n        s.l_desc = new TreeDesc(s.dyn_ltree, static_l_desc);\n        s.d_desc = new TreeDesc(s.dyn_dtree, static_d_desc);\n        s.bl_desc = new TreeDesc(s.bl_tree, static_bl_desc);\n        s.bi_buf = 0;\n        s.bi_valid = 0;\n        init_block(s);\n      }\n      function _tr_stored_block(s, buf, stored_len, last) {\n        send_bits(s, (STORED_BLOCK << 1) + (last ? 1 : 0), 3);\n        copy_block(s, buf, stored_len, true);\n      }\n      function _tr_align(s) {\n        send_bits(s, STATIC_TREES << 1, 3);\n        send_code(s, END_BLOCK, static_ltree);\n        bi_flush(s);\n      }\n      function _tr_flush_block(s, buf, stored_len, last) {\n        var opt_lenb, static_lenb;\n        var max_blindex = 0;\n        if (s.level > 0) {\n          if (s.strm.data_type === Z_UNKNOWN) {\n            s.strm.data_type = detect_data_type(s);\n          }\n          build_tree(s, s.l_desc);\n          build_tree(s, s.d_desc);\n          max_blindex = build_bl_tree(s);\n          opt_lenb = s.opt_len + 3 + 7 >>> 3;\n          static_lenb = s.static_len + 3 + 7 >>> 3;\n          if (static_lenb <= opt_lenb) {\n            opt_lenb = static_lenb;\n          }\n        } else {\n          opt_lenb = static_lenb = stored_len + 5;\n        }\n        if (stored_len + 4 <= opt_lenb && buf !== -1) {\n          _tr_stored_block(s, buf, stored_len, last);\n        } else if (s.strategy === Z_FIXED || static_lenb === opt_lenb) {\n          send_bits(s, (STATIC_TREES << 1) + (last ? 1 : 0), 3);\n          compress_block(s, static_ltree, static_dtree);\n        } else {\n          send_bits(s, (DYN_TREES << 1) + (last ? 1 : 0), 3);\n          send_all_trees(s, s.l_desc.max_code + 1, s.d_desc.max_code + 1, max_blindex + 1);\n          compress_block(s, s.dyn_ltree, s.dyn_dtree);\n        }\n        init_block(s);\n        if (last) {\n          bi_windup(s);\n        }\n      }\n      function _tr_tally(s, dist, lc) {\n        s.pending_buf[s.d_buf + s.last_lit * 2] = dist >>> 8 & 255;\n        s.pending_buf[s.d_buf + s.last_lit * 2 + 1] = dist & 255;\n        s.pending_buf[s.l_buf + s.last_lit] = lc & 255;\n        s.last_lit++;\n        if (dist === 0) {\n          s.dyn_ltree[lc * 2]++;\n        } else {\n          s.matches++;\n          dist--;\n          s.dyn_ltree[(_length_code[lc] + LITERALS + 1) * 2]++;\n          s.dyn_dtree[d_code(dist) * 2]++;\n        }\n        return s.last_lit === s.lit_bufsize - 1;\n      }\n      exports._tr_init = _tr_init;\n      exports._tr_stored_block = _tr_stored_block;\n      exports._tr_flush_block = _tr_flush_block;\n      exports._tr_tally = _tr_tally;\n      exports._tr_align = _tr_align;\n    }\n  });\n\n  // node_modules/pako/lib/zlib/adler32.js\n  var require_adler32 = __commonJS({\n    "node_modules/pako/lib/zlib/adler32.js"(exports, module) {\n      "use strict";\n      function adler32(adler, buf, len, pos) {\n        var s1 = adler & 65535 | 0, s2 = adler >>> 16 & 65535 | 0, n = 0;\n        while (len !== 0) {\n          n = len > 2e3 ? 2e3 : len;\n          len -= n;\n          do {\n            s1 = s1 + buf[pos++] | 0;\n            s2 = s2 + s1 | 0;\n          } while (--n);\n          s1 %= 65521;\n          s2 %= 65521;\n        }\n        return s1 | s2 << 16 | 0;\n      }\n      module.exports = adler32;\n    }\n  });\n\n  // node_modules/pako/lib/zlib/crc32.js\n  var require_crc32 = __commonJS({\n    "node_modules/pako/lib/zlib/crc32.js"(exports, module) {\n      "use strict";\n      function makeTable() {\n        var c, table = [];\n        for (var n = 0; n < 256; n++) {\n          c = n;\n          for (var k = 0; k < 8; k++) {\n            c = c & 1 ? 3988292384 ^ c >>> 1 : c >>> 1;\n          }\n          table[n] = c;\n        }\n        return table;\n      }\n      var crcTable = makeTable();\n      function crc32(crc, buf, len, pos) {\n        var t = crcTable, end = pos + len;\n        crc ^= -1;\n        for (var i = pos; i < end; i++) {\n          crc = crc >>> 8 ^ t[(crc ^ buf[i]) & 255];\n        }\n        return crc ^ -1;\n      }\n      module.exports = crc32;\n    }\n  });\n\n  // node_modules/pako/lib/zlib/messages.js\n  var require_messages = __commonJS({\n    "node_modules/pako/lib/zlib/messages.js"(exports, module) {\n      "use strict";\n      module.exports = {\n        2: "need dictionary",\n        /* Z_NEED_DICT       2  */\n        1: "stream end",\n        /* Z_STREAM_END      1  */\n        0: "",\n        /* Z_OK              0  */\n        "-1": "file error",\n        /* Z_ERRNO         (-1) */\n        "-2": "stream error",\n        /* Z_STREAM_ERROR  (-2) */\n        "-3": "data error",\n        /* Z_DATA_ERROR    (-3) */\n        "-4": "insufficient memory",\n        /* Z_MEM_ERROR     (-4) */\n        "-5": "buffer error",\n        /* Z_BUF_ERROR     (-5) */\n        "-6": "incompatible version"\n        /* Z_VERSION_ERROR (-6) */\n      };\n    }\n  });\n\n  // node_modules/pako/lib/zlib/deflate.js\n  var require_deflate = __commonJS({\n    "node_modules/pako/lib/zlib/deflate.js"(exports) {\n      "use strict";\n      var utils = require_common();\n      var trees = require_trees();\n      var adler32 = require_adler32();\n      var crc32 = require_crc32();\n      var msg = require_messages();\n      var Z_NO_FLUSH = 0;\n      var Z_PARTIAL_FLUSH = 1;\n      var Z_FULL_FLUSH = 3;\n      var Z_FINISH = 4;\n      var Z_BLOCK = 5;\n      var Z_OK = 0;\n      var Z_STREAM_END = 1;\n      var Z_STREAM_ERROR = -2;\n      var Z_DATA_ERROR = -3;\n      var Z_BUF_ERROR = -5;\n      var Z_DEFAULT_COMPRESSION = -1;\n      var Z_FILTERED = 1;\n      var Z_HUFFMAN_ONLY = 2;\n      var Z_RLE = 3;\n      var Z_FIXED = 4;\n      var Z_DEFAULT_STRATEGY = 0;\n      var Z_UNKNOWN = 2;\n      var Z_DEFLATED = 8;\n      var MAX_MEM_LEVEL = 9;\n      var MAX_WBITS = 15;\n      var DEF_MEM_LEVEL = 8;\n      var LENGTH_CODES = 29;\n      var LITERALS = 256;\n      var L_CODES = LITERALS + 1 + LENGTH_CODES;\n      var D_CODES = 30;\n      var BL_CODES = 19;\n      var HEAP_SIZE = 2 * L_CODES + 1;\n      var MAX_BITS = 15;\n      var MIN_MATCH = 3;\n      var MAX_MATCH = 258;\n      var MIN_LOOKAHEAD = MAX_MATCH + MIN_MATCH + 1;\n      var PRESET_DICT = 32;\n      var INIT_STATE = 42;\n      var EXTRA_STATE = 69;\n      var NAME_STATE = 73;\n      var COMMENT_STATE = 91;\n      var HCRC_STATE = 103;\n      var BUSY_STATE = 113;\n      var FINISH_STATE = 666;\n      var BS_NEED_MORE = 1;\n      var BS_BLOCK_DONE = 2;\n      var BS_FINISH_STARTED = 3;\n      var BS_FINISH_DONE = 4;\n      var OS_CODE = 3;\n      function err(strm, errorCode) {\n        strm.msg = msg[errorCode];\n        return errorCode;\n      }\n      function rank(f) {\n        return (f << 1) - (f > 4 ? 9 : 0);\n      }\n      function zero(buf) {\n        var len = buf.length;\n        while (--len >= 0) {\n          buf[len] = 0;\n        }\n      }\n      function flush_pending(strm) {\n        var s = strm.state;\n        var len = s.pending;\n        if (len > strm.avail_out) {\n          len = strm.avail_out;\n        }\n        if (len === 0) {\n          return;\n        }\n        utils.arraySet(strm.output, s.pending_buf, s.pending_out, len, strm.next_out);\n        strm.next_out += len;\n        s.pending_out += len;\n        strm.total_out += len;\n        strm.avail_out -= len;\n        s.pending -= len;\n        if (s.pending === 0) {\n          s.pending_out = 0;\n        }\n      }\n      function flush_block_only(s, last) {\n        trees._tr_flush_block(s, s.block_start >= 0 ? s.block_start : -1, s.strstart - s.block_start, last);\n        s.block_start = s.strstart;\n        flush_pending(s.strm);\n      }\n      function put_byte(s, b) {\n        s.pending_buf[s.pending++] = b;\n      }\n      function putShortMSB(s, b) {\n        s.pending_buf[s.pending++] = b >>> 8 & 255;\n        s.pending_buf[s.pending++] = b & 255;\n      }\n      function read_buf(strm, buf, start, size) {\n        var len = strm.avail_in;\n        if (len > size) {\n          len = size;\n        }\n        if (len === 0) {\n          return 0;\n        }\n        strm.avail_in -= len;\n        utils.arraySet(buf, strm.input, strm.next_in, len, start);\n        if (strm.state.wrap === 1) {\n          strm.adler = adler32(strm.adler, buf, len, start);\n        } else if (strm.state.wrap === 2) {\n          strm.adler = crc32(strm.adler, buf, len, start);\n        }\n        strm.next_in += len;\n        strm.total_in += len;\n        return len;\n      }\n      function longest_match(s, cur_match) {\n        var chain_length = s.max_chain_length;\n        var scan = s.strstart;\n        var match;\n        var len;\n        var best_len = s.prev_length;\n        var nice_match = s.nice_match;\n        var limit = s.strstart > s.w_size - MIN_LOOKAHEAD ? s.strstart - (s.w_size - MIN_LOOKAHEAD) : 0;\n        var _win = s.window;\n        var wmask = s.w_mask;\n        var prev = s.prev;\n        var strend = s.strstart + MAX_MATCH;\n        var scan_end1 = _win[scan + best_len - 1];\n        var scan_end = _win[scan + best_len];\n        if (s.prev_length >= s.good_match) {\n          chain_length >>= 2;\n        }\n        if (nice_match > s.lookahead) {\n          nice_match = s.lookahead;\n        }\n        do {\n          match = cur_match;\n          if (_win[match + best_len] !== scan_end || _win[match + best_len - 1] !== scan_end1 || _win[match] !== _win[scan] || _win[++match] !== _win[scan + 1]) {\n            continue;\n          }\n          scan += 2;\n          match++;\n          do {\n          } while (_win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && _win[++scan] === _win[++match] && scan < strend);\n          len = MAX_MATCH - (strend - scan);\n          scan = strend - MAX_MATCH;\n          if (len > best_len) {\n            s.match_start = cur_match;\n            best_len = len;\n            if (len >= nice_match) {\n              break;\n            }\n            scan_end1 = _win[scan + best_len - 1];\n            scan_end = _win[scan + best_len];\n          }\n        } while ((cur_match = prev[cur_match & wmask]) > limit && --chain_length !== 0);\n        if (best_len <= s.lookahead) {\n          return best_len;\n        }\n        return s.lookahead;\n      }\n      function fill_window(s) {\n        var _w_size = s.w_size;\n        var p, n, m, more, str;\n        do {\n          more = s.window_size - s.lookahead - s.strstart;\n          if (s.strstart >= _w_size + (_w_size - MIN_LOOKAHEAD)) {\n            utils.arraySet(s.window, s.window, _w_size, _w_size, 0);\n            s.match_start -= _w_size;\n            s.strstart -= _w_size;\n            s.block_start -= _w_size;\n            n = s.hash_size;\n            p = n;\n            do {\n              m = s.head[--p];\n              s.head[p] = m >= _w_size ? m - _w_size : 0;\n            } while (--n);\n            n = _w_size;\n            p = n;\n            do {\n              m = s.prev[--p];\n              s.prev[p] = m >= _w_size ? m - _w_size : 0;\n            } while (--n);\n            more += _w_size;\n          }\n          if (s.strm.avail_in === 0) {\n            break;\n          }\n          n = read_buf(s.strm, s.window, s.strstart + s.lookahead, more);\n          s.lookahead += n;\n          if (s.lookahead + s.insert >= MIN_MATCH) {\n            str = s.strstart - s.insert;\n            s.ins_h = s.window[str];\n            s.ins_h = (s.ins_h << s.hash_shift ^ s.window[str + 1]) & s.hash_mask;\n            while (s.insert) {\n              s.ins_h = (s.ins_h << s.hash_shift ^ s.window[str + MIN_MATCH - 1]) & s.hash_mask;\n              s.prev[str & s.w_mask] = s.head[s.ins_h];\n              s.head[s.ins_h] = str;\n              str++;\n              s.insert--;\n              if (s.lookahead + s.insert < MIN_MATCH) {\n                break;\n              }\n            }\n          }\n        } while (s.lookahead < MIN_LOOKAHEAD && s.strm.avail_in !== 0);\n      }\n      function deflate_stored(s, flush) {\n        var max_block_size = 65535;\n        if (max_block_size > s.pending_buf_size - 5) {\n          max_block_size = s.pending_buf_size - 5;\n        }\n        for (; ; ) {\n          if (s.lookahead <= 1) {\n            fill_window(s);\n            if (s.lookahead === 0 && flush === Z_NO_FLUSH) {\n              return BS_NEED_MORE;\n            }\n            if (s.lookahead === 0) {\n              break;\n            }\n          }\n          s.strstart += s.lookahead;\n          s.lookahead = 0;\n          var max_start = s.block_start + max_block_size;\n          if (s.strstart === 0 || s.strstart >= max_start) {\n            s.lookahead = s.strstart - max_start;\n            s.strstart = max_start;\n            flush_block_only(s, false);\n            if (s.strm.avail_out === 0) {\n              return BS_NEED_MORE;\n            }\n          }\n          if (s.strstart - s.block_start >= s.w_size - MIN_LOOKAHEAD) {\n            flush_block_only(s, false);\n            if (s.strm.avail_out === 0) {\n              return BS_NEED_MORE;\n            }\n          }\n        }\n        s.insert = 0;\n        if (flush === Z_FINISH) {\n          flush_block_only(s, true);\n          if (s.strm.avail_out === 0) {\n            return BS_FINISH_STARTED;\n          }\n          return BS_FINISH_DONE;\n        }\n        if (s.strstart > s.block_start) {\n          flush_block_only(s, false);\n          if (s.strm.avail_out === 0) {\n            return BS_NEED_MORE;\n          }\n        }\n        return BS_NEED_MORE;\n      }\n      function deflate_fast(s, flush) {\n        var hash_head;\n        var bflush;\n        for (; ; ) {\n          if (s.lookahead < MIN_LOOKAHEAD) {\n            fill_window(s);\n            if (s.lookahead < MIN_LOOKAHEAD && flush === Z_NO_FLUSH) {\n              return BS_NEED_MORE;\n            }\n            if (s.lookahead === 0) {\n              break;\n            }\n          }\n          hash_head = 0;\n          if (s.lookahead >= MIN_MATCH) {\n            s.ins_h = (s.ins_h << s.hash_shift ^ s.window[s.strstart + MIN_MATCH - 1]) & s.hash_mask;\n            hash_head = s.prev[s.strstart & s.w_mask] = s.head[s.ins_h];\n            s.head[s.ins_h] = s.strstart;\n          }\n          if (hash_head !== 0 && s.strstart - hash_head <= s.w_size - MIN_LOOKAHEAD) {\n            s.match_length = longest_match(s, hash_head);\n          }\n          if (s.match_length >= MIN_MATCH) {\n            bflush = trees._tr_tally(s, s.strstart - s.match_start, s.match_length - MIN_MATCH);\n            s.lookahead -= s.match_length;\n            if (s.match_length <= s.max_lazy_match && s.lookahead >= MIN_MATCH) {\n              s.match_length--;\n              do {\n                s.strstart++;\n                s.ins_h = (s.ins_h << s.hash_shift ^ s.window[s.strstart + MIN_MATCH - 1]) & s.hash_mask;\n                hash_head = s.prev[s.strstart & s.w_mask] = s.head[s.ins_h];\n                s.head[s.ins_h] = s.strstart;\n              } while (--s.match_length !== 0);\n              s.strstart++;\n            } else {\n              s.strstart += s.match_length;\n              s.match_length = 0;\n              s.ins_h = s.window[s.strstart];\n              s.ins_h = (s.ins_h << s.hash_shift ^ s.window[s.strstart + 1]) & s.hash_mask;\n            }\n          } else {\n            bflush = trees._tr_tally(s, 0, s.window[s.strstart]);\n            s.lookahead--;\n            s.strstart++;\n          }\n          if (bflush) {\n            flush_block_only(s, false);\n            if (s.strm.avail_out === 0) {\n              return BS_NEED_MORE;\n            }\n          }\n        }\n        s.insert = s.strstart < MIN_MATCH - 1 ? s.strstart : MIN_MATCH - 1;\n        if (flush === Z_FINISH) {\n          flush_block_only(s, true);\n          if (s.strm.avail_out === 0) {\n            return BS_FINISH_STARTED;\n          }\n          return BS_FINISH_DONE;\n        }\n        if (s.last_lit) {\n          flush_block_only(s, false);\n          if (s.strm.avail_out === 0) {\n            return BS_NEED_MORE;\n          }\n        }\n        return BS_BLOCK_DONE;\n      }\n      function deflate_slow(s, flush) {\n        var hash_head;\n        var bflush;\n        var max_insert;\n        for (; ; ) {\n          if (s.lookahead < MIN_LOOKAHEAD) {\n            fill_window(s);\n            if (s.lookahead < MIN_LOOKAHEAD && flush === Z_NO_FLUSH) {\n              return BS_NEED_MORE;\n            }\n            if (s.lookahead === 0) {\n              break;\n            }\n          }\n          hash_head = 0;\n          if (s.lookahead >= MIN_MATCH) {\n            s.ins_h = (s.ins_h << s.hash_shift ^ s.window[s.strstart + MIN_MATCH - 1]) & s.hash_mask;\n            hash_head = s.prev[s.strstart & s.w_mask] = s.head[s.ins_h];\n            s.head[s.ins_h] = s.strstart;\n          }\n          s.prev_length = s.match_length;\n          s.prev_match = s.match_start;\n          s.match_length = MIN_MATCH - 1;\n          if (hash_head !== 0 && s.prev_length < s.max_lazy_match && s.strstart - hash_head <= s.w_size - MIN_LOOKAHEAD) {\n            s.match_length = longest_match(s, hash_head);\n            if (s.match_length <= 5 && (s.strategy === Z_FILTERED || s.match_length === MIN_MATCH && s.strstart - s.match_start > 4096)) {\n              s.match_length = MIN_MATCH - 1;\n            }\n          }\n          if (s.prev_length >= MIN_MATCH && s.match_length <= s.prev_length) {\n            max_insert = s.strstart + s.lookahead - MIN_MATCH;\n            bflush = trees._tr_tally(s, s.strstart - 1 - s.prev_match, s.prev_length - MIN_MATCH);\n            s.lookahead -= s.prev_length - 1;\n            s.prev_length -= 2;\n            do {\n              if (++s.strstart <= max_insert) {\n                s.ins_h = (s.ins_h << s.hash_shift ^ s.window[s.strstart + MIN_MATCH - 1]) & s.hash_mask;\n                hash_head = s.prev[s.strstart & s.w_mask] = s.head[s.ins_h];\n                s.head[s.ins_h] = s.strstart;\n              }\n            } while (--s.prev_length !== 0);\n            s.match_available = 0;\n            s.match_length = MIN_MATCH - 1;\n            s.strstart++;\n            if (bflush) {\n              flush_block_only(s, false);\n              if (s.strm.avail_out === 0) {\n                return BS_NEED_MORE;\n              }\n            }\n          } else if (s.match_available) {\n            bflush = trees._tr_tally(s, 0, s.window[s.strstart - 1]);\n            if (bflush) {\n              flush_block_only(s, false);\n            }\n            s.strstart++;\n            s.lookahead--;\n            if (s.strm.avail_out === 0) {\n              return BS_NEED_MORE;\n            }\n          } else {\n            s.match_available = 1;\n            s.strstart++;\n            s.lookahead--;\n          }\n        }\n        if (s.match_available) {\n          bflush = trees._tr_tally(s, 0, s.window[s.strstart - 1]);\n          s.match_available = 0;\n        }\n        s.insert = s.strstart < MIN_MATCH - 1 ? s.strstart : MIN_MATCH - 1;\n        if (flush === Z_FINISH) {\n          flush_block_only(s, true);\n          if (s.strm.avail_out === 0) {\n            return BS_FINISH_STARTED;\n          }\n          return BS_FINISH_DONE;\n        }\n        if (s.last_lit) {\n          flush_block_only(s, false);\n          if (s.strm.avail_out === 0) {\n            return BS_NEED_MORE;\n          }\n        }\n        return BS_BLOCK_DONE;\n      }\n      function deflate_rle(s, flush) {\n        var bflush;\n        var prev;\n        var scan, strend;\n        var _win = s.window;\n        for (; ; ) {\n          if (s.lookahead <= MAX_MATCH) {\n            fill_window(s);\n            if (s.lookahead <= MAX_MATCH && flush === Z_NO_FLUSH) {\n              return BS_NEED_MORE;\n            }\n            if (s.lookahead === 0) {\n              break;\n            }\n          }\n          s.match_length = 0;\n          if (s.lookahead >= MIN_MATCH && s.strstart > 0) {\n            scan = s.strstart - 1;\n            prev = _win[scan];\n            if (prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan]) {\n              strend = s.strstart + MAX_MATCH;\n              do {\n              } while (prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && prev === _win[++scan] && scan < strend);\n              s.match_length = MAX_MATCH - (strend - scan);\n              if (s.match_length > s.lookahead) {\n                s.match_length = s.lookahead;\n              }\n            }\n          }\n          if (s.match_length >= MIN_MATCH) {\n            bflush = trees._tr_tally(s, 1, s.match_length - MIN_MATCH);\n            s.lookahead -= s.match_length;\n            s.strstart += s.match_length;\n            s.match_length = 0;\n          } else {\n            bflush = trees._tr_tally(s, 0, s.window[s.strstart]);\n            s.lookahead--;\n            s.strstart++;\n          }\n          if (bflush) {\n            flush_block_only(s, false);\n            if (s.strm.avail_out === 0) {\n              return BS_NEED_MORE;\n            }\n          }\n        }\n        s.insert = 0;\n        if (flush === Z_FINISH) {\n          flush_block_only(s, true);\n          if (s.strm.avail_out === 0) {\n            return BS_FINISH_STARTED;\n          }\n          return BS_FINISH_DONE;\n        }\n        if (s.last_lit) {\n          flush_block_only(s, false);\n          if (s.strm.avail_out === 0) {\n            return BS_NEED_MORE;\n          }\n        }\n        return BS_BLOCK_DONE;\n      }\n      function deflate_huff(s, flush) {\n        var bflush;\n        for (; ; ) {\n          if (s.lookahead === 0) {\n            fill_window(s);\n            if (s.lookahead === 0) {\n              if (flush === Z_NO_FLUSH) {\n                return BS_NEED_MORE;\n              }\n              break;\n            }\n          }\n          s.match_length = 0;\n          bflush = trees._tr_tally(s, 0, s.window[s.strstart]);\n          s.lookahead--;\n          s.strstart++;\n          if (bflush) {\n            flush_block_only(s, false);\n            if (s.strm.avail_out === 0) {\n              return BS_NEED_MORE;\n            }\n          }\n        }\n        s.insert = 0;\n        if (flush === Z_FINISH) {\n          flush_block_only(s, true);\n          if (s.strm.avail_out === 0) {\n            return BS_FINISH_STARTED;\n          }\n          return BS_FINISH_DONE;\n        }\n        if (s.last_lit) {\n          flush_block_only(s, false);\n          if (s.strm.avail_out === 0) {\n            return BS_NEED_MORE;\n          }\n        }\n        return BS_BLOCK_DONE;\n      }\n      function Config(good_length, max_lazy, nice_length, max_chain, func) {\n        this.good_length = good_length;\n        this.max_lazy = max_lazy;\n        this.nice_length = nice_length;\n        this.max_chain = max_chain;\n        this.func = func;\n      }\n      var configuration_table;\n      configuration_table = [\n        /*      good lazy nice chain */\n        new Config(0, 0, 0, 0, deflate_stored),\n        /* 0 store only */\n        new Config(4, 4, 8, 4, deflate_fast),\n        /* 1 max speed, no lazy matches */\n        new Config(4, 5, 16, 8, deflate_fast),\n        /* 2 */\n        new Config(4, 6, 32, 32, deflate_fast),\n        /* 3 */\n        new Config(4, 4, 16, 16, deflate_slow),\n        /* 4 lazy matches */\n        new Config(8, 16, 32, 32, deflate_slow),\n        /* 5 */\n        new Config(8, 16, 128, 128, deflate_slow),\n        /* 6 */\n        new Config(8, 32, 128, 256, deflate_slow),\n        /* 7 */\n        new Config(32, 128, 258, 1024, deflate_slow),\n        /* 8 */\n        new Config(32, 258, 258, 4096, deflate_slow)\n        /* 9 max compression */\n      ];\n      function lm_init(s) {\n        s.window_size = 2 * s.w_size;\n        zero(s.head);\n        s.max_lazy_match = configuration_table[s.level].max_lazy;\n        s.good_match = configuration_table[s.level].good_length;\n        s.nice_match = configuration_table[s.level].nice_length;\n        s.max_chain_length = configuration_table[s.level].max_chain;\n        s.strstart = 0;\n        s.block_start = 0;\n        s.lookahead = 0;\n        s.insert = 0;\n        s.match_length = s.prev_length = MIN_MATCH - 1;\n        s.match_available = 0;\n        s.ins_h = 0;\n      }\n      function DeflateState() {\n        this.strm = null;\n        this.status = 0;\n        this.pending_buf = null;\n        this.pending_buf_size = 0;\n        this.pending_out = 0;\n        this.pending = 0;\n        this.wrap = 0;\n        this.gzhead = null;\n        this.gzindex = 0;\n        this.method = Z_DEFLATED;\n        this.last_flush = -1;\n        this.w_size = 0;\n        this.w_bits = 0;\n        this.w_mask = 0;\n        this.window = null;\n        this.window_size = 0;\n        this.prev = null;\n        this.head = null;\n        this.ins_h = 0;\n        this.hash_size = 0;\n        this.hash_bits = 0;\n        this.hash_mask = 0;\n        this.hash_shift = 0;\n        this.block_start = 0;\n        this.match_length = 0;\n        this.prev_match = 0;\n        this.match_available = 0;\n        this.strstart = 0;\n        this.match_start = 0;\n        this.lookahead = 0;\n        this.prev_length = 0;\n        this.max_chain_length = 0;\n        this.max_lazy_match = 0;\n        this.level = 0;\n        this.strategy = 0;\n        this.good_match = 0;\n        this.nice_match = 0;\n        this.dyn_ltree = new utils.Buf16(HEAP_SIZE * 2);\n        this.dyn_dtree = new utils.Buf16((2 * D_CODES + 1) * 2);\n        this.bl_tree = new utils.Buf16((2 * BL_CODES + 1) * 2);\n        zero(this.dyn_ltree);\n        zero(this.dyn_dtree);\n        zero(this.bl_tree);\n        this.l_desc = null;\n        this.d_desc = null;\n        this.bl_desc = null;\n        this.bl_count = new utils.Buf16(MAX_BITS + 1);\n        this.heap = new utils.Buf16(2 * L_CODES + 1);\n        zero(this.heap);\n        this.heap_len = 0;\n        this.heap_max = 0;\n        this.depth = new utils.Buf16(2 * L_CODES + 1);\n        zero(this.depth);\n        this.l_buf = 0;\n        this.lit_bufsize = 0;\n        this.last_lit = 0;\n        this.d_buf = 0;\n        this.opt_len = 0;\n        this.static_len = 0;\n        this.matches = 0;\n        this.insert = 0;\n        this.bi_buf = 0;\n        this.bi_valid = 0;\n      }\n      function deflateResetKeep(strm) {\n        var s;\n        if (!strm || !strm.state) {\n          return err(strm, Z_STREAM_ERROR);\n        }\n        strm.total_in = strm.total_out = 0;\n        strm.data_type = Z_UNKNOWN;\n        s = strm.state;\n        s.pending = 0;\n        s.pending_out = 0;\n        if (s.wrap < 0) {\n          s.wrap = -s.wrap;\n        }\n        s.status = s.wrap ? INIT_STATE : BUSY_STATE;\n        strm.adler = s.wrap === 2 ? 0 : 1;\n        s.last_flush = Z_NO_FLUSH;\n        trees._tr_init(s);\n        return Z_OK;\n      }\n      function deflateReset(strm) {\n        var ret = deflateResetKeep(strm);\n        if (ret === Z_OK) {\n          lm_init(strm.state);\n        }\n        return ret;\n      }\n      function deflateSetHeader(strm, head) {\n        if (!strm || !strm.state) {\n          return Z_STREAM_ERROR;\n        }\n        if (strm.state.wrap !== 2) {\n          return Z_STREAM_ERROR;\n        }\n        strm.state.gzhead = head;\n        return Z_OK;\n      }\n      function deflateInit2(strm, level, method, windowBits, memLevel, strategy) {\n        if (!strm) {\n          return Z_STREAM_ERROR;\n        }\n        var wrap = 1;\n        if (level === Z_DEFAULT_COMPRESSION) {\n          level = 6;\n        }\n        if (windowBits < 0) {\n          wrap = 0;\n          windowBits = -windowBits;\n        } else if (windowBits > 15) {\n          wrap = 2;\n          windowBits -= 16;\n        }\n        if (memLevel < 1 || memLevel > MAX_MEM_LEVEL || method !== Z_DEFLATED || windowBits < 8 || windowBits > 15 || level < 0 || level > 9 || strategy < 0 || strategy > Z_FIXED) {\n          return err(strm, Z_STREAM_ERROR);\n        }\n        if (windowBits === 8) {\n          windowBits = 9;\n        }\n        var s = new DeflateState();\n        strm.state = s;\n        s.strm = strm;\n        s.wrap = wrap;\n        s.gzhead = null;\n        s.w_bits = windowBits;\n        s.w_size = 1 << s.w_bits;\n        s.w_mask = s.w_size - 1;\n        s.hash_bits = memLevel + 7;\n        s.hash_size = 1 << s.hash_bits;\n        s.hash_mask = s.hash_size - 1;\n        s.hash_shift = ~~((s.hash_bits + MIN_MATCH - 1) / MIN_MATCH);\n        s.window = new utils.Buf8(s.w_size * 2);\n        s.head = new utils.Buf16(s.hash_size);\n        s.prev = new utils.Buf16(s.w_size);\n        s.lit_bufsize = 1 << memLevel + 6;\n        s.pending_buf_size = s.lit_bufsize * 4;\n        s.pending_buf = new utils.Buf8(s.pending_buf_size);\n        s.d_buf = 1 * s.lit_bufsize;\n        s.l_buf = (1 + 2) * s.lit_bufsize;\n        s.level = level;\n        s.strategy = strategy;\n        s.method = method;\n        return deflateReset(strm);\n      }\n      function deflateInit(strm, level) {\n        return deflateInit2(strm, level, Z_DEFLATED, MAX_WBITS, DEF_MEM_LEVEL, Z_DEFAULT_STRATEGY);\n      }\n      function deflate(strm, flush) {\n        var old_flush, s;\n        var beg, val;\n        if (!strm || !strm.state || flush > Z_BLOCK || flush < 0) {\n          return strm ? err(strm, Z_STREAM_ERROR) : Z_STREAM_ERROR;\n        }\n        s = strm.state;\n        if (!strm.output || !strm.input && strm.avail_in !== 0 || s.status === FINISH_STATE && flush !== Z_FINISH) {\n          return err(strm, strm.avail_out === 0 ? Z_BUF_ERROR : Z_STREAM_ERROR);\n        }\n        s.strm = strm;\n        old_flush = s.last_flush;\n        s.last_flush = flush;\n        if (s.status === INIT_STATE) {\n          if (s.wrap === 2) {\n            strm.adler = 0;\n            put_byte(s, 31);\n            put_byte(s, 139);\n            put_byte(s, 8);\n            if (!s.gzhead) {\n              put_byte(s, 0);\n              put_byte(s, 0);\n              put_byte(s, 0);\n              put_byte(s, 0);\n              put_byte(s, 0);\n              put_byte(s, s.level === 9 ? 2 : s.strategy >= Z_HUFFMAN_ONLY || s.level < 2 ? 4 : 0);\n              put_byte(s, OS_CODE);\n              s.status = BUSY_STATE;\n            } else {\n              put_byte(\n                s,\n                (s.gzhead.text ? 1 : 0) + (s.gzhead.hcrc ? 2 : 0) + (!s.gzhead.extra ? 0 : 4) + (!s.gzhead.name ? 0 : 8) + (!s.gzhead.comment ? 0 : 16)\n              );\n              put_byte(s, s.gzhead.time & 255);\n              put_byte(s, s.gzhead.time >> 8 & 255);\n              put_byte(s, s.gzhead.time >> 16 & 255);\n              put_byte(s, s.gzhead.time >> 24 & 255);\n              put_byte(s, s.level === 9 ? 2 : s.strategy >= Z_HUFFMAN_ONLY || s.level < 2 ? 4 : 0);\n              put_byte(s, s.gzhead.os & 255);\n              if (s.gzhead.extra && s.gzhead.extra.length) {\n                put_byte(s, s.gzhead.extra.length & 255);\n                put_byte(s, s.gzhead.extra.length >> 8 & 255);\n              }\n              if (s.gzhead.hcrc) {\n                strm.adler = crc32(strm.adler, s.pending_buf, s.pending, 0);\n              }\n              s.gzindex = 0;\n              s.status = EXTRA_STATE;\n            }\n          } else {\n            var header = Z_DEFLATED + (s.w_bits - 8 << 4) << 8;\n            var level_flags = -1;\n            if (s.strategy >= Z_HUFFMAN_ONLY || s.level < 2) {\n              level_flags = 0;\n            } else if (s.level < 6) {\n              level_flags = 1;\n            } else if (s.level === 6) {\n              level_flags = 2;\n            } else {\n              level_flags = 3;\n            }\n            header |= level_flags << 6;\n            if (s.strstart !== 0) {\n              header |= PRESET_DICT;\n            }\n            header += 31 - header % 31;\n            s.status = BUSY_STATE;\n            putShortMSB(s, header);\n            if (s.strstart !== 0) {\n              putShortMSB(s, strm.adler >>> 16);\n              putShortMSB(s, strm.adler & 65535);\n            }\n            strm.adler = 1;\n          }\n        }\n        if (s.status === EXTRA_STATE) {\n          if (s.gzhead.extra) {\n            beg = s.pending;\n            while (s.gzindex < (s.gzhead.extra.length & 65535)) {\n              if (s.pending === s.pending_buf_size) {\n                if (s.gzhead.hcrc && s.pending > beg) {\n                  strm.adler = crc32(strm.adler, s.pending_buf, s.pending - beg, beg);\n                }\n                flush_pending(strm);\n                beg = s.pending;\n                if (s.pending === s.pending_buf_size) {\n                  break;\n                }\n              }\n              put_byte(s, s.gzhead.extra[s.gzindex] & 255);\n              s.gzindex++;\n            }\n            if (s.gzhead.hcrc && s.pending > beg) {\n              strm.adler = crc32(strm.adler, s.pending_buf, s.pending - beg, beg);\n            }\n            if (s.gzindex === s.gzhead.extra.length) {\n              s.gzindex = 0;\n              s.status = NAME_STATE;\n            }\n          } else {\n            s.status = NAME_STATE;\n          }\n        }\n        if (s.status === NAME_STATE) {\n          if (s.gzhead.name) {\n            beg = s.pending;\n            do {\n              if (s.pending === s.pending_buf_size) {\n                if (s.gzhead.hcrc && s.pending > beg) {\n                  strm.adler = crc32(strm.adler, s.pending_buf, s.pending - beg, beg);\n                }\n                flush_pending(strm);\n                beg = s.pending;\n                if (s.pending === s.pending_buf_size) {\n                  val = 1;\n                  break;\n                }\n              }\n              if (s.gzindex < s.gzhead.name.length) {\n                val = s.gzhead.name.charCodeAt(s.gzindex++) & 255;\n              } else {\n                val = 0;\n              }\n              put_byte(s, val);\n            } while (val !== 0);\n            if (s.gzhead.hcrc && s.pending > beg) {\n              strm.adler = crc32(strm.adler, s.pending_buf, s.pending - beg, beg);\n            }\n            if (val === 0) {\n              s.gzindex = 0;\n              s.status = COMMENT_STATE;\n            }\n          } else {\n            s.status = COMMENT_STATE;\n          }\n        }\n        if (s.status === COMMENT_STATE) {\n          if (s.gzhead.comment) {\n            beg = s.pending;\n            do {\n              if (s.pending === s.pending_buf_size) {\n                if (s.gzhead.hcrc && s.pending > beg) {\n                  strm.adler = crc32(strm.adler, s.pending_buf, s.pending - beg, beg);\n                }\n                flush_pending(strm);\n                beg = s.pending;\n                if (s.pending === s.pending_buf_size) {\n                  val = 1;\n                  break;\n                }\n              }\n              if (s.gzindex < s.gzhead.comment.length) {\n                val = s.gzhead.comment.charCodeAt(s.gzindex++) & 255;\n              } else {\n                val = 0;\n              }\n              put_byte(s, val);\n            } while (val !== 0);\n            if (s.gzhead.hcrc && s.pending > beg) {\n              strm.adler = crc32(strm.adler, s.pending_buf, s.pending - beg, beg);\n            }\n            if (val === 0) {\n              s.status = HCRC_STATE;\n            }\n          } else {\n            s.status = HCRC_STATE;\n          }\n        }\n        if (s.status === HCRC_STATE) {\n          if (s.gzhead.hcrc) {\n            if (s.pending + 2 > s.pending_buf_size) {\n              flush_pending(strm);\n            }\n            if (s.pending + 2 <= s.pending_buf_size) {\n              put_byte(s, strm.adler & 255);\n              put_byte(s, strm.adler >> 8 & 255);\n              strm.adler = 0;\n              s.status = BUSY_STATE;\n            }\n          } else {\n            s.status = BUSY_STATE;\n          }\n        }\n        if (s.pending !== 0) {\n          flush_pending(strm);\n          if (strm.avail_out === 0) {\n            s.last_flush = -1;\n            return Z_OK;\n          }\n        } else if (strm.avail_in === 0 && rank(flush) <= rank(old_flush) && flush !== Z_FINISH) {\n          return err(strm, Z_BUF_ERROR);\n        }\n        if (s.status === FINISH_STATE && strm.avail_in !== 0) {\n          return err(strm, Z_BUF_ERROR);\n        }\n        if (strm.avail_in !== 0 || s.lookahead !== 0 || flush !== Z_NO_FLUSH && s.status !== FINISH_STATE) {\n          var bstate = s.strategy === Z_HUFFMAN_ONLY ? deflate_huff(s, flush) : s.strategy === Z_RLE ? deflate_rle(s, flush) : configuration_table[s.level].func(s, flush);\n          if (bstate === BS_FINISH_STARTED || bstate === BS_FINISH_DONE) {\n            s.status = FINISH_STATE;\n          }\n          if (bstate === BS_NEED_MORE || bstate === BS_FINISH_STARTED) {\n            if (strm.avail_out === 0) {\n              s.last_flush = -1;\n            }\n            return Z_OK;\n          }\n          if (bstate === BS_BLOCK_DONE) {\n            if (flush === Z_PARTIAL_FLUSH) {\n              trees._tr_align(s);\n            } else if (flush !== Z_BLOCK) {\n              trees._tr_stored_block(s, 0, 0, false);\n              if (flush === Z_FULL_FLUSH) {\n                zero(s.head);\n                if (s.lookahead === 0) {\n                  s.strstart = 0;\n                  s.block_start = 0;\n                  s.insert = 0;\n                }\n              }\n            }\n            flush_pending(strm);\n            if (strm.avail_out === 0) {\n              s.last_flush = -1;\n              return Z_OK;\n            }\n          }\n        }\n        if (flush !== Z_FINISH) {\n          return Z_OK;\n        }\n        if (s.wrap <= 0) {\n          return Z_STREAM_END;\n        }\n        if (s.wrap === 2) {\n          put_byte(s, strm.adler & 255);\n          put_byte(s, strm.adler >> 8 & 255);\n          put_byte(s, strm.adler >> 16 & 255);\n          put_byte(s, strm.adler >> 24 & 255);\n          put_byte(s, strm.total_in & 255);\n          put_byte(s, strm.total_in >> 8 & 255);\n          put_byte(s, strm.total_in >> 16 & 255);\n          put_byte(s, strm.total_in >> 24 & 255);\n        } else {\n          putShortMSB(s, strm.adler >>> 16);\n          putShortMSB(s, strm.adler & 65535);\n        }\n        flush_pending(strm);\n        if (s.wrap > 0) {\n          s.wrap = -s.wrap;\n        }\n        return s.pending !== 0 ? Z_OK : Z_STREAM_END;\n      }\n      function deflateEnd(strm) {\n        var status;\n        if (!strm || !strm.state) {\n          return Z_STREAM_ERROR;\n        }\n        status = strm.state.status;\n        if (status !== INIT_STATE && status !== EXTRA_STATE && status !== NAME_STATE && status !== COMMENT_STATE && status !== HCRC_STATE && status !== BUSY_STATE && status !== FINISH_STATE) {\n          return err(strm, Z_STREAM_ERROR);\n        }\n        strm.state = null;\n        return status === BUSY_STATE ? err(strm, Z_DATA_ERROR) : Z_OK;\n      }\n      function deflateSetDictionary(strm, dictionary) {\n        var dictLength = dictionary.length;\n        var s;\n        var str, n;\n        var wrap;\n        var avail;\n        var next;\n        var input;\n        var tmpDict;\n        if (!strm || !strm.state) {\n          return Z_STREAM_ERROR;\n        }\n        s = strm.state;\n        wrap = s.wrap;\n        if (wrap === 2 || wrap === 1 && s.status !== INIT_STATE || s.lookahead) {\n          return Z_STREAM_ERROR;\n        }\n        if (wrap === 1) {\n          strm.adler = adler32(strm.adler, dictionary, dictLength, 0);\n        }\n        s.wrap = 0;\n        if (dictLength >= s.w_size) {\n          if (wrap === 0) {\n            zero(s.head);\n            s.strstart = 0;\n            s.block_start = 0;\n            s.insert = 0;\n          }\n          tmpDict = new utils.Buf8(s.w_size);\n          utils.arraySet(tmpDict, dictionary, dictLength - s.w_size, s.w_size, 0);\n          dictionary = tmpDict;\n          dictLength = s.w_size;\n        }\n        avail = strm.avail_in;\n        next = strm.next_in;\n        input = strm.input;\n        strm.avail_in = dictLength;\n        strm.next_in = 0;\n        strm.input = dictionary;\n        fill_window(s);\n        while (s.lookahead >= MIN_MATCH) {\n          str = s.strstart;\n          n = s.lookahead - (MIN_MATCH - 1);\n          do {\n            s.ins_h = (s.ins_h << s.hash_shift ^ s.window[str + MIN_MATCH - 1]) & s.hash_mask;\n            s.prev[str & s.w_mask] = s.head[s.ins_h];\n            s.head[s.ins_h] = str;\n            str++;\n          } while (--n);\n          s.strstart = str;\n          s.lookahead = MIN_MATCH - 1;\n          fill_window(s);\n        }\n        s.strstart += s.lookahead;\n        s.block_start = s.strstart;\n        s.insert = s.lookahead;\n        s.lookahead = 0;\n        s.match_length = s.prev_length = MIN_MATCH - 1;\n        s.match_available = 0;\n        strm.next_in = next;\n        strm.input = input;\n        strm.avail_in = avail;\n        s.wrap = wrap;\n        return Z_OK;\n      }\n      exports.deflateInit = deflateInit;\n      exports.deflateInit2 = deflateInit2;\n      exports.deflateReset = deflateReset;\n      exports.deflateResetKeep = deflateResetKeep;\n      exports.deflateSetHeader = deflateSetHeader;\n      exports.deflate = deflate;\n      exports.deflateEnd = deflateEnd;\n      exports.deflateSetDictionary = deflateSetDictionary;\n      exports.deflateInfo = "pako deflate (from Nodeca project)";\n    }\n  });\n\n  // node_modules/pako/lib/utils/strings.js\n  var require_strings = __commonJS({\n    "node_modules/pako/lib/utils/strings.js"(exports) {\n      "use strict";\n      var utils = require_common();\n      var STR_APPLY_OK = true;\n      var STR_APPLY_UIA_OK = true;\n      try {\n        String.fromCharCode.apply(null, [0]);\n      } catch (__) {\n        STR_APPLY_OK = false;\n      }\n      try {\n        String.fromCharCode.apply(null, new Uint8Array(1));\n      } catch (__) {\n        STR_APPLY_UIA_OK = false;\n      }\n      var _utf8len = new utils.Buf8(256);\n      for (q = 0; q < 256; q++) {\n        _utf8len[q] = q >= 252 ? 6 : q >= 248 ? 5 : q >= 240 ? 4 : q >= 224 ? 3 : q >= 192 ? 2 : 1;\n      }\n      var q;\n      _utf8len[254] = _utf8len[254] = 1;\n      exports.string2buf = function(str) {\n        var buf, c, c2, m_pos, i, str_len = str.length, buf_len = 0;\n        for (m_pos = 0; m_pos < str_len; m_pos++) {\n          c = str.charCodeAt(m_pos);\n          if ((c & 64512) === 55296 && m_pos + 1 < str_len) {\n            c2 = str.charCodeAt(m_pos + 1);\n            if ((c2 & 64512) === 56320) {\n              c = 65536 + (c - 55296 << 10) + (c2 - 56320);\n              m_pos++;\n            }\n          }\n          buf_len += c < 128 ? 1 : c < 2048 ? 2 : c < 65536 ? 3 : 4;\n        }\n        buf = new utils.Buf8(buf_len);\n        for (i = 0, m_pos = 0; i < buf_len; m_pos++) {\n          c = str.charCodeAt(m_pos);\n          if ((c & 64512) === 55296 && m_pos + 1 < str_len) {\n            c2 = str.charCodeAt(m_pos + 1);\n            if ((c2 & 64512) === 56320) {\n              c = 65536 + (c - 55296 << 10) + (c2 - 56320);\n              m_pos++;\n            }\n          }\n          if (c < 128) {\n            buf[i++] = c;\n          } else if (c < 2048) {\n            buf[i++] = 192 | c >>> 6;\n            buf[i++] = 128 | c & 63;\n          } else if (c < 65536) {\n            buf[i++] = 224 | c >>> 12;\n            buf[i++] = 128 | c >>> 6 & 63;\n            buf[i++] = 128 | c & 63;\n          } else {\n            buf[i++] = 240 | c >>> 18;\n            buf[i++] = 128 | c >>> 12 & 63;\n            buf[i++] = 128 | c >>> 6 & 63;\n            buf[i++] = 128 | c & 63;\n          }\n        }\n        return buf;\n      };\n      function buf2binstring(buf, len) {\n        if (len < 65534) {\n          if (buf.subarray && STR_APPLY_UIA_OK || !buf.subarray && STR_APPLY_OK) {\n            return String.fromCharCode.apply(null, utils.shrinkBuf(buf, len));\n          }\n        }\n        var result = "";\n        for (var i = 0; i < len; i++) {\n          result += String.fromCharCode(buf[i]);\n        }\n        return result;\n      }\n      exports.buf2binstring = function(buf) {\n        return buf2binstring(buf, buf.length);\n      };\n      exports.binstring2buf = function(str) {\n        var buf = new utils.Buf8(str.length);\n        for (var i = 0, len = buf.length; i < len; i++) {\n          buf[i] = str.charCodeAt(i);\n        }\n        return buf;\n      };\n      exports.buf2string = function(buf, max) {\n        var i, out, c, c_len;\n        var len = max || buf.length;\n        var utf16buf = new Array(len * 2);\n        for (out = 0, i = 0; i < len; ) {\n          c = buf[i++];\n          if (c < 128) {\n            utf16buf[out++] = c;\n            continue;\n          }\n          c_len = _utf8len[c];\n          if (c_len > 4) {\n            utf16buf[out++] = 65533;\n            i += c_len - 1;\n            continue;\n          }\n          c &= c_len === 2 ? 31 : c_len === 3 ? 15 : 7;\n          while (c_len > 1 && i < len) {\n            c = c << 6 | buf[i++] & 63;\n            c_len--;\n          }\n          if (c_len > 1) {\n            utf16buf[out++] = 65533;\n            continue;\n          }\n          if (c < 65536) {\n            utf16buf[out++] = c;\n          } else {\n            c -= 65536;\n            utf16buf[out++] = 55296 | c >> 10 & 1023;\n            utf16buf[out++] = 56320 | c & 1023;\n          }\n        }\n        return buf2binstring(utf16buf, out);\n      };\n      exports.utf8border = function(buf, max) {\n        var pos;\n        max = max || buf.length;\n        if (max > buf.length) {\n          max = buf.length;\n        }\n        pos = max - 1;\n        while (pos >= 0 && (buf[pos] & 192) === 128) {\n          pos--;\n        }\n        if (pos < 0) {\n          return max;\n        }\n        if (pos === 0) {\n          return max;\n        }\n        return pos + _utf8len[buf[pos]] > max ? pos : max;\n      };\n    }\n  });\n\n  // node_modules/pako/lib/zlib/zstream.js\n  var require_zstream = __commonJS({\n    "node_modules/pako/lib/zlib/zstream.js"(exports, module) {\n      "use strict";\n      function ZStream() {\n        this.input = null;\n        this.next_in = 0;\n        this.avail_in = 0;\n        this.total_in = 0;\n        this.output = null;\n        this.next_out = 0;\n        this.avail_out = 0;\n        this.total_out = 0;\n        this.msg = "";\n        this.state = null;\n        this.data_type = 2;\n        this.adler = 0;\n      }\n      module.exports = ZStream;\n    }\n  });\n\n  // node_modules/pako/lib/deflate.js\n  var require_deflate2 = __commonJS({\n    "node_modules/pako/lib/deflate.js"(exports) {\n      "use strict";\n      var zlib_deflate = require_deflate();\n      var utils = require_common();\n      var strings = require_strings();\n      var msg = require_messages();\n      var ZStream = require_zstream();\n      var toString = Object.prototype.toString;\n      var Z_NO_FLUSH = 0;\n      var Z_FINISH = 4;\n      var Z_OK = 0;\n      var Z_STREAM_END = 1;\n      var Z_SYNC_FLUSH = 2;\n      var Z_DEFAULT_COMPRESSION = -1;\n      var Z_DEFAULT_STRATEGY = 0;\n      var Z_DEFLATED = 8;\n      function Deflate(options) {\n        if (!(this instanceof Deflate)) return new Deflate(options);\n        this.options = utils.assign({\n          level: Z_DEFAULT_COMPRESSION,\n          method: Z_DEFLATED,\n          chunkSize: 16384,\n          windowBits: 15,\n          memLevel: 8,\n          strategy: Z_DEFAULT_STRATEGY,\n          to: ""\n        }, options || {});\n        var opt = this.options;\n        if (opt.raw && opt.windowBits > 0) {\n          opt.windowBits = -opt.windowBits;\n        } else if (opt.gzip && opt.windowBits > 0 && opt.windowBits < 16) {\n          opt.windowBits += 16;\n        }\n        this.err = 0;\n        this.msg = "";\n        this.ended = false;\n        this.chunks = [];\n        this.strm = new ZStream();\n        this.strm.avail_out = 0;\n        var status = zlib_deflate.deflateInit2(\n          this.strm,\n          opt.level,\n          opt.method,\n          opt.windowBits,\n          opt.memLevel,\n          opt.strategy\n        );\n        if (status !== Z_OK) {\n          throw new Error(msg[status]);\n        }\n        if (opt.header) {\n          zlib_deflate.deflateSetHeader(this.strm, opt.header);\n        }\n        if (opt.dictionary) {\n          var dict;\n          if (typeof opt.dictionary === "string") {\n            dict = strings.string2buf(opt.dictionary);\n          } else if (toString.call(opt.dictionary) === "[object ArrayBuffer]") {\n            dict = new Uint8Array(opt.dictionary);\n          } else {\n            dict = opt.dictionary;\n          }\n          status = zlib_deflate.deflateSetDictionary(this.strm, dict);\n          if (status !== Z_OK) {\n            throw new Error(msg[status]);\n          }\n          this._dict_set = true;\n        }\n      }\n      Deflate.prototype.push = function(data, mode) {\n        var strm = this.strm;\n        var chunkSize = this.options.chunkSize;\n        var status, _mode;\n        if (this.ended) {\n          return false;\n        }\n        _mode = mode === ~~mode ? mode : mode === true ? Z_FINISH : Z_NO_FLUSH;\n        if (typeof data === "string") {\n          strm.input = strings.string2buf(data);\n        } else if (toString.call(data) === "[object ArrayBuffer]") {\n          strm.input = new Uint8Array(data);\n        } else {\n          strm.input = data;\n        }\n        strm.next_in = 0;\n        strm.avail_in = strm.input.length;\n        do {\n          if (strm.avail_out === 0) {\n            strm.output = new utils.Buf8(chunkSize);\n            strm.next_out = 0;\n            strm.avail_out = chunkSize;\n          }\n          status = zlib_deflate.deflate(strm, _mode);\n          if (status !== Z_STREAM_END && status !== Z_OK) {\n            this.onEnd(status);\n            this.ended = true;\n            return false;\n          }\n          if (strm.avail_out === 0 || strm.avail_in === 0 && (_mode === Z_FINISH || _mode === Z_SYNC_FLUSH)) {\n            if (this.options.to === "string") {\n              this.onData(strings.buf2binstring(utils.shrinkBuf(strm.output, strm.next_out)));\n            } else {\n              this.onData(utils.shrinkBuf(strm.output, strm.next_out));\n            }\n          }\n        } while ((strm.avail_in > 0 || strm.avail_out === 0) && status !== Z_STREAM_END);\n        if (_mode === Z_FINISH) {\n          status = zlib_deflate.deflateEnd(this.strm);\n          this.onEnd(status);\n          this.ended = true;\n          return status === Z_OK;\n        }\n        if (_mode === Z_SYNC_FLUSH) {\n          this.onEnd(Z_OK);\n          strm.avail_out = 0;\n          return true;\n        }\n        return true;\n      };\n      Deflate.prototype.onData = function(chunk) {\n        this.chunks.push(chunk);\n      };\n      Deflate.prototype.onEnd = function(status) {\n        if (status === Z_OK) {\n          if (this.options.to === "string") {\n            this.result = this.chunks.join("");\n          } else {\n            this.result = utils.flattenChunks(this.chunks);\n          }\n        }\n        this.chunks = [];\n        this.err = status;\n        this.msg = this.strm.msg;\n      };\n      function deflate(input, options) {\n        var deflator = new Deflate(options);\n        deflator.push(input, true);\n        if (deflator.err) {\n          throw deflator.msg || msg[deflator.err];\n        }\n        return deflator.result;\n      }\n      function deflateRaw(input, options) {\n        options = options || {};\n        options.raw = true;\n        return deflate(input, options);\n      }\n      function gzip2(input, options) {\n        options = options || {};\n        options.gzip = true;\n        return deflate(input, options);\n      }\n      exports.Deflate = Deflate;\n      exports.deflate = deflate;\n      exports.deflateRaw = deflateRaw;\n      exports.gzip = gzip2;\n    }\n  });\n\n  // node_modules/pako/lib/zlib/inffast.js\n  var require_inffast = __commonJS({\n    "node_modules/pako/lib/zlib/inffast.js"(exports, module) {\n      "use strict";\n      var BAD = 30;\n      var TYPE = 12;\n      module.exports = function inflate_fast(strm, start) {\n        var state;\n        var _in;\n        var last;\n        var _out;\n        var beg;\n        var end;\n        var dmax;\n        var wsize;\n        var whave;\n        var wnext;\n        var s_window;\n        var hold;\n        var bits;\n        var lcode;\n        var dcode;\n        var lmask;\n        var dmask;\n        var here;\n        var op;\n        var len;\n        var dist;\n        var from;\n        var from_source;\n        var input, output;\n        state = strm.state;\n        _in = strm.next_in;\n        input = strm.input;\n        last = _in + (strm.avail_in - 5);\n        _out = strm.next_out;\n        output = strm.output;\n        beg = _out - (start - strm.avail_out);\n        end = _out + (strm.avail_out - 257);\n        dmax = state.dmax;\n        wsize = state.wsize;\n        whave = state.whave;\n        wnext = state.wnext;\n        s_window = state.window;\n        hold = state.hold;\n        bits = state.bits;\n        lcode = state.lencode;\n        dcode = state.distcode;\n        lmask = (1 << state.lenbits) - 1;\n        dmask = (1 << state.distbits) - 1;\n        top:\n          do {\n            if (bits < 15) {\n              hold += input[_in++] << bits;\n              bits += 8;\n              hold += input[_in++] << bits;\n              bits += 8;\n            }\n            here = lcode[hold & lmask];\n            dolen:\n              for (; ; ) {\n                op = here >>> 24;\n                hold >>>= op;\n                bits -= op;\n                op = here >>> 16 & 255;\n                if (op === 0) {\n                  output[_out++] = here & 65535;\n                } else if (op & 16) {\n                  len = here & 65535;\n                  op &= 15;\n                  if (op) {\n                    if (bits < op) {\n                      hold += input[_in++] << bits;\n                      bits += 8;\n                    }\n                    len += hold & (1 << op) - 1;\n                    hold >>>= op;\n                    bits -= op;\n                  }\n                  if (bits < 15) {\n                    hold += input[_in++] << bits;\n                    bits += 8;\n                    hold += input[_in++] << bits;\n                    bits += 8;\n                  }\n                  here = dcode[hold & dmask];\n                  dodist:\n                    for (; ; ) {\n                      op = here >>> 24;\n                      hold >>>= op;\n                      bits -= op;\n                      op = here >>> 16 & 255;\n                      if (op & 16) {\n                        dist = here & 65535;\n                        op &= 15;\n                        if (bits < op) {\n                          hold += input[_in++] << bits;\n                          bits += 8;\n                          if (bits < op) {\n                            hold += input[_in++] << bits;\n                            bits += 8;\n                          }\n                        }\n                        dist += hold & (1 << op) - 1;\n                        if (dist > dmax) {\n                          strm.msg = "invalid distance too far back";\n                          state.mode = BAD;\n                          break top;\n                        }\n                        hold >>>= op;\n                        bits -= op;\n                        op = _out - beg;\n                        if (dist > op) {\n                          op = dist - op;\n                          if (op > whave) {\n                            if (state.sane) {\n                              strm.msg = "invalid distance too far back";\n                              state.mode = BAD;\n                              break top;\n                            }\n                          }\n                          from = 0;\n                          from_source = s_window;\n                          if (wnext === 0) {\n                            from += wsize - op;\n                            if (op < len) {\n                              len -= op;\n                              do {\n                                output[_out++] = s_window[from++];\n                              } while (--op);\n                              from = _out - dist;\n                              from_source = output;\n                            }\n                          } else if (wnext < op) {\n                            from += wsize + wnext - op;\n                            op -= wnext;\n                            if (op < len) {\n                              len -= op;\n                              do {\n                                output[_out++] = s_window[from++];\n                              } while (--op);\n                              from = 0;\n                              if (wnext < len) {\n                                op = wnext;\n                                len -= op;\n                                do {\n                                  output[_out++] = s_window[from++];\n                                } while (--op);\n                                from = _out - dist;\n                                from_source = output;\n                              }\n                            }\n                          } else {\n                            from += wnext - op;\n                            if (op < len) {\n                              len -= op;\n                              do {\n                                output[_out++] = s_window[from++];\n                              } while (--op);\n                              from = _out - dist;\n                              from_source = output;\n                            }\n                          }\n                          while (len > 2) {\n                            output[_out++] = from_source[from++];\n                            output[_out++] = from_source[from++];\n                            output[_out++] = from_source[from++];\n                            len -= 3;\n                          }\n                          if (len) {\n                            output[_out++] = from_source[from++];\n                            if (len > 1) {\n                              output[_out++] = from_source[from++];\n                            }\n                          }\n                        } else {\n                          from = _out - dist;\n                          do {\n                            output[_out++] = output[from++];\n                            output[_out++] = output[from++];\n                            output[_out++] = output[from++];\n                            len -= 3;\n                          } while (len > 2);\n                          if (len) {\n                            output[_out++] = output[from++];\n                            if (len > 1) {\n                              output[_out++] = output[from++];\n                            }\n                          }\n                        }\n                      } else if ((op & 64) === 0) {\n                        here = dcode[(here & 65535) + (hold & (1 << op) - 1)];\n                        continue dodist;\n                      } else {\n                        strm.msg = "invalid distance code";\n                        state.mode = BAD;\n                        break top;\n                      }\n                      break;\n                    }\n                } else if ((op & 64) === 0) {\n                  here = lcode[(here & 65535) + (hold & (1 << op) - 1)];\n                  continue dolen;\n                } else if (op & 32) {\n                  state.mode = TYPE;\n                  break top;\n                } else {\n                  strm.msg = "invalid literal/length code";\n                  state.mode = BAD;\n                  break top;\n                }\n                break;\n              }\n          } while (_in < last && _out < end);\n        len = bits >> 3;\n        _in -= len;\n        bits -= len << 3;\n        hold &= (1 << bits) - 1;\n        strm.next_in = _in;\n        strm.next_out = _out;\n        strm.avail_in = _in < last ? 5 + (last - _in) : 5 - (_in - last);\n        strm.avail_out = _out < end ? 257 + (end - _out) : 257 - (_out - end);\n        state.hold = hold;\n        state.bits = bits;\n        return;\n      };\n    }\n  });\n\n  // node_modules/pako/lib/zlib/inftrees.js\n  var require_inftrees = __commonJS({\n    "node_modules/pako/lib/zlib/inftrees.js"(exports, module) {\n      "use strict";\n      var utils = require_common();\n      var MAXBITS = 15;\n      var ENOUGH_LENS = 852;\n      var ENOUGH_DISTS = 592;\n      var CODES = 0;\n      var LENS = 1;\n      var DISTS = 2;\n      var lbase = [\n        /* Length codes 257..285 base */\n        3,\n        4,\n        5,\n        6,\n        7,\n        8,\n        9,\n        10,\n        11,\n        13,\n        15,\n        17,\n        19,\n        23,\n        27,\n        31,\n        35,\n        43,\n        51,\n        59,\n        67,\n        83,\n        99,\n        115,\n        131,\n        163,\n        195,\n        227,\n        258,\n        0,\n        0\n      ];\n      var lext = [\n        /* Length codes 257..285 extra */\n        16,\n        16,\n        16,\n        16,\n        16,\n        16,\n        16,\n        16,\n        17,\n        17,\n        17,\n        17,\n        18,\n        18,\n        18,\n        18,\n        19,\n        19,\n        19,\n        19,\n        20,\n        20,\n        20,\n        20,\n        21,\n        21,\n        21,\n        21,\n        16,\n        72,\n        78\n      ];\n      var dbase = [\n        /* Distance codes 0..29 base */\n        1,\n        2,\n        3,\n        4,\n        5,\n        7,\n        9,\n        13,\n        17,\n        25,\n        33,\n        49,\n        65,\n        97,\n        129,\n        193,\n        257,\n        385,\n        513,\n        769,\n        1025,\n        1537,\n        2049,\n        3073,\n        4097,\n        6145,\n        8193,\n        12289,\n        16385,\n        24577,\n        0,\n        0\n      ];\n      var dext = [\n        /* Distance codes 0..29 extra */\n        16,\n        16,\n        16,\n        16,\n        17,\n        17,\n        18,\n        18,\n        19,\n        19,\n        20,\n        20,\n        21,\n        21,\n        22,\n        22,\n        23,\n        23,\n        24,\n        24,\n        25,\n        25,\n        26,\n        26,\n        27,\n        27,\n        28,\n        28,\n        29,\n        29,\n        64,\n        64\n      ];\n      module.exports = function inflate_table(type, lens, lens_index, codes, table, table_index, work, opts) {\n        var bits = opts.bits;\n        var len = 0;\n        var sym = 0;\n        var min = 0, max = 0;\n        var root = 0;\n        var curr = 0;\n        var drop = 0;\n        var left = 0;\n        var used = 0;\n        var huff = 0;\n        var incr;\n        var fill;\n        var low;\n        var mask;\n        var next;\n        var base = null;\n        var base_index = 0;\n        var end;\n        var count = new utils.Buf16(MAXBITS + 1);\n        var offs = new utils.Buf16(MAXBITS + 1);\n        var extra = null;\n        var extra_index = 0;\n        var here_bits, here_op, here_val;\n        for (len = 0; len <= MAXBITS; len++) {\n          count[len] = 0;\n        }\n        for (sym = 0; sym < codes; sym++) {\n          count[lens[lens_index + sym]]++;\n        }\n        root = bits;\n        for (max = MAXBITS; max >= 1; max--) {\n          if (count[max] !== 0) {\n            break;\n          }\n        }\n        if (root > max) {\n          root = max;\n        }\n        if (max === 0) {\n          table[table_index++] = 1 << 24 | 64 << 16 | 0;\n          table[table_index++] = 1 << 24 | 64 << 16 | 0;\n          opts.bits = 1;\n          return 0;\n        }\n        for (min = 1; min < max; min++) {\n          if (count[min] !== 0) {\n            break;\n          }\n        }\n        if (root < min) {\n          root = min;\n        }\n        left = 1;\n        for (len = 1; len <= MAXBITS; len++) {\n          left <<= 1;\n          left -= count[len];\n          if (left < 0) {\n            return -1;\n          }\n        }\n        if (left > 0 && (type === CODES || max !== 1)) {\n          return -1;\n        }\n        offs[1] = 0;\n        for (len = 1; len < MAXBITS; len++) {\n          offs[len + 1] = offs[len] + count[len];\n        }\n        for (sym = 0; sym < codes; sym++) {\n          if (lens[lens_index + sym] !== 0) {\n            work[offs[lens[lens_index + sym]]++] = sym;\n          }\n        }\n        if (type === CODES) {\n          base = extra = work;\n          end = 19;\n        } else if (type === LENS) {\n          base = lbase;\n          base_index -= 257;\n          extra = lext;\n          extra_index -= 257;\n          end = 256;\n        } else {\n          base = dbase;\n          extra = dext;\n          end = -1;\n        }\n        huff = 0;\n        sym = 0;\n        len = min;\n        next = table_index;\n        curr = root;\n        drop = 0;\n        low = -1;\n        used = 1 << root;\n        mask = used - 1;\n        if (type === LENS && used > ENOUGH_LENS || type === DISTS && used > ENOUGH_DISTS) {\n          return 1;\n        }\n        for (; ; ) {\n          here_bits = len - drop;\n          if (work[sym] < end) {\n            here_op = 0;\n            here_val = work[sym];\n          } else if (work[sym] > end) {\n            here_op = extra[extra_index + work[sym]];\n            here_val = base[base_index + work[sym]];\n          } else {\n            here_op = 32 + 64;\n            here_val = 0;\n          }\n          incr = 1 << len - drop;\n          fill = 1 << curr;\n          min = fill;\n          do {\n            fill -= incr;\n            table[next + (huff >> drop) + fill] = here_bits << 24 | here_op << 16 | here_val | 0;\n          } while (fill !== 0);\n          incr = 1 << len - 1;\n          while (huff & incr) {\n            incr >>= 1;\n          }\n          if (incr !== 0) {\n            huff &= incr - 1;\n            huff += incr;\n          } else {\n            huff = 0;\n          }\n          sym++;\n          if (--count[len] === 0) {\n            if (len === max) {\n              break;\n            }\n            len = lens[lens_index + work[sym]];\n          }\n          if (len > root && (huff & mask) !== low) {\n            if (drop === 0) {\n              drop = root;\n            }\n            next += min;\n            curr = len - drop;\n            left = 1 << curr;\n            while (curr + drop < max) {\n              left -= count[curr + drop];\n              if (left <= 0) {\n                break;\n              }\n              curr++;\n              left <<= 1;\n            }\n            used += 1 << curr;\n            if (type === LENS && used > ENOUGH_LENS || type === DISTS && used > ENOUGH_DISTS) {\n              return 1;\n            }\n            low = huff & mask;\n            table[low] = root << 24 | curr << 16 | next - table_index | 0;\n          }\n        }\n        if (huff !== 0) {\n          table[next + huff] = len - drop << 24 | 64 << 16 | 0;\n        }\n        opts.bits = root;\n        return 0;\n      };\n    }\n  });\n\n  // node_modules/pako/lib/zlib/inflate.js\n  var require_inflate = __commonJS({\n    "node_modules/pako/lib/zlib/inflate.js"(exports) {\n      "use strict";\n      var utils = require_common();\n      var adler32 = require_adler32();\n      var crc32 = require_crc32();\n      var inflate_fast = require_inffast();\n      var inflate_table = require_inftrees();\n      var CODES = 0;\n      var LENS = 1;\n      var DISTS = 2;\n      var Z_FINISH = 4;\n      var Z_BLOCK = 5;\n      var Z_TREES = 6;\n      var Z_OK = 0;\n      var Z_STREAM_END = 1;\n      var Z_NEED_DICT = 2;\n      var Z_STREAM_ERROR = -2;\n      var Z_DATA_ERROR = -3;\n      var Z_MEM_ERROR = -4;\n      var Z_BUF_ERROR = -5;\n      var Z_DEFLATED = 8;\n      var HEAD = 1;\n      var FLAGS = 2;\n      var TIME = 3;\n      var OS = 4;\n      var EXLEN = 5;\n      var EXTRA = 6;\n      var NAME = 7;\n      var COMMENT = 8;\n      var HCRC = 9;\n      var DICTID = 10;\n      var DICT = 11;\n      var TYPE = 12;\n      var TYPEDO = 13;\n      var STORED = 14;\n      var COPY_ = 15;\n      var COPY = 16;\n      var TABLE = 17;\n      var LENLENS = 18;\n      var CODELENS = 19;\n      var LEN_ = 20;\n      var LEN = 21;\n      var LENEXT = 22;\n      var DIST = 23;\n      var DISTEXT = 24;\n      var MATCH = 25;\n      var LIT = 26;\n      var CHECK = 27;\n      var LENGTH = 28;\n      var DONE = 29;\n      var BAD = 30;\n      var MEM = 31;\n      var SYNC = 32;\n      var ENOUGH_LENS = 852;\n      var ENOUGH_DISTS = 592;\n      var MAX_WBITS = 15;\n      var DEF_WBITS = MAX_WBITS;\n      function zswap32(q) {\n        return (q >>> 24 & 255) + (q >>> 8 & 65280) + ((q & 65280) << 8) + ((q & 255) << 24);\n      }\n      function InflateState() {\n        this.mode = 0;\n        this.last = false;\n        this.wrap = 0;\n        this.havedict = false;\n        this.flags = 0;\n        this.dmax = 0;\n        this.check = 0;\n        this.total = 0;\n        this.head = null;\n        this.wbits = 0;\n        this.wsize = 0;\n        this.whave = 0;\n        this.wnext = 0;\n        this.window = null;\n        this.hold = 0;\n        this.bits = 0;\n        this.length = 0;\n        this.offset = 0;\n        this.extra = 0;\n        this.lencode = null;\n        this.distcode = null;\n        this.lenbits = 0;\n        this.distbits = 0;\n        this.ncode = 0;\n        this.nlen = 0;\n        this.ndist = 0;\n        this.have = 0;\n        this.next = null;\n        this.lens = new utils.Buf16(320);\n        this.work = new utils.Buf16(288);\n        this.lendyn = null;\n        this.distdyn = null;\n        this.sane = 0;\n        this.back = 0;\n        this.was = 0;\n      }\n      function inflateResetKeep(strm) {\n        var state;\n        if (!strm || !strm.state) {\n          return Z_STREAM_ERROR;\n        }\n        state = strm.state;\n        strm.total_in = strm.total_out = state.total = 0;\n        strm.msg = "";\n        if (state.wrap) {\n          strm.adler = state.wrap & 1;\n        }\n        state.mode = HEAD;\n        state.last = 0;\n        state.havedict = 0;\n        state.dmax = 32768;\n        state.head = null;\n        state.hold = 0;\n        state.bits = 0;\n        state.lencode = state.lendyn = new utils.Buf32(ENOUGH_LENS);\n        state.distcode = state.distdyn = new utils.Buf32(ENOUGH_DISTS);\n        state.sane = 1;\n        state.back = -1;\n        return Z_OK;\n      }\n      function inflateReset(strm) {\n        var state;\n        if (!strm || !strm.state) {\n          return Z_STREAM_ERROR;\n        }\n        state = strm.state;\n        state.wsize = 0;\n        state.whave = 0;\n        state.wnext = 0;\n        return inflateResetKeep(strm);\n      }\n      function inflateReset2(strm, windowBits) {\n        var wrap;\n        var state;\n        if (!strm || !strm.state) {\n          return Z_STREAM_ERROR;\n        }\n        state = strm.state;\n        if (windowBits < 0) {\n          wrap = 0;\n          windowBits = -windowBits;\n        } else {\n          wrap = (windowBits >> 4) + 1;\n          if (windowBits < 48) {\n            windowBits &= 15;\n          }\n        }\n        if (windowBits && (windowBits < 8 || windowBits > 15)) {\n          return Z_STREAM_ERROR;\n        }\n        if (state.window !== null && state.wbits !== windowBits) {\n          state.window = null;\n        }\n        state.wrap = wrap;\n        state.wbits = windowBits;\n        return inflateReset(strm);\n      }\n      function inflateInit2(strm, windowBits) {\n        var ret;\n        var state;\n        if (!strm) {\n          return Z_STREAM_ERROR;\n        }\n        state = new InflateState();\n        strm.state = state;\n        state.window = null;\n        ret = inflateReset2(strm, windowBits);\n        if (ret !== Z_OK) {\n          strm.state = null;\n        }\n        return ret;\n      }\n      function inflateInit(strm) {\n        return inflateInit2(strm, DEF_WBITS);\n      }\n      var virgin = true;\n      var lenfix;\n      var distfix;\n      function fixedtables(state) {\n        if (virgin) {\n          var sym;\n          lenfix = new utils.Buf32(512);\n          distfix = new utils.Buf32(32);\n          sym = 0;\n          while (sym < 144) {\n            state.lens[sym++] = 8;\n          }\n          while (sym < 256) {\n            state.lens[sym++] = 9;\n          }\n          while (sym < 280) {\n            state.lens[sym++] = 7;\n          }\n          while (sym < 288) {\n            state.lens[sym++] = 8;\n          }\n          inflate_table(LENS, state.lens, 0, 288, lenfix, 0, state.work, { bits: 9 });\n          sym = 0;\n          while (sym < 32) {\n            state.lens[sym++] = 5;\n          }\n          inflate_table(DISTS, state.lens, 0, 32, distfix, 0, state.work, { bits: 5 });\n          virgin = false;\n        }\n        state.lencode = lenfix;\n        state.lenbits = 9;\n        state.distcode = distfix;\n        state.distbits = 5;\n      }\n      function updatewindow(strm, src, end, copy) {\n        var dist;\n        var state = strm.state;\n        if (state.window === null) {\n          state.wsize = 1 << state.wbits;\n          state.wnext = 0;\n          state.whave = 0;\n          state.window = new utils.Buf8(state.wsize);\n        }\n        if (copy >= state.wsize) {\n          utils.arraySet(state.window, src, end - state.wsize, state.wsize, 0);\n          state.wnext = 0;\n          state.whave = state.wsize;\n        } else {\n          dist = state.wsize - state.wnext;\n          if (dist > copy) {\n            dist = copy;\n          }\n          utils.arraySet(state.window, src, end - copy, dist, state.wnext);\n          copy -= dist;\n          if (copy) {\n            utils.arraySet(state.window, src, end - copy, copy, 0);\n            state.wnext = copy;\n            state.whave = state.wsize;\n          } else {\n            state.wnext += dist;\n            if (state.wnext === state.wsize) {\n              state.wnext = 0;\n            }\n            if (state.whave < state.wsize) {\n              state.whave += dist;\n            }\n          }\n        }\n        return 0;\n      }\n      function inflate(strm, flush) {\n        var state;\n        var input, output;\n        var next;\n        var put;\n        var have, left;\n        var hold;\n        var bits;\n        var _in, _out;\n        var copy;\n        var from;\n        var from_source;\n        var here = 0;\n        var here_bits, here_op, here_val;\n        var last_bits, last_op, last_val;\n        var len;\n        var ret;\n        var hbuf = new utils.Buf8(4);\n        var opts;\n        var n;\n        var order = (\n          /* permutation of code lengths */\n          [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15]\n        );\n        if (!strm || !strm.state || !strm.output || !strm.input && strm.avail_in !== 0) {\n          return Z_STREAM_ERROR;\n        }\n        state = strm.state;\n        if (state.mode === TYPE) {\n          state.mode = TYPEDO;\n        }\n        put = strm.next_out;\n        output = strm.output;\n        left = strm.avail_out;\n        next = strm.next_in;\n        input = strm.input;\n        have = strm.avail_in;\n        hold = state.hold;\n        bits = state.bits;\n        _in = have;\n        _out = left;\n        ret = Z_OK;\n        inf_leave:\n          for (; ; ) {\n            switch (state.mode) {\n              case HEAD:\n                if (state.wrap === 0) {\n                  state.mode = TYPEDO;\n                  break;\n                }\n                while (bits < 16) {\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  have--;\n                  hold += input[next++] << bits;\n                  bits += 8;\n                }\n                if (state.wrap & 2 && hold === 35615) {\n                  state.check = 0;\n                  hbuf[0] = hold & 255;\n                  hbuf[1] = hold >>> 8 & 255;\n                  state.check = crc32(state.check, hbuf, 2, 0);\n                  hold = 0;\n                  bits = 0;\n                  state.mode = FLAGS;\n                  break;\n                }\n                state.flags = 0;\n                if (state.head) {\n                  state.head.done = false;\n                }\n                if (!(state.wrap & 1) || /* check if zlib header allowed */\n                (((hold & 255) << 8) + (hold >> 8)) % 31) {\n                  strm.msg = "incorrect header check";\n                  state.mode = BAD;\n                  break;\n                }\n                if ((hold & 15) !== Z_DEFLATED) {\n                  strm.msg = "unknown compression method";\n                  state.mode = BAD;\n                  break;\n                }\n                hold >>>= 4;\n                bits -= 4;\n                len = (hold & 15) + 8;\n                if (state.wbits === 0) {\n                  state.wbits = len;\n                } else if (len > state.wbits) {\n                  strm.msg = "invalid window size";\n                  state.mode = BAD;\n                  break;\n                }\n                state.dmax = 1 << len;\n                strm.adler = state.check = 1;\n                state.mode = hold & 512 ? DICTID : TYPE;\n                hold = 0;\n                bits = 0;\n                break;\n              case FLAGS:\n                while (bits < 16) {\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  have--;\n                  hold += input[next++] << bits;\n                  bits += 8;\n                }\n                state.flags = hold;\n                if ((state.flags & 255) !== Z_DEFLATED) {\n                  strm.msg = "unknown compression method";\n                  state.mode = BAD;\n                  break;\n                }\n                if (state.flags & 57344) {\n                  strm.msg = "unknown header flags set";\n                  state.mode = BAD;\n                  break;\n                }\n                if (state.head) {\n                  state.head.text = hold >> 8 & 1;\n                }\n                if (state.flags & 512) {\n                  hbuf[0] = hold & 255;\n                  hbuf[1] = hold >>> 8 & 255;\n                  state.check = crc32(state.check, hbuf, 2, 0);\n                }\n                hold = 0;\n                bits = 0;\n                state.mode = TIME;\n              /* falls through */\n              case TIME:\n                while (bits < 32) {\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  have--;\n                  hold += input[next++] << bits;\n                  bits += 8;\n                }\n                if (state.head) {\n                  state.head.time = hold;\n                }\n                if (state.flags & 512) {\n                  hbuf[0] = hold & 255;\n                  hbuf[1] = hold >>> 8 & 255;\n                  hbuf[2] = hold >>> 16 & 255;\n                  hbuf[3] = hold >>> 24 & 255;\n                  state.check = crc32(state.check, hbuf, 4, 0);\n                }\n                hold = 0;\n                bits = 0;\n                state.mode = OS;\n              /* falls through */\n              case OS:\n                while (bits < 16) {\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  have--;\n                  hold += input[next++] << bits;\n                  bits += 8;\n                }\n                if (state.head) {\n                  state.head.xflags = hold & 255;\n                  state.head.os = hold >> 8;\n                }\n                if (state.flags & 512) {\n                  hbuf[0] = hold & 255;\n                  hbuf[1] = hold >>> 8 & 255;\n                  state.check = crc32(state.check, hbuf, 2, 0);\n                }\n                hold = 0;\n                bits = 0;\n                state.mode = EXLEN;\n              /* falls through */\n              case EXLEN:\n                if (state.flags & 1024) {\n                  while (bits < 16) {\n                    if (have === 0) {\n                      break inf_leave;\n                    }\n                    have--;\n                    hold += input[next++] << bits;\n                    bits += 8;\n                  }\n                  state.length = hold;\n                  if (state.head) {\n                    state.head.extra_len = hold;\n                  }\n                  if (state.flags & 512) {\n                    hbuf[0] = hold & 255;\n                    hbuf[1] = hold >>> 8 & 255;\n                    state.check = crc32(state.check, hbuf, 2, 0);\n                  }\n                  hold = 0;\n                  bits = 0;\n                } else if (state.head) {\n                  state.head.extra = null;\n                }\n                state.mode = EXTRA;\n              /* falls through */\n              case EXTRA:\n                if (state.flags & 1024) {\n                  copy = state.length;\n                  if (copy > have) {\n                    copy = have;\n                  }\n                  if (copy) {\n                    if (state.head) {\n                      len = state.head.extra_len - state.length;\n                      if (!state.head.extra) {\n                        state.head.extra = new Array(state.head.extra_len);\n                      }\n                      utils.arraySet(\n                        state.head.extra,\n                        input,\n                        next,\n                        // extra field is limited to 65536 bytes\n                        // - no need for additional size check\n                        copy,\n                        /*len + copy > state.head.extra_max - len ? state.head.extra_max : copy,*/\n                        len\n                      );\n                    }\n                    if (state.flags & 512) {\n                      state.check = crc32(state.check, input, copy, next);\n                    }\n                    have -= copy;\n                    next += copy;\n                    state.length -= copy;\n                  }\n                  if (state.length) {\n                    break inf_leave;\n                  }\n                }\n                state.length = 0;\n                state.mode = NAME;\n              /* falls through */\n              case NAME:\n                if (state.flags & 2048) {\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  copy = 0;\n                  do {\n                    len = input[next + copy++];\n                    if (state.head && len && state.length < 65536) {\n                      state.head.name += String.fromCharCode(len);\n                    }\n                  } while (len && copy < have);\n                  if (state.flags & 512) {\n                    state.check = crc32(state.check, input, copy, next);\n                  }\n                  have -= copy;\n                  next += copy;\n                  if (len) {\n                    break inf_leave;\n                  }\n                } else if (state.head) {\n                  state.head.name = null;\n                }\n                state.length = 0;\n                state.mode = COMMENT;\n              /* falls through */\n              case COMMENT:\n                if (state.flags & 4096) {\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  copy = 0;\n                  do {\n                    len = input[next + copy++];\n                    if (state.head && len && state.length < 65536) {\n                      state.head.comment += String.fromCharCode(len);\n                    }\n                  } while (len && copy < have);\n                  if (state.flags & 512) {\n                    state.check = crc32(state.check, input, copy, next);\n                  }\n                  have -= copy;\n                  next += copy;\n                  if (len) {\n                    break inf_leave;\n                  }\n                } else if (state.head) {\n                  state.head.comment = null;\n                }\n                state.mode = HCRC;\n              /* falls through */\n              case HCRC:\n                if (state.flags & 512) {\n                  while (bits < 16) {\n                    if (have === 0) {\n                      break inf_leave;\n                    }\n                    have--;\n                    hold += input[next++] << bits;\n                    bits += 8;\n                  }\n                  if (hold !== (state.check & 65535)) {\n                    strm.msg = "header crc mismatch";\n                    state.mode = BAD;\n                    break;\n                  }\n                  hold = 0;\n                  bits = 0;\n                }\n                if (state.head) {\n                  state.head.hcrc = state.flags >> 9 & 1;\n                  state.head.done = true;\n                }\n                strm.adler = state.check = 0;\n                state.mode = TYPE;\n                break;\n              case DICTID:\n                while (bits < 32) {\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  have--;\n                  hold += input[next++] << bits;\n                  bits += 8;\n                }\n                strm.adler = state.check = zswap32(hold);\n                hold = 0;\n                bits = 0;\n                state.mode = DICT;\n              /* falls through */\n              case DICT:\n                if (state.havedict === 0) {\n                  strm.next_out = put;\n                  strm.avail_out = left;\n                  strm.next_in = next;\n                  strm.avail_in = have;\n                  state.hold = hold;\n                  state.bits = bits;\n                  return Z_NEED_DICT;\n                }\n                strm.adler = state.check = 1;\n                state.mode = TYPE;\n              /* falls through */\n              case TYPE:\n                if (flush === Z_BLOCK || flush === Z_TREES) {\n                  break inf_leave;\n                }\n              /* falls through */\n              case TYPEDO:\n                if (state.last) {\n                  hold >>>= bits & 7;\n                  bits -= bits & 7;\n                  state.mode = CHECK;\n                  break;\n                }\n                while (bits < 3) {\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  have--;\n                  hold += input[next++] << bits;\n                  bits += 8;\n                }\n                state.last = hold & 1;\n                hold >>>= 1;\n                bits -= 1;\n                switch (hold & 3) {\n                  case 0:\n                    state.mode = STORED;\n                    break;\n                  case 1:\n                    fixedtables(state);\n                    state.mode = LEN_;\n                    if (flush === Z_TREES) {\n                      hold >>>= 2;\n                      bits -= 2;\n                      break inf_leave;\n                    }\n                    break;\n                  case 2:\n                    state.mode = TABLE;\n                    break;\n                  case 3:\n                    strm.msg = "invalid block type";\n                    state.mode = BAD;\n                }\n                hold >>>= 2;\n                bits -= 2;\n                break;\n              case STORED:\n                hold >>>= bits & 7;\n                bits -= bits & 7;\n                while (bits < 32) {\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  have--;\n                  hold += input[next++] << bits;\n                  bits += 8;\n                }\n                if ((hold & 65535) !== (hold >>> 16 ^ 65535)) {\n                  strm.msg = "invalid stored block lengths";\n                  state.mode = BAD;\n                  break;\n                }\n                state.length = hold & 65535;\n                hold = 0;\n                bits = 0;\n                state.mode = COPY_;\n                if (flush === Z_TREES) {\n                  break inf_leave;\n                }\n              /* falls through */\n              case COPY_:\n                state.mode = COPY;\n              /* falls through */\n              case COPY:\n                copy = state.length;\n                if (copy) {\n                  if (copy > have) {\n                    copy = have;\n                  }\n                  if (copy > left) {\n                    copy = left;\n                  }\n                  if (copy === 0) {\n                    break inf_leave;\n                  }\n                  utils.arraySet(output, input, next, copy, put);\n                  have -= copy;\n                  next += copy;\n                  left -= copy;\n                  put += copy;\n                  state.length -= copy;\n                  break;\n                }\n                state.mode = TYPE;\n                break;\n              case TABLE:\n                while (bits < 14) {\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  have--;\n                  hold += input[next++] << bits;\n                  bits += 8;\n                }\n                state.nlen = (hold & 31) + 257;\n                hold >>>= 5;\n                bits -= 5;\n                state.ndist = (hold & 31) + 1;\n                hold >>>= 5;\n                bits -= 5;\n                state.ncode = (hold & 15) + 4;\n                hold >>>= 4;\n                bits -= 4;\n                if (state.nlen > 286 || state.ndist > 30) {\n                  strm.msg = "too many length or distance symbols";\n                  state.mode = BAD;\n                  break;\n                }\n                state.have = 0;\n                state.mode = LENLENS;\n              /* falls through */\n              case LENLENS:\n                while (state.have < state.ncode) {\n                  while (bits < 3) {\n                    if (have === 0) {\n                      break inf_leave;\n                    }\n                    have--;\n                    hold += input[next++] << bits;\n                    bits += 8;\n                  }\n                  state.lens[order[state.have++]] = hold & 7;\n                  hold >>>= 3;\n                  bits -= 3;\n                }\n                while (state.have < 19) {\n                  state.lens[order[state.have++]] = 0;\n                }\n                state.lencode = state.lendyn;\n                state.lenbits = 7;\n                opts = { bits: state.lenbits };\n                ret = inflate_table(CODES, state.lens, 0, 19, state.lencode, 0, state.work, opts);\n                state.lenbits = opts.bits;\n                if (ret) {\n                  strm.msg = "invalid code lengths set";\n                  state.mode = BAD;\n                  break;\n                }\n                state.have = 0;\n                state.mode = CODELENS;\n              /* falls through */\n              case CODELENS:\n                while (state.have < state.nlen + state.ndist) {\n                  for (; ; ) {\n                    here = state.lencode[hold & (1 << state.lenbits) - 1];\n                    here_bits = here >>> 24;\n                    here_op = here >>> 16 & 255;\n                    here_val = here & 65535;\n                    if (here_bits <= bits) {\n                      break;\n                    }\n                    if (have === 0) {\n                      break inf_leave;\n                    }\n                    have--;\n                    hold += input[next++] << bits;\n                    bits += 8;\n                  }\n                  if (here_val < 16) {\n                    hold >>>= here_bits;\n                    bits -= here_bits;\n                    state.lens[state.have++] = here_val;\n                  } else {\n                    if (here_val === 16) {\n                      n = here_bits + 2;\n                      while (bits < n) {\n                        if (have === 0) {\n                          break inf_leave;\n                        }\n                        have--;\n                        hold += input[next++] << bits;\n                        bits += 8;\n                      }\n                      hold >>>= here_bits;\n                      bits -= here_bits;\n                      if (state.have === 0) {\n                        strm.msg = "invalid bit length repeat";\n                        state.mode = BAD;\n                        break;\n                      }\n                      len = state.lens[state.have - 1];\n                      copy = 3 + (hold & 3);\n                      hold >>>= 2;\n                      bits -= 2;\n                    } else if (here_val === 17) {\n                      n = here_bits + 3;\n                      while (bits < n) {\n                        if (have === 0) {\n                          break inf_leave;\n                        }\n                        have--;\n                        hold += input[next++] << bits;\n                        bits += 8;\n                      }\n                      hold >>>= here_bits;\n                      bits -= here_bits;\n                      len = 0;\n                      copy = 3 + (hold & 7);\n                      hold >>>= 3;\n                      bits -= 3;\n                    } else {\n                      n = here_bits + 7;\n                      while (bits < n) {\n                        if (have === 0) {\n                          break inf_leave;\n                        }\n                        have--;\n                        hold += input[next++] << bits;\n                        bits += 8;\n                      }\n                      hold >>>= here_bits;\n                      bits -= here_bits;\n                      len = 0;\n                      copy = 11 + (hold & 127);\n                      hold >>>= 7;\n                      bits -= 7;\n                    }\n                    if (state.have + copy > state.nlen + state.ndist) {\n                      strm.msg = "invalid bit length repeat";\n                      state.mode = BAD;\n                      break;\n                    }\n                    while (copy--) {\n                      state.lens[state.have++] = len;\n                    }\n                  }\n                }\n                if (state.mode === BAD) {\n                  break;\n                }\n                if (state.lens[256] === 0) {\n                  strm.msg = "invalid code -- missing end-of-block";\n                  state.mode = BAD;\n                  break;\n                }\n                state.lenbits = 9;\n                opts = { bits: state.lenbits };\n                ret = inflate_table(LENS, state.lens, 0, state.nlen, state.lencode, 0, state.work, opts);\n                state.lenbits = opts.bits;\n                if (ret) {\n                  strm.msg = "invalid literal/lengths set";\n                  state.mode = BAD;\n                  break;\n                }\n                state.distbits = 6;\n                state.distcode = state.distdyn;\n                opts = { bits: state.distbits };\n                ret = inflate_table(DISTS, state.lens, state.nlen, state.ndist, state.distcode, 0, state.work, opts);\n                state.distbits = opts.bits;\n                if (ret) {\n                  strm.msg = "invalid distances set";\n                  state.mode = BAD;\n                  break;\n                }\n                state.mode = LEN_;\n                if (flush === Z_TREES) {\n                  break inf_leave;\n                }\n              /* falls through */\n              case LEN_:\n                state.mode = LEN;\n              /* falls through */\n              case LEN:\n                if (have >= 6 && left >= 258) {\n                  strm.next_out = put;\n                  strm.avail_out = left;\n                  strm.next_in = next;\n                  strm.avail_in = have;\n                  state.hold = hold;\n                  state.bits = bits;\n                  inflate_fast(strm, _out);\n                  put = strm.next_out;\n                  output = strm.output;\n                  left = strm.avail_out;\n                  next = strm.next_in;\n                  input = strm.input;\n                  have = strm.avail_in;\n                  hold = state.hold;\n                  bits = state.bits;\n                  if (state.mode === TYPE) {\n                    state.back = -1;\n                  }\n                  break;\n                }\n                state.back = 0;\n                for (; ; ) {\n                  here = state.lencode[hold & (1 << state.lenbits) - 1];\n                  here_bits = here >>> 24;\n                  here_op = here >>> 16 & 255;\n                  here_val = here & 65535;\n                  if (here_bits <= bits) {\n                    break;\n                  }\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  have--;\n                  hold += input[next++] << bits;\n                  bits += 8;\n                }\n                if (here_op && (here_op & 240) === 0) {\n                  last_bits = here_bits;\n                  last_op = here_op;\n                  last_val = here_val;\n                  for (; ; ) {\n                    here = state.lencode[last_val + ((hold & (1 << last_bits + last_op) - 1) >> last_bits)];\n                    here_bits = here >>> 24;\n                    here_op = here >>> 16 & 255;\n                    here_val = here & 65535;\n                    if (last_bits + here_bits <= bits) {\n                      break;\n                    }\n                    if (have === 0) {\n                      break inf_leave;\n                    }\n                    have--;\n                    hold += input[next++] << bits;\n                    bits += 8;\n                  }\n                  hold >>>= last_bits;\n                  bits -= last_bits;\n                  state.back += last_bits;\n                }\n                hold >>>= here_bits;\n                bits -= here_bits;\n                state.back += here_bits;\n                state.length = here_val;\n                if (here_op === 0) {\n                  state.mode = LIT;\n                  break;\n                }\n                if (here_op & 32) {\n                  state.back = -1;\n                  state.mode = TYPE;\n                  break;\n                }\n                if (here_op & 64) {\n                  strm.msg = "invalid literal/length code";\n                  state.mode = BAD;\n                  break;\n                }\n                state.extra = here_op & 15;\n                state.mode = LENEXT;\n              /* falls through */\n              case LENEXT:\n                if (state.extra) {\n                  n = state.extra;\n                  while (bits < n) {\n                    if (have === 0) {\n                      break inf_leave;\n                    }\n                    have--;\n                    hold += input[next++] << bits;\n                    bits += 8;\n                  }\n                  state.length += hold & (1 << state.extra) - 1;\n                  hold >>>= state.extra;\n                  bits -= state.extra;\n                  state.back += state.extra;\n                }\n                state.was = state.length;\n                state.mode = DIST;\n              /* falls through */\n              case DIST:\n                for (; ; ) {\n                  here = state.distcode[hold & (1 << state.distbits) - 1];\n                  here_bits = here >>> 24;\n                  here_op = here >>> 16 & 255;\n                  here_val = here & 65535;\n                  if (here_bits <= bits) {\n                    break;\n                  }\n                  if (have === 0) {\n                    break inf_leave;\n                  }\n                  have--;\n                  hold += input[next++] << bits;\n                  bits += 8;\n                }\n                if ((here_op & 240) === 0) {\n                  last_bits = here_bits;\n                  last_op = here_op;\n                  last_val = here_val;\n                  for (; ; ) {\n                    here = state.distcode[last_val + ((hold & (1 << last_bits + last_op) - 1) >> last_bits)];\n                    here_bits = here >>> 24;\n                    here_op = here >>> 16 & 255;\n                    here_val = here & 65535;\n                    if (last_bits + here_bits <= bits) {\n                      break;\n                    }\n                    if (have === 0) {\n                      break inf_leave;\n                    }\n                    have--;\n                    hold += input[next++] << bits;\n                    bits += 8;\n                  }\n                  hold >>>= last_bits;\n                  bits -= last_bits;\n                  state.back += last_bits;\n                }\n                hold >>>= here_bits;\n                bits -= here_bits;\n                state.back += here_bits;\n                if (here_op & 64) {\n                  strm.msg = "invalid distance code";\n                  state.mode = BAD;\n                  break;\n                }\n                state.offset = here_val;\n                state.extra = here_op & 15;\n                state.mode = DISTEXT;\n              /* falls through */\n              case DISTEXT:\n                if (state.extra) {\n                  n = state.extra;\n                  while (bits < n) {\n                    if (have === 0) {\n                      break inf_leave;\n                    }\n                    have--;\n                    hold += input[next++] << bits;\n                    bits += 8;\n                  }\n                  state.offset += hold & (1 << state.extra) - 1;\n                  hold >>>= state.extra;\n                  bits -= state.extra;\n                  state.back += state.extra;\n                }\n                if (state.offset > state.dmax) {\n                  strm.msg = "invalid distance too far back";\n                  state.mode = BAD;\n                  break;\n                }\n                state.mode = MATCH;\n              /* falls through */\n              case MATCH:\n                if (left === 0) {\n                  break inf_leave;\n                }\n                copy = _out - left;\n                if (state.offset > copy) {\n                  copy = state.offset - copy;\n                  if (copy > state.whave) {\n                    if (state.sane) {\n                      strm.msg = "invalid distance too far back";\n                      state.mode = BAD;\n                      break;\n                    }\n                  }\n                  if (copy > state.wnext) {\n                    copy -= state.wnext;\n                    from = state.wsize - copy;\n                  } else {\n                    from = state.wnext - copy;\n                  }\n                  if (copy > state.length) {\n                    copy = state.length;\n                  }\n                  from_source = state.window;\n                } else {\n                  from_source = output;\n                  from = put - state.offset;\n                  copy = state.length;\n                }\n                if (copy > left) {\n                  copy = left;\n                }\n                left -= copy;\n                state.length -= copy;\n                do {\n                  output[put++] = from_source[from++];\n                } while (--copy);\n                if (state.length === 0) {\n                  state.mode = LEN;\n                }\n                break;\n              case LIT:\n                if (left === 0) {\n                  break inf_leave;\n                }\n                output[put++] = state.length;\n                left--;\n                state.mode = LEN;\n                break;\n              case CHECK:\n                if (state.wrap) {\n                  while (bits < 32) {\n                    if (have === 0) {\n                      break inf_leave;\n                    }\n                    have--;\n                    hold |= input[next++] << bits;\n                    bits += 8;\n                  }\n                  _out -= left;\n                  strm.total_out += _out;\n                  state.total += _out;\n                  if (_out) {\n                    strm.adler = state.check = /*UPDATE(state.check, put - _out, _out);*/\n                    state.flags ? crc32(state.check, output, _out, put - _out) : adler32(state.check, output, _out, put - _out);\n                  }\n                  _out = left;\n                  if ((state.flags ? hold : zswap32(hold)) !== state.check) {\n                    strm.msg = "incorrect data check";\n                    state.mode = BAD;\n                    break;\n                  }\n                  hold = 0;\n                  bits = 0;\n                }\n                state.mode = LENGTH;\n              /* falls through */\n              case LENGTH:\n                if (state.wrap && state.flags) {\n                  while (bits < 32) {\n                    if (have === 0) {\n                      break inf_leave;\n                    }\n                    have--;\n                    hold += input[next++] << bits;\n                    bits += 8;\n                  }\n                  if (hold !== (state.total & 4294967295)) {\n                    strm.msg = "incorrect length check";\n                    state.mode = BAD;\n                    break;\n                  }\n                  hold = 0;\n                  bits = 0;\n                }\n                state.mode = DONE;\n              /* falls through */\n              case DONE:\n                ret = Z_STREAM_END;\n                break inf_leave;\n              case BAD:\n                ret = Z_DATA_ERROR;\n                break inf_leave;\n              case MEM:\n                return Z_MEM_ERROR;\n              case SYNC:\n              /* falls through */\n              default:\n                return Z_STREAM_ERROR;\n            }\n          }\n        strm.next_out = put;\n        strm.avail_out = left;\n        strm.next_in = next;\n        strm.avail_in = have;\n        state.hold = hold;\n        state.bits = bits;\n        if (state.wsize || _out !== strm.avail_out && state.mode < BAD && (state.mode < CHECK || flush !== Z_FINISH)) {\n          if (updatewindow(strm, strm.output, strm.next_out, _out - strm.avail_out)) {\n            state.mode = MEM;\n            return Z_MEM_ERROR;\n          }\n        }\n        _in -= strm.avail_in;\n        _out -= strm.avail_out;\n        strm.total_in += _in;\n        strm.total_out += _out;\n        state.total += _out;\n        if (state.wrap && _out) {\n          strm.adler = state.check = /*UPDATE(state.check, strm.next_out - _out, _out);*/\n          state.flags ? crc32(state.check, output, _out, strm.next_out - _out) : adler32(state.check, output, _out, strm.next_out - _out);\n        }\n        strm.data_type = state.bits + (state.last ? 64 : 0) + (state.mode === TYPE ? 128 : 0) + (state.mode === LEN_ || state.mode === COPY_ ? 256 : 0);\n        if ((_in === 0 && _out === 0 || flush === Z_FINISH) && ret === Z_OK) {\n          ret = Z_BUF_ERROR;\n        }\n        return ret;\n      }\n      function inflateEnd(strm) {\n        if (!strm || !strm.state) {\n          return Z_STREAM_ERROR;\n        }\n        var state = strm.state;\n        if (state.window) {\n          state.window = null;\n        }\n        strm.state = null;\n        return Z_OK;\n      }\n      function inflateGetHeader(strm, head) {\n        var state;\n        if (!strm || !strm.state) {\n          return Z_STREAM_ERROR;\n        }\n        state = strm.state;\n        if ((state.wrap & 2) === 0) {\n          return Z_STREAM_ERROR;\n        }\n        state.head = head;\n        head.done = false;\n        return Z_OK;\n      }\n      function inflateSetDictionary(strm, dictionary) {\n        var dictLength = dictionary.length;\n        var state;\n        var dictid;\n        var ret;\n        if (!strm || !strm.state) {\n          return Z_STREAM_ERROR;\n        }\n        state = strm.state;\n        if (state.wrap !== 0 && state.mode !== DICT) {\n          return Z_STREAM_ERROR;\n        }\n        if (state.mode === DICT) {\n          dictid = 1;\n          dictid = adler32(dictid, dictionary, dictLength, 0);\n          if (dictid !== state.check) {\n            return Z_DATA_ERROR;\n          }\n        }\n        ret = updatewindow(strm, dictionary, dictLength, dictLength);\n        if (ret) {\n          state.mode = MEM;\n          return Z_MEM_ERROR;\n        }\n        state.havedict = 1;\n        return Z_OK;\n      }\n      exports.inflateReset = inflateReset;\n      exports.inflateReset2 = inflateReset2;\n      exports.inflateResetKeep = inflateResetKeep;\n      exports.inflateInit = inflateInit;\n      exports.inflateInit2 = inflateInit2;\n      exports.inflate = inflate;\n      exports.inflateEnd = inflateEnd;\n      exports.inflateGetHeader = inflateGetHeader;\n      exports.inflateSetDictionary = inflateSetDictionary;\n      exports.inflateInfo = "pako inflate (from Nodeca project)";\n    }\n  });\n\n  // node_modules/pako/lib/zlib/constants.js\n  var require_constants = __commonJS({\n    "node_modules/pako/lib/zlib/constants.js"(exports, module) {\n      "use strict";\n      module.exports = {\n        /* Allowed flush values; see deflate() and inflate() below for details */\n        Z_NO_FLUSH: 0,\n        Z_PARTIAL_FLUSH: 1,\n        Z_SYNC_FLUSH: 2,\n        Z_FULL_FLUSH: 3,\n        Z_FINISH: 4,\n        Z_BLOCK: 5,\n        Z_TREES: 6,\n        /* Return codes for the compression/decompression functions. Negative values\n        * are errors, positive values are used for special but normal events.\n        */\n        Z_OK: 0,\n        Z_STREAM_END: 1,\n        Z_NEED_DICT: 2,\n        Z_ERRNO: -1,\n        Z_STREAM_ERROR: -2,\n        Z_DATA_ERROR: -3,\n        //Z_MEM_ERROR:     -4,\n        Z_BUF_ERROR: -5,\n        //Z_VERSION_ERROR: -6,\n        /* compression levels */\n        Z_NO_COMPRESSION: 0,\n        Z_BEST_SPEED: 1,\n        Z_BEST_COMPRESSION: 9,\n        Z_DEFAULT_COMPRESSION: -1,\n        Z_FILTERED: 1,\n        Z_HUFFMAN_ONLY: 2,\n        Z_RLE: 3,\n        Z_FIXED: 4,\n        Z_DEFAULT_STRATEGY: 0,\n        /* Possible values of the data_type field (though see inflate()) */\n        Z_BINARY: 0,\n        Z_TEXT: 1,\n        //Z_ASCII:                1, // = Z_TEXT (deprecated)\n        Z_UNKNOWN: 2,\n        /* The deflate compression method */\n        Z_DEFLATED: 8\n        //Z_NULL:                 null // Use -1 or null inline, depending on var type\n      };\n    }\n  });\n\n  // node_modules/pako/lib/zlib/gzheader.js\n  var require_gzheader = __commonJS({\n    "node_modules/pako/lib/zlib/gzheader.js"(exports, module) {\n      "use strict";\n      function GZheader() {\n        this.text = 0;\n        this.time = 0;\n        this.xflags = 0;\n        this.os = 0;\n        this.extra = null;\n        this.extra_len = 0;\n        this.name = "";\n        this.comment = "";\n        this.hcrc = 0;\n        this.done = false;\n      }\n      module.exports = GZheader;\n    }\n  });\n\n  // node_modules/pako/lib/inflate.js\n  var require_inflate2 = __commonJS({\n    "node_modules/pako/lib/inflate.js"(exports) {\n      "use strict";\n      var zlib_inflate = require_inflate();\n      var utils = require_common();\n      var strings = require_strings();\n      var c = require_constants();\n      var msg = require_messages();\n      var ZStream = require_zstream();\n      var GZheader = require_gzheader();\n      var toString = Object.prototype.toString;\n      function Inflate2(options) {\n        if (!(this instanceof Inflate2)) return new Inflate2(options);\n        this.options = utils.assign({\n          chunkSize: 16384,\n          windowBits: 0,\n          to: ""\n        }, options || {});\n        var opt = this.options;\n        if (opt.raw && opt.windowBits >= 0 && opt.windowBits < 16) {\n          opt.windowBits = -opt.windowBits;\n          if (opt.windowBits === 0) {\n            opt.windowBits = -15;\n          }\n        }\n        if (opt.windowBits >= 0 && opt.windowBits < 16 && !(options && options.windowBits)) {\n          opt.windowBits += 32;\n        }\n        if (opt.windowBits > 15 && opt.windowBits < 48) {\n          if ((opt.windowBits & 15) === 0) {\n            opt.windowBits |= 15;\n          }\n        }\n        this.err = 0;\n        this.msg = "";\n        this.ended = false;\n        this.chunks = [];\n        this.strm = new ZStream();\n        this.strm.avail_out = 0;\n        var status = zlib_inflate.inflateInit2(\n          this.strm,\n          opt.windowBits\n        );\n        if (status !== c.Z_OK) {\n          throw new Error(msg[status]);\n        }\n        this.header = new GZheader();\n        zlib_inflate.inflateGetHeader(this.strm, this.header);\n        if (opt.dictionary) {\n          if (typeof opt.dictionary === "string") {\n            opt.dictionary = strings.string2buf(opt.dictionary);\n          } else if (toString.call(opt.dictionary) === "[object ArrayBuffer]") {\n            opt.dictionary = new Uint8Array(opt.dictionary);\n          }\n          if (opt.raw) {\n            status = zlib_inflate.inflateSetDictionary(this.strm, opt.dictionary);\n            if (status !== c.Z_OK) {\n              throw new Error(msg[status]);\n            }\n          }\n        }\n      }\n      Inflate2.prototype.push = function(data, mode) {\n        var strm = this.strm;\n        var chunkSize = this.options.chunkSize;\n        var dictionary = this.options.dictionary;\n        var status, _mode;\n        var next_out_utf8, tail, utf8str;\n        var allowBufError = false;\n        if (this.ended) {\n          return false;\n        }\n        _mode = mode === ~~mode ? mode : mode === true ? c.Z_FINISH : c.Z_NO_FLUSH;\n        if (typeof data === "string") {\n          strm.input = strings.binstring2buf(data);\n        } else if (toString.call(data) === "[object ArrayBuffer]") {\n          strm.input = new Uint8Array(data);\n        } else {\n          strm.input = data;\n        }\n        strm.next_in = 0;\n        strm.avail_in = strm.input.length;\n        do {\n          if (strm.avail_out === 0) {\n            strm.output = new utils.Buf8(chunkSize);\n            strm.next_out = 0;\n            strm.avail_out = chunkSize;\n          }\n          status = zlib_inflate.inflate(strm, c.Z_NO_FLUSH);\n          if (status === c.Z_NEED_DICT && dictionary) {\n            status = zlib_inflate.inflateSetDictionary(this.strm, dictionary);\n          }\n          if (status === c.Z_BUF_ERROR && allowBufError === true) {\n            status = c.Z_OK;\n            allowBufError = false;\n          }\n          if (status !== c.Z_STREAM_END && status !== c.Z_OK) {\n            this.onEnd(status);\n            this.ended = true;\n            return false;\n          }\n          if (strm.next_out) {\n            if (strm.avail_out === 0 || status === c.Z_STREAM_END || strm.avail_in === 0 && (_mode === c.Z_FINISH || _mode === c.Z_SYNC_FLUSH)) {\n              if (this.options.to === "string") {\n                next_out_utf8 = strings.utf8border(strm.output, strm.next_out);\n                tail = strm.next_out - next_out_utf8;\n                utf8str = strings.buf2string(strm.output, next_out_utf8);\n                strm.next_out = tail;\n                strm.avail_out = chunkSize - tail;\n                if (tail) {\n                  utils.arraySet(strm.output, strm.output, next_out_utf8, tail, 0);\n                }\n                this.onData(utf8str);\n              } else {\n                this.onData(utils.shrinkBuf(strm.output, strm.next_out));\n              }\n            }\n          }\n          if (strm.avail_in === 0 && strm.avail_out === 0) {\n            allowBufError = true;\n          }\n        } while ((strm.avail_in > 0 || strm.avail_out === 0) && status !== c.Z_STREAM_END);\n        if (status === c.Z_STREAM_END) {\n          _mode = c.Z_FINISH;\n        }\n        if (_mode === c.Z_FINISH) {\n          status = zlib_inflate.inflateEnd(this.strm);\n          this.onEnd(status);\n          this.ended = true;\n          return status === c.Z_OK;\n        }\n        if (_mode === c.Z_SYNC_FLUSH) {\n          this.onEnd(c.Z_OK);\n          strm.avail_out = 0;\n          return true;\n        }\n        return true;\n      };\n      Inflate2.prototype.onData = function(chunk) {\n        this.chunks.push(chunk);\n      };\n      Inflate2.prototype.onEnd = function(status) {\n        if (status === c.Z_OK) {\n          if (this.options.to === "string") {\n            this.result = this.chunks.join("");\n          } else {\n            this.result = utils.flattenChunks(this.chunks);\n          }\n        }\n        this.chunks = [];\n        this.err = status;\n        this.msg = this.strm.msg;\n      };\n      function inflate(input, options) {\n        var inflator = new Inflate2(options);\n        inflator.push(input, true);\n        if (inflator.err) {\n          throw inflator.msg || msg[inflator.err];\n        }\n        return inflator.result;\n      }\n      function inflateRaw(input, options) {\n        options = options || {};\n        options.raw = true;\n        return inflate(input, options);\n      }\n      exports.Inflate = Inflate2;\n      exports.inflate = inflate;\n      exports.inflateRaw = inflateRaw;\n      exports.ungzip = inflate;\n    }\n  });\n\n  // node_modules/pako/index.js\n  var require_pako = __commonJS({\n    "node_modules/pako/index.js"(exports, module) {\n      "use strict";\n      var assign = require_common().assign;\n      var deflate = require_deflate2();\n      var inflate = require_inflate2();\n      var constants = require_constants();\n      var pako = {};\n      assign(pako, deflate, inflate, constants);\n      module.exports = pako;\n    }\n  });\n\n  // src/sticky-model.ts\n  var STICKY_UNIT = 1e3;\n  var PRIMARY_TEXT_BOX = "primary";\n  var STICKY_FONTS = {\n    sans: { label: "Sans serif", family: "sans-serif" },\n    serif: { label: "Serif", family: "serif" },\n    mono: { label: "Monospace", family: "monospace" },\n    song: { label: "Song / \\u5B8B\\u4F53", family: \'"Songti SC", SimSun, serif\' },\n    kai: { label: "Kai / \\u6977\\u4F53", family: "KaiTi, STKaiti, serif" }\n  };\n  function stickyFontSize(size) {\n    return typeof size === "number" && Number.isFinite(size) ? Math.round(Math.max(8, Math.min(144, size)) * 10) / 10 : 20;\n  }\n  function normalizeTextStyle(style) {\n    return {\n      fontSize: style.fontSize === void 0 ? void 0 : stickyFontSize(style.fontSize),\n      fontFamily: style.fontFamily && Object.prototype.hasOwnProperty.call(STICKY_FONTS, style.fontFamily) ? style.fontFamily : void 0,\n      bold: style.bold === true,\n      italic: style.italic === true,\n      scaleText: style.scaleText === true\n    };\n  }\n  function compareStickyOrder(a, b) {\n    return a.createdAt - b.createdAt || a.id.localeCompare(b.id);\n  }\n  function stickyTextBoxes(note) {\n    var _a, _b, _c, _d;\n    return [{\n      id: PRIMARY_TEXT_BOX,\n      text: note.text,\n      x: (_a = note.textX) != null ? _a : 16,\n      y: (_b = note.textY) != null ? _b : 16,\n      width: (_c = note.textWidth) != null ? _c : Math.max(60, note.width * note.boardPageWidth - 32),\n      height: note.textHeight,\n      fontSize: note.textFontSize,\n      fontFamily: note.textFontFamily,\n      bold: note.textBold,\n      italic: note.textItalic,\n      scaleText: note.textScaleText,\n      createdAt: note.createdAt,\n      updatedAt: note.textUpdatedAt\n    }, ...(_d = note.textBoxes) != null ? _d : []];\n  }\n  function cloneSticky(note) {\n    var _a;\n    return {\n      ...note,\n      textBoxes: (_a = note.textBoxes) == null ? void 0 : _a.map((box) => ({ ...box })),\n      deletedTextBoxes: { ...note.deletedTextBoxes },\n      deletedStrokeIds: [...note.deletedStrokeIds],\n      strokes: note.strokes.map((stroke) => {\n        var _a2;\n        return {\n          ...stroke,\n          points: stroke.points.map((point) => ({ ...point })),\n          dynamics: stroke.dynamics ? {\n            ...stroke.dynamics,\n            pressureCurve: (_a2 = stroke.dynamics.pressureCurve) == null ? void 0 : _a2.map((point) => [...point])\n          } : void 0\n        };\n      })\n    };\n  }\n  function mergeSticky(a, b) {\n    var _a, _b, _c, _d;\n    const latest = b.updatedAt > a.updatedAt || b.updatedAt === a.updatedAt && JSON.stringify(b) > JSON.stringify(a) ? b : a;\n    const text = b.textUpdatedAt > a.textUpdatedAt || b.textUpdatedAt === a.textUpdatedAt && JSON.stringify(stickyTextBoxes(b)[0]) > JSON.stringify(stickyTextBoxes(a)[0]) ? b : a;\n    const deletedTextBoxes = { ...a.deletedTextBoxes };\n    for (const [id, time] of Object.entries((_a = b.deletedTextBoxes) != null ? _a : {})) deletedTextBoxes[id] = Math.max((_b = deletedTextBoxes[id]) != null ? _b : 0, time);\n    const boxes = /* @__PURE__ */ new Map();\n    for (const box of [...(_c = a.textBoxes) != null ? _c : [], ...(_d = b.textBoxes) != null ? _d : []]) {\n      const previous = boxes.get(box.id);\n      if (!deletedTextBoxes[box.id] && (!previous || box.updatedAt > previous.updatedAt || box.updatedAt === previous.updatedAt && JSON.stringify(box) > JSON.stringify(previous))) boxes.set(box.id, { ...box });\n    }\n    const removed = /* @__PURE__ */ new Set([...a.deletedStrokeIds, ...b.deletedStrokeIds]);\n    const strokes = /* @__PURE__ */ new Map();\n    for (const stroke of [...a.strokes, ...b.strokes]) {\n      const previous = strokes.get(stroke.id);\n      if (!removed.has(stroke.id) && (!previous || stroke.updatedAt > previous.updatedAt || stroke.updatedAt === previous.updatedAt && JSON.stringify(stroke) > JSON.stringify(previous))) strokes.set(stroke.id, stroke);\n    }\n    return {\n      ...latest,\n      text: text.text,\n      textUpdatedAt: text.textUpdatedAt,\n      textX: text.textX,\n      textY: text.textY,\n      textWidth: text.textWidth,\n      textHeight: text.textHeight,\n      textFontSize: text.textFontSize,\n      textFontFamily: text.textFontFamily,\n      textBold: text.textBold,\n      textItalic: text.textItalic,\n      textScaleText: text.textScaleText,\n      textBoxes: [...boxes.values()].sort((x, y) => x.createdAt - y.createdAt || x.id.localeCompare(y.id)),\n      deletedTextBoxes,\n      strokes: [...strokes.values()].sort((x, y) => x.createdAt - y.createdAt || x.id.localeCompare(y.id)),\n      deletedStrokeIds: [...removed]\n    };\n  }\n  function normalizeSticky(value, pageId) {\n    var _a;\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    if (typeof raw.id !== "string" || ![raw.x, raw.y, raw.width, raw.height].every((n) => typeof n === "number" && Number.isFinite(n))) return null;\n    const positive = (n, fallback) => typeof n === "number" && Number.isFinite(n) && n > 0 ? n : fallback;\n    const string = (n) => typeof n === "string" ? n : "";\n    const position = (n, fallback) => typeof n === "number" && Number.isFinite(n) ? Math.max(0, n) : fallback;\n    const deletedTextBoxes = Object.fromEntries(Object.entries((_a = raw.deletedTextBoxes) != null ? _a : {}).filter(([id, time]) => id !== PRIMARY_TEXT_BOX && typeof time === "number" && Number.isFinite(time) && time > 0));\n    const boxes = /* @__PURE__ */ new Map();\n    for (const box of Array.isArray(raw.textBoxes) ? raw.textBoxes : []) {\n      if (!box || typeof box.id !== "string" || box.id === PRIMARY_TEXT_BOX || typeof box.text !== "string") continue;\n      const normalized = {\n        ...normalizeTextStyle(box),\n        id: box.id,\n        text: box.text,\n        x: position(box.x, 16),\n        y: position(box.y, 16),\n        width: Math.max(60, positive(box.width, 240)),\n        height: box.height === void 0 ? void 0 : Math.max(60, positive(box.height, 120)),\n        createdAt: positive(box.createdAt, 1),\n        updatedAt: positive(box.updatedAt, 1)\n      };\n      const previous = boxes.get(box.id);\n      if (!deletedTextBoxes[box.id] && (!previous || normalized.updatedAt > previous.updatedAt || normalized.updatedAt === previous.updatedAt && JSON.stringify(normalized) > JSON.stringify(previous))) boxes.set(box.id, normalized);\n    }\n    const textOnly = raw.kind === "text";\n    const width = Math.min(1, Math.max(textOnly ? 0.01 : 0.05, raw.width)), height = Math.min(1, Math.max(textOnly ? 0.01 : 0.05, raw.height));\n    const textStyle = normalizeTextStyle({ fontSize: raw.textFontSize, fontFamily: raw.textFontFamily, bold: raw.textBold, italic: raw.textItalic, scaleText: raw.textScaleText });\n    const removed = Array.isArray(raw.deletedStrokeIds) ? raw.deletedStrokeIds.filter((id) => typeof id === "string") : [];\n    const strokes = (Array.isArray(raw.strokes) ? raw.strokes : []).filter((stroke) => stroke && typeof stroke.id === "string" && Array.isArray(stroke.points)).map((stroke) => ({\n      ...stroke,\n      pageId: raw.id,\n      tool: stroke.tool === "highlighter" ? "highlighter" : "pen",\n      color: /^#[0-9a-f]{6}$/i.test(stroke.color) ? stroke.color : "#202020",\n      width: positive(stroke.width, 3),\n      opacity: Math.min(1, positive(stroke.opacity, 1)),\n      dynamics: normalizeDynamics(stroke.dynamics),\n      points: stroke.points.filter((point) => point && Number.isFinite(point.x) && Number.isFinite(point.y)).map((point) => ({\n        x: Math.max(0, point.x),\n        y: Math.max(0, point.y),\n        pressure: Math.min(1, Math.max(0.05, positive(point.pressure, 0.5))),\n        t: positive(point.t, 1),\n        tiltX: typeof point.tiltX === "number" && Number.isFinite(point.tiltX) ? point.tiltX : void 0,\n        tiltY: typeof point.tiltY === "number" && Number.isFinite(point.tiltY) ? point.tiltY : void 0\n      })),\n      createdAt: positive(stroke.createdAt, 1),\n      updatedAt: positive(stroke.updatedAt, 1)\n    })).filter((stroke) => !removed.includes(stroke.id));\n    return {\n      id: raw.id,\n      pageId,\n      ...textOnly ? { kind: "text" } : {},\n      x: Math.max(0, Math.min(1, raw.x)),\n      y: Math.max(0, Math.min(1, raw.y)),\n      width,\n      height,\n      title: string(raw.title),\n      keywords: string(raw.keywords),\n      text: string(raw.text),\n      textUpdatedAt: positive(raw.textUpdatedAt, 1),\n      textWidth: Math.max(60, positive(raw.textWidth, width * positive(raw.boardPageWidth, STICKY_UNIT) - 32)),\n      textX: textOnly ? 0 : position(raw.textX, 16),\n      textY: textOnly ? 0 : position(raw.textY, 16),\n      textHeight: raw.textHeight === void 0 ? void 0 : Math.max(60, positive(raw.textHeight, 120)),\n      textFontSize: textStyle.fontSize,\n      textFontFamily: textStyle.fontFamily,\n      textBold: textStyle.bold,\n      textItalic: textStyle.italic,\n      textScaleText: textStyle.scaleText,\n      textBoxes: [...boxes.values()].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)),\n      deletedTextBoxes,\n      color: typeof raw.color === "string" && /^#[0-9a-f]{6}$/i.test(raw.color) ? raw.color : "#fff1a8",\n      collapsed: !textOnly && raw.collapsed === true,\n      preview: raw.preview !== false,\n      scrollX: textOnly ? 0 : Math.max(0, positive(raw.scrollX, 0)),\n      scrollY: textOnly ? 0 : Math.max(0, positive(raw.scrollY, 0)),\n      boardPageWidth: positive(raw.boardPageWidth, STICKY_UNIT),\n      strokes,\n      deletedStrokeIds: removed,\n      createdAt: positive(raw.createdAt, 1),\n      updatedAt: positive(raw.updatedAt, 1)\n    };\n  }\n\n  // src/model.ts\n  var DEFAULT_PAGE_WIDTH = 1600;\n  var DEFAULT_PAGE_HEIGHT = 2200;\n  function newId(prefix) {\n    const random = Math.random().toString(36).slice(2, 10);\n    return `${prefix}-${Date.now().toString(36)}-${random}`;\n  }\n  function createNotebook(title = "Ink Notebook") {\n    const now = Date.now();\n    const page = createPage("Page 1", "ruled", now);\n    return {\n      schema: 2,\n      title,\n      pageWidth: DEFAULT_PAGE_WIDTH,\n      pageHeight: DEFAULT_PAGE_HEIGHT,\n      pages: [page],\n      pageOrder: [page.id],\n      deletedPages: {},\n      pageOrderUpdatedAt: now,\n      updatedAt: now\n    };\n  }\n  function createPage(title, paper = "ruled", now = Date.now()) {\n    return { id: newId("page"), title, paper, strokes: [], deletedStrokeIds: [], createdAt: now, updatedAt: now };\n  }\n  function normalizeNotebook(value) {\n    if (!value || typeof value !== "object") return createNotebook();\n    const raw = value;\n    const pages = Array.isArray(raw.pages) ? raw.pages : [];\n    const normalizedPages = pages.map(normalizePage).filter((page) => page !== null);\n    const mergedById = /* @__PURE__ */ new Map();\n    for (const page of normalizedPages) {\n      const existing = mergedById.get(page.id);\n      mergedById.set(page.id, existing ? mergePages(existing, page) : page);\n    }\n    const dedupedPages = [...mergedById.values()];\n    const pageIds = new Set(dedupedPages.map((page) => page.id));\n    const legacyOrder = [...dedupedPages].sort((a, b) => a.createdAt - b.createdAt).map((page) => page.id);\n    const requestedOrder = Array.isArray(raw.pageOrder) ? raw.pageOrder.filter((id) => typeof id === "string") : legacyOrder;\n    const pageOrder = [.../* @__PURE__ */ new Set([...requestedOrder.filter((id) => pageIds.has(id)), ...legacyOrder.filter((id) => !requestedOrder.includes(id))])];\n    const deletedPages = raw.deletedPages && typeof raw.deletedPages === "object" ? Object.fromEntries(Object.entries(raw.deletedPages).filter((entry) => typeof entry[0] === "string" && typeof entry[1] === "number" && Number.isFinite(entry[1]))) : {};\n    const visiblePages = dedupedPages.filter((page) => !(page.id in deletedPages));\n    const visibleIds = new Set(visiblePages.map((page) => page.id));\n    const byId = new Map(visiblePages.map((page) => [page.id, page]));\n    const orderedPages = pageOrder.map((id) => byId.get(id)).filter((page) => page !== void 0);\n    if (orderedPages.length === 0) orderedPages.push(createPage("Page 1"));\n    return {\n      schema: 2,\n      title: typeof raw.title === "string" ? raw.title : "Ink Notebook",\n      pageWidth: finitePositive(raw.pageWidth, DEFAULT_PAGE_WIDTH),\n      pageHeight: finitePositive(raw.pageHeight, DEFAULT_PAGE_HEIGHT),\n      pages: orderedPages,\n      pageOrder: orderedPages.map((page) => page.id).filter((id) => visibleIds.has(id) || orderedPages.length === 1),\n      deletedPages,\n      pageOrderUpdatedAt: finitePositive(raw.pageOrderUpdatedAt, finitePositive(raw.updatedAt, Date.now())),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function mergeNotebooks(base, incoming) {\n    var _a, _b, _c, _d, _e, _f, _g;\n    const pages = /* @__PURE__ */ new Map();\n    for (const page of base.pages) pages.set(page.id, page);\n    for (const page of incoming.pages) {\n      const existing = pages.get(page.id);\n      pages.set(page.id, existing ? mergePages(existing, page) : page);\n    }\n    const deletedPages = { ...(_a = base.deletedPages) != null ? _a : {} };\n    for (const [id, timestamp] of Object.entries((_b = incoming.deletedPages) != null ? _b : {})) deletedPages[id] = Math.max((_c = deletedPages[id]) != null ? _c : 0, timestamp);\n    for (const id of Object.keys(deletedPages)) pages.delete(id);\n    const orderSource = incoming.pageOrderUpdatedAt > base.pageOrderUpdatedAt || incoming.pageOrderUpdatedAt === base.pageOrderUpdatedAt && compareNotebookOrder(incoming, base) >= 0 ? incoming : base;\n    const preferred = (_d = orderSource.pageOrder) != null ? _d : [];\n    const known = preferred.map((id) => pages.get(id)).filter((page) => page !== void 0);\n    const additions = [...pages.values()].filter((page) => !preferred.includes(page.id)).sort((a, b) => a.createdAt - b.createdAt);\n    const ordered = [...known];\n    for (const page of additions) {\n      const inBase = ((_e = base.pageOrder) != null ? _e : []).includes(page.id);\n      const inIncoming = ((_f = incoming.pageOrder) != null ? _f : []).includes(page.id);\n      const source = inBase && !inIncoming ? base : incoming;\n      const sourceOrder = (_g = source.pageOrder) != null ? _g : source.pages.map((candidate) => candidate.id);\n      const sourceIndex = sourceOrder.indexOf(page.id);\n      let inserted = false;\n      for (let index = sourceIndex - 1; index >= 0; index--) {\n        const anchor = ordered.findIndex((candidate) => candidate.id === sourceOrder[index]);\n        if (anchor >= 0) {\n          ordered.splice(anchor + 1, 0, page);\n          inserted = true;\n          break;\n        }\n      }\n      if (!inserted) for (let index = sourceIndex + 1; index < sourceOrder.length; index++) {\n        const anchor = ordered.findIndex((candidate) => candidate.id === sourceOrder[index]);\n        if (anchor >= 0) {\n          ordered.splice(anchor, 0, page);\n          inserted = true;\n          break;\n        }\n      }\n      if (!inserted) {\n        const at = ordered.findIndex((candidate) => page.createdAt < candidate.createdAt);\n        ordered.splice(at < 0 ? ordered.length : at, 0, page);\n      }\n    }\n    const safePages = ordered.length ? ordered : [createPage("Page 1")];\n    const pageOrder = safePages.map((page) => page.id);\n    return {\n      ...incoming,\n      schema: 2,\n      title: incoming.updatedAt >= base.updatedAt ? incoming.title : base.title,\n      pageWidth: incoming.pageWidth || base.pageWidth,\n      pageHeight: incoming.pageHeight || base.pageHeight,\n      pages: safePages,\n      pageOrder,\n      deletedPages,\n      pageOrderUpdatedAt: Math.max(base.pageOrderUpdatedAt, incoming.pageOrderUpdatedAt),\n      updatedAt: Math.max(base.updatedAt, incoming.updatedAt)\n    };\n  }\n  function compareNotebookOrder(left, right) {\n    var _a, _b;\n    const leftOrder = JSON.stringify((_a = left.pageOrder) != null ? _a : []);\n    const rightOrder = JSON.stringify((_b = right.pageOrder) != null ? _b : []);\n    return leftOrder < rightOrder ? -1 : leftOrder > rightOrder ? 1 : 0;\n  }\n  function mergePages(base, incoming) {\n    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k;\n    const stickyNotes = /* @__PURE__ */ new Map();\n    for (const note of [...(_a = base.stickyNotes) != null ? _a : [], ...(_b = incoming.stickyNotes) != null ? _b : []]) {\n      const previous = stickyNotes.get(note.id);\n      stickyNotes.set(note.id, previous ? mergeSticky(previous, note) : note);\n    }\n    const deletedStickyNotes = { ...base.deletedStickyNotes };\n    for (const [id, time] of Object.entries((_c = incoming.deletedStickyNotes) != null ? _c : {})) deletedStickyNotes[id] = Math.max((_d = deletedStickyNotes[id]) != null ? _d : 0, time);\n    for (const [id, note] of stickyNotes) if (note.updatedAt <= ((_e = deletedStickyNotes[id]) != null ? _e : 0)) stickyNotes.delete(id);\n    const images = /* @__PURE__ */ new Map();\n    for (const image of [...(_f = base.images) != null ? _f : [], ...(_g = incoming.images) != null ? _g : []]) {\n      const previous = images.get(image.id);\n      if (!previous || image.updatedAt > previous.updatedAt || image.updatedAt === previous.updatedAt && JSON.stringify(image) > JSON.stringify(previous)) images.set(image.id, image);\n    }\n    const deletedImageIds = [.../* @__PURE__ */ new Set([...(_h = base.deletedImageIds) != null ? _h : [], ...(_i = incoming.deletedImageIds) != null ? _i : []])];\n    for (const id of deletedImageIds) images.delete(id);\n    const strokes = /* @__PURE__ */ new Map();\n    for (const stroke of base.strokes) strokes.set(stroke.id, stroke);\n    for (const stroke of incoming.strokes) {\n      const existing = strokes.get(stroke.id);\n      if (!existing || stroke.updatedAt >= existing.updatedAt) strokes.set(stroke.id, stroke);\n    }\n    const deletedStrokeIds = [.../* @__PURE__ */ new Set([...(_j = base.deletedStrokeIds) != null ? _j : [], ...(_k = incoming.deletedStrokeIds) != null ? _k : []])];\n    for (const id of deletedStrokeIds) strokes.delete(id);\n    const tags = incoming.updatedAt >= base.updatedAt ? incoming.tags : base.tags;\n    return {\n      ...base,\n      ...incoming,\n      title: incoming.updatedAt >= base.updatedAt ? incoming.title : base.title,\n      paper: incoming.updatedAt >= base.updatedAt ? incoming.paper : base.paper,\n      // Flag is single-valued; the newest side decides, including "cleared"\n      // (an absent flag on the newer side must override the older flag).\n      flag: incoming.updatedAt >= base.updatedAt ? incoming.flag : base.flag,\n      strokes: [...strokes.values()].sort((a, b) => a.createdAt - b.createdAt),\n      deletedStrokeIds,\n      // Either side carrying tags forces the key so the spread above cannot\n      // leak the loser\'s list; undefined clears it and JSON-drops on disk,\n      // keeping untagged pages key-free after a normalize round-trip.\n      ...base.tags || incoming.tags ? { tags: (tags == null ? void 0 : tags.length) ? [...tags] : void 0 } : {},\n      ...base.stickyNotes || incoming.stickyNotes || base.deletedStickyNotes || incoming.deletedStickyNotes ? {\n        stickyNotes: [...stickyNotes.values()].sort(compareStickyOrder),\n        deletedStickyNotes\n      } : {},\n      ...base.images || incoming.images || base.deletedImageIds || incoming.deletedImageIds ? {\n        images: [...images.values()].sort((a, b) => a.createdAt - b.createdAt || a.id.localeCompare(b.id)),\n        deletedImageIds\n      } : {},\n      updatedAt: Math.max(base.updatedAt, incoming.updatedAt)\n    };\n  }\n  function normalizePage(value) {\n    var _a;\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    const strokes = Array.isArray(raw.strokes) ? raw.strokes : [];\n    const deletedStrokeIds = Array.isArray(raw.deletedStrokeIds) ? raw.deletedStrokeIds.filter((id) => typeof id === "string") : [];\n    const deleted = new Set(deletedStrokeIds);\n    const pageId = typeof raw.id === "string" ? raw.id : newId("page");\n    const deletedImageIds = Array.isArray(raw.deletedImageIds) ? raw.deletedImageIds.filter((id) => typeof id === "string") : [];\n    const deletedStickyNotes = Object.fromEntries(Object.entries((_a = raw.deletedStickyNotes) != null ? _a : {}).filter(([id, time]) => typeof id === "string" && Number.isFinite(time)));\n    return {\n      id: pageId,\n      title: typeof raw.title === "string" ? raw.title : "Untitled",\n      paper: isPaperStyle(raw.paper) ? raw.paper : "ruled",\n      strokes: strokes.map(normalizeStroke).filter((stroke) => stroke !== null && !deleted.has(stroke.id)),\n      deletedStrokeIds,\n      ...Array.isArray(raw.stickyNotes) || raw.deletedStickyNotes ? {\n        stickyNotes: (Array.isArray(raw.stickyNotes) ? raw.stickyNotes : []).map((note) => normalizeSticky(note, pageId)).filter((note) => {\n          var _a2;\n          return !!note && note.updatedAt > ((_a2 = deletedStickyNotes[note.id]) != null ? _a2 : 0);\n        }).sort(compareStickyOrder),\n        deletedStickyNotes\n      } : {},\n      ...Array.isArray(raw.images) || Array.isArray(raw.deletedImageIds) ? {\n        images: (Array.isArray(raw.images) ? raw.images : []).map((image) => normalizeImage(image, pageId)).filter((image) => !!image && !deletedImageIds.includes(image.id)),\n        deletedImageIds\n      } : {},\n      // Legacy files carry neither field; garbage values are dropped instead of\n      // being round-tripped, so an unknown writer can never poison the model.\n      ...Array.isArray(raw.tags) ? { tags: normalizeTagList(raw.tags) } : {},\n      ...isPageFlag(raw.flag) ? { flag: raw.flag } : {},\n      createdAt: finitePositive(raw.createdAt, Date.now()),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function normalizeTagList(value) {\n    const tags = [];\n    for (const tag of value) {\n      if (typeof tag !== "string") continue;\n      const trimmed = tag.trim();\n      if (trimmed && !tags.includes(trimmed)) tags.push(trimmed);\n    }\n    return tags;\n  }\n  function isPageFlag(value) {\n    return value === "red" || value === "yellow" || value === "green";\n  }\n  function isManagedImagePath(path) {\n    return typeof path === "string" && /^Ink Notes\\/Images\\/assets\\/[a-zA-Z0-9-]+\\.png$/.test(path);\n  }\n  function normalizeImage(value, pageId) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    if (typeof raw.id !== "string" || !isManagedImagePath(raw.assetPath)) return null;\n    if (![raw.x, raw.y, raw.width, raw.height].every((n) => typeof n === "number" && Number.isFinite(n))) return null;\n    const width = clamp(raw.width, 0.01, 1), height = clamp(raw.height, 0.01, 1);\n    return {\n      id: raw.id,\n      pageId,\n      assetPath: raw.assetPath,\n      x: clamp(raw.x, 0, 1 - width),\n      y: clamp(raw.y, 0, 1 - height),\n      width,\n      height,\n      foreground: raw.foreground === true,\n      createdAt: finitePositive(raw.createdAt, Date.now()),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function normalizeStroke(value) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    if (typeof raw.id !== "string" || typeof raw.pageId !== "string") return null;\n    const points = Array.isArray(raw.points) ? raw.points : [];\n    return {\n      id: raw.id,\n      pageId: raw.pageId,\n      tool: raw.tool === "highlighter" ? "highlighter" : "pen",\n      color: typeof raw.color === "string" ? raw.color : "#1b1b1b",\n      width: finitePositive(raw.width, 3),\n      opacity: clamp(finitePositive(raw.opacity, 1), 0.05, 1),\n      points: points.map(normalizePoint).filter((point) => point !== null),\n      dynamics: normalizeDynamics(raw.dynamics),\n      createdAt: finitePositive(raw.createdAt, Date.now()),\n      updatedAt: finitePositive(raw.updatedAt, Date.now())\n    };\n  }\n  function normalizeDynamics(value) {\n    if (!value || typeof value !== "object") return void 0;\n    const raw = value;\n    const percent = (candidate, fallback) => typeof candidate === "number" && Number.isFinite(candidate) ? clamp(Math.round(candidate), 0, 100) : fallback;\n    const curve = Array.isArray(raw.pressureCurve) && raw.pressureCurve.length >= 2 ? raw.pressureCurve.map((point) => Array.isArray(point) ? [Number(point[0]), Number(point[1])] : [NaN, NaN]) : void 0;\n    const dynamics = {\n      taper: percent(raw.taper, 0),\n      pressure: percent(raw.pressure, 100),\n      speed: percent(raw.speed, 0)\n    };\n    if (curve) dynamics.pressureCurve = curve;\n    const defaults = { taper: 0, pressure: 100, speed: 0 };\n    const plain = dynamics.taper === defaults.taper && dynamics.pressure === defaults.pressure && dynamics.speed === defaults.speed;\n    return plain && !curve ? void 0 : dynamics;\n  }\n  function normalizePoint(value) {\n    if (!value || typeof value !== "object") return null;\n    const raw = value;\n    if (typeof raw.x !== "number" || typeof raw.y !== "number") return null;\n    return {\n      x: clamp(raw.x, 0, 1),\n      y: clamp(raw.y, 0, 1),\n      pressure: clamp(typeof raw.pressure === "number" ? raw.pressure : 0.5, 0.05, 1),\n      tiltX: typeof raw.tiltX === "number" ? raw.tiltX : void 0,\n      tiltY: typeof raw.tiltY === "number" ? raw.tiltY : void 0,\n      t: finitePositive(raw.t, Date.now())\n    };\n  }\n  function finitePositive(value, fallback) {\n    return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : fallback;\n  }\n  function clamp(value, min, max) {\n    return Math.max(min, Math.min(max, value));\n  }\n  function isPaperStyle(value) {\n    return value === "blank" || value === "ruled" || value === "grid" || value === "dot";\n  }\n\n  // src/storage-codec.ts\n  var import_pako = __toESM(require_pako());\n  var MAGIC = "INK-GZIP-1\\n";\n  var MIN_COMPRESS_LENGTH = 1024;\n  var MAX_INFLATED_BYTES = 256 * 1024 * 1024;\n  function serializeStoredJson(value) {\n    const plain = `${JSON.stringify(value)}\n`;\n    if (plain.length < MIN_COMPRESS_LENGTH) return plain;\n    const bytes = new TextEncoder().encode(plain);\n    if (bytes.length > MAX_INFLATED_BYTES) return plain;\n    const compressed = (0, import_pako.gzip)(plain, { level: 6 });\n    let binary = "";\n    for (let offset = 0; offset < compressed.length; offset += 8192)\n      binary += String.fromCharCode(...compressed.subarray(offset, offset + 8192));\n    const encoded = `${MAGIC}${btoa(binary)}\n`;\n    return encoded.length < bytes.length ? encoded : plain;\n  }\n  function parseStoredJson(raw) {\n    if (!raw.startsWith(MAGIC)) return JSON.parse(raw);\n    try {\n      const base64 = raw.slice(MAGIC.length).trim();\n      if (!base64 || base64.length > Math.ceil(MAX_INFLATED_BYTES / 3) * 4 || base64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) throw new Error("Invalid base64");\n      const binary = atob(base64), data = new Uint8Array(binary.length);\n      for (let index = 0; index < binary.length; index++) data[index] = binary.charCodeAt(index);\n      if (data.length < 18 || data[0] !== 31 || data[1] !== 139 || data[2] !== 8) throw new Error("Invalid gzip header");\n      if (new DataView(data.buffer).getUint32(data.length - 4, true) > MAX_INFLATED_BYTES) throw new Error("Notebook exceeds 256 MiB decompression limit");\n      const chunks = [];\n      let size = 0;\n      const inflate = new import_pako.Inflate({ chunkSize: 65536 });\n      inflate.onData = (chunk) => {\n        size += chunk.length;\n        if (size > MAX_INFLATED_BYTES) throw new Error("Notebook exceeds 256 MiB decompression limit");\n        chunks.push(chunk);\n      };\n      if (!inflate.push(data, false) || inflate.err || !inflate.ended || inflate.strm.avail_in !== 0) throw new Error(inflate.msg || "Incomplete or trailing gzip data");\n      const bytes = new Uint8Array(size);\n      let offset = 0;\n      for (const chunk of chunks) {\n        bytes.set(chunk, offset);\n        offset += chunk.length;\n      }\n      return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));\n    } catch (error) {\n      throw new SyntaxError(`Invalid compressed Ink Notes file: ${error instanceof Error ? error.message : String(error)}`);\n    }\n  }\n\n  // src/rendering.ts\n  var STROKE_WIDTH_REFERENCE = 980;\n  var paths = /* @__PURE__ */ new WeakMap();\n  function penOutlineRings(stroke, width, height, referenceWidth = STROKE_WIDTH_REFERENCE) {\n    const geometry = penStampGeometry(stroke, width, height, referenceWidth);\n    if (geometry.count === 0) return [];\n    return geometry.ringsFor(0, geometry.count, false);\n  }\n  function penStampGeometry(stroke, width, height, referenceWidth = STROKE_WIDTH_REFERENCE) {\n    var _a, _b, _c, _d;\n    const widthScale = width / referenceWidth;\n    const pressures = smoothPenPressures(stroke.points);\n    const centerline = smoothOutlineCenterline(\n      stroke.points.map((point, index) => [point.x * width, point.y * height, pressures[index], point.t]),\n      stroke.width * widthScale * 0.925\n    );\n    const count = centerline.length;\n    if (count === 0) return { count, ringsFor: () => [] };\n    const speeds = new Array(count);\n    for (let index = 0; index < count; index++) {\n      const previous = centerline[Math.max(0, index - 1)];\n      const following = centerline[Math.min(count - 1, index + 1)];\n      const distance = Math.hypot(following[0] - previous[0], following[1] - previous[1]);\n      const dt = Math.max(1, (following[3] - previous[3]) / 2);\n      speeds[index] = distance / (dt / 1e3);\n    }\n    const sortedSpeeds = [...speeds].sort((a, b) => a - b);\n    const medianSpeed = sortedSpeeds[Math.floor(sortedSpeeds.length / 2)] || 0;\n    const speedReference = Math.max(medianSpeed * 2.5, 60);\n    const pressureGain = clampPercent((_a = stroke.dynamics) == null ? void 0 : _a.pressure, 100) / 100;\n    const speedGain = clampPercent((_b = stroke.dynamics) == null ? void 0 : _b.speed, 0) / 100;\n    const pressureCurve = normalizePressureCurve((_c = stroke.dynamics) == null ? void 0 : _c.pressureCurve);\n    const taper = clampPercent((_d = stroke.dynamics) == null ? void 0 : _d.taper, 0) / 100;\n    const brushWidth = stroke.width * widthScale;\n    const fullDiameter = brushWidth * 1.3;\n    let totalLength = 0;\n    const cumulative = new Array(count);\n    cumulative[0] = 0;\n    for (let index = 1; index < count; index++) {\n      totalLength += Math.hypot(centerline[index][0] - centerline[index - 1][0], centerline[index][1] - centerline[index - 1][1]);\n      cumulative[index] = totalLength;\n    }\n    const rampLength = taper * Math.min(totalLength * 0.25, brushWidth * 2);\n    const envelopeAt = (distanceFromEnd) => {\n      if (rampLength <= 0) return 1;\n      const m = Math.min(1, distanceFromEnd / rampLength);\n      const smoothstep = m * m * (3 - 2 * m);\n      return 1 - taper * (1 - smoothstep);\n    };\n    const halfWidthAt = (index) => {\n      const point = centerline[index];\n      const pressure = samplePressureCurve(Math.max(0, Math.min(1, point[2])), pressureCurve);\n      const effectivePressure = 0.5 + (pressure - 0.5) * pressureGain;\n      const modulation = (0.55 + 0.75 * effectivePressure) / 1.3;\n      const speedNorm = Math.min(speeds[index] / speedReference, 1);\n      const speedFactor = 1 - speedGain * speedNorm * speedNorm * 0.35;\n      const envelope = envelopeAt(Math.min(cumulative[index], totalLength - cumulative[index]));\n      return Math.max(0.3 * widthScale, fullDiameter / 2 * envelope * modulation * speedFactor);\n    };\n    const normals = new Array(count);\n    for (let index = 0; index < count; index++) {\n      const point = centerline[index];\n      const previous = centerline[Math.max(0, index - 1)];\n      const following = centerline[Math.min(count - 1, index + 1)];\n      let dx = following[0] - previous[0];\n      let dy = following[1] - previous[1];\n      if (index === 0 && count > 1) {\n        dx = centerline[1][0] - point[0];\n        dy = centerline[1][1] - point[1];\n      } else if (index === count - 1 && count > 1) {\n        dx = point[0] - centerline[index - 1][0];\n        dy = point[1] - centerline[index - 1][1];\n      }\n      let length = Math.hypot(dx, dy);\n      if (length < 1e-6) {\n        dx = 1;\n        dy = 0;\n        length = 1;\n      }\n      normals[index] = [-dy / length, dx / length];\n    }\n    const discSegments = 12;\n    const ringsFor = (from, to, linkAcrossEnd) => {\n      const rings = [];\n      const emitRing = (ring) => {\n        if (ring.length < 3) return;\n        let area = 0;\n        for (let index = 0; index < ring.length; index++) {\n          const a = ring[index];\n          const b = ring[(index + 1) % ring.length];\n          area += a[0] * b[1] - b[0] * a[1];\n        }\n        rings.push(area < 0 ? ring.slice().reverse() : ring);\n      };\n      const lastLink = linkAcrossEnd ? to : to - 1;\n      for (let index = from; index < to; index++) {\n        const point = centerline[index];\n        const radius = halfWidthAt(index);\n        const [nx, ny] = normals[index];\n        const ring = [];\n        for (let sample = 0; sample < discSegments; sample++) {\n          const angle = sample / discSegments * Math.PI * 2;\n          ring.push([point[0] + Math.cos(angle) * radius, point[1] + Math.sin(angle) * radius]);\n        }\n        emitRing(ring);\n        if (index >= lastLink) continue;\n        const following = centerline[index + 1];\n        const followingRadius = halfWidthAt(index + 1);\n        const [fnx, fny] = normals[index + 1];\n        emitRing([\n          [point[0] + nx * radius, point[1] + ny * radius],\n          [following[0] + fnx * followingRadius, following[1] + fny * followingRadius],\n          [following[0] - fnx * followingRadius, following[1] - fny * followingRadius],\n          [point[0] - nx * radius, point[1] - ny * radius]\n        ]);\n      }\n      return rings;\n    };\n    return { count, ringsFor };\n  }\n  function clampPercent(value, fallback) {\n    return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.min(100, value)) : fallback;\n  }\n  function normalizePressureCurve(raw) {\n    if (!Array.isArray(raw)) return void 0;\n    const cleaned = raw.filter((point) => Array.isArray(point) && point.length >= 2 && typeof point[0] === "number" && Number.isFinite(point[0]) && typeof point[1] === "number" && Number.isFinite(point[1])).map((point) => [Math.max(0, Math.min(1, point[0])), Math.max(0, Math.min(1, point[1]))].map((value) => Math.round(value * 1e3) / 1e3)).sort((a, b) => a[0] - b[0]);\n    if (cleaned.length < 2) return void 0;\n    cleaned[0][0] = 0;\n    cleaned[cleaned.length - 1][0] = 1;\n    const monotonic = [cleaned[0]];\n    for (let index = 1; index < cleaned.length; index++) {\n      if (cleaned[index][0] <= monotonic[monotonic.length - 1][0]) continue;\n      monotonic.push(cleaned[index]);\n    }\n    if (monotonic.length < 2) return void 0;\n    for (let index = 1; index < monotonic.length; index++) {\n      monotonic[index][1] = Math.max(monotonic[index][1], monotonic[index - 1][1]);\n    }\n    const identity = monotonic.every(([x, y]) => Math.abs(x - y) <= 1e-3);\n    return identity ? void 0 : monotonic;\n  }\n  function samplePressureCurve(pressure, curve) {\n    if (!curve || curve.length < 2) return pressure;\n    if (pressure <= curve[0][0]) return curve[0][1];\n    for (let index = 1; index < curve.length; index++) {\n      if (pressure <= curve[index][0]) {\n        const span = curve[index][0] - curve[index - 1][0];\n        const amount = span > 0 ? (pressure - curve[index - 1][0]) / span : 0;\n        return curve[index - 1][1] + (curve[index][1] - curve[index - 1][1]) * amount;\n      }\n    }\n    return curve[curve.length - 1][1];\n  }\n  function smoothOutlineCenterline(points, nib) {\n    if (points.length < 3) return points;\n    const maxSegment = nib * 0.75;\n    let current = points;\n    for (let pass = 0; pass < 2; pass++) {\n      const next = current.map((point) => point.slice());\n      for (let index = 1; index < current.length - 1; index++) {\n        const point = current[index];\n        const previous = current[index - 1];\n        const following = current[index + 1];\n        if (Math.hypot(point[0] - previous[0], point[1] - previous[1]) > maxSegment) continue;\n        if (Math.hypot(following[0] - point[0], following[1] - point[1]) > maxSegment) continue;\n        next[index][0] = (previous[0] + 2 * point[0] + following[0]) / 4;\n        next[index][1] = (previous[1] + 2 * point[1] + following[1]) / 4;\n        next[index][2] = (previous[2] + 2 * point[2] + following[2]) / 4;\n      }\n      current = next;\n    }\n    return current;\n  }\n  function smoothPenPressures(points) {\n    if (points.length < 3) return points.map((point) => point.pressure);\n    return points.map((point, index) => {\n      if (index === 0 || index === points.length - 1) return point.pressure;\n      return median3(points[index - 1].pressure, point.pressure, points[index + 1].pressure);\n    });\n  }\n  function median3(a, b, c) {\n    return Math.max(Math.min(a, b), Math.min(Math.max(a, b), c));\n  }\n  function applyStrokeStyle(ctx, stroke) {\n    ctx.globalAlpha = stroke.opacity;\n    ctx.fillStyle = stroke.color;\n    ctx.strokeStyle = stroke.color;\n    ctx.lineCap = "round";\n    ctx.lineJoin = "round";\n    ctx.globalCompositeOperation = stroke.tool === "highlighter" ? "multiply" : "source-over";\n  }\n  function drawSampleDot(ctx, stroke, width, height, referenceWidth = STROKE_WIDTH_REFERENCE) {\n    var _a;\n    const point = stroke.points[0];\n    const gain = clampPercent((_a = stroke.dynamics) == null ? void 0 : _a.pressure, 100) / 100;\n    const effectivePressure = 0.5 + (point.pressure - 0.5) * gain;\n    const diameter = (stroke.tool === "highlighter" ? stroke.width : stroke.width * (0.55 + effectivePressure * 0.75)) * width / referenceWidth;\n    ctx.beginPath();\n    ctx.arc(point.x * width, point.y * height, diameter / 2, 0, Math.PI * 2);\n    ctx.fill();\n  }\n  function drawInkStroke(ctx, stroke, width, height, referenceWidth = STROKE_WIDTH_REFERENCE) {\n    if (stroke.points.length === 0) return;\n    ctx.save();\n    applyStrokeStyle(ctx, stroke);\n    if (stroke.points.length === 1) {\n      drawSampleDot(ctx, stroke, width, height, referenceWidth);\n    } else if (stroke.tool === "highlighter") {\n      ctx.lineWidth = stroke.width * width / referenceWidth;\n      drawSmoothPath(ctx, stroke.points, width, height);\n      ctx.stroke();\n    } else {\n      let cached = paths.get(stroke);\n      if (!cached || cached.points !== stroke.points || cached.count !== stroke.points.length || cached.updatedAt !== stroke.updatedAt || cached.size !== stroke.width || cached.width !== width || cached.height !== height) {\n        cached = {\n          points: stroke.points,\n          count: stroke.points.length,\n          updatedAt: stroke.updatedAt,\n          size: stroke.width,\n          width,\n          height,\n          path: createPenPath(stroke, width, height, referenceWidth)\n        };\n        paths.set(stroke, cached);\n      }\n      ctx.fill(cached.path);\n    }\n    ctx.restore();\n  }\n  function traceRings(path, rings) {\n    for (const ring of rings) {\n      path.moveTo(ring[0][0], ring[0][1]);\n      for (let index = 1; index < ring.length; index++) path.lineTo(ring[index][0], ring[index][1]);\n      path.closePath();\n    }\n  }\n  function createPenPath(stroke, width, height, referenceWidth = STROKE_WIDTH_REFERENCE) {\n    const path = new Path2D();\n    traceRings(path, penOutlineRings(stroke, width, height, referenceWidth));\n    return path;\n  }\n  function drawSmoothPath(ctx, points, width, height, from = 0, to = points.length) {\n    ctx.beginPath();\n    ctx.moveTo(points[from].x * width, points[from].y * height);\n    for (let index = from + 1; index < to; index++) {\n      const previous = points[index - 1];\n      const point = points[index];\n      const end = index === to - 1 ? point : { x: (previous.x + point.x) / 2, y: (previous.y + point.y) / 2 };\n      ctx.quadraticCurveTo(previous.x * width, previous.y * height, end.x * width, end.y * height);\n    }\n    const last = points[to - 1];\n    ctx.lineTo(last.x * width, last.y * height);\n  }\n\n  // src/worker-protocol.ts\n  function serializeNotebook(notebook) {\n    return serializeStoredJson(notebook);\n  }\n  function cloneStrokeValue(stroke) {\n    return { ...stroke, points: stroke.points.map((point) => ({ ...point })) };\n  }\n  function clonePageValue(page) {\n    var _a, _b, _c;\n    return { ...page, stickyNotes: (_a = page.stickyNotes) == null ? void 0 : _a.map(cloneSticky), deletedStickyNotes: { ...page.deletedStickyNotes }, images: (_b = page.images) == null ? void 0 : _b.map((image) => ({ ...image })), deletedImageIds: [...(_c = page.deletedImageIds) != null ? _c : []], strokes: page.strokes.map(cloneStrokeValue), deletedStrokeIds: [...page.deletedStrokeIds] };\n  }\n\n  // src/worker-core.ts\n  var WorkerPageIndex = class {\n    constructor(width, height) {\n      this.width = width;\n      this.height = height;\n      this.entries = /* @__PURE__ */ new Map();\n      this.cells = /* @__PURE__ */ new Map();\n      this.strokeWidths = /* @__PURE__ */ new Map();\n      this.maximumStrokeWidth = 0;\n    }\n    sync(page) {\n      this.entries.clear();\n      this.cells.clear();\n      this.strokeWidths.clear();\n      this.maximumStrokeWidth = 0;\n      page.strokes.forEach((stroke, order) => this.upsert(stroke, order));\n    }\n    upsert(stroke, order) {\n      var _a;\n      this.remove(stroke.id);\n      const entry = { stroke, order, cells: workerStrokeCells(stroke, this.width, this.height) };\n      this.entries.set(stroke.id, entry);\n      this.strokeWidths.set(stroke.width, ((_a = this.strokeWidths.get(stroke.width)) != null ? _a : 0) + 1);\n      this.maximumStrokeWidth = Math.max(this.maximumStrokeWidth, stroke.width);\n      for (const cell of entry.cells) {\n        let bucket = this.cells.get(cell);\n        if (!bucket) this.cells.set(cell, bucket = /* @__PURE__ */ new Set());\n        bucket.add(entry);\n      }\n    }\n    remove(strokeId) {\n      var _a;\n      const entry = this.entries.get(strokeId);\n      if (!entry) return;\n      this.entries.delete(strokeId);\n      const widthCount = ((_a = this.strokeWidths.get(entry.stroke.width)) != null ? _a : 1) - 1;\n      if (widthCount > 0) this.strokeWidths.set(entry.stroke.width, widthCount);\n      else this.strokeWidths.delete(entry.stroke.width);\n      if (entry.stroke.width === this.maximumStrokeWidth && widthCount <= 0) {\n        this.maximumStrokeWidth = 0;\n        for (const width of this.strokeWidths.keys()) this.maximumStrokeWidth = Math.max(this.maximumStrokeWidth, width);\n      }\n      for (const cell of entry.cells) {\n        const bucket = this.cells.get(cell);\n        bucket == null ? void 0 : bucket.delete(entry);\n        if ((bucket == null ? void 0 : bucket.size) === 0) this.cells.delete(cell);\n      }\n    }\n    updateOrder(page) {\n      page.strokes.forEach((stroke, order) => {\n        const entry = this.entries.get(stroke.id);\n        if (entry) entry.order = order;\n      });\n    }\n    getStroke(strokeId) {\n      var _a;\n      return (_a = this.entries.get(strokeId)) == null ? void 0 : _a.stroke;\n    }\n    getOrder(strokeId) {\n      var _a;\n      return (_a = this.entries.get(strokeId)) == null ? void 0 : _a.order;\n    }\n    query(cell, queryWidth = this.width, queryHeight = this.height) {\n      var _a, _b;\n      if (queryWidth === this.width && queryHeight === this.height) {\n        return [...(_a = this.cells.get(cell)) != null ? _a : []].sort((left, right) => left.order - right.order).map((entry) => entry.stroke);\n      }\n      const [column, row] = cell.split(":").map(Number);\n      const x = column * 128;\n      const y = row * 128;\n      const padding = this.maximumStrokeWidth * 0.7 + 4;\n      const paddingX = padding * this.width / queryWidth;\n      const paddingY = padding * this.height / queryHeight;\n      const keys = workerCellKeys({\n        x: x * this.width / queryWidth - paddingX,\n        y: y * this.height / queryHeight - paddingY,\n        width: Math.min(128, queryWidth - x) * this.width / queryWidth + paddingX * 2,\n        height: Math.min(128, queryHeight - y) * this.height / queryHeight + paddingY * 2\n      }, this.width, this.height);\n      const found = /* @__PURE__ */ new Set();\n      for (const key of keys) for (const entry of (_b = this.cells.get(key)) != null ? _b : []) found.add(entry);\n      return [...found].sort((left, right) => left.order - right.order).map((entry) => entry.stroke);\n    }\n  };\n  var OUTLINE_CACHE_LIMIT = 512;\n  var ProtocolError = class extends Error {\n    constructor(code, message) {\n      super(message);\n      this.code = code;\n    }\n  };\n  var InkWorkerCore = class {\n    constructor(capabilities) {\n      this.capabilities = capabilities;\n      this.sessions = /* @__PURE__ */ new Map();\n    }\n    ready() {\n      return { type: "ready", requestId: 0, sessionId: "", generation: 0, notebookRevision: 0, capabilities: this.capabilities };\n    }\n    async handle(request) {\n      var _a, _b;\n      try {\n        const response = await this.dispatch(request);\n        return response.type === "tile-rendered" ? { response, transfer: [response.bitmap] } : response.type === "operation-applied" && response.outline ? { response, transfer: [response.outline.buffer] } : { response };\n      } catch (error) {\n        return { response: {\n          type: "error",\n          requestId: request.requestId,\n          sessionId: request.sessionId,\n          generation: request.generation,\n          notebookRevision: (_b = (_a = this.sessions.get(request.sessionId)) == null ? void 0 : _a.revision) != null ? _b : request.notebookRevision,\n          code: error instanceof ProtocolError ? error.code : "internal",\n          message: error instanceof Error ? error.message : String(error)\n        } };\n      }\n    }\n    async dispatch(request) {\n      if (request.type === "initialize-raw") {\n        if (request.notebookRevision !== request.revision) {\n          throw new ProtocolError("revision-gap", "Initialize request revision metadata does not match its notebook revision");\n        }\n        const notebook = parseNotebook(request.raw);\n        this.sessions.set(request.sessionId, {\n          generation: request.generation,\n          notebook,\n          revision: request.revision,\n          pendingSave: /* @__PURE__ */ new Map(),\n          indexes: workerIndexes(notebook),\n          outlineCache: /* @__PURE__ */ new Map()\n        });\n        return this.response(request, { type: "initialized", notebook, revision: request.revision });\n      }\n      if (request.type === "initialize-notebook") {\n        if (request.notebookRevision !== request.revision) {\n          throw new ProtocolError("revision-gap", "Initialize request revision metadata does not match its notebook revision");\n        }\n        const notebook = normalizeNotebook(request.notebook);\n        this.sessions.set(request.sessionId, {\n          generation: request.generation,\n          notebook,\n          revision: request.revision,\n          pendingSave: /* @__PURE__ */ new Map(),\n          indexes: workerIndexes(notebook),\n          outlineCache: /* @__PURE__ */ new Map()\n        });\n        return this.response(request, { type: "initialized", notebook, revision: request.revision });\n      }\n      const session = this.sessions.get(request.sessionId);\n      if (!session) throw new ProtocolError("missing-session", "Ink worker session is not initialized");\n      if (session.generation !== request.generation) throw new ProtocolError("stale-generation", "Ink worker request belongs to a stale file generation");\n      if (request.type !== "apply-operation" && request.notebookRevision > session.revision) {\n        throw new ProtocolError("revision-gap", `Worker revision ${session.revision} is behind request revision ${request.notebookRevision}`);\n      }\n      if (request.type === "serialize-storage") {\n        return this.response(request, { type: "storage-serialized", content: serializeStoredJson(request.value) });\n      }\n      if (request.type === "apply-operation") {\n        if (request.notebookRevision !== request.revision) {\n          throw new ProtocolError("revision-gap", "Operation revision metadata does not match its notebook revision");\n        }\n        if (request.revision !== session.revision + 1) {\n          throw new ProtocolError("revision-gap", `Expected revision ${session.revision + 1}, received ${request.revision}`);\n        }\n        const operation = request.operation;\n        invalidateOperationOutlines(session.outlineCache, operation);\n        const operationIndex = "pageId" in operation && typeof operation.pageId === "string" ? session.indexes.get(operation.pageId) : void 0;\n        const outline = applyNotebookOperation(session.notebook, operation, session.outlineCache, operationIndex);\n        if (operation.type === "replace-notebook" || operation.type === "history-restore" || operation.type === "page-operation") {\n          session.indexes = workerIndexes(session.notebook);\n          session.outlineCache.clear();\n        } else {\n          const pageId = operation.pageId;\n          const page = session.notebook.pages.find((candidate) => candidate.id === pageId);\n          if (page) {\n            let index = session.indexes.get(pageId);\n            if (!index) session.indexes.set(pageId, index = new WorkerPageIndex(session.notebook.pageWidth, session.notebook.pageHeight));\n            updateWorkerIndex(index, page, operation, outline == null ? void 0 : outline.stroke);\n          }\n        }\n        session.revision = request.revision;\n        return this.response(request, {\n          type: "operation-applied",\n          revision: session.revision,\n          ...outline ? { strokeId: outline.strokeId, sampleCount: outline.sampleCount, outline: outline.points, outlineMode: outline.mode } : {}\n        });\n      }\n      if (request.type === "barrier") {\n        if (session.revision < request.minimumRevision) {\n          throw new ProtocolError("revision-gap", `Worker revision ${session.revision} is behind ${request.minimumRevision}`);\n        }\n        return this.response(request, { type: "barrier-complete", revision: session.revision });\n      }\n      if (request.type === "prepare-save") {\n        if (session.revision < request.minimumRevision) {\n          throw new ProtocolError("revision-gap", `Worker revision ${session.revision} is behind ${request.minimumRevision}`);\n        }\n        const disk = parseNotebook(request.raw);\n        const local = normalizeNotebook(session.notebook);\n        const merged = mergeNotebooks(disk, local);\n        const token = `${request.sessionId}:${request.generation}:${request.requestId}`;\n        session.pendingSave.clear();\n        session.pendingSave.set(token, {\n          notebook: normalizeNotebook(merged),\n          revision: session.revision,\n          reconcile: JSON.stringify(merged) !== JSON.stringify(local)\n        });\n        return this.response(request, { type: "save-prepared", token, content: serializeNotebook(merged), revision: session.revision });\n      }\n      if (request.type === "render-tile") {\n        const rendered = renderTile(\n          session.notebook,\n          session.indexes.get(request.pageId),\n          session.outlineCache,\n          request.pageId,\n          request.cell,\n          request.density,\n          request.revision,\n          request.renderGeneration,\n          request.width,\n          request.height,\n          request.excludedStrokeIds\n        );\n        return this.response(request, { type: "tile-rendered", ...rendered });\n      }\n      if (request.type === "cancel-render-generation") {\n        return this.response(request, { type: "renders-cancelled", renderGeneration: request.renderGeneration });\n      }\n      if (request.type === "commit-save") {\n        const candidate = session.pendingSave.get(request.token);\n        if (!candidate) throw new ProtocolError("missing-session", "Prepared save is no longer available");\n        session.pendingSave.delete(request.token);\n        session.notebook = mergeNotebooks(candidate.notebook, session.notebook);\n        session.indexes = workerIndexes(session.notebook);\n        session.outlineCache.clear();\n        return this.response(request, {\n          type: "save-committed",\n          revision: candidate.revision,\n          merged: candidate.reconcile ? candidate.notebook : void 0\n        });\n      }\n      if (request.type === "abort-save") {\n        session.pendingSave.delete(request.token);\n        return this.response(request, { type: "save-aborted" });\n      }\n      if (request.type === "merge-external") {\n        const merged = mergeNotebooks(parseNotebook(request.raw), session.notebook);\n        const changed = JSON.stringify(merged) !== JSON.stringify(session.notebook);\n        session.notebook = normalizeNotebook(merged);\n        session.indexes = workerIndexes(session.notebook);\n        session.outlineCache.clear();\n        return this.response(request, { type: "external-merged", notebook: changed ? session.notebook : void 0, revision: session.revision });\n      }\n      this.sessions.delete(request.sessionId);\n      return this.response(request, { type: "session-disposed" });\n    }\n    response(request, response) {\n      var _a, _b;\n      return {\n        ...response,\n        requestId: request.requestId,\n        sessionId: request.sessionId,\n        generation: request.generation,\n        notebookRevision: (_b = (_a = this.sessions.get(request.sessionId)) == null ? void 0 : _a.revision) != null ? _b : request.notebookRevision\n      };\n    }\n  };\n  function renderTile(notebook, index, outlineCache, pageId, cell, density, revision, renderGeneration, pageWidth, pageHeight, excludedStrokeIds) {\n    var _a;\n    const page = notebook.pages.find((candidate) => candidate.id === pageId);\n    if (!page) throw new Error(`Ink worker page is unavailable: ${pageId}`);\n    const Canvas = globalThis.OffscreenCanvas;\n    if (!Canvas) throw new Error("OffscreenCanvas is not supported by this device");\n    const [column, row] = cell.split(":").map(Number);\n    const x = column * 128;\n    const y = row * 128;\n    const width = Math.min(128, pageWidth - x);\n    const height = Math.min(128, pageHeight - y);\n    if (width <= 0 || height <= 0) throw new Error(`Ink worker tile is outside page bounds: ${cell}`);\n    const safeDensity = Math.max(0.5, Math.min(9, density));\n    const bleedPixels = Math.ceil(4 * safeDensity);\n    const canvasWidth = Math.ceil(width * safeDensity) + bleedPixels * 2;\n    const canvasHeight = Math.ceil(height * safeDensity) + bleedPixels * 2;\n    const canvas = new Canvas(canvasWidth, canvasHeight);\n    const ctx = canvas.getContext("2d");\n    if (!ctx) throw new Error("Ink worker could not create a 2D tile context");\n    ctx.setTransform(safeDensity, 0, 0, safeDensity, bleedPixels - x * safeDensity, bleedPixels - y * safeDensity);\n    const candidates = (_a = index == null ? void 0 : index.query(cell, pageWidth, pageHeight)) != null ? _a : [];\n    for (const stroke of candidates) {\n      if (excludedStrokeIds == null ? void 0 : excludedStrokeIds.includes(stroke.id)) continue;\n      drawWorkerStroke(ctx, stroke, pageWidth, pageHeight, outlineCache);\n    }\n    return {\n      pageId,\n      cell,\n      density: safeDensity,\n      revision,\n      renderGeneration,\n      x,\n      y,\n      width,\n      height,\n      canvasWidth,\n      canvasHeight,\n      bitmap: canvas.transferToImageBitmap()\n    };\n  }\n  function workerIndexes(notebook) {\n    const indexes = /* @__PURE__ */ new Map();\n    for (const page of notebook.pages) {\n      const index = new WorkerPageIndex(notebook.pageWidth, notebook.pageHeight);\n      index.sync(page);\n      indexes.set(page.id, index);\n    }\n    return indexes;\n  }\n  function workerStrokeCells(stroke, pageWidth, pageHeight) {\n    if (stroke.points.length === 0) return [];\n    const padding = stroke.width * 0.7 + 4;\n    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;\n    for (const point of stroke.points) {\n      minX = Math.min(minX, point.x * pageWidth);\n      minY = Math.min(minY, point.y * pageHeight);\n      maxX = Math.max(maxX, point.x * pageWidth);\n      maxY = Math.max(maxY, point.y * pageHeight);\n    }\n    return workerCellKeys({ x: minX - padding, y: minY - padding, width: maxX - minX + padding * 2, height: maxY - minY + padding * 2 }, pageWidth, pageHeight);\n  }\n  function workerCellKeys(rect, pageWidth, pageHeight) {\n    if (!Number.isFinite(rect.x + rect.y + rect.width + rect.height) || rect.width <= 0 || rect.height <= 0 || rect.x >= pageWidth || rect.y >= pageHeight || rect.x + rect.width <= 0 || rect.y + rect.height <= 0) return [];\n    const cells = [];\n    for (let row = Math.floor(Math.max(0, rect.y) / 128); row < Math.ceil(Math.min(pageHeight, rect.y + rect.height) / 128); row++) {\n      for (let column = Math.floor(Math.max(0, rect.x) / 128); column < Math.ceil(Math.min(pageWidth, rect.x + rect.width) / 128); column++) {\n        cells.push(`${column}:${row}`);\n      }\n    }\n    return cells;\n  }\n  function drawWorkerStroke(ctx, stroke, width, height, cache) {\n    if (stroke.tool !== "pen") {\n      drawInkStroke(ctx, stroke, width, height);\n      return;\n    }\n    const signature = `${stroke.updatedAt}:${stroke.points.length}:${stroke.width}:${width}:${height}`;\n    let cached = cache.get(stroke.id);\n    let outline = (cached == null ? void 0 : cached.signature) === signature ? cached.points : void 0;\n    if (!outline) {\n      const generated = penOutlineRings(stroke, width, height);\n      const separators = Math.max(0, generated.length - 1);\n      const buffer = new Float32Array((generated.reduce((total, ring) => total + ring.length, 0) + separators) * 2);\n      let cursor = 0;\n      generated.forEach((ring, ringIndex) => {\n        if (ringIndex > 0) {\n          buffer[cursor] = Number.NaN;\n          buffer[cursor + 1] = Number.NaN;\n          cursor += 2;\n        }\n        for (const [x, y] of ring) {\n          buffer[cursor] = x;\n          buffer[cursor + 1] = y;\n          cursor += 2;\n        }\n      });\n      outline = buffer;\n      cache.delete(stroke.id);\n      cache.set(stroke.id, { signature, points: outline });\n      while (cache.size > OUTLINE_CACHE_LIMIT) cache.delete(cache.keys().next().value);\n    } else {\n      cache.delete(stroke.id);\n      cache.set(stroke.id, cached);\n    }\n    ctx.save();\n    ctx.globalAlpha = stroke.opacity;\n    ctx.fillStyle = stroke.color;\n    ctx.globalCompositeOperation = "source-over";\n    if (outline.length >= 2) {\n      ctx.beginPath();\n      let tracing = false;\n      for (let index = 0; index < outline.length; index += 2) {\n        const x = outline[index];\n        const y = outline[index + 1];\n        if (!Number.isFinite(x) || !Number.isFinite(y)) {\n          tracing = false;\n          continue;\n        }\n        if (!tracing) {\n          tracing = true;\n          ctx.moveTo(x, y);\n          continue;\n        }\n        ctx.lineTo(x, y);\n      }\n      ctx.fill();\n    }\n    ctx.restore();\n  }\n  function parseNotebook(raw) {\n    try {\n      return normalizeNotebook(parseStoredJson(raw));\n    } catch (e) {\n      throw new ProtocolError("invalid-format", "Existing ink notebook is corrupt or uses an unsupported encoding");\n    }\n  }\n  function applyNotebookOperation(notebook, operation, cache, index) {\n    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;\n    if (operation.type === "replace-notebook" || operation.type === "history-restore") {\n      Object.assign(notebook, normalizeNotebook(operation.notebook));\n      return void 0;\n    }\n    if (operation.type === "page-operation") {\n      const page2 = operation.page;\n      if ((operation.action === "add" || operation.action === "duplicate" || operation.action === "restore") && page2) {\n        if (!(page2.id in notebook.deletedPages)) {\n          notebook.pages = notebook.pages.filter((candidate) => candidate.id !== page2.id);\n          notebook.pages.push(clonePageValue(page2));\n        }\n      } else if (operation.action === "delete" && operation.pageId) {\n        if (notebook.pages.length > 1) {\n          notebook.pages = notebook.pages.filter((candidate) => candidate.id !== operation.pageId);\n          notebook.deletedPages[operation.pageId] = Math.max((_a = notebook.deletedPages[operation.pageId]) != null ? _a : 0, (_b = operation.deletedAt) != null ? _b : Date.now());\n        }\n      }\n      const order = new Map(operation.pageOrder.map((id, index2) => [id, index2]));\n      notebook.pages.sort((left, right) => {\n        var _a2, _b2;\n        return ((_a2 = order.get(left.id)) != null ? _a2 : Number.MAX_SAFE_INTEGER) - ((_b2 = order.get(right.id)) != null ? _b2 : Number.MAX_SAFE_INTEGER);\n      });\n      notebook.pageOrder = notebook.pages.map((candidate) => candidate.id);\n      notebook.pageOrderUpdatedAt = operation.pageOrderUpdatedAt;\n      notebook.updatedAt = operation.notebookUpdatedAt;\n      return void 0;\n    }\n    const page = notebook.pages.find((candidate) => candidate.id === operation.pageId);\n    if (!page) return void 0;\n    let outlinedStroke;\n    if (operation.type === "start-stroke") {\n      const position = (_c = index == null ? void 0 : index.getOrder(operation.stroke.id)) != null ? _c : -1;\n      const stroke = cloneStrokeValue(operation.stroke);\n      if (position >= 0) page.strokes[position] = stroke;\n      else page.strokes.push(stroke);\n      outlinedStroke = stroke;\n    } else if (operation.type === "append-stroke-points") {\n      const stroke = (_d = index == null ? void 0 : index.getStroke(operation.strokeId)) != null ? _d : page.strokes.find((candidate) => candidate.id === operation.strokeId);\n      if (stroke) {\n        for (let index2 = 0; index2 + 5 < operation.points.length; index2 += 6) {\n          stroke.points.push({\n            x: operation.points[index2],\n            y: operation.points[index2 + 1],\n            pressure: operation.points[index2 + 2],\n            tiltX: Number.isNaN(operation.points[index2 + 3]) ? void 0 : operation.points[index2 + 3],\n            tiltY: Number.isNaN(operation.points[index2 + 4]) ? void 0 : operation.points[index2 + 4],\n            t: operation.points[index2 + 5]\n          });\n        }\n        outlinedStroke = stroke;\n      }\n    } else if (operation.type === "complete-stroke") {\n      const stroke = (_e = index == null ? void 0 : index.getStroke(operation.strokeId)) != null ? _e : page.strokes.find((candidate) => candidate.id === operation.strokeId);\n      if (stroke) stroke.updatedAt = operation.pageUpdatedAt;\n    } else if (operation.type === "finalize-stroke") {\n      const position = (_f = index == null ? void 0 : index.getOrder(operation.stroke.id)) != null ? _f : -1;\n      const stroke = cloneStrokeValue(operation.stroke);\n      if (position >= 0) page.strokes[position] = stroke;\n      else page.strokes.push(stroke);\n      page.strokes.sort((left, right) => left.createdAt - right.createdAt);\n      outlinedStroke = stroke;\n    } else if (operation.type === "patch-strokes") {\n      const removed = new Set(operation.remove);\n      const upsert = new Map(operation.upsert.map((stroke) => [stroke.id, cloneStrokeValue(stroke)]));\n      page.strokes = page.strokes.filter((stroke) => !removed.has(stroke.id) && !upsert.has(stroke.id));\n      page.strokes.push(...upsert.values());\n      page.strokes.sort((left, right) => left.createdAt - right.createdAt);\n      page.deletedStrokeIds = [.../* @__PURE__ */ new Set([...page.deletedStrokeIds, ...operation.deletedStrokeIds])];\n    } else if (operation.type === "translate-strokes") {\n      for (const strokeId of operation.strokeIds) {\n        const stroke = (_g = index == null ? void 0 : index.getStroke(strokeId)) != null ? _g : page.strokes.find((candidate) => candidate.id === strokeId);\n        if (!stroke) continue;\n        stroke.points = stroke.points.map((point) => ({ ...point, x: point.x + operation.dx, y: point.y + operation.dy }));\n        stroke.updatedAt = operation.pageUpdatedAt;\n      }\n    } else if (operation.type === "patch-sticky-notes") {\n      const removed = new Set(operation.remove), upsert = new Map(operation.upsert.map((note) => [note.id, cloneSticky(note)]));\n      page.deletedStickyNotes = { ...page.deletedStickyNotes };\n      for (const [id, time] of Object.entries(operation.deletedStickyNotes)) page.deletedStickyNotes[id] = Math.max((_h = page.deletedStickyNotes[id]) != null ? _h : 0, time);\n      page.stickyNotes = [...((_i = page.stickyNotes) != null ? _i : []).filter((note) => !removed.has(note.id) && !upsert.has(note.id)), ...upsert.values()].filter((note) => {\n        var _a2;\n        return note.updatedAt > ((_a2 = page.deletedStickyNotes[note.id]) != null ? _a2 : 0);\n      }).sort(compareStickyOrder);\n    } else if (operation.type === "patch-images") {\n      const removed = new Set(operation.remove);\n      const upsert = new Map(operation.upsert.map((image) => [image.id, { ...image }]));\n      page.deletedImageIds = [.../* @__PURE__ */ new Set([...(_j = page.deletedImageIds) != null ? _j : [], ...operation.deletedImageIds])];\n      page.images = [...((_k = page.images) != null ? _k : []).filter((image) => !removed.has(image.id) && !upsert.has(image.id)), ...upsert.values()].filter((image) => !page.deletedImageIds.includes(image.id));\n    } else {\n      if (operation.title !== void 0) page.title = operation.title;\n      if (operation.paper !== void 0) page.paper = operation.paper;\n      if (operation.tags !== void 0) page.tags = [...operation.tags];\n      if (operation.flag !== void 0) page.flag = (_l = operation.flag) != null ? _l : void 0;\n    }\n    page.updatedAt = operation.pageUpdatedAt;\n    notebook.updatedAt = operation.notebookUpdatedAt;\n    if (!outlinedStroke || outlinedStroke.tool !== "pen" && outlinedStroke.tool !== "highlighter") return void 0;\n    const previewWidth = operation.type === "start-stroke" || operation.type === "append-stroke-points" ? Math.max(1, (_m = operation.previewWidth) != null ? _m : notebook.pageWidth) : notebook.pageWidth;\n    const previewHeight = operation.type === "start-stroke" || operation.type === "append-stroke-points" ? Math.max(1, (_n = operation.previewHeight) != null ? _n : notebook.pageHeight) : notebook.pageHeight;\n    const signature = `${outlinedStroke.updatedAt}:${outlinedStroke.points.length}:${outlinedStroke.width}:${previewWidth}:${previewHeight}`;\n    if (outlinedStroke.tool === "highlighter") {\n      const line = new Float32Array(outlinedStroke.points.length * 2);\n      for (let index2 = 0; index2 < outlinedStroke.points.length; index2++) {\n        line[index2 * 2] = outlinedStroke.points[index2].x;\n        line[index2 * 2 + 1] = outlinedStroke.points[index2].y;\n      }\n      return { strokeId: outlinedStroke.id, sampleCount: outlinedStroke.points.length, points: line, mode: "highlighter", stroke: outlinedStroke };\n    }\n    const cached = cache == null ? void 0 : cache.get(outlinedStroke.id);\n    let outline = (cached == null ? void 0 : cached.signature) === signature ? cached.points : void 0;\n    if (!outline) {\n      const generated = penOutlineRings(outlinedStroke, previewWidth, previewHeight);\n      const separators = Math.max(0, generated.length - 1);\n      const buffer = new Float32Array((generated.reduce((total, ring) => total + ring.length, 0) + separators) * 2);\n      let cursor = 0;\n      generated.forEach((ring, ringIndex) => {\n        if (ringIndex > 0) {\n          buffer[cursor] = Number.NaN;\n          buffer[cursor + 1] = Number.NaN;\n          cursor += 2;\n        }\n        for (const [x, y] of ring) {\n          buffer[cursor] = x;\n          buffer[cursor + 1] = y;\n          cursor += 2;\n        }\n      });\n      outline = buffer;\n      if (cache) {\n        cache.delete(outlinedStroke.id);\n        cache.set(outlinedStroke.id, { signature, points: outline });\n        while (cache.size > OUTLINE_CACHE_LIMIT) cache.delete(cache.keys().next().value);\n      }\n    }\n    const normalized = new Float32Array(outline.length);\n    for (let index2 = 0; index2 < outline.length; index2 += 2) {\n      normalized[index2] = outline[index2] / previewWidth;\n      normalized[index2 + 1] = outline[index2 + 1] / previewHeight;\n    }\n    return { strokeId: outlinedStroke.id, sampleCount: outlinedStroke.points.length, points: normalized, mode: "pen", stroke: outlinedStroke };\n  }\n  function invalidateOperationOutlines(cache, operation) {\n    if (operation.type === "replace-notebook" || operation.type === "history-restore" || operation.type === "page-operation") {\n      cache.clear();\n      return;\n    }\n    if (operation.type === "start-stroke" || operation.type === "finalize-stroke") cache.delete(operation.stroke.id);\n    else if (operation.type === "append-stroke-points" || operation.type === "complete-stroke") cache.delete(operation.strokeId);\n    else if (operation.type === "patch-strokes") {\n      for (const id of operation.remove) cache.delete(id);\n      for (const stroke of operation.upsert) cache.delete(stroke.id);\n    } else if (operation.type === "translate-strokes") {\n      for (const id of operation.strokeIds) cache.delete(id);\n    }\n  }\n  function updateWorkerIndex(index, page, operation, outlinedStroke) {\n    var _a, _b, _c, _d;\n    if (operation.type === "start-stroke" || operation.type === "finalize-stroke") {\n      const stroke = outlinedStroke;\n      if (stroke) index.upsert(stroke, operation.type === "start-stroke" ? (_a = index.getOrder(stroke.id)) != null ? _a : page.strokes.length - 1 : Number.MAX_SAFE_INTEGER);\n      if (operation.type === "finalize-stroke") index.updateOrder(page);\n    } else if (operation.type === "complete-stroke") {\n      const stroke = outlinedStroke != null ? outlinedStroke : index.getStroke(operation.strokeId);\n      if (stroke) index.upsert(stroke, (_b = index.getOrder(operation.strokeId)) != null ? _b : page.strokes.length - 1);\n    } else if (operation.type === "append-stroke-points") {\n    } else if (operation.type === "patch-strokes") {\n      for (const id of operation.remove) index.remove(id);\n      const positions = new Map(page.strokes.map((stroke, position) => [stroke.id, position]));\n      const strokes = new Map(page.strokes.map((stroke) => [stroke.id, stroke]));\n      for (const replacement of operation.upsert) {\n        const stroke = strokes.get(replacement.id);\n        if (stroke) index.upsert(stroke, (_c = positions.get(stroke.id)) != null ? _c : Number.MAX_SAFE_INTEGER);\n      }\n      index.updateOrder(page);\n    } else if (operation.type === "translate-strokes") {\n      for (const id of operation.strokeIds) {\n        const stroke = index.getStroke(id);\n        if (stroke) index.upsert(stroke, (_d = index.getOrder(id)) != null ? _d : Number.MAX_SAFE_INTEGER);\n      }\n    }\n  }\n\n  // src/ink-worker.ts\n  var scope = self;\n  var core = new InkWorkerCore({\n    offscreenCanvas: typeof OffscreenCanvas !== "undefined",\n    imageBitmap: typeof ImageBitmap !== "undefined",\n    transferable: supportsTransferableBuffers()\n  });\n  var queue = [];\n  var running = false;\n  scope.onmessage = (event) => {\n    const request = event.data;\n    if (request.type === "cancel-render-generation") {\n      for (let index = queue.length - 1; index >= 0; index--) {\n        const queued = queue[index];\n        if (queued.type === "render-tile" && queued.sessionId === request.sessionId && queued.generation === request.generation && queued.renderGeneration < request.renderGeneration) {\n          queue.splice(index, 1);\n          scope.postMessage({\n            type: "error",\n            requestId: queued.requestId,\n            sessionId: queued.sessionId,\n            generation: queued.generation,\n            notebookRevision: queued.notebookRevision,\n            code: "stale-generation",\n            message: "Queued tile belongs to an obsolete render generation"\n          });\n        }\n      }\n    }\n    queue.push(request);\n    drain();\n  };\n  function drain() {\n    if (running || queue.length === 0) return;\n    queue.sort((left, right) => workerPriority(left) - workerPriority(right));\n    const request = queue.shift();\n    running = true;\n    void core.handle(request).then(({ response, transfer }) => scope.postMessage(response, transfer != null ? transfer : [])).finally(() => {\n      running = false;\n      drain();\n    });\n  }\n  function workerPriority(request) {\n    if (request.type === "cancel-render-generation" || request.type === "initialize-raw" || request.type === "initialize-notebook") return 0;\n    if (request.type === "apply-operation") return 1;\n    if (request.type === "render-tile") return request.priority === "visible" ? 2 : 3;\n    return 4;\n  }\n  scope.postMessage(core.ready());\n  function supportsTransferableBuffers() {\n    if (typeof MessageChannel === "undefined") return false;\n    try {\n      const channel = new MessageChannel();\n      const buffer = new ArrayBuffer(1);\n      channel.port1.postMessage(buffer, [buffer]);\n      channel.port1.close();\n      channel.port2.close();\n      return buffer.byteLength === 0;\n    } catch (e) {\n      return false;\n    }\n  }\n})();\n';
 
 // src/worker-service.ts
 var WORKER_READY_TIMEOUT = 2e3;
@@ -32745,7 +33100,7 @@ var InkView = class extends InkWritingView {
     this.store = store;
     this.workers = workers;
     if (toolState) this.useSharedToolState(toolState);
-    this.scope = new import_obsidian8.Scope(this.app.scope);
+    this.scope = new import_obsidian9.Scope(this.app.scope);
   }
   getViewType() {
     return VIEW_TYPE_INK;
@@ -32909,16 +33264,16 @@ var InkView = class extends InkWritingView {
     var _a;
     if (!this.file) return;
     if (!notebookHasInk(this.notebook)) {
-      new import_obsidian8.Notice("This notebook has no handwriting to export yet");
+      new import_obsidian9.Notice("This notebook has no handwriting to export yet");
       return;
     }
     try {
       const output = await exportNotebookPdf(this.notebook, this.file.basename, this.canvasLogicalWidth, (_a = this.imageLibrary) == null ? void 0 : _a.bytes, { app: this.app, source: this.file.path });
       const target = exportPathFor(this.file.path, (candidate) => this.app.vault.getAbstractFileByPath(candidate) !== null);
       await this.app.vault.createBinary(target, output.buffer.slice(output.byteOffset, output.byteOffset + output.byteLength));
-      new import_obsidian8.Notice(`Exported ${target}`);
+      new import_obsidian9.Notice(`Exported ${target}`);
     } catch (error) {
-      new import_obsidian8.Notice(`Export failed: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian9.Notice(`Export failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   activeToolButton() {
@@ -33411,7 +33766,7 @@ var InkView = class extends InkWritingView {
     this.refreshCurrentPageThumbnail();
     if (this.externalRefreshPending && this.pendingInkStrokes.length === 0) {
       this.externalRefreshPending = false;
-      void this.reloadFromDisk().catch((error) => new import_obsidian8.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
+      void this.reloadFromDisk().catch((error) => new import_obsidian9.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
     }
   }
   afterCommand(command) {
@@ -33806,7 +34161,7 @@ var InkView = class extends InkWritingView {
     };
     const text = JSON.stringify(report, null, 2);
     if (toClipboard) {
-      void navigator.clipboard.writeText(text).then(() => new import_obsidian8.Notice("Ink diagnostics copied to the clipboard.")).catch((error) => new import_obsidian8.Notice(`Ink Notes could not copy diagnostics: ${error instanceof Error ? error.message : String(error)}`));
+      void navigator.clipboard.writeText(text).then(() => new import_obsidian9.Notice("Ink diagnostics copied to the clipboard.")).catch((error) => new import_obsidian9.Notice(`Ink Notes could not copy diagnostics: ${error instanceof Error ? error.message : String(error)}`));
       return;
     }
     const blob = new Blob([text], { type: "application/json" });
@@ -33816,7 +34171,7 @@ var InkView = class extends InkWritingView {
     anchor.download = `ink-diagnostics-${(/* @__PURE__ */ new Date()).toISOString().replace(/[:.]/g, "-")}.json`;
     anchor.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 0);
-    new import_obsidian8.Notice(`Exported ${report.strokes.length} stroke records.`);
+    new import_obsidian9.Notice(`Exported ${report.strokes.length} stroke records.`);
   }
   // ------------------------------------------------------------ page tools
   addPage(index = this.notebook.pages.length) {
@@ -33881,7 +34236,7 @@ var InkView = class extends InkWritingView {
         (window.devicePixelRatio || 1) * this.zoom
       );
     })().catch((error) => {
-      new import_obsidian8.Notice(`Ink Notes could not switch pages: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian9.Notice(`Ink Notes could not switch pages: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
   openPageMenu(event) {
@@ -34145,9 +34500,9 @@ page: ${this.currentPage().id}
 \`\`\``;
     try {
       await navigator.clipboard.writeText(syntax);
-      new import_obsidian8.Notice("Copied Ink page embed syntax");
+      new import_obsidian9.Notice("Copied Ink page embed syntax");
     } catch (error) {
-      new import_obsidian8.Notice(`Could not copy embed syntax: ${error instanceof Error ? error.message : String(error)}`);
+      new import_obsidian9.Notice(`Could not copy embed syntax: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
   /**
@@ -34250,7 +34605,7 @@ page: ${this.currentPage().id}
     if (this.activeSave === saving) this.activeSave = null;
   }
   reportSaveFailure(file, error) {
-    new import_obsidian8.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
+    new import_obsidian9.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
   }
   async performSave(file) {
     this.syncing = true;
@@ -34263,7 +34618,7 @@ page: ${this.currentPage().id}
           this.savedRevision = Math.max(this.savedRevision, result.revision);
           if (result.merged && this.file === file) this.receiveMergedNotebook(result.merged);
         } catch (error) {
-          new import_obsidian8.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
+          new import_obsidian9.Notice(`Ink Notes could not save ${file.path || "notebook"}: ${error instanceof Error ? error.message : String(error)}`);
           break;
         }
       } while (this.saveRequested || this.dirtyRevision > this.savedRevision);
@@ -34271,7 +34626,7 @@ page: ${this.currentPage().id}
       this.syncing = false;
       if (this.externalRefreshPending && this.activePointerId === null) {
         this.externalRefreshPending = false;
-        void this.reloadFromDisk().catch((error) => new import_obsidian8.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
+        void this.reloadFromDisk().catch((error) => new import_obsidian9.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
       }
       if (this.dirtyRevision > this.savedRevision && this.saveRequested) this.scheduleSave();
     }
@@ -34395,168 +34750,6 @@ function clonePageAsNew(page, title, now = Date.now()) {
 }
 function notebooksEqual(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
-}
-
-// src/storage.ts
-var import_obsidian9 = require("obsidian");
-
-// src/storage-codec.ts
-var import_pako = __toESM(require_pako());
-var MAGIC = "INK-GZIP-1\n";
-var MIN_COMPRESS_LENGTH = 1024;
-var MAX_INFLATED_BYTES = 256 * 1024 * 1024;
-function serializeStoredJson(value) {
-  const plain = `${JSON.stringify(value)}
-`;
-  if (plain.length < MIN_COMPRESS_LENGTH) return plain;
-  const bytes = new TextEncoder().encode(plain);
-  if (bytes.length > MAX_INFLATED_BYTES) return plain;
-  const compressed = (0, import_pako.gzip)(plain, { level: 6 });
-  let binary = "";
-  for (let offset = 0; offset < compressed.length; offset += 8192)
-    binary += String.fromCharCode(...compressed.subarray(offset, offset + 8192));
-  const encoded = `${MAGIC}${btoa(binary)}
-`;
-  return encoded.length < bytes.length ? encoded : plain;
-}
-function parseStoredJson(raw) {
-  if (!raw.startsWith(MAGIC)) return JSON.parse(raw);
-  try {
-    const base64 = raw.slice(MAGIC.length).trim();
-    if (!base64 || base64.length > Math.ceil(MAX_INFLATED_BYTES / 3) * 4 || base64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(base64)) throw new Error("Invalid base64");
-    const binary = atob(base64), data = new Uint8Array(binary.length);
-    for (let index = 0; index < binary.length; index++) data[index] = binary.charCodeAt(index);
-    if (data.length < 18 || data[0] !== 31 || data[1] !== 139 || data[2] !== 8) throw new Error("Invalid gzip header");
-    if (new DataView(data.buffer).getUint32(data.length - 4, true) > MAX_INFLATED_BYTES) throw new Error("Notebook exceeds 256 MiB decompression limit");
-    const chunks = [];
-    let size = 0;
-    const inflate = new import_pako.Inflate({ chunkSize: 65536 });
-    inflate.onData = (chunk) => {
-      size += chunk.length;
-      if (size > MAX_INFLATED_BYTES) throw new Error("Notebook exceeds 256 MiB decompression limit");
-      chunks.push(chunk);
-    };
-    if (!inflate.push(data, false) || inflate.err || !inflate.ended || inflate.strm.avail_in !== 0) throw new Error(inflate.msg || "Incomplete or trailing gzip data");
-    const bytes = new Uint8Array(size);
-    let offset = 0;
-    for (const chunk of chunks) {
-      bytes.set(chunk, offset);
-      offset += chunk.length;
-    }
-    return JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes));
-  } catch (error) {
-    throw new SyntaxError(`Invalid compressed Ink Notes file: ${error instanceof Error ? error.message : String(error)}`);
-  }
-}
-
-// src/storage.ts
-var INK_EXTENSION = "ink";
-var INK_FOLDER = "Ink Notes";
-var NotebookFormatError = class extends Error {
-  constructor(message = "Ink notebook contains invalid JSON") {
-    super(message);
-    this.name = "NotebookFormatError";
-  }
-};
-var NotebookStore = class {
-  constructor(app) {
-    this.selfWrites = /* @__PURE__ */ new Map();
-    this.app = app;
-    this.vault = app.vault;
-  }
-  async create(title) {
-    await this.ensureFolder();
-    const safeTitle = title.trim().replace(/[\\/:*?"<>|#^\[\]]/g, "-").slice(0, 80) || "Ink Notebook";
-    let path = `${INK_FOLDER}/${safeTitle}.${INK_EXTENSION}`;
-    let count = 2;
-    while (this.vault.getAbstractFileByPath(path)) path = `${INK_FOLDER}/${safeTitle} ${count++}.${INK_EXTENSION}`;
-    const notebook = createNotebook(safeTitle);
-    return this.vault.create(path, serialize(notebook));
-  }
-  async read(file) {
-    const raw = await this.readRaw(file);
-    return normalizeNotebook(parseStoredJson(raw));
-  }
-  async readRaw(file) {
-    return this.vault.read(file);
-  }
-  async writeIfUnchanged(file, expectedRaw, nextRaw) {
-    let matched = false;
-    try {
-      await this.vault.process(file, (raw) => {
-        if (raw !== expectedRaw) return raw;
-        matched = true;
-        this.selfWrites.set(file.path, nextRaw);
-        return nextRaw;
-      });
-    } catch (error) {
-      if (this.selfWrites.get(file.path) === nextRaw) this.selfWrites.delete(file.path);
-      throw error;
-    }
-    return matched;
-  }
-  async save(file, notebook) {
-    const next = { ...notebook, updatedAt: Date.now() };
-    let merged = next;
-    let expectedWrite = null;
-    try {
-      await this.vault.process(file, (raw) => {
-        let latest;
-        try {
-          latest = normalizeNotebook(parseStoredJson(raw));
-        } catch (error) {
-          throw new NotebookFormatError(`Cannot save ${file.path || "notebook"}: existing file is corrupt or uses an unsupported encoding`);
-        }
-        merged = mergeNotebooks(latest, next);
-        expectedWrite = serialize(merged);
-        this.selfWrites.set(file.path, expectedWrite);
-        return expectedWrite;
-      });
-    } catch (error) {
-      if (expectedWrite !== null && this.selfWrites.get(file.path) === expectedWrite) this.selfWrites.delete(file.path);
-      throw error;
-    }
-    return merged;
-  }
-  async list() {
-    return this.vault.getFiles().filter((file) => file.extension === INK_EXTENSION && file.path.startsWith(`${INK_FOLDER}/`));
-  }
-  observe(onChange) {
-    const timers = /* @__PURE__ */ new Map();
-    const handler = (file) => {
-      if (!(file instanceof import_obsidian9.TFile) || file.extension !== INK_EXTENSION || !file.path.startsWith(`${INK_FOLDER}/`)) return;
-      const expected = this.selfWrites.get(file.path);
-      const notify = () => {
-        timers.delete(file.path);
-        onChange(file);
-      };
-      const existing = timers.get(file.path);
-      if (existing !== void 0) globalThis.clearTimeout(existing);
-      if (!expected) {
-        timers.set(file.path, globalThis.setTimeout(notify, 75));
-        return;
-      }
-      void this.vault.cachedRead(file).then((raw) => {
-        if (this.selfWrites.get(file.path) === expected) this.selfWrites.delete(file.path);
-        if (raw !== expected) timers.set(file.path, globalThis.setTimeout(notify, 75));
-      }).catch(() => {
-        this.selfWrites.delete(file.path);
-        timers.set(file.path, globalThis.setTimeout(notify, 75));
-      });
-    };
-    const ref = this.vault.on("modify", handler);
-    return () => {
-      for (const timer of timers.values()) globalThis.clearTimeout(timer);
-      timers.clear();
-      this.vault.offref(ref);
-    };
-  }
-  async ensureFolder() {
-    if (!this.vault.getAbstractFileByPath(INK_FOLDER)) await this.vault.createFolder(INK_FOLDER);
-  }
-};
-function serialize(notebook) {
-  return serializeStoredJson(notebook);
 }
 
 // src/embed.ts
@@ -36660,7 +36853,7 @@ var PdfInkView = class extends InkWritingView {
     this.canvasLogicalHeight = Math.max(1, Math.round(this.pageBaseHeight * 64) / 64);
     (_b = this.tiles) == null ? void 0 : _b.setDisplayScale(this.zoom);
     const page = (_c = this.sidecar) == null ? void 0 : _c.notebook.pages[this.noteIndex];
-    if (page) (_d = this.tiles) == null ? void 0 : _d.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    if (page) (_d = this.tiles) == null ? void 0 : _d.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight, this.tileExclusion());
     this.updateViewport(refine);
   }
   updateViewport(refine) {
@@ -37265,7 +37458,7 @@ var PdfInkView = class extends InkWritingView {
     if (renderPageContent) {
       const page = (_a = this.sidecar) == null ? void 0 : _a.notebook.pages[this.noteIndex];
       if (page && this.tiles) {
-        this.tiles.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight);
+        this.tiles.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight, this.tileExclusion());
         this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
       }
       this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
@@ -37290,7 +37483,7 @@ var PdfInkView = class extends InkWritingView {
     this.sidecar = null;
     this.sidecarRaw = "";
     this.sidecarFile = null;
-    (_a = this.tiles) == null ? void 0 : _a.setPage(EMPTY_NOTEBOOK.pages[0], this.canvasLogicalWidth, this.canvasLogicalHeight);
+    (_a = this.tiles) == null ? void 0 : _a.setPage(EMPTY_NOTEBOOK.pages[0], this.canvasLogicalWidth, this.canvasLogicalHeight, this.tileExclusion());
     this.pdfDoc = null;
     this.sourcePages = [];
     this.noteIndex = 0;
@@ -37615,6 +37808,9 @@ var DEFAULT_SETTINGS = {
 var InkNotesPlugin = class extends import_obsidian15.Plugin {
   constructor() {
     super(...arguments);
+    /** Recently opened notebooks; persisted in the plugin data document so the
+     *  picker can offer them even after they leave the default folder. */
+    this.history = new NotebookHistoryIndex();
     this.config = { ...DEFAULT_SETTINGS };
     /** Tool settings shared by both editors; loaded sanitized in onload and
      *  kept current by the debounced saver. */
@@ -37667,6 +37863,7 @@ var InkNotesPlugin = class extends import_obsidian15.Plugin {
       pdfOpenMode: (saved == null ? void 0 : saved.pdfOpenMode) === "native" || (saved == null ? void 0 : saved.pdfOpenMode) === "compatible" || (saved == null ? void 0 : saved.pdfOpenMode) === "ink" ? saved.pdfOpenMode : typeof (saved == null ? void 0 : saved.takeOverPdfTabs) === "boolean" ? saved.takeOverPdfTabs ? "ink" : "native" : DEFAULT_SETTINGS.pdfOpenMode
     };
     this.toolState = sanitizeToolState(saved == null ? void 0 : saved.toolState);
+    this.history = new NotebookHistoryIndex(saved == null ? void 0 : saved.notebookHistory);
     this.toolStateSaver = new ToolStateSaver((stored) => this.persistToolState(stored));
     this.toolStateBinding = {
       config: this.toolState,
@@ -37832,13 +38029,13 @@ var InkNotesPlugin = class extends import_obsidian15.Plugin {
   persistToolState(stored) {
     this.toolState.eraserMode = stored.eraserMode;
     this.toolState.eraserSize = stored.eraserSize;
-    return this.saveData({ pdfOpenMode: this.config.pdfOpenMode, toolState: stored }).catch((error) => {
+    return this.saveData({ pdfOpenMode: this.config.pdfOpenMode, toolState: stored, notebookHistory: this.history.list() }).catch((error) => {
       new import_obsidian15.Notice(`Ink Notes could not save tool settings: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
   /** Persists the plugin settings together with the latest tool settings. */
   async persistSettings() {
-    await this.saveData({ pdfOpenMode: this.config.pdfOpenMode, toolState: storedToolState(this.toolState) });
+    await this.saveData({ pdfOpenMode: this.config.pdfOpenMode, toolState: storedToolState(this.toolState), notebookHistory: this.history.list() });
   }
   get fingerAsPen() {
     return this.toolState.fingerAsPen;
@@ -37858,27 +38055,43 @@ var InkNotesPlugin = class extends import_obsidian15.Plugin {
     await leaf.setViewState({ type: VIEW_TYPE_PDF_INK, state: { file: file.path } });
   }
   async openNotebook() {
-    const files = await this.store.list();
+    const entries = discoverNotebooks(await this.store.list(), this.history.list());
     new NotebookSuggestModal(
       this.app,
-      files,
+      entries,
       (file) => this.runAsync(this.openFile(file), `open ${file.path}`),
-      (title) => this.createNotebook(title),
+      (title, folder) => this.createNotebook(title, folder),
       async (file, title) => {
         const parent = file.path.slice(0, file.path.lastIndexOf("/") + 1);
         const path = `${parent}${title}.${INK_EXTENSION}`;
         if (path !== file.path) await this.app.fileManager.renameFile(file, path);
-      }
+      },
+      (cleared) => this.runAsync(this.forgetNotebooks(cleared), "clear missing notebook entries")
     ).open();
   }
-  async createNotebook(title = "Ink Notebook") {
-    const file = await this.store.create(title);
+  async createNotebook(title = "Ink Notebook", folder) {
+    const file = await this.store.create(title, folder);
     await this.openFile(file);
   }
   async openFile(file, pageId) {
+    if (file.extension === INK_EXTENSION) this.rememberNotebook(file);
     const leaf = this.app.workspace.getLeaf(true);
     await leaf.openFile(file);
     if (pageId && leaf.view instanceof InkView) leaf.view.revealPage(pageId);
+  }
+  /** Records the open for discovery even after the notebook moves anywhere in
+   *  the vault; a persistence failure must not block opening the notebook. */
+  rememberNotebook(file) {
+    this.history.record(file.path, file.basename);
+    void this.persistSettings().catch((error) => {
+      new import_obsidian15.Notice(`Ink Notes could not save notebook history: ${error instanceof Error ? error.message : String(error)}`);
+    });
+  }
+  /** Manual cleanup only: removes the given history entries (missing files)
+   *  without touching the notebooks themselves. */
+  async forgetNotebooks(entries) {
+    for (const entry of entries) this.history.remove(entry.path);
+    await this.persistSettings();
   }
   runAsync(action, operation) {
     void action.catch((error) => new import_obsidian15.Notice(`Ink Notes could not ${operation}: ${error instanceof Error ? error.message : String(error)}`));

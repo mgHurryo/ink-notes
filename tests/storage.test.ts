@@ -73,6 +73,91 @@ describe("NotebookStore", () => {
     expect(raw).toBe("after");
   });
 
+  it("scans the whole vault for .ink notebooks instead of only the default folder", async () => {
+    const inFolder = { path: "Ink Notes/Course.ink", extension: "ink" } as TFile;
+    const outside = { path: "Courses/Math/Geometry.ink", extension: "ink" } as TFile;
+    const markdown = { path: "Ink Notes/Readme.md", extension: "md" } as TFile;
+    const sidecar = { path: "A_pdfinkwrittern/Paper--x.pdfink.json", extension: "json" } as TFile;
+    const vault = { getFiles: vi.fn(() => [inFolder, outside, markdown, sidecar]) };
+    const store = new NotebookStore({ vault } as unknown as App);
+    expect(await store.list()).toEqual([inFolder, outside]);
+  });
+
+  it("also reloads open notebooks that live outside the default folder", async () => {
+    vi.useFakeTimers();
+    let modify: ((file: TFile) => void) | undefined;
+    const vault = {
+      on: vi.fn((_name: string, handler: (file: TFile) => void) => { modify = handler; return {}; }),
+      offref: vi.fn(),
+    };
+    const store = new NotebookStore({ vault } as unknown as App);
+    const changed = vi.fn();
+    store.observe(changed);
+    modify?.(Object.assign(new (await import("obsidian")).TFile(), { path: "Courses/Math/Geometry.ink", extension: "ink" }));
+    await vi.advanceTimersByTimeAsync(75);
+    expect(changed).toHaveBeenCalledOnce();
+  });
+
+  it("creates in the default folder when no custom folder is given", async () => {
+    const vault = {
+      getAbstractFileByPath: vi.fn(() => undefined),
+      createFolder: vi.fn(async () => undefined),
+      create: vi.fn(async (path: string) => ({ path }) as TFile),
+    };
+    const store = new NotebookStore({ vault } as unknown as App);
+    const file = await store.create("Algebra");
+    expect(vault.createFolder).toHaveBeenCalledWith("Ink Notes");
+    expect(file.path).toBe("Ink Notes/Algebra.ink");
+  });
+
+  it("creates through a custom nested folder and reuses folders that already exist", async () => {
+    const vault = {
+      getAbstractFileByPath: vi.fn((path: string) => path === "Courses" ? { path } : undefined),
+      createFolder: vi.fn(async () => undefined),
+      create: vi.fn(async (path: string) => ({ path }) as TFile),
+    };
+    const store = new NotebookStore({ vault } as unknown as App);
+    const file = await store.create("Geometry", "Courses/Math");
+    expect(vault.createFolder).toHaveBeenCalledExactlyOnceWith("Courses/Math");
+    expect(file.path).toBe("Courses/Math/Geometry.ink");
+  });
+
+  it("cleans messy custom folders with the same rules as notebook titles", async () => {
+    const vault = {
+      getAbstractFileByPath: vi.fn(() => undefined),
+      createFolder: vi.fn(async () => undefined),
+      create: vi.fn(async (path: string) => ({ path }) as TFile),
+    };
+    const store = new NotebookStore({ vault } as unknown as App);
+    const file = await store.create("My:Book", " Courses // Math\\Spring ");
+    expect(file.path).toBe("Courses/Math/Spring/My-Book.ink");
+  });
+
+  it("keeps empty, dot and traversal folders on the default folder", async () => {
+    const folders = new Set<string>();
+    const vault = {
+      getAbstractFileByPath: vi.fn((path: string) => folders.has(path) ? { path } : undefined),
+      createFolder: vi.fn(async (path: string) => { folders.add(path); }),
+      create: vi.fn(async (path: string) => ({ path }) as TFile),
+    };
+    const store = new NotebookStore({ vault } as unknown as App);
+    expect((await store.create("A", "  ")).path).toBe("Ink Notes/A.ink");
+    expect((await store.create("B", ".././..")).path).toBe("Ink Notes/B.ink");
+    expect(vault.createFolder).toHaveBeenCalledExactlyOnceWith("Ink Notes");
+  });
+
+  it("refuses a custom folder path occupied by a file", async () => {
+    const occupant = Object.assign(new (await import("obsidian")).TFile(), { path: "Courses", extension: "md" });
+    const vault = {
+      getAbstractFileByPath: vi.fn((path: string) => path === "Courses" ? occupant : undefined),
+      createFolder: vi.fn(async () => undefined),
+      create: vi.fn(async (path: string) => ({ path }) as TFile),
+    };
+    const store = new NotebookStore({ vault } as unknown as App);
+    await expect(store.create("Algebra", "Courses/Math")).rejects.toThrow("a file already exists at Courses");
+    expect(vault.createFolder).not.toHaveBeenCalled();
+  });
+
   it("suppresses the matching modify event emitted by its own save", async () => {
     const notebook = createNotebook();
     let raw = JSON.stringify(notebook);

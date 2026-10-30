@@ -66,6 +66,8 @@ interface WheelMotion {
   gestureId: number;
   suppressed: boolean;
   renewedTravel?: number;
+  /** True on the frozen stall-probation sample: pageDelta must not count it. */
+  probation?: boolean;
 }
 
 /** One short-lived input stream; neither device identity nor page state is stored. */
@@ -87,6 +89,11 @@ export class DesktopWheelGesture {
   private renewedPeak = 0;
   private renewedIncreases = 0;
   private renewalBlocked = false;
+  /** One-sample reprieve for a settled-band stall merged sample whose clamped
+   *  speed outran the envelope: the sample is frozen uncounted while the next
+   *  sample's slope decides between a real renewed flick (reset) and the same
+   *  flick delivered late (keep the gesture and its suppression). */
+  private stallProbation = false;
   private trackpadPages = 0;
   /** Pages already flipped on the x axis during the current contact. Unlike
    *  trackpadPages it survives beginRenewedGesture: a mid-tail renewal is
@@ -115,6 +122,7 @@ export class DesktopWheelGesture {
     this.lastDelta = this.lastMagnitude = this.travel = this.notchCredit = 0;
     this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     this.renewalBlocked = false;
+    this.stallProbation = false;
     this.trackpadPages = this.zeroAxisPauses = 0;
     this.contactXPages = 0;
     this.flippedRun = 0;
@@ -183,14 +191,39 @@ export class DesktopWheelGesture {
     } else if (axis !== this.axis || delta.mode !== this.mode || reversed) {
       this.reset();
       gap = 0;
+    } else if (this.stallProbation) {
+      // The frozen stall sample is judged by the NEXT sample's slope: a real
+      // renewed flick keeps rising over the frozen settled envelope, a tail
+      // continuation only decays. The judgment must not run on the merged
+      // sample itself - a >= 140ms stall's own clamped speed already clears
+      // the 2.2x ratio - and gap >= 2 keeps a same-tick merged event (dt
+      // clamped to 1ms, speed inflated 10x) from posing as that rise.
+      this.stallProbation = false;
+      if (gap >= 2 && normalized > Math.abs(this.lastDelta) && normalized > this.lastMagnitude
+        && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO) {
+        this.reset();
+        gap = 0;
+      }
     } else if (renewed) {
       // A quiet interval marks a new intent only when the stream resumes
       // RISING over the settled envelope; resuming at or below it is the same
       // physical flick delivered late - keep the gesture, its suppression and
       // the page budget, and let the ramp detector below re-seed instead.
       if (normalized > Math.abs(this.lastDelta)) {
-        this.reset();
-        gap = 0;
+        // A settled-band stall merged sample is judged on the [1,50]ms clamp,
+        // which inflates its speed gap/50x over the real delivery gap. When
+        // the rise vanishes at that real gap the clamp alone manufactured it,
+        // so freeze the envelope for one sample and let the slope judge
+        // above - resetting here would mint a fresh contact and hand the
+        // remaining tail travel a budget to page again. A rise that survives
+        // the real gap (a genuine re-swipe) keeps the reset.
+        if (!unclamped && gap > REF_DT_MS * 5
+          && magnitude * (REF_DT_MS / gap) <= Math.abs(this.lastDelta)) {
+          this.stallProbation = true;
+        } else {
+          this.reset();
+          gap = 0;
+        }
       }
     }
     // Count retained samples that moved nothing: isolated ones are the
@@ -284,13 +317,15 @@ export class DesktopWheelGesture {
     // run still re-classifies through ZERO_AXIS_PAUSES_TO_SWITCH. The envelope
     // stores normalized speeds, so every comparison below shares one unit.
     const pausedTail = movement === 0 && this.flipped && !this.discrete;
-    this.lastDelta = pausedTail ? this.lastDelta
+    // The probation sample stays frozen: the envelope must still describe the
+    // pre-stall tail when the next sample's slope is judged against it.
+    this.lastDelta = pausedTail || this.stallProbation ? this.lastDelta
       : this.flipped && !this.discrete
         ? Math.sign(movement) * Math.min(Math.abs(this.lastDelta), normalized)
         : Math.sign(movement) * normalized;
-    if (!pausedTail) this.lastMagnitude = normalized;
+    if (!pausedTail && !this.stallProbation) this.lastMagnitude = normalized;
     return { axis, movement, discrete: this.discrete, mode: delta.mode, gap, gestureId: this.gestureId,
-      suppressed: !this.discrete && this.flipped, renewedTravel };
+      suppressed: !this.discrete && this.flipped, renewedTravel, probation: this.stallProbation };
   }
 
   pageDelta(motion: WheelMotion, scrolled: boolean): number {
@@ -299,6 +334,7 @@ export class DesktopWheelGesture {
       this.renewalBlocked = false;
       return 0;
     }
+    if (motion.probation) return 0;
     if (motion.suppressed) return 0;
     if (motion.renewedTravel !== undefined) this.travel = motion.renewedTravel;
     if (motion.discrete) {

@@ -53,3 +53,33 @@ test("an empty vault offers creation without writing on open or cancellation", a
   await expect(page.getByRole("dialog")).toHaveCount(0);
   await expect(page.locator("html")).not.toHaveAttribute("data-opened-notebook");
 });
+
+test("creation accepts a custom folder and missing history entries stay greyed until cleared", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/?notebooks&missing");
+  const missingRow = page.locator(".ink-notebook-result-missing");
+  await expect(missingRow).toHaveCount(1);
+  await expect(missingRow).toContainText("Old notes");
+  await expect(missingRow).toContainText("File missing");
+  await page.screenshot({ path: "test-results/notebook-picker-missing.png" });
+  await page.getByRole("button", { name: "Create Ink notebook", exact: true }).click();
+  const name = page.getByRole("textbox", { name: "Notebook name", exact: true });
+  const folder = page.getByRole("textbox", { name: "Folder", exact: true });
+  await expect(folder).toHaveAttribute("placeholder", /Ink Notes/);
+  await name.fill("Algebra");
+  await folder.fill("Courses/Math");
+  await page.getByRole("button", { name: "Create", exact: true }).click();
+  await expect(page.locator("html")).toHaveAttribute("data-opened-notebook", "Courses/Math/Algebra.ink");
+  await page.evaluate(() => (window as unknown as { openNotebookPicker(): void }).openNotebookPicker());
+  const search = page.getByRole("textbox", { name: "Search Ink notebooks", exact: true });
+  await search.fill("Math");
+  await expect(page.locator(".ink-notebook-result")).toHaveCount(1);
+  await expect(page.locator(".ink-notebook-result-path")).toHaveText("Courses/Math/Algebra.ink");
+  await page.getByRole("button", { name: "Clear missing notebook entries", exact: true }).click();
+  await page.evaluate(() => (window as unknown as { openNotebookPicker(): void }).openNotebookPicker());
+  await expect(page.getByRole("button", { name: "Clear missing notebook entries", exact: true })).toHaveCount(0);
+  await search.fill("Old notes");
+  await expect(page.locator(".ink-notebook-result")).toHaveCount(0);
+  await search.fill("Math");
+  await expect(page.locator(".ink-notebook-result")).toHaveCount(1);
+});

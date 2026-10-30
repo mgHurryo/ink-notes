@@ -87,6 +87,60 @@ describe("DesktopWheelGesture moderate re-swipe over a settled tail", () => {
   });
 });
 
+describe("DesktopWheelGesture settled-tail stall continuation", () => {
+  // Below the hot-tail band the [1,50]ms delivery clamp returns, so a
+  // 55-180ms stall's merged sample is judged at gap/50 of its true speed:
+  // it used to outrun the settled envelope, reset the gesture and hand the
+  // remaining tail travel a fresh contact whose budget flipped a second page
+  // inside one physical contact. A rise the clamp alone manufactures must
+  // freeze for one sample; the next sample's slope decides.
+  function pagesAcrossSettledTailStall(axis: "x" | "y", stallGapMs: number): number {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 100;
+    const feed = (magnitudes: number[], stepMs: number) => {
+      for (const magnitude of magnitudes) {
+        const delta = axis === "x" ? { x: magnitude, y: 0, mode: 0 } : { x: 0, y: magnitude, mode: 0 };
+        pages += gesture.pageDelta(gesture.begin(delta, false, at), false);
+        at += stepMs;
+      }
+    };
+    // tau=300ms inertia tail: a sample reports the pixels its decaying speed
+    // sweeps across the 10ms reporting window (v * 30 * (1 - e^(-10/300))).
+    const windowPx = 30 * (1 - Math.exp(-10 / 300));
+    const tail = (v0: number, count: number, elapsedMs = 0): number[] =>
+      Array.from({ length: count }, (_, i) => v0 * Math.exp(-(elapsedMs + (i + 1) * 10) / 300) * windowPx);
+    feed(axis === "x" ? [140, 90, 60, 40] : [140, 90, 60], 10); // fast phase: the contact's one page
+    feed(tail(axis === "x" ? 10 : 11, 32), 10); // decays to ~3.4px/10ms, inside the settled band
+    const tailSpeed = (axis === "x" ? 10 : 11) * Math.exp(-320 / 300);
+    if (stallGapMs > 0) {
+      // One merged event sums the pixels the stalled tail swept across the gap.
+      at += stallGapMs - 10;
+      feed([tailSpeed * 30 * (1 - Math.exp(-stallGapMs / 300))], 10);
+      feed(tail(tailSpeed, 70, stallGapMs), 10); // continuation to exhaustion
+    } else {
+      feed(tail(tailSpeed, 71), 10);
+    }
+    return pages;
+  }
+
+  it("keeps a horizontal settled-tail stall continuation to its contact's one page", () => {
+    expect(pagesAcrossSettledTailStall("x", 100)).toBe(1);
+  });
+
+  it("keeps the vertical mirror of the settled-tail stall to one page", () => {
+    expect(pagesAcrossSettledTailStall("y", 100)).toBe(1);
+  });
+
+  it("keeps the same tail delivered without a stall to one page", () => {
+    expect(pagesAcrossSettledTailStall("x", 0)).toBe(1);
+  });
+
+  it("keeps a 40ms stall under the quiet-gap threshold to one page", () => {
+    expect(pagesAcrossSettledTailStall("x", 40)).toBe(1);
+  });
+});
+
 describe("DesktopWheelGesture gesture boundaries", () => {
   it("keeps a decaying flick to a single page (no momentum continuation)", () => {
     expect(flipCount([140, 90, 60, 30, 20, 14, 10])).toBe(1);
