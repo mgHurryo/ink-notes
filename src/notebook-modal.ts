@@ -1,11 +1,14 @@
 import { App, Modal, SuggestModal, TFile, setIcon } from "obsidian";
+import { INK_FOLDER, type NotebookDiscovery } from "./storage";
 
 /** Keep creation outside the filtered results so it never disappears. */
-export class NotebookSuggestModal extends SuggestModal<TFile> {
+export class NotebookSuggestModal extends SuggestModal<NotebookDiscovery> {
   private actions: HTMLElement | null = null;
 
-  constructor(app: App, private readonly files: TFile[], private readonly select: (file: TFile) => void,
-    private readonly create: (title: string) => Promise<void>, private readonly rename: (file: TFile, title: string) => Promise<void>) {
+  constructor(app: App, private readonly entries: NotebookDiscovery[], private readonly select: (file: TFile) => void,
+    private readonly create: (title: string, folder?: string) => Promise<void>,
+    private readonly rename: (file: TFile, title: string) => Promise<void>,
+    private readonly clear: (entries: NotebookDiscovery[]) => Promise<void> | void) {
     super(app);
     this.setPlaceholder("Search Ink notebooks");
     this.emptyStateText = "No notebooks found";
@@ -17,7 +20,21 @@ export class NotebookSuggestModal extends SuggestModal<TFile> {
     this.actions = this.modalEl.createDiv({ cls: "ink-notebook-picker-actions" });
     this.modalEl.prepend(this.actions);
     this.actions.createEl("span", { text: "Ink notebooks" });
-    const button = this.actions.createEl("button", { cls: "ink-notebook-create", attr: {
+    const buttons = this.actions.createDiv({ cls: "ink-notebook-picker-buttons" });
+    const missing = this.entries.filter((entry) => !entry.file);
+    if (missing.length) {
+      const clearMissing = buttons.createEl("button", { text: "Clear missing", cls: "ink-notebook-clear-missing", attr: {
+        type: "button", title: "Clear missing notebook entries", "aria-label": "Clear missing notebook entries",
+      } });
+      clearMissing.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+      });
+      clearMissing.addEventListener("click", () => {
+        this.close();
+        void this.clear(missing);
+      });
+    }
+    const button = buttons.createEl("button", { cls: "ink-notebook-create", attr: {
       type: "button", title: "Create Ink notebook", "aria-label": "Create Ink notebook",
     } });
     setIcon(button.createSpan({ attr: { "aria-hidden": "true" } }), "plus");
@@ -26,7 +43,7 @@ export class NotebookSuggestModal extends SuggestModal<TFile> {
     });
     button.addEventListener("click", () => {
       this.close();
-      new NotebookNameModal(this.app, "Create Ink notebook", "Ink Notebook", "Create", this.create).open();
+      new NotebookNameModal(this.app, "Create Ink notebook", "Ink Notebook", "Create", this.create, { folder: true }).open();
     });
   }
 
@@ -36,18 +53,36 @@ export class NotebookSuggestModal extends SuggestModal<TFile> {
     super.onClose();
   }
 
-  getSuggestions(query: string): TFile[] {
+  getSuggestions(query: string): NotebookDiscovery[] {
     const search = query.trim().toLowerCase();
-    return this.files.filter((file) => !search || file.path.toLowerCase().includes(search));
+    return this.entries.filter((entry) => !search || entry.path.toLowerCase().includes(search));
   }
 
-  renderSuggestion(file: TFile, el: HTMLElement): void {
+  renderSuggestion(entry: NotebookDiscovery, el: HTMLElement): void {
     el.addClass("ink-notebook-result");
+    if (!entry.file) el.addClass("ink-notebook-result-missing");
     const name = el.createDiv({ cls: "ink-notebook-result-name" });
-    name.createDiv({ text: file.basename });
-    name.createDiv({ text: file.path, cls: "ink-notebook-result-path" });
+    name.createDiv({ text: entry.title });
+    name.createDiv({ text: entry.path, cls: "ink-notebook-result-path" });
+    if (!entry.file) {
+      name.createDiv({ text: "File missing", cls: "ink-notebook-result-missing-label" });
+      const clear = el.createEl("button", { cls: "ink-notebook-clear", attr: {
+        type: "button", title: `Clear ${entry.title} from history`, "aria-label": `Clear ${entry.title} from history`,
+      } });
+      setIcon(clear.createSpan({ attr: { "aria-hidden": "true" } }), "trash-2");
+      clear.addEventListener("keydown", (event) => {
+        if (event.key === "Enter" || event.key === " ") event.stopPropagation();
+      });
+      clear.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        this.close();
+        void this.clear([entry]);
+      });
+      return;
+    }
     const rename = el.createEl("button", { cls: "ink-notebook-rename", attr: {
-      type: "button", title: "Rename notebook", "aria-label": `Rename ${file.basename}`,
+      type: "button", title: "Rename notebook", "aria-label": `Rename ${entry.title}`,
     } });
     setIcon(rename.createSpan({ attr: { "aria-hidden": "true" } }), "pencil");
     rename.addEventListener("keydown", (event) => {
@@ -57,20 +92,23 @@ export class NotebookSuggestModal extends SuggestModal<TFile> {
       event.preventDefault();
       event.stopPropagation();
       this.close();
-      new NotebookNameModal(this.app, "Rename Ink notebook", file.basename, "Rename",
-        (title) => this.rename(file, title)).open();
+      new NotebookNameModal(this.app, "Rename Ink notebook", entry.title, "Rename",
+        (title) => this.rename(entry.file!, title)).open();
     });
   }
 
-  onChooseSuggestion(file: TFile, event: MouseEvent | KeyboardEvent): void {
+  onChooseSuggestion(entry: NotebookDiscovery, event: MouseEvent | KeyboardEvent): void {
+    // A missing file cannot be opened; its row only offers the clear action.
+    if (!entry.file) return;
     if ((event.target as HTMLElement | null)?.closest?.("button")) return;
-    this.select(file);
+    this.select(entry.file);
   }
 }
 
 export class NotebookNameModal extends Modal {
   constructor(app: App, private readonly heading: string, private readonly initialName: string,
-    private readonly action: string, private readonly submitName: (title: string) => Promise<void>) {
+    private readonly action: string, private readonly submitName: (title: string, folder?: string) => Promise<void>,
+    private readonly options?: { folder?: boolean }) {
     super(app);
   }
 
@@ -81,6 +119,13 @@ export class NotebookNameModal extends Modal {
     const label = form.createEl("label", { text: "Notebook name" });
     const input = label.createEl("input", { attr: { type: "text", required: "", maxlength: "80" } });
     input.value = this.initialName;
+    let folderInput: HTMLInputElement | null = null;
+    if (this.options?.folder) {
+      const folderLabel = form.createEl("label", { text: "Folder" });
+      folderInput = folderLabel.createEl("input", { attr: {
+        type: "text", placeholder: `${INK_FOLDER} (default)`, spellcheck: "false",
+      } });
+    }
     const error = form.createDiv({ cls: "ink-notebook-name-error", attr: { role: "alert" } });
     const actions = form.createDiv({ cls: "ink-notebook-name-actions" });
     const cancel = actions.createEl("button", { text: "Cancel", attr: { type: "button" } });
@@ -96,14 +141,22 @@ export class NotebookNameModal extends Modal {
         input.focus();
         return;
       }
+      const folder = cleanedNotebookFolder(folderInput?.value ?? "");
+      if (folder === null) {
+        error.setText("Enter a valid folder path without reserved characters.");
+        folderInput!.focus();
+        return;
+      }
       pending = true;
       input.disabled = cancel.disabled = submit.disabled = true;
+      if (folderInput) folderInput.disabled = true;
       error.setText("");
-      void this.submitName(title).then(() => this.close()).catch((reason: unknown) => {
+      void this.submitName(title, folder || undefined).then(() => this.close()).catch((reason: unknown) => {
         error.setText(`Could not ${this.action.toLowerCase()} notebook: ${reason instanceof Error ? reason.message : String(reason)}`);
       }).finally(() => {
         pending = false;
         input.disabled = cancel.disabled = submit.disabled = false;
+        if (folderInput) folderInput.disabled = false;
       });
     });
     input.focus();
@@ -111,4 +164,17 @@ export class NotebookNameModal extends Modal {
   }
 
   onClose(): void { this.contentEl.empty(); }
+}
+
+/** Folder paths follow Obsidian's forward-slash semantics: stray or duplicated
+ *  slashes and backslashes are tolerated and normalized, but reserved filename
+ *  characters and dot segments are rejected so the storage layer never
+ *  silently rewrites a typed folder. Empty input means the default folder. */
+function cleanedNotebookFolder(raw: string): string | null {
+  const collapsed = raw.trim().replace(/\\/g, "/").replace(/\/+/g, "/").replace(/^\/|\/$/g, "");
+  if (!collapsed) return "";
+  if (/[:*?"<>|#^\[\]]/.test(collapsed)) return null;
+  const segments = collapsed.split("/");
+  if (segments.some((segment) => !segment || segment === "." || segment === "..")) return null;
+  return collapsed;
 }

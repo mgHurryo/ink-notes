@@ -59,7 +59,8 @@ vi.mock("obsidian", async (importOriginal) => ({
   setIcon: () => undefined,
   loadPdfJs: () => Promise.resolve({}),
 }));
-vi.mock("../src/storage", () => ({
+vi.mock("../src/storage", async (importOriginal) => ({
+  ...(await importOriginal<Record<string, unknown>>()),
   INK_EXTENSION: "ink",
   NotebookStore: class { observe = observe; list = list; create = create; },
 }));
@@ -180,7 +181,7 @@ describe("plugin event synchronization", () => {
       expect(takeover.gateProvider().enabled).toBe(false);
     } finally { install.mockRestore(); }
   });
-  it.each([{ files: [] }, { files: [{ path: "Ink Notes/Existing.ink", basename: "Existing" }] }])("ribbon always opens a picker with a reusable creation action: $files", async ({ files }) => {
+  it.each([{ files: [] }, { files: [{ path: "Ink Notes/Existing.ink", basename: "Existing", extension: "ink" }] }])("ribbon always opens a picker with a reusable creation action: $files", async ({ files }) => {
     list.mockResolvedValue(files);
     const file = { path: "Ink Notes/New name.ink" };
     create.mockResolvedValue(file);
@@ -192,11 +193,54 @@ describe("plugin event synchronization", () => {
     (plugin.addRibbonIcon as unknown as ReturnType<typeof vi.fn>).mock.calls[0][2]();
     await vi.waitFor(() => expect(pickerOpen).toHaveBeenCalledOnce());
     expect(create).not.toHaveBeenCalled();
-    expect(pickerArguments.mock.calls[0][1]).toBe(files);
-    const add = pickerArguments.mock.calls[0][3] as (title: string) => Promise<void>;
+    const entries = pickerArguments.mock.calls[0][1] as { path: string; file: unknown }[];
+    expect(entries).toEqual(files.map((entry) => ({ path: entry.path, title: entry.basename, file: entry, lastOpened: undefined })));
+    const add = pickerArguments.mock.calls[0][3] as (title: string, folder?: string) => Promise<void>;
     await add("New name"); await add("Another name");
-    expect(create.mock.calls).toEqual([["New name"], ["Another name"]]);
+    expect(create.mock.calls).toEqual([["New name", undefined], ["Another name", undefined]]);
     expect(openFile).toHaveBeenCalledWith(file);
+  });
+
+  it("remembers opened ink notebooks in the persisted history and skips other files", async () => {
+    const plugin = new InkNotesPlugin({} as never, {} as never);
+    const openFileLeaf = vi.fn(async () => undefined);
+    Object.assign(plugin.app.workspace, { getLeaf: vi.fn(() => ({ openFile: openFileLeaf })) });
+    await plugin.onload();
+    const internal = plugin as unknown as { openFile(file: unknown): Promise<void> };
+    const ink = Object.assign(new TFile(), { path: "Courses/Math/Geometry.ink", basename: "Geometry", extension: "ink" });
+    await internal.openFile(ink);
+    expect(plugin.saveData).toHaveBeenLastCalledWith(expect.objectContaining({
+      notebookHistory: [{ path: "Courses/Math/Geometry.ink", title: "Geometry", lastOpened: expect.any(Number) }],
+    }));
+    (plugin.saveData as ReturnType<typeof vi.fn>).mockClear();
+    await internal.openFile(Object.assign(new TFile(), { path: "docs/Paper.pdf", basename: "Paper", extension: "pdf" }));
+    expect(plugin.saveData).not.toHaveBeenCalled();
+    (plugin.saveData as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error("disk full"));
+    await internal.openFile(Object.assign(new TFile(), { path: "Ink Notes/Second.ink", basename: "Second", extension: "ink" }));
+    await vi.waitFor(() => expect(notice).toHaveBeenCalledWith("Ink Notes could not save notebook history: disk full"));
+  });
+
+  it("offers missing history entries in the picker and clears them through the picker action", async () => {
+    const existing = { path: "Ink Notes/Algebra.ink", basename: "Algebra", extension: "ink" };
+    list.mockResolvedValue([existing]);
+    const plugin = new InkNotesPlugin({} as never, {} as never);
+    (plugin.loadData as ReturnType<typeof vi.fn>).mockResolvedValue({
+      notebookHistory: [
+        { path: "Ink Notes/Algebra.ink", title: "Algebra", lastOpened: 100 },
+        { path: "Archive/Gone.ink", title: "Gone", lastOpened: 50 },
+      ],
+    });
+    await plugin.onload();
+    await (plugin as unknown as { openNotebook(): Promise<void> }).openNotebook();
+    expect(pickerArguments.mock.calls[0][1]).toEqual([
+      { path: "Ink Notes/Algebra.ink", title: "Algebra", lastOpened: 100, file: existing },
+      { path: "Archive/Gone.ink", title: "Gone", lastOpened: 50, file: null },
+    ]);
+    const clear = pickerArguments.mock.calls[0][5] as (entries: { path: string }[]) => Promise<unknown>;
+    await clear([{ path: "Archive/Gone.ink" }]);
+    expect(plugin.saveData).toHaveBeenLastCalledWith(expect.objectContaining({
+      notebookHistory: [{ path: "Ink Notes/Algebra.ink", title: "Algebra", lastOpened: 100 }],
+    }));
   });
 
   it("renames through FileManager while retaining the current directory and ink extension", async () => {
