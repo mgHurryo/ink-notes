@@ -1514,7 +1514,9 @@ export class PdfInkView extends InkWritingView {
     this.canvasLogicalHeight = Math.max(1, Math.round(this.pageBaseHeight * 64) / 64);
     this.tiles?.setDisplayScale(this.zoom);
     const page = this.sidecar?.notebook.pages[this.noteIndex];
-    if (page) this.tiles?.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    // Relay the pending-ink exclusion so a relayout inside the 180ms commit
+    // window cannot clear the worker snapshot and double-composite highlighter.
+    if (page) this.tiles?.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight, this.tileExclusion());
     this.updateViewport(refine);
   }
 
@@ -2098,7 +2100,7 @@ export class PdfInkView extends InkWritingView {
     if (renderPageContent) {
       const page = this.sidecar?.notebook.pages[this.noteIndex];
       if (page && this.tiles) {
-        this.tiles.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight);
+        this.tiles.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight, this.tileExclusion());
         this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
       }
       this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
@@ -2125,7 +2127,10 @@ export class PdfInkView extends InkWritingView {
     this.sidecar = null;
     this.sidecarRaw = "";
     this.sidecarFile = null;
-    this.tiles?.setPage(EMPTY_NOTEBOOK.pages[0]!, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    // Sidecar is already null and discardPendingInkPreview() ran above, so
+    // tileExclusion() is undefined here; pass it anyway to keep every setPage
+    // call site in the exclusion-passing form.
+    this.tiles?.setPage(EMPTY_NOTEBOOK.pages[0]!, this.canvasLogicalWidth, this.canvasLogicalHeight, this.tileExclusion());
     this.pdfDoc = null;
     this.sourcePages = [];
     this.noteIndex = 0;

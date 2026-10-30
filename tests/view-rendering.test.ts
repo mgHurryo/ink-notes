@@ -359,6 +359,9 @@ it("excludes lasso-selected strokes from worker-rendered tiles while the drag pr
     start: { x: 0.2, y: 0.2 }, pageId: "page", bounds: { minX: 0.2, minY: 0.2, maxX: 0.4, maxY: 0.4 },
     strokes: [{ id: "sel-a", points: [] }, { id: "sel-b", points: [] }], before: new Map(), dx: 0, dy: 0,
   };
+  // Runtime state before beginLassoPreview: finishLasso has already recorded
+  // the selection, and tileExclusion() now reads it while lassoDrag lives.
+  v.selectedStrokeIds = new Set(["sel-a", "sel-b"]);
 
   v.beginLassoPreview(v.currentPage());
 
