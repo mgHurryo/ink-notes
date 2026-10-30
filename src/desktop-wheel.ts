@@ -142,8 +142,20 @@ export class DesktopWheelGesture {
     // Computed from the arrival gap before any boundary reset zeroes it: the
     // delivery interval is what the speed estimate means. Only the flipped
     // continuous path below consumes it, so the zeroed-gap reset paths (which
-    // clear flipped) never compare against it.
-    const normalized = magnitude * (REF_DT_MS / Math.min(Math.max(gap, 1), REF_DT_MS * 5));
+    // clear flipped) never compare against it. On a still-hot continuous tail
+    // there is no upper clamp: a merged post-stall sample already sums the
+    // hardware deltas across the stall, so clamping its dt to REF_DT_MS*5
+    // overstates its speed by gap/REF_DT_MS and re-arms the decayed tail as a
+    // new flick. Settled tails keep the clamp - their stalled continuations
+    // cannot re-reach the page threshold (rate*tau < threshold), while the
+    // clamp is load-bearing there: a moderate re-swipe after a real quiet gap
+    // reports one report-interval of pixels, which only clears the renewal
+    // gate when its dt clamps to the reporting cadence.
+    const unclamped = this.flipped && !this.discrete
+      && Math.abs(this.lastDelta) > RENEWED_FLICK_RELEASE_PX;
+    const normalized = magnitude * (REF_DT_MS / (unclamped
+      ? Math.max(gap, 1)
+      : Math.min(Math.max(gap, 1), REF_DT_MS * 5)));
     // A large pixel delta alone is not a notch: fast touchpad flicks also
     // exceed 80px. Recognize conventional wheel steps conservatively; once
     // continuous motion appears, keep its inertia in the same gesture.
