@@ -3191,6 +3191,10 @@ export abstract class InkWritingView extends FileView {
     const excluded = new Set<string>(this.stickyInput?.proxies.keys());
     if (this.activeStroke) excluded.add(this.activeStroke.id);
     for (const stroke of this.pendingInkStrokes) if (!committing.has(stroke.id)) excluded.add(stroke.id);
+    // While a lasso drag moves strokes out of the tile index, every setPage
+    // relay must carry them too or a mid-drag relayout re-indexes them and the
+    // worker redraws static ghosts at their pre-drag positions.
+    if (this.lassoDrag) for (const id of this.selectedStrokeIds) excluded.add(id);
     return excluded.size > 0 ? excluded : undefined;
   }
 

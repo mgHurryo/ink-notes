@@ -983,34 +983,35 @@ describe("predicted ghost tip", () => {
 });
 
 
-describe("pdf page fit", () => {
-  /** layoutPage harness: pane metrics plus a minimal page geometry; tiles
-   *  stay unset (all call sites are optional-chained). */
-  function layoutHarness(clientWidth: number, clientHeight: number, page: { width: number; height: number }) {
-    const view = Object.create(PdfInkView.prototype) as unknown as {
-      scroller: unknown; pageWrap: unknown; sidecar: unknown; noteIndex: number;
-      zoom: number; zoomTouched: boolean; fitZoom: number;
-      pageWrapStyle: Record<string, string>;
-      layoutPage(): void;
-    };
-    view.pageWrapStyle = {};
-    view.scroller = {
-      clientWidth, clientHeight,
-      ownerDocument: { activeElement: null }, contains: () => false,
-      getBoundingClientRect: () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }),
-    };
-    view.pageWrap = {
-      style: view.pageWrapStyle,
-      setCssStyles(styles: Record<string, string>) { Object.assign(view.pageWrapStyle, styles); },
-      getBoundingClientRect: () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }),
-    };
-    view.sidecar = { notebook: { pages: [{ id: "p1" }] }, notePages: [page] };
-    view.noteIndex = 0;
-    view.zoom = 1;
-    view.zoomTouched = false;
-    return view;
-  }
+/** layoutPage harness: pane metrics plus a minimal page geometry; tiles
+ *  stay unset (all call sites are optional-chained). */
+function layoutHarness(clientWidth: number, clientHeight: number, page: { width: number; height: number }) {
+  const view = Object.create(PdfInkView.prototype) as unknown as {
+    scroller: unknown; pageWrap: unknown; sidecar: unknown; noteIndex: number;
+    zoom: number; zoomTouched: boolean; fitZoom: number;
+    pageWrapStyle: Record<string, string>;
+    layoutPage(): void;
+  };
+  view.pageWrapStyle = {};
+  view.scroller = {
+    clientWidth, clientHeight,
+    ownerDocument: { activeElement: null }, contains: () => false,
+    getBoundingClientRect: () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }),
+  };
+  view.pageWrap = {
+    style: view.pageWrapStyle,
+    setCssStyles(styles: Record<string, string>) { Object.assign(view.pageWrapStyle, styles); },
+    getBoundingClientRect: () => ({ left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 }),
+  };
+  view.sidecar = { notebook: { pages: [{ id: "p1" }] }, notePages: [page] };
+  view.noteIndex = 0;
+  view.zoom = 1;
+  view.zoomTouched = false;
+  return view;
+}
 
+
+describe("pdf page fit", () => {
   it("fits a landscape page to the pane WIDTH at zoom 1 (no double scaling)", () => {
     // A 16:9 slide on a 12.9" landscape pane. The beta.29/30 regression
     // multiplied the box width (already pane-wide at zoom 1) by
@@ -1030,5 +1031,94 @@ describe("pdf page fit", () => {
     const height = parseFloat(view.pageWrapStyle.height);
     expect(height).toBeCloseTo(880, 0);
     expect(width).toBeLessThan(1270);
+  });
+});
+
+
+describe("pdf setPage relays the ink exclusion", () => {
+  beforeEach(() => { vi.stubGlobal("window", globalThis); });
+
+  /** layoutHarness plus a tiles mock and pending-ink state, so the real
+   *  prototype tileExclusion() drives the fourth setPage argument. */
+  function exclusionHarness(pendingIds: string[]) {
+    const view = layoutHarness(1318, 928, { width: 960, height: 540 }) as unknown as {
+      tiles: { setPage: ReturnType<typeof vi.fn>; setDisplayScale: ReturnType<typeof vi.fn>;
+        update: ReturnType<typeof vi.fn>; setWorkerExclusion: ReturnType<typeof vi.fn> };
+      pendingInkStrokes: InkStroke[];
+      activeStroke: InkStroke | null;
+      committingInkStrokes: InkStroke[] | null;
+      stickyInput: unknown;
+      selectedStrokeIds: Set<string>;
+      lassoPath: InkPoint[];
+      lassoDrag: unknown;
+      viewport: { x: number; y: number; width: number; height: number };
+      canvasLogicalWidth: number;
+      canvasLogicalHeight: number;
+      resizeSelectionCanvas(): void;
+      resizePreview(): void;
+      drawSelection(): void;
+      updatePageIndicator(): void;
+      refreshPageRail(): void;
+      updateToolButtons(): void;
+      updateHistoryButtons(): void;
+      hideLassoPreview(): void;
+      layoutPage(): void;
+      renderAll(renderPageContent?: boolean): void;
+    };
+    view.tiles = {
+      setPage: vi.fn(), setDisplayScale: vi.fn(), update: vi.fn(), setWorkerExclusion: vi.fn(),
+    };
+    // Only the id is read by tileExclusion(); the rest keeps the shape honest.
+    view.pendingInkStrokes = pendingIds.map((id) => ({ id, points: [], tool: "pen" })) as unknown as InkStroke[];
+    view.activeStroke = null;
+    view.committingInkStrokes = null;
+    view.stickyInput = null;
+    view.selectedStrokeIds = new Set();
+    view.lassoPath = [];
+    view.lassoDrag = null;
+    view.viewport = { x: 0, y: 0, width: 10, height: 10 };
+    view.canvasLogicalWidth = 1270;
+    view.canvasLogicalHeight = 900;
+    view.resizeSelectionCanvas = vi.fn();
+    view.resizePreview = vi.fn();
+    view.drawSelection = vi.fn();
+    return view;
+  }
+
+  it("layoutPage relays the pending-ink exclusion as setPage's fourth argument", () => {
+    const view = exclusionHarness(["s1"]);
+    view.layoutPage();
+    expect(view.tiles.setPage).toHaveBeenCalledOnce();
+    // The 180ms commit window outlives a ResizeObserver relayout; without the
+    // relay the worker snapshot (#292) is cleared and highlighter double-draws.
+    expect(view.tiles.setPage.mock.calls[0]![3]).toEqual(new Set(["s1"]));
+  });
+
+  it("renderAll relays the exclusion too", () => {
+    const view = exclusionHarness(["s1"]);
+    view.updatePageIndicator = vi.fn();
+    view.refreshPageRail = vi.fn();
+    view.updateToolButtons = vi.fn();
+    view.updateHistoryButtons = vi.fn();
+    view.renderAll();
+    expect(view.tiles.setPage.mock.calls[0]![3]).toEqual(new Set(["s1"]));
+  });
+
+  it("mid-lasso relayout carries the selected ids and hideLassoPreview restores the baseline", () => {
+    const view = exclusionHarness(["s1"]);
+    view.selectedStrokeIds = new Set(["s2", "s3"]);
+    view.lassoDrag = {
+      start: { x: 0, y: 0 }, pageId: "p1", bounds: null, strokes: [], before: new Map(), dx: 0, dy: 0,
+    };
+    view.layoutPage();
+    // A relayout between patchStrokes and the drop commit must not re-index
+    // the moved selection (#311): worker tiles would redraw static ghosts.
+    expect([...(view.tiles.setPage.mock.calls[0]![3] as Set<string>)].sort()).toEqual(["s1", "s2", "s3"]);
+    // Every lasso exit path clears lassoDrag first, so the baseline restore
+    // drops the selection again and worker rendering rejoins it.
+    view.lassoDrag = null;
+    view.hideLassoPreview();
+    expect(view.tiles.setWorkerExclusion).toHaveBeenCalled();
+    expect([...(view.tiles.setWorkerExclusion.mock.calls.at(-1)![0] as Set<string>)].sort()).toEqual(["s1"]);
   });
 });

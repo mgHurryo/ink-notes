@@ -30492,6 +30492,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     const excluded = new Set((_c = this.stickyInput) == null ? void 0 : _c.proxies.keys());
     if (this.activeStroke) excluded.add(this.activeStroke.id);
     for (const stroke of this.pendingInkStrokes) if (!committing.has(stroke.id)) excluded.add(stroke.id);
+    if (this.lassoDrag) for (const id of this.selectedStrokeIds) excluded.add(id);
     return excluded.size > 0 ? excluded : void 0;
   }
   startPendingInkCommit(page) {
@@ -36828,7 +36829,7 @@ var PdfInkView = class extends InkWritingView {
     this.canvasLogicalHeight = Math.max(1, Math.round(this.pageBaseHeight * 64) / 64);
     (_b = this.tiles) == null ? void 0 : _b.setDisplayScale(this.zoom);
     const page = (_c = this.sidecar) == null ? void 0 : _c.notebook.pages[this.noteIndex];
-    if (page) (_d = this.tiles) == null ? void 0 : _d.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight);
+    if (page) (_d = this.tiles) == null ? void 0 : _d.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight, this.tileExclusion());
     this.updateViewport(refine);
   }
   updateViewport(refine) {
@@ -37433,7 +37434,7 @@ var PdfInkView = class extends InkWritingView {
     if (renderPageContent) {
       const page = (_a = this.sidecar) == null ? void 0 : _a.notebook.pages[this.noteIndex];
       if (page && this.tiles) {
-        this.tiles.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight);
+        this.tiles.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight, this.tileExclusion());
         this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
       }
       this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
@@ -37458,7 +37459,7 @@ var PdfInkView = class extends InkWritingView {
     this.sidecar = null;
     this.sidecarRaw = "";
     this.sidecarFile = null;
-    (_a = this.tiles) == null ? void 0 : _a.setPage(EMPTY_NOTEBOOK.pages[0], this.canvasLogicalWidth, this.canvasLogicalHeight);
+    (_a = this.tiles) == null ? void 0 : _a.setPage(EMPTY_NOTEBOOK.pages[0], this.canvasLogicalWidth, this.canvasLogicalHeight, this.tileExclusion());
     this.pdfDoc = null;
     this.sourcePages = [];
     this.noteIndex = 0;
