@@ -24612,6 +24612,11 @@ var DesktopWheelGesture = class {
     this.renewedPeak = 0;
     this.renewedIncreases = 0;
     this.renewalBlocked = false;
+    /** One-sample reprieve for a settled-band stall merged sample whose clamped
+     *  speed outran the envelope: the sample is frozen uncounted while the next
+     *  sample's slope decides between a real renewed flick (reset) and the same
+     *  flick delivered late (keep the gesture and its suppression). */
+    this.stallProbation = false;
     this.trackpadPages = 0;
     /** Pages already flipped on the x axis during the current contact. Unlike
      *  trackpadPages it survives beginRenewedGesture: a mid-tail renewal is
@@ -24639,6 +24644,7 @@ var DesktopWheelGesture = class {
     this.lastDelta = this.lastMagnitude = this.travel = this.notchCredit = 0;
     this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     this.renewalBlocked = false;
+    this.stallProbation = false;
     this.trackpadPages = this.zeroAxisPauses = 0;
     this.contactXPages = 0;
     this.flippedRun = 0;
@@ -24667,10 +24673,20 @@ var DesktopWheelGesture = class {
     } else if (axis !== this.axis || delta.mode !== this.mode || reversed) {
       this.reset();
       gap = 0;
-    } else if (renewed) {
-      if (normalized > Math.abs(this.lastDelta)) {
+    } else if (this.stallProbation) {
+      this.stallProbation = false;
+      if (gap >= 2 && normalized > Math.abs(this.lastDelta) && normalized > this.lastMagnitude && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO) {
         this.reset();
         gap = 0;
+      }
+    } else if (renewed) {
+      if (normalized > Math.abs(this.lastDelta)) {
+        if (!unclamped && gap > REF_DT_MS * 5 && magnitude * (REF_DT_MS / gap) <= Math.abs(this.lastDelta)) {
+          this.stallProbation = true;
+        } else {
+          this.reset();
+          gap = 0;
+        }
       }
     }
     this.zeroAxisPauses = movement === 0 && axis === this.axis ? this.zeroAxisPauses + 1 : 0;
@@ -24729,8 +24745,8 @@ var DesktopWheelGesture = class {
     this.flippedRun = this.flipped ? priorFlippedRun + 1 : 0;
     this.flippedPreviously = this.flipped;
     const pausedTail = movement === 0 && this.flipped && !this.discrete;
-    this.lastDelta = pausedTail ? this.lastDelta : this.flipped && !this.discrete ? Math.sign(movement) * Math.min(Math.abs(this.lastDelta), normalized) : Math.sign(movement) * normalized;
-    if (!pausedTail) this.lastMagnitude = normalized;
+    this.lastDelta = pausedTail || this.stallProbation ? this.lastDelta : this.flipped && !this.discrete ? Math.sign(movement) * Math.min(Math.abs(this.lastDelta), normalized) : Math.sign(movement) * normalized;
+    if (!pausedTail && !this.stallProbation) this.lastMagnitude = normalized;
     return {
       axis,
       movement,
@@ -24739,7 +24755,8 @@ var DesktopWheelGesture = class {
       gap,
       gestureId: this.gestureId,
       suppressed: !this.discrete && this.flipped,
-      renewedTravel
+      renewedTravel,
+      probation: this.stallProbation
     };
   }
   pageDelta(motion, scrolled) {
@@ -24748,6 +24765,7 @@ var DesktopWheelGesture = class {
       this.renewalBlocked = false;
       return 0;
     }
+    if (motion.probation) return 0;
     if (motion.suppressed) return 0;
     if (motion.renewedTravel !== void 0) this.travel = motion.renewedTravel;
     if (motion.discrete) {

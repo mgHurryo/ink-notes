@@ -810,6 +810,25 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(2);
     });
 
+    it("keeps a settled-tail stall merged sample from minting a fresh contact", async () => {
+      // The residual band under the hot-tail fix: once the envelope decays
+      // into the settled band (<= 4px) the [1,50]ms clamp returns, and a
+      // 100ms stall merged sample outran it on clamp-inflated speed alone -
+      // the reset minted a fresh contact and the remaining tail travel
+      // flipped a second page inside one physical contact.
+      const { scroller, wheel, settle } = await desktopSetup();
+      scroller.scrollTop = 600;
+      for (const [delta, time] of [[140, 100], [90, 110], [60, 120]]) wheel(0, delta, { timeStamp: time });
+      const windowPx = 30 * (1 - Math.exp(-10 / 300));
+      const tailSpeed = 11 * Math.exp(-320 / 300);
+      Array.from({ length: 32 }, (_, i) => 11 * Math.exp(-(10 + i * 10) / 300) * windowPx)
+        .forEach((delta, i) => wheel(0, delta, { timeStamp: 130 + i * 10 }));
+      wheel(0, tailSpeed * 30 * (1 - Math.exp(-100 / 300)), { timeStamp: 540 });
+      Array.from({ length: 70 }, (_, i) => tailSpeed * Math.exp(-(100 + (i + 1) * 10) / 300) * windowPx)
+        .forEach((delta, i) => wheel(0, delta, { timeStamp: 550 + i * 10 }));
+      expect(settle).toHaveBeenCalledTimes(1);
+    });
+
     it("re-arms the same moderate re-swipe speed at every report cadence on the y axis", async () => {
       const { scroller, wheel, settle } = await desktopSetup();
       // The re-arm floors are speeds (px per 10ms reference window), not
