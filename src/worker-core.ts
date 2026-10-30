@@ -560,6 +560,8 @@ export function applyNotebookOperation(notebook: InkNotebook, operation: Noteboo
   } else {
     if (operation.title !== undefined) page.title = operation.title;
     if (operation.paper !== undefined) page.paper = operation.paper;
+    if (operation.tags !== undefined) page.tags = [...operation.tags];
+    if (operation.flag !== undefined) page.flag = operation.flag ?? undefined;
   }
   page.updatedAt = operation.pageUpdatedAt;
   notebook.updatedAt = operation.notebookUpdatedAt;
