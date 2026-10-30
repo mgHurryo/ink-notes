@@ -45,21 +45,36 @@ describe("page tag storage compatibility", () => {
 });
 
 describe("notebook tag merge semantics", () => {
-  it("unions tags from both sides in base-first order", () => {
+  it("resolves same-page tag conflicts last-writer-wins like flags", () => {
     const base = createNotebook();
-    const incoming = normalizeNotebook(base);
+    const retagged = normalizeNotebook(base);
     base.pages[0].tags = ["exam", "hard"];
-    incoming.pages[0].tags = ["review", "exam"];
-    expect(mergeNotebooks(base, incoming).pages[0].tags).toEqual(["exam", "hard", "review"]);
-    expect(mergeNotebooks(incoming, base).pages[0].tags).toEqual(["review", "exam", "hard"]);
+    retagged.pages[0].tags = ["review", "exam"];
+    retagged.pages[0].updatedAt = base.pages[0].updatedAt + 10;
+    expect(mergeNotebooks(base, retagged).pages[0].tags).toEqual(["review", "exam"]);
+    expect(mergeNotebooks(retagged, base).pages[0].tags).toEqual(["review", "exam"]);
   });
 
-  it("keeps tags when only one side carries them", () => {
+  it("lets a newer side without tags clear the older side's tags", () => {
     const base = createNotebook();
-    const incoming = normalizeNotebook(base);
-    base.pages[0].tags = ["solo"];
-    expect(mergeNotebooks(base, incoming).pages[0].tags).toEqual(["solo"]);
-    expect(mergeNotebooks(incoming, base).pages[0].tags).toEqual(["solo"]);
+    const tagged = normalizeNotebook(base);
+    tagged.pages[0].tags = ["solo"];
+    // A newer page whose tag edit removed them carries no tags at all.
+    const cleared = normalizeNotebook(base);
+    cleared.pages[0].updatedAt = base.pages[0].updatedAt + 20;
+    expect(cleared.pages[0].tags).toBeUndefined();
+    expect(mergeNotebooks(tagged, cleared).pages[0].tags).toBeUndefined();
+    expect(mergeNotebooks(cleared, tagged).pages[0].tags).toBeUndefined();
+  });
+
+  it("persists a single-machine tag removal through a disk-base save merge", () => {
+    // Disk carries one tag; the local edit removed it and bumped updatedAt.
+    const disk = createNotebook();
+    disk.pages[0].tags = ["a"];
+    const local = normalizeNotebook(disk);
+    delete local.pages[0].tags;
+    local.pages[0].updatedAt = disk.pages[0].updatedAt + 50;
+    expect(mergeNotebooks(disk, local).pages[0].tags).toBeUndefined();
   });
 
   it("resolves flags last-writer-wins and lets a newer side clear one", () => {

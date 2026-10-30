@@ -222,25 +222,26 @@ describe("merge", () => {
   // Page tags/flags ride on the embedded notebook pages, so mergeSidecars must
   // preserve them through every realign it performs on notebook.pages.
   describe("page tag merge semantics", () => {
-    it("unions tags added to different pages on different devices", () => {
+    it("merges tags added to different pages on different devices", () => {
       const base = makeSidecar();
       const incoming = JSON.parse(JSON.stringify(base)) as PdfSidecar;
       base.notebook.pages[0].tags = ["exam"];
+      base.notebook.pages[0].updatedAt += 10;
       incoming.notebook.pages[1].tags = ["review"];
+      incoming.notebook.pages[1].updatedAt += 10;
       const merged = mergeSidecars(base, incoming);
       expect(merged.notebook.pages[0].tags).toEqual(["exam"]);
       expect(merged.notebook.pages[1].tags).toEqual(["review"]);
     });
 
-    it("unions tags added to the same page from both sides, keeping base order", () => {
+    it("resolves a same-page tag conflict by last writer (page.updatedAt)", () => {
       const base = makeSidecar();
       const incoming = JSON.parse(JSON.stringify(base)) as PdfSidecar;
       base.notebook.pages[0].tags = ["exam", "hard"];
       incoming.notebook.pages[0].tags = ["review", "exam"];
-      const merged = mergeSidecars(base, incoming);
-      expect(merged.notebook.pages[0].tags).toEqual(["exam", "hard", "review"]);
-      const reverse = mergeSidecars(incoming, base);
-      expect(reverse.notebook.pages[0].tags).toEqual(["review", "exam", "hard"]);
+      incoming.notebook.pages[0].updatedAt = base.notebook.pages[0].updatedAt + 10;
+      expect(mergeSidecars(base, incoming).notebook.pages[0].tags).toEqual(["review", "exam"]);
+      expect(mergeSidecars(incoming, base).notebook.pages[0].tags).toEqual(["review", "exam"]);
     });
 
     it("resolves a same-page flag conflict by last writer (page.updatedAt)", () => {
