@@ -31888,9 +31888,9 @@ var TileRenderer = class {
   }
   resumeInkCommit() {
     this.inkCommitPaused = false;
-    if (this.droppedRefine) {
+    if (this.droppedRefine && this.active && !this.disposed && !this.inkCommit) {
       this.droppedRefine = false;
-      if (this.active && !this.disposed && !this.inkCommit) this.update(this.viewport, this.density, true);
+      this.update(this.viewport, this.density, true);
     }
     this.scheduleInkCommit();
     this.schedule();
@@ -32115,6 +32115,10 @@ var TileRenderer = class {
       }
     }
     commit.onComplete(valid);
+    if (this.droppedRefine && this.active && !this.disposed && !this.inkCommitPaused) {
+      this.droppedRefine = false;
+      this.update(this.viewport, this.density, true);
+    }
     this.schedule();
   }
   abortInkCommit(notify) {
