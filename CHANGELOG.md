@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5-beta.26 - 2026-10-30
+
+- Merge page tags last-writer-wins so removals persist (#334): deleting a page tag no longer reappears after the note is saved and merged, because removals now win over stale copies instead of being resurrected by the older tag list. Judge hot-tail stall wheel samples at the true delivery gap (#335): one light trackpad sweep no longer flips several pages when a main-thread stall clumps wheel events, because stall-period samples are compared against their actual delivery gap instead of an inflated speed. Preserve a dropped refine across a live interactive commit (#336): pages stay sharp after zooming when an eraser swipe erases nothing, because the deferred high-density rebuild is no longer consumed and skipped while the previous commit is still in flight.
+
 ## 0.1.5-beta.25 - 2026-10-30
 
 - Scale the stroke tile index padding by index width (#328): ink drawn with wide pens or highlighters on wide PDF panes no longer leaves persistent unpainted gaps on the main-thread fallback path, because registered index cells now cover the same scaled band the renderers stamp. Keep sample timestamps when lasso-translating strokes (#329): moving a selection no longer flattens every sample to one instant, so speed-based width dynamics survive the move instead of the moved strokes rendering fatter with their fast-thinned tail lost, and the corrupted timing is no longer persisted and synced. Let the Pages toggle reclaim the rail from fast paging (#330): re-expanding the page rail with the Pages switch during a fast-paging burst now sticks after the burst's silent collapse, instead of the timer overriding the user's last explicit action and hiding the rail again.
