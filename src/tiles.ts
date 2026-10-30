@@ -449,9 +449,13 @@ export class TileRenderer {
 
   resumeInkCommit(): void {
     this.inkCommitPaused = false;
-    if (this.droppedRefine) {
+    // Consume the flag only when the rebuild can actually run: an eraser
+    // gesture that erased nothing never replaces an in-flight interactive
+    // commit, and clearing the flag here would swallow the refine work
+    // until finishInkCommit() settles the commit and compensates.
+    if (this.droppedRefine && this.active && !this.disposed && !this.inkCommit) {
       this.droppedRefine = false;
-      if (this.active && !this.disposed && !this.inkCommit) this.update(this.viewport, this.density, true);
+      this.update(this.viewport, this.density, true);
     }
     this.scheduleInkCommit();
     this.schedule();
@@ -672,6 +676,13 @@ export class TileRenderer {
       }
     }
     commit.onComplete(valid);
+    // The commit that made resumeInkCommit() defer its dropped-refine rebuild
+    // has just settled; compensate now unless a pause already owns the flag
+    // for the gesture's own resume (pen path).
+    if (this.droppedRefine && this.active && !this.disposed && !this.inkCommitPaused) {
+      this.droppedRefine = false;
+      this.update(this.viewport, this.density, true);
+    }
     this.schedule();
   }
 

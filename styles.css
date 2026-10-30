@@ -773,6 +773,154 @@
 .ink-rail-heading { color: var(--ink-text); font-size: 13px; font-weight: 650; }
 .ink-rail-count { color: var(--ink-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 
+/* Rail filter toggles ("with ink" / "tagged"); both stack. */
+.ink-rail-filters {
+  position: relative;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(44px, 1fr));
+  gap: 6px;
+  margin: 0 0 8px;
+}
+
+.ink-rail-filters .ink-icon-button {
+  width: 100%;
+  height: 34px;
+  min-height: 34px;
+  padding: 0;
+  border: 1px solid var(--ink-border);
+  border-radius: var(--ink-radius-sm);
+  color: var(--ink-muted);
+  background: var(--ink-workspace);
+}
+
+.ink-rail-filters .ink-icon-button[aria-pressed="true"] {
+  border-color: var(--ink-accent);
+  color: var(--ink-on-accent);
+  background: var(--ink-accent);
+}
+
+/* Flag/tag badges on rail thumbnails (both editors share the markup). */
+.ink-thumb-flag {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  width: 12px;
+  height: 12px;
+  border: 1px solid rgb(0 0 0 / 25%);
+  border-radius: 50%;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 25%);
+}
+.ink-thumb-flag.is-red { background: #e5484d; }
+.ink-thumb-flag.is-yellow { background: #f5c400; }
+.ink-thumb-flag.is-green { background: #2fa65a; }
+
+.ink-thumb-tags {
+  position: absolute;
+  top: 4px;
+  right: 5px;
+  min-width: 16px;
+  padding: 0 4px;
+  border-radius: 8px;
+  color: var(--ink-on-accent);
+  background: var(--ink-accent);
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 16px;
+  text-align: center;
+}
+
+/* Corner entry to the tagging popover: dimmed by default, full on
+   hover/focus; a real button so touch and Playwright can always reach it. */
+.ink-thumb-tag-button {
+  position: absolute;
+  right: 5px;
+  bottom: 5px;
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  color: var(--ink-text);
+  background: rgb(255 255 255 / 85%);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 20%);
+  opacity: 0.55;
+}
+.ink-thumb-tag-button svg { width: 13px; height: 13px; }
+.ink-page-thumb:hover .ink-thumb-tag-button,
+.ink-thumb-tag-button:focus-visible,
+.ink-thumb-tag-button:not(:disabled):active { opacity: 1; }
+.ink-thumb-tag-button:disabled { opacity: 0.2; }
+
+/* Filtered-out thumbnails leave the rail (display, not visibility: hidden
+   thumbs would still occupy their grid row). */
+.ink-page-thumb.is-filtered-out { display: none; }
+
+/* Shared tagging popover (notebook + PDF rails). */
+.ink-tag-popover {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 232px;
+  max-height: 260px;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--ink-border);
+  border-radius: var(--ink-radius-md);
+  background: var(--ink-panel);
+  box-shadow: var(--ink-shadow-panel);
+}
+.ink-tag-flags { display: flex; gap: 6px; }
+.ink-flag-choice {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--ink-border);
+  border-radius: var(--ink-radius-sm);
+  color: var(--ink-text);
+  background: var(--ink-workspace);
+}
+.ink-flag-choice svg { width: 15px; height: 15px; }
+.ink-flag-choice[aria-pressed="true"] { border-width: 2px; }
+.ink-flag-choice.ink-flag-red[aria-pressed="true"] { border-color: #e5484d; color: #e5484d; }
+.ink-flag-choice.ink-flag-yellow[aria-pressed="true"] { border-color: #d19f00; color: #d19f00; }
+.ink-flag-choice.ink-flag-green[aria-pressed="true"] { border-color: #2fa65a; color: #2fa65a; }
+.ink-flag-choice.ink-flag-none[aria-pressed="true"] { border-color: var(--ink-accent); color: var(--ink-accent); }
+
+.ink-tag-list { display: flex; flex-wrap: wrap; gap: 5px; }
+.ink-tag-list.is-empty { display: none; }
+.ink-tag-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--ink-border);
+  border-radius: 10px;
+  background: var(--ink-workspace);
+  font-size: 11px;
+}
+.ink-tag-chip .ink-icon-button { width: 16px; height: 16px; min-height: 16px; border: none; background: transparent; }
+.ink-tag-chip .ink-icon-button svg { width: 11px; height: 11px; }
+.ink-tag-input-row { display: flex; gap: 6px; }
+.ink-tag-input {
+  flex: 1;
+  min-width: 0;
+  padding: 5px 8px;
+  border: 1px solid var(--ink-border);
+  border-radius: var(--ink-radius-sm);
+  background: var(--ink-workspace);
+  color: var(--ink-text);
+  font-size: 12px;
+}
+.ink-tag-input-row .ink-icon-button { width: 30px; height: 30px; min-height: 30px; flex: 0 0 30px; }
+
 .ink-rail-actions {
   position: relative;
   z-index: 1;

@@ -218,6 +218,79 @@ describe("merge", () => {
     const merged = mergeSidecars(base, incoming);
     expect(merged.notePages.map((page) => page.id)).toEqual([sourcePageId(0), sourcePageId(1)]);
   });
+
+  // Page tags/flags ride on the embedded notebook pages, so mergeSidecars must
+  // preserve them through every realign it performs on notebook.pages.
+  describe("page tag merge semantics", () => {
+    it("merges tags added to different pages on different devices", () => {
+      const base = makeSidecar();
+      const incoming = JSON.parse(JSON.stringify(base)) as PdfSidecar;
+      base.notebook.pages[0].tags = ["exam"];
+      base.notebook.pages[0].updatedAt += 10;
+      incoming.notebook.pages[1].tags = ["review"];
+      incoming.notebook.pages[1].updatedAt += 10;
+      const merged = mergeSidecars(base, incoming);
+      expect(merged.notebook.pages[0].tags).toEqual(["exam"]);
+      expect(merged.notebook.pages[1].tags).toEqual(["review"]);
+    });
+
+    it("resolves a same-page tag conflict by last writer (page.updatedAt)", () => {
+      const base = makeSidecar();
+      const incoming = JSON.parse(JSON.stringify(base)) as PdfSidecar;
+      base.notebook.pages[0].tags = ["exam", "hard"];
+      incoming.notebook.pages[0].tags = ["review", "exam"];
+      incoming.notebook.pages[0].updatedAt = base.notebook.pages[0].updatedAt + 10;
+      expect(mergeSidecars(base, incoming).notebook.pages[0].tags).toEqual(["review", "exam"]);
+      expect(mergeSidecars(incoming, base).notebook.pages[0].tags).toEqual(["review", "exam"]);
+    });
+
+    it("resolves a same-page flag conflict by last writer (page.updatedAt)", () => {
+      const base = makeSidecar();
+      const incoming = JSON.parse(JSON.stringify(base)) as PdfSidecar;
+      base.notebook.pages[0].flag = "red";
+      incoming.notebook.pages[0].flag = "green";
+      incoming.notebook.pages[0].updatedAt = base.notebook.pages[0].updatedAt + 10;
+      expect(mergeSidecars(base, incoming).notebook.pages[0].flag).toBe("green");
+      expect(mergeSidecars(incoming, base).notebook.pages[0].flag).toBe("green");
+    });
+
+    it("lets a newer side clear a flag the older side still has", () => {
+      const base = makeSidecar();
+      const incoming = JSON.parse(JSON.stringify(base)) as PdfSidecar;
+      base.notebook.pages[0].flag = "yellow";
+      incoming.notebook.pages[0].updatedAt = base.notebook.pages[0].updatedAt + 10;
+      expect(mergeSidecars(base, incoming).notebook.pages[0].flag).toBeUndefined();
+    });
+
+    it("keeps tags attached to their page id when the note sequence is realigned", () => {
+      const base = makeSidecar();
+      const id = insertBlankNotePage(base, null);
+      moveBlankNotePage(base, id, 0);
+      // Device B cloned the same sequence, then wrote ink later; device A
+      // tagged the moved blank page (a real tag edit bumps page.updatedAt).
+      const incoming = JSON.parse(JSON.stringify(base)) as PdfSidecar;
+      base.notebook.pages[0].tags = ["moved"];
+      base.notebook.pages[0].flag = "green";
+      base.notebook.pages[0].updatedAt += 10;
+      incoming.notebook.pages[2].strokes.push(stroke(sourcePageId(1), "stroke-c"));
+      incoming.notebook.pages[2].updatedAt += 20;
+      const merged = mergeSidecars(base, incoming);
+      expect(merged.notePages.map((page) => page.id)).toEqual([id, sourcePageId(0), sourcePageId(1)]);
+      expect(merged.notebook.pages[0].id).toBe(id);
+      expect(merged.notebook.pages[0].tags).toEqual(["moved"]);
+      expect(merged.notebook.pages[0].flag).toBe("green");
+      expect(merged.notebook.pages[2].strokes.map((entry) => entry.id)).toContain("stroke-c");
+    });
+
+    it("survives a disk round-trip with tags and flags intact", () => {
+      const base = makeSidecar();
+      base.notebook.pages[0].tags = ["exam", " hard "];
+      base.notebook.pages[0].flag = "red";
+      const parsed = normalizeSidecar(parseStoredJson(serializeStoredJson(base)));
+      expect(parsed.notebook.pages[0].tags).toEqual(["exam", "hard"]);
+      expect(parsed.notebook.pages[0].flag).toBe("red");
+    });
+  });
 });
 
 describe("note page operations", () => {

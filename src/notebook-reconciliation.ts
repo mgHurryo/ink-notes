@@ -29,7 +29,11 @@ export function reconcileNotebook(target: InkNotebook, incoming: InkNotebook, se
     }
 
     const paperChanged = page.paper !== incomingPage.paper;
-    const railChanged = page.title !== incomingPage.title || paperChanged;
+    // Tags/flags render on the rail, so a peer-merged change must mark the
+    // rail dirty exactly like a title/paper change does.
+    const railChanged = page.title !== incomingPage.title || paperChanged
+      || (page.tags ?? []).join("\n") !== (incomingPage.tags ?? []).join("\n")
+      || page.flag !== incomingPage.flag;
     const inkChanged = reconcilePage(page, incomingPage, metadataOnlyChanges);
     pageChanges.set(page.id, { ink: inkChanged, paper: paperChanged, rail: railChanged });
     return page;
@@ -103,6 +107,11 @@ function reconcilePage(target: InkPage, incoming: InkPage, metadataOnlyChanges: 
 
   target.title = incoming.title;
   target.paper = incoming.paper;
+  // Tag surface ([] and absent are the same state; keep untagged pages
+  // key-free so legacy files stay byte-stable through unrelated saves).
+  if (incoming.tags?.length) target.tags = [...incoming.tags];
+  else delete target.tags;
+  target.flag = incoming.flag;
   if (inkChanged) target.strokes = strokes;
   target.deletedStrokeIds = arraysEqual(target.deletedStrokeIds, incoming.deletedStrokeIds)
     ? target.deletedStrokeIds : [...incoming.deletedStrokeIds];

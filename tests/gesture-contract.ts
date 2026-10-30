@@ -763,6 +763,53 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(1);
     });
 
+    it("keeps a stall-merged tail sample from renewing the decayed flick", async () => {
+      // A 100ms main-thread stall merges the tau=300ms inertia tail's hardware
+      // samples into one event whose pixels already sum the whole stall, so the
+      // sample must be normalized at its real delivery gap. Clamping the gap to
+      // 50ms overstated its speed gap/50x, crossed the decayed envelope, reset
+      // the gesture and let the resumed tail's own travel flip a second page -
+      // the residual 55-180ms stall band #320's idle reset leaves behind.
+      const { scroller, wheel, settle } = await desktopSetup();
+      scroller.scrollTop = 600;
+      for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [35, 130], [20, 140], [14, 150]]) {
+        wheel(0, delta, { timeStamp: time });
+      }
+      wheel(0, 76.5, { timeStamp: 250 });
+      Array.from({ length: 45 }, (_, i) => 9 * Math.exp(-(10 + i * 10) / 300))
+        .forEach((delta, i) => wheel(0, delta, { timeStamp: 260 + i * 10 }));
+      expect(settle).toHaveBeenCalledTimes(1);
+    });
+
+    it("keeps the same tail delivered without the stall to one page", async () => {
+      // Control for the stall-merged regression above: the identical decaying
+      // tail delivered continuously (no stall) is one page, so that regression
+      // isolates the stall's delivery timing, not the tail's magnitude.
+      const { scroller, wheel, settle } = await desktopSetup();
+      scroller.scrollTop = 600;
+      for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [35, 130], [20, 140], [14, 150]]) {
+        wheel(0, delta, { timeStamp: time });
+      }
+      Array.from({ length: 45 }, (_, i) => 9 * Math.exp(-(10 + i * 10) / 300))
+        .forEach((delta, i) => wheel(0, delta, { timeStamp: 160 + i * 10 }));
+      expect(settle).toHaveBeenCalledTimes(1);
+    });
+
+    it("re-arms a real rising re-swipe delivered after the stall", async () => {
+      // Anti-overfix for the stall-merged regression above: normalizing at the
+      // real delivery gap must not swallow genuine renewals - a strictly
+      // rising re-swipe out of the stall (45->50->55) still re-arms through the
+      // ramp detector and flips the second page.
+      const { scroller, wheel, settle } = await desktopSetup();
+      scroller.scrollTop = 600;
+      for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [35, 130], [20, 140], [14, 150]]) {
+        wheel(0, delta, { timeStamp: time });
+      }
+      wheel(0, 76.5, { timeStamp: 250 });
+      for (const [delta, time] of [[45, 260], [50, 270], [55, 280]]) wheel(0, delta, { timeStamp: time });
+      expect(settle).toHaveBeenCalledTimes(2);
+    });
+
     it("re-arms the same moderate re-swipe speed at every report cadence on the y axis", async () => {
       const { scroller, wheel, settle } = await desktopSetup();
       // The re-arm floors are speeds (px per 10ms reference window), not
