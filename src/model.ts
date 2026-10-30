@@ -74,8 +74,9 @@ export interface InkPage {
   deletedImageIds?: string[];
   stickyNotes?: StickyNote[];
   deletedStickyNotes?: Record<string, number>;
-  /** Free-text labels. Merged as a union across devices (additive; removal is
-   *  a local refinement only), so a page can carry several at once. */
+  /** Free-text labels. The whole list merges last-writer-wins on page
+   *  updatedAt like flag/title: the newer side's list decides, including
+   *  removals. */
   tags?: string[];
   /**
    * Triage flag. Single-valued, so it merges last-writer-wins on page
@@ -239,11 +240,11 @@ function mergePages(base: InkPage, incoming: InkPage): InkPage {
   }
   const deletedStrokeIds = [...new Set([...(base.deletedStrokeIds ?? []), ...(incoming.deletedStrokeIds ?? [])])];
   for (const id of deletedStrokeIds) strokes.delete(id);
-  // Tags are append-only across devices: union in base order first, then
-  // incoming-only tags (the spread above would otherwise replace wholesale,
-  // and a wholesale replace would silently drop the other device's labels).
-  const tags = [...(base.tags ?? [])];
-  for (const tag of incoming.tags ?? []) if (!tags.includes(tag)) tags.push(tag);
+  // Tags follow the page-level last-writer-wins of flag/title: the newer
+  // side's full list decides, including removals — a newer side without tags
+  // must clear the older side's tags (a union would resurrect every deletion
+  // on save).
+  const tags = incoming.updatedAt >= base.updatedAt ? incoming.tags : base.tags;
   return {
     ...base,
     ...incoming,
@@ -254,7 +255,10 @@ function mergePages(base: InkPage, incoming: InkPage): InkPage {
     flag: incoming.updatedAt >= base.updatedAt ? incoming.flag : base.flag,
     strokes: [...strokes.values()].sort((a, b) => a.createdAt - b.createdAt),
     deletedStrokeIds,
-    ...(base.tags || incoming.tags ? { tags } : {}),
+    // Either side carrying tags forces the key so the spread above cannot
+    // leak the loser's list; undefined clears it and JSON-drops on disk,
+    // keeping untagged pages key-free after a normalize round-trip.
+    ...(base.tags || incoming.tags ? { tags: tags?.length ? [...tags] : undefined } : {}),
     ...(base.stickyNotes || incoming.stickyNotes || base.deletedStickyNotes || incoming.deletedStickyNotes ? {
       stickyNotes: [...stickyNotes.values()].sort(compareStickyOrder), deletedStickyNotes,
     } : {}),
