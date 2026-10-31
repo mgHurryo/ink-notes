@@ -24584,6 +24584,7 @@ var RENEWED_FLICK_GAP_MS = 55;
 var RENEWED_FLICK_RELEASE_PX = 4;
 var RENEWED_FLICK_JUMP_PX = 24;
 var RENEWED_FLICK_JUMP_RATIO = 2.2;
+var RENEWED_FLICK_HOLD_RATIO = 0.6;
 var REF_DT_MS = 10;
 var RENEW_MIN_FLIPPED = 3;
 var PAGE_TRAVEL_PX = 100;
@@ -24611,6 +24612,13 @@ var DesktopWheelGesture = class {
      *  momentum continuation only decays, a fresh flick rises over the settled
      *  tail without needing an implausible single-step ratio. */
     this.lastMagnitude = 0;
+    /** Whether the frozen envelope's last write came from a sample delivered at
+     *  reporting cadence (gap in [2, 55)ms). The renewal heuristics normalized
+     *  speeds to that reference window, so an envelope last written by a
+     *  same-tick stall flush or by a boundary delivery carries no tail-speed
+     *  evidence and must not veto a fresh swipe at the idle boundary (see the
+     *  renewed branch below). */
+    this.envelopeAtCadence = false;
     this.travel = 0;
     this.flipped = false;
     this.notchCredit = 0;
@@ -24623,6 +24631,20 @@ var DesktopWheelGesture = class {
      *  sample's slope decides between a real renewed flick (reset) and the same
      *  flick delivered late (keep the gesture and its suppression). */
     this.stallProbation = false;
+    /** Which exit a frozen sample deferred its action to the next sample's
+     *  slope: "rearm" (jump re-arm) or "reset" (quiet-gap reset). Null on the
+     *  settled-tail probation above, whose judgment stays the strict rise. A
+     *  stall merge stamped at the delivery cadence (the event carries a short
+     *  gap the stall never had) is indistinguishable from a real re-swipe at
+     *  the single-sample level, so exits whose predicate fired on such a shape
+     *  must not act in-frame. */
+    this.stallDeferral = null;
+    /** Normalized speed and raw travel of the frozen sample: the mirror arm
+     *  judges the next sample against the speed, and on confirmation the travel
+     *  is restored so a real re-swipe flips on the same beat an in-frame exit
+     *  would have flipped it. */
+    this.stallDeferralSpeed = 0;
+    this.stallDeferralTravel = 0;
     this.trackpadPages = 0;
     /** Pages already flipped on the x axis during the current contact. Unlike
      *  trackpadPages it survives beginRenewedGesture: a mid-tail renewal is
@@ -24651,6 +24673,9 @@ var DesktopWheelGesture = class {
     this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     this.renewalBlocked = false;
     this.stallProbation = false;
+    this.stallDeferral = null;
+    this.stallDeferralSpeed = this.stallDeferralTravel = 0;
+    this.envelopeAtCadence = false;
     this.trackpadPages = this.zeroAxisPauses = 0;
     this.contactXPages = 0;
     this.flippedRun = 0;
@@ -24659,7 +24684,7 @@ var DesktopWheelGesture = class {
   }
   begin(delta, shift, at) {
     let gap = this.lastAt === null ? 0 : at - this.lastAt;
-    if (gap < 0 || gap >= GESTURE_IDLE_MS) {
+    if (gap < 0 || gap >= GESTURE_IDLE_MS && !(this.flipped && !this.discrete && !this.stallProbation)) {
       this.reset();
       gap = 0;
     }
@@ -24669,6 +24694,7 @@ var DesktopWheelGesture = class {
     const magnitude = Math.abs(movement);
     const unclamped = this.flipped && !this.discrete && Math.abs(this.lastDelta) > RENEWED_FLICK_RELEASE_PX;
     const normalized = magnitude * (REF_DT_MS / (unclamped ? Math.max(gap, 1) : Math.min(Math.max(gap, 1), REF_DT_MS * 5)));
+    const cadence = gap >= 2 && gap < RENEWED_FLICK_GAP_MS;
     const pixelNotch = delta.x === 0 && (axis === "y" || shift) && magnitude >= 80 && (magnitude % 100 === 0 || magnitude % 120 === 0);
     const discrete = delta.mode !== 0 || pixelNotch;
     const reversed = this.lastDelta !== 0 && movement !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta);
@@ -24680,19 +24706,48 @@ var DesktopWheelGesture = class {
       this.reset();
       gap = 0;
     } else if (this.stallProbation) {
-      this.stallProbation = false;
-      if (gap >= 2 && normalized > Math.abs(this.lastDelta) && normalized > this.lastMagnitude && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO) {
-        this.reset();
-        gap = 0;
+      if (!(movement === 0 && !this.discrete)) {
+        this.stallProbation = false;
+        if (this.stallDeferral !== null) {
+          const deferral = this.stallDeferral;
+          this.stallDeferral = null;
+          if (gap >= 2 && normalized >= this.stallDeferralSpeed * RENEWED_FLICK_HOLD_RATIO) {
+            if (deferral === "rearm") {
+              this.beginRenewedGesture();
+              this.flipped = false;
+              this.travel = this.stallDeferralTravel;
+              this.renewalBlocked = true;
+              this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+            } else {
+              this.reset();
+              gap = 0;
+              this.travel = this.stallDeferralTravel;
+            }
+          }
+          this.stallDeferralSpeed = this.stallDeferralTravel = 0;
+        } else if (gap >= 2 && normalized > Math.abs(this.lastDelta) && normalized > this.lastMagnitude && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO) {
+          this.reset();
+          gap = 0;
+        }
       }
     } else if (renewed) {
-      if (normalized > Math.abs(this.lastDelta)) {
-        if (!unclamped && gap > REF_DT_MS * 5 && magnitude * (REF_DT_MS / gap) <= Math.abs(this.lastDelta)) {
+      if (gap >= GESTURE_IDLE_MS && !this.envelopeAtCadence) {
+        this.reset();
+        gap = 0;
+      } else if (normalized > Math.abs(this.lastDelta)) {
+        if ((!unclamped || gap >= GESTURE_IDLE_MS) && gap > REF_DT_MS * 5 && magnitude * (REF_DT_MS / gap) <= Math.abs(this.lastDelta)) {
           this.stallProbation = true;
+        } else if (normalized < Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO) {
+          this.stallProbation = true;
+          this.stallDeferral = "reset";
+          this.stallDeferralSpeed = normalized;
+          this.stallDeferralTravel = movement;
         } else {
           this.reset();
           gap = 0;
         }
+      } else if (gap >= GESTURE_IDLE_MS) {
+        this.stallProbation = true;
       }
     }
     this.zeroAxisPauses = movement === 0 && axis === this.axis ? this.zeroAxisPauses + 1 : 0;
@@ -24739,11 +24794,10 @@ var DesktopWheelGesture = class {
           }
         }
       } else if (jump && priorFlippedRun >= RENEW_MIN_FLIPPED) {
-        this.beginRenewedGesture();
-        this.flipped = false;
-        this.travel = 0;
-        this.renewalBlocked = true;
-        this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+        this.stallProbation = true;
+        this.stallDeferral = "rearm";
+        this.stallDeferralSpeed = normalized;
+        this.stallDeferralTravel = movement;
       }
     } else {
       this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
@@ -24752,7 +24806,10 @@ var DesktopWheelGesture = class {
     this.flippedPreviously = this.flipped;
     const pausedTail = movement === 0 && this.flipped && !this.discrete;
     this.lastDelta = pausedTail || this.stallProbation ? this.lastDelta : this.flipped && !this.discrete ? Math.sign(movement) * Math.min(Math.abs(this.lastDelta), normalized) : Math.sign(movement) * normalized;
-    if (!pausedTail && !this.stallProbation) this.lastMagnitude = normalized;
+    if (!pausedTail && !this.stallProbation) {
+      this.lastMagnitude = normalized;
+      this.envelopeAtCadence = cadence;
+    }
     return {
       axis,
       movement,

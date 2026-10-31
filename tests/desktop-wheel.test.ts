@@ -94,7 +94,7 @@ describe("DesktopWheelGesture settled-tail stall continuation", () => {
   // remaining tail travel a fresh contact whose budget flipped a second page
   // inside one physical contact. A rise the clamp alone manufactures must
   // freeze for one sample; the next sample's slope decides.
-  function pagesAcrossSettledTailStall(axis: "x" | "y", stallGapMs: number): number {
+  function pagesAcrossSettledTailStall(axis: "x" | "y", stallGapMs: number, stallStampMs = stallGapMs): number {
     const gesture = new DesktopWheelGesture();
     let pages = 0;
     let at = 100;
@@ -114,9 +114,21 @@ describe("DesktopWheelGesture settled-tail stall continuation", () => {
     feed(tail(axis === "x" ? 10 : 11, 32), 10); // decays to ~3.4px/10ms, inside the settled band
     const tailSpeed = (axis === "x" ? 10 : 11) * Math.exp(-320 / 300);
     if (stallGapMs > 0) {
-      // One merged event sums the pixels the stalled tail swept across the gap.
-      at += stallGapMs - 10;
-      feed([tailSpeed * 30 * (1 - Math.exp(-stallGapMs / 300))], 10);
+      // One merged event sums the pixels the stalled tail swept across the
+      // real gap. stallStampMs delivers it with a shorter stamp (the gap the
+      // delivery cadence claims, AppKit-style), so the event lies about the
+      // stall it merged while the tail itself still decays across the real
+      // stall duration.
+      at += stallStampMs - 10;
+      const mergedPx = tailSpeed * 30 * (1 - Math.exp(-stallGapMs / 300));
+      const delta = axis === "x" ? { x: mergedPx, y: 0, mode: 0 } : { x: 0, y: mergedPx, mode: 0 };
+      const merged = gesture.begin(delta, false, at);
+      // The merged event must land exactly stallStampMs after the last tail
+      // sample; an off-by-10ms timestamp once read the wrong side of the
+      // 180ms idle boundary.
+      expect(merged.gap).toBe(stallStampMs);
+      pages += gesture.pageDelta(merged, false);
+      at += 10;
       feed(tail(tailSpeed, 70, stallGapMs), 10); // continuation to exhaustion
     } else {
       feed(tail(tailSpeed, 71), 10);
@@ -138,6 +150,254 @@ describe("DesktopWheelGesture settled-tail stall continuation", () => {
 
   it("keeps a 40ms stall under the quiet-gap threshold to one page", () => {
     expect(pagesAcrossSettledTailStall("x", 40)).toBe(1);
+  });
+
+  it("pins a 178ms stall just under the idle boundary to one page", () => {
+    expect(pagesAcrossSettledTailStall("y", 178)).toBe(1);
+  });
+
+  it("pins a 179ms stall to one page on the horizontal mirror", () => {
+    expect(pagesAcrossSettledTailStall("x", 179)).toBe(1);
+  });
+
+  it("keeps a 180ms stall at the idle boundary to one page", () => {
+    expect(pagesAcrossSettledTailStall("y", 180)).toBe(1);
+  });
+
+  it("keeps a 181ms stall past the idle boundary to one page", () => {
+    expect(pagesAcrossSettledTailStall("x", 181)).toBe(1);
+  });
+
+  it("keeps a 189ms stall past the idle boundary to one page", () => {
+    expect(pagesAcrossSettledTailStall("x", 189)).toBe(1);
+  });
+
+  it("keeps a 250ms stall to one page on the vertical mirror", () => {
+    expect(pagesAcrossSettledTailStall("y", 250)).toBe(1);
+  });
+
+  // Stamped delivery (the merged event carries a delivery-cadence gap instead
+  // of its real stall gap): the clamp then reads the merge at gap/50 of its
+  // true speed, so a 100ms merge stamped at 0-10ms clears the settledRise
+  // floor and re-arms through the jump exit, and stamped at 55ms it outruns
+  // the settled envelope on "real-gap" speed alone and resets through the
+  // quiet-gap exit. Both mint a fresh contact the resumed tail pages on. The
+  // mid-band stamp stays blocked by the 12px settledRise floor (pinned), and
+  // the horizontal contact keeps its single page across every stamp because
+  // contactXPages survives a re-arm (its asymmetry with the y axis pinned).
+  it("keeps a settled-tail stall merge stamped at delivery cadence to one page (0ms)", () => {
+    expect(pagesAcrossSettledTailStall("y", 100, 0)).toBe(1);
+  });
+
+  it("keeps a settled-tail stall merge stamped at delivery cadence to one page (10ms)", () => {
+    expect(pagesAcrossSettledTailStall("y", 100, 10)).toBe(1);
+  });
+
+  it("keeps a settled-tail stall merge stamped inside the mid band to one page (30ms)", () => {
+    expect(pagesAcrossSettledTailStall("y", 100, 30)).toBe(1);
+  });
+
+  it("keeps a settled-tail stall merge stamped just past the quiet gap to one page (55ms)", () => {
+    expect(pagesAcrossSettledTailStall("y", 100, 55)).toBe(1);
+  });
+
+  it("keeps every stamped delivery of a horizontal stall merge to one page", () => {
+    for (const stamp of [0, 10, 30, 55]) expect(pagesAcrossSettledTailStall("x", 100, stamp)).toBe(1);
+  });
+});
+
+describe("DesktopWheelGesture stamped tropical stall merge", () => {
+  // A tail converging just above the release floor (~4.8px/10ms) is still hot
+  // (unclamped): its merged samples are judged at their stamp's real gap, so
+  // the settled-band clamp defense never applies. A 100ms merge (~41px)
+  // stamped at 15ms lands in the jump band and stamped at 70ms rises over the
+  // envelope through the quiet-gap exit - both re-armed and minted a fresh
+  // budget the resumed tail pages on. Delivered at its real gap the merge
+  // stays inside the envelope (anti-overfix control).
+  function pagesAcrossTropicalStallMerge(stampGapMs: number): number {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 100;
+    const feed = (magnitudes: number[], stepMs: number) => {
+      for (const magnitude of magnitudes) {
+        pages += gesture.pageDelta(gesture.begin({ x: 0, y: magnitude, mode: 0 }, false, at), false);
+        at += stepMs;
+      }
+    };
+    const windowPx = 30 * (1 - Math.exp(-10 / 300));
+    feed([140, 90, 60], 10); // fast phase: the contact's one page
+    const tailSpeed = 14 * Math.exp(-320 / 300); // converges at ~4.8px/10ms, above the release floor
+    feed(Array.from({ length: 32 }, (_, i) => 14 * Math.exp(-(i + 1) * 10 / 300) * windowPx), 10);
+    at += stampGapMs - 10;
+    const mergedPx = tailSpeed * 30 * (1 - Math.exp(-100 / 300));
+    const merged = gesture.begin({ x: 0, y: mergedPx, mode: 0 }, false, at);
+    expect(merged.gap).toBe(stampGapMs);
+    pages += gesture.pageDelta(merged, false);
+    at += 10;
+    feed(Array.from({ length: 70 }, (_, i) => tailSpeed * Math.exp(-(100 + (i + 1) * 10) / 300) * windowPx), 10);
+    return pages;
+  }
+
+  it("keeps a tropical stall merge stamped in the jump band to one page (15ms)", () => {
+    expect(pagesAcrossTropicalStallMerge(15)).toBe(1);
+  });
+
+  it("keeps a tropical stall merge stamped past the quiet gap to one page (70ms)", () => {
+    expect(pagesAcrossTropicalStallMerge(70)).toBe(1);
+  });
+
+  it("keeps the same merge delivered at its real gap to one page (100ms)", () => {
+    expect(pagesAcrossTropicalStallMerge(100)).toBe(1);
+  });
+});
+
+describe("DesktopWheelGesture hot-tail stall continuation", () => {
+  // A tail whose envelope converged above the 4px release floor is still hot:
+  // its >=180ms stall merge arrives at the true gap (unclamped), and the
+  // merged amplitude itself (envelope * 30 * (1 - e^(-gap/300))) clears the
+  // 100px page threshold in one sample. The idle-boundary reset used to arm
+  // a fresh contact for it, so the remaining tail flipped a second page -
+  // the "one swipe, many pages" family past the settled band.
+  function pagesAcrossHotTailStall(stallGapMs: number): number {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 100;
+    const feed = (magnitudes: number[], stepMs: number) => {
+      for (const magnitude of magnitudes) {
+        pages += gesture.pageDelta(gesture.begin({ x: 0, y: magnitude, mode: 0 }, false, at), false);
+        at += stepMs;
+      }
+    };
+    feed([140, 90, 60, 30, 20, 14], 10); // fast phase: one page
+    feed([11, 9.5, 8.5, 8.2, 8], 10); // tail converges at ~8px/10ms, above the release floor
+    at += stallGapMs - 10;
+    // The merged event sweeps envelope * 30 * (1 - e^(-gap/300)) pixels:
+    // 116.8px at a 200ms stall, 135.7px at 250ms.
+    const mergedPx = 8 * 30 * (1 - Math.exp(-stallGapMs / 300));
+    const merged = gesture.begin({ x: 0, y: mergedPx, mode: 0 }, false, at);
+    expect(merged.gap).toBe(stallGapMs);
+    pages += gesture.pageDelta(merged, false);
+    at += 10;
+    feed(Array.from({ length: 40 }, (_, i) => 8 * Math.exp(-(stallGapMs + (i + 1) * 10) / 300)), 10);
+    return pages;
+  }
+
+  it("keeps a 200ms stall of a still-hot tail to one page", () => {
+    expect(pagesAcrossHotTailStall(200)).toBe(1);
+  });
+
+  it("keeps a 250ms stall of a still-hot tail to one page", () => {
+    expect(pagesAcrossHotTailStall(250)).toBe(1);
+  });
+});
+
+describe("DesktopWheelGesture idle-boundary re-arm guard", () => {
+  // Locks the freeze implementation of the >=180ms boundary: the boundary
+  // first sample must go onto stall probation, never through to the ramp
+  // detector - a boundary sample seeded into renewedPeak/renewedTravel makes
+  // the deliberate re-sweep below crawl instead of re-arming on the next
+  // sample's slope (an earlier revision of the boundary fix regressed these
+  // to one page). Both tails stay at two pages: on y the slope judgment mints
+  // a new contact whose budget flips the second page; on x the same reset
+  // opens the second contact, which flips its own single page (the one-page-
+  // per-contact contract).
+  function pagesAcrossIdleBoundaryResweep(axis: "x" | "y", hot: boolean): number {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 100;
+    const feed = (magnitudes: number[], stepMs: number) => {
+      for (const magnitude of magnitudes) {
+        const delta = axis === "x" ? { x: magnitude, y: 0, mode: 0 } : { x: 0, y: magnitude, mode: 0 };
+        pages += gesture.pageDelta(gesture.begin(delta, false, at), false);
+        at += stepMs;
+      }
+    };
+    const windowPx = 30 * (1 - Math.exp(-10 / 300));
+    feed(axis === "x" ? [140, 90, 60, 40] : [140, 90, 60], 10); // the contact's one page
+    if (hot) {
+      feed([11, 9.5, 8.5, 7, 6.2, 6], 10); // converges at ~6px/10ms, above the release floor
+    } else {
+      // tau=300ms tail decaying to just under the release floor (settled).
+      const v0 = axis === "x" ? 10 : 11;
+      feed(Array.from({ length: 32 }, (_, i) => v0 * Math.exp(-(i + 1) * 10 / 300) * windowPx), 10);
+    }
+    at += 200 - 10; // silence across the idle boundary: the re-sweep lands at gap 200ms
+    feed(Array.from({ length: 30 }, (_, i) => 13 + (i % 5) * 2), 10);
+    return pages;
+  }
+
+  it("rearms a deliberate re-sweep after 200ms over a settled tail (y)", () => {
+    expect(pagesAcrossIdleBoundaryResweep("y", false)).toBe(2);
+  });
+
+  it("rearms a deliberate re-sweep after 200ms over a settled tail (x)", () => {
+    expect(pagesAcrossIdleBoundaryResweep("x", false)).toBe(2);
+  });
+
+  it("rearms a deliberate re-sweep after 200ms over a hot tail (y)", () => {
+    expect(pagesAcrossIdleBoundaryResweep("y", true)).toBe(2);
+  });
+
+  it("rearms a deliberate re-sweep after 200ms over a hot tail (x)", () => {
+    expect(pagesAcrossIdleBoundaryResweep("x", true)).toBe(2);
+  });
+});
+
+describe("DesktopWheelGesture idle-boundary reset for cadence-less envelopes", () => {
+  // The >=180ms boundary freeze only protects a tail whose envelope was
+  // earned at delivery cadence. When the frozen envelope was last written by
+  // a same-tick flush or by a boundary delivery, it carries no tail-speed
+  // evidence, and freezing behind it swallows whole re-swipes: a single-event
+  // swipe has no follow-up sample to clear the probation, and each swallowed
+  // swipe min-chains the envelope toward its own speed so identical repeats
+  // freeze in an alternating pattern. These two shapes are the desktop-input
+  // visual fixtures ("5 / 6" single-event bursts, "5 / 5" separate sync
+  // flicks); both queue every destination across a save barrier.
+  function bursts(count: number, gapMs = 320): number {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    for (let i = 0; i < count; i++) {
+      pages += gesture.pageDelta(gesture.begin({ x: 150, y: 0, mode: 0 }, false, 10000 + i * gapMs), false);
+    }
+    return pages;
+  }
+
+  it("flips every single-event burst delivered past the idle boundary", () => {
+    expect(bursts(4)).toBe(4);
+  });
+
+  it("flips every separate sync-dispatched flick past the idle boundary", () => {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    // One synchronous task hands a flick's six samples colliding timestamps;
+    // the flicks themselves land ~200ms apart (real awaited gaps).
+    for (const start of [10000, 10200, 10400]) {
+      for (const magnitude of [140, 90, 60, 30, 10, 4]) {
+        pages += gesture.pageDelta(gesture.begin({ x: magnitude, y: 0, mode: 0 }, false, start), false);
+      }
+    }
+    expect(pages).toBe(3);
+  });
+
+  it("still freezes a cadence-earned tail merge at the boundary (stall contract)", () => {
+    // Control: the same single-event gap, but the envelope behind it was
+    // written by 10ms-cadence tail samples - the freeze must stay.
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 100;
+    const feed = (magnitudes: number[], stepMs: number) => {
+      for (const magnitude of magnitudes) {
+        pages += gesture.pageDelta(gesture.begin({ x: 0, y: magnitude, mode: 0 }, false, at), false);
+        at += stepMs;
+      }
+    };
+    feed([140, 90, 60, 30, 20, 14], 10); // fast phase: one page
+    feed([11, 9.5, 8.5, 8.2, 8], 10); // tail converges at ~8px/10ms
+    at += 190;
+    const merged = gesture.begin({ x: 0, y: 8 * 30 * (1 - Math.exp(-200 / 300)), mode: 0 }, false, at);
+    expect(merged.gap).toBe(200);
+    pages += gesture.pageDelta(merged, false);
+    expect(pages).toBe(1);
   });
 });
 

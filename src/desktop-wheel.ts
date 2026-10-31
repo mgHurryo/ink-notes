@@ -7,6 +7,14 @@ const RENEWED_FLICK_RELEASE_PX = 4;
  *  envelope marks a new gesture - compound acceleration never happens. */
 const RENEWED_FLICK_JUMP_PX = 24;
 const RENEWED_FLICK_JUMP_RATIO = 2.2;
+/** A deferred re-arm/reset is confirmed one sample later by a next sample
+ *  that merely HOLDS this fraction of the frozen sample's speed, not the
+ *  strict rise the settled-tail probation demands: a real re-flick's fast
+ *  phase holds nearly constant, and only a stall merge's tail decays away.
+ *  The floor sits just under the oscillating re-flick shape (60/90px steps
+ *  hold 0.67x) and safely above the shallowest merged-continuation fall (a
+ *  70ms-stamped tropical merge decays to 0.56x). */
+const RENEWED_FLICK_HOLD_RATIO = 0.6;
 /** Every renewal heuristic below compares speeds, not per-event amplitudes:
  *  each sample is normalized to this reference window, the reporting cadence
  *  the px floors were tuned at. A main-thread stall merges several hardware
@@ -82,6 +90,13 @@ export class DesktopWheelGesture {
    *  momentum continuation only decays, a fresh flick rises over the settled
    *  tail without needing an implausible single-step ratio. */
   private lastMagnitude = 0;
+  /** Whether the frozen envelope's last write came from a sample delivered at
+   *  reporting cadence (gap in [2, 55)ms). The renewal heuristics normalized
+   *  speeds to that reference window, so an envelope last written by a
+   *  same-tick stall flush or by a boundary delivery carries no tail-speed
+   *  evidence and must not veto a fresh swipe at the idle boundary (see the
+   *  renewed branch below). */
+  private envelopeAtCadence = false;
   private travel = 0;
   private flipped = false;
   private notchCredit = 0;
@@ -94,6 +109,20 @@ export class DesktopWheelGesture {
    *  sample's slope decides between a real renewed flick (reset) and the same
    *  flick delivered late (keep the gesture and its suppression). */
   private stallProbation = false;
+  /** Which exit a frozen sample deferred its action to the next sample's
+   *  slope: "rearm" (jump re-arm) or "reset" (quiet-gap reset). Null on the
+   *  settled-tail probation above, whose judgment stays the strict rise. A
+   *  stall merge stamped at the delivery cadence (the event carries a short
+   *  gap the stall never had) is indistinguishable from a real re-swipe at
+   *  the single-sample level, so exits whose predicate fired on such a shape
+   *  must not act in-frame. */
+  private stallDeferral: "rearm" | "reset" | null = null;
+  /** Normalized speed and raw travel of the frozen sample: the mirror arm
+   *  judges the next sample against the speed, and on confirmation the travel
+   *  is restored so a real re-swipe flips on the same beat an in-frame exit
+   *  would have flipped it. */
+  private stallDeferralSpeed = 0;
+  private stallDeferralTravel = 0;
   private trackpadPages = 0;
   /** Pages already flipped on the x axis during the current contact. Unlike
    *  trackpadPages it survives beginRenewedGesture: a mid-tail renewal is
@@ -123,6 +152,9 @@ export class DesktopWheelGesture {
     this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     this.renewalBlocked = false;
     this.stallProbation = false;
+    this.stallDeferral = null;
+    this.stallDeferralSpeed = this.stallDeferralTravel = 0;
+    this.envelopeAtCadence = false;
     this.trackpadPages = this.zeroAxisPauses = 0;
     this.contactXPages = 0;
     this.flippedRun = 0;
@@ -132,7 +164,18 @@ export class DesktopWheelGesture {
 
   begin(delta: WheelDelta, shift: boolean, at: number): WheelMotion {
     let gap = this.lastAt === null ? 0 : at - this.lastAt;
-    if (gap < 0 || gap >= GESTURE_IDLE_MS) { this.reset(); gap = 0; }
+    // An idle-boundary gap hard-resets - except for a flipped continuous
+    // gesture: resetting there would clear the flip suppression and the page
+    // budget and hand the stall's remaining tail travel a fresh contact that
+    // pages again (the >=180ms slice of the one-swipe-many-pages family). The
+    // real gap is kept so the renewal logic below can judge the merged sample
+    // at its true delivery interval. Discrete gestures and a gesture whose
+    // stall probation died inside the gap still hard-reset, so a gesture can
+    // never outlive the stall that paused it.
+    if (gap < 0 || (gap >= GESTURE_IDLE_MS && !(this.flipped && !this.discrete && !this.stallProbation))) {
+      this.reset();
+      gap = 0;
+    }
     const horizontal = Math.abs(delta.x), vertical = Math.abs(delta.y);
     // A zero component on the held axis pauses a diagonal stream instead of
     // switching the axis; without the tolerance the axis flips and the reset
@@ -164,6 +207,10 @@ export class DesktopWheelGesture {
     const normalized = magnitude * (REF_DT_MS / (unclamped
       ? Math.max(gap, 1)
       : Math.min(Math.max(gap, 1), REF_DT_MS * 5)));
+    // Captured from the arrival gap before any boundary reset zeroes it: the
+    // envelope write below records whether its value still describes a stream
+    // that was delivering at reporting cadence.
+    const cadence = gap >= 2 && gap < RENEWED_FLICK_GAP_MS;
     // A large pixel delta alone is not a notch: fast touchpad flicks also
     // exceed 80px. Recognize conventional wheel steps conservatively; once
     // continuous motion appears, keep its inertia in the same gesture.
@@ -197,33 +244,102 @@ export class DesktopWheelGesture {
       // continuation only decays. The judgment must not run on the merged
       // sample itself - a >= 140ms stall's own clamped speed already clears
       // the 2.2x ratio - and gap >= 2 keeps a same-tick merged event (dt
-      // clamped to 1ms, speed inflated 10x) from posing as that rise.
-      this.stallProbation = false;
-      if (gap >= 2 && normalized > Math.abs(this.lastDelta) && normalized > this.lastMagnitude
-        && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO) {
-        this.reset();
-        gap = 0;
+      // clamped to 1ms, speed inflated 10x) from posing as that rise. A
+      // paused held-axis sample carries no slope at all: the freeze stands
+      // for the next moving sample, exactly as the envelope write below
+      // survives pauses.
+      if (!(movement === 0 && !this.discrete)) {
+        this.stallProbation = false;
+        if (this.stallDeferral !== null) {
+          // Mirror arm for a deferred exit: a real re-flick's fast phase holds
+          // or rises over the frozen sample, a stamped merge's resumed tail
+          // decays away - and holding (not the strict rise demanded below) is
+          // the giveaway, or the constant-velocity re-sweep contract would be
+          // swallowed. The exit's action runs one beat late with the frozen
+          // sample's parked travel restored, so a real re-swipe flips on the
+          // same beat an in-frame exit would have flipped it; a fall keeps the
+          // gesture, its suppression and its page budget.
+          const deferral = this.stallDeferral;
+          this.stallDeferral = null;
+          if (gap >= 2 && normalized >= this.stallDeferralSpeed * RENEWED_FLICK_HOLD_RATIO) {
+            if (deferral === "rearm") {
+              this.beginRenewedGesture();
+              this.flipped = false;
+              this.travel = this.stallDeferralTravel;
+              this.renewalBlocked = true;
+              this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+            } else {
+              this.reset();
+              gap = 0;
+              this.travel = this.stallDeferralTravel;
+            }
+          }
+          this.stallDeferralSpeed = this.stallDeferralTravel = 0;
+        } else if (gap >= 2 && normalized > Math.abs(this.lastDelta) && normalized > this.lastMagnitude
+          && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO) {
+          this.reset();
+          gap = 0;
+        }
       }
     } else if (renewed) {
       // A quiet interval marks a new intent only when the stream resumes
       // RISING over the settled envelope; resuming at or below it is the same
       // physical flick delivered late - keep the gesture, its suppression and
       // the page budget, and let the ramp detector below re-seed instead.
-      if (normalized > Math.abs(this.lastDelta)) {
+      if (gap >= GESTURE_IDLE_MS && !this.envelopeAtCadence) {
+        // An envelope without cadence evidence cannot describe a tail speed,
+        // so it must not veto this boundary sample: freezing behind it leaves
+        // a single-event re-swipe with no follow-up sample to clear the
+        // probation, and the swallowed sample's min-chain write then converges
+        // the envelope to its own speed, freezing every later swipe in an
+        // alternating pattern (the desktop-input visual fixtures queue "5 / 5"
+        // and "5 / 6" across a save barrier there). Reset into a fresh
+        // contact - the pre-#345 idle-boundary reset, scoped to envelopes with
+        // no cadence evidence, so a cadence-earned tail keeps its freeze and
+        // with it the one-swipe-many-pages protection.
+        this.reset();
+        gap = 0;
+      } else if (normalized > Math.abs(this.lastDelta)) {
         // A settled-band stall merged sample is judged on the [1,50]ms clamp,
         // which inflates its speed gap/50x over the real delivery gap. When
         // the rise vanishes at that real gap the clamp alone manufactured it,
         // so freeze the envelope for one sample and let the slope judge
         // above - resetting here would mint a fresh contact and hand the
-        // remaining tail travel a budget to page again. A rise that survives
-        // the real gap (a genuine re-swipe) keeps the reset.
-        if (!unclamped && gap > REF_DT_MS * 5
+        // remaining tail travel a budget to page again. At the >= 180ms idle
+        // boundary a live (unclamped) tail is already judged at its real gap,
+        // so the freeze stays available there too instead of the old
+        // unconditional reset. A rise that survives the real gap (a genuine
+        // re-swipe) keeps the reset.
+        if ((!unclamped || gap >= GESTURE_IDLE_MS) && gap > REF_DT_MS * 5
           && magnitude * (REF_DT_MS / gap) <= Math.abs(this.lastDelta)) {
           this.stallProbation = true;
+        } else if (normalized < Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO) {
+          // The remaining rise the real delivery gap does not support is a
+          // stamp lie: a merge delivered at delivery cadence outruns the
+          // envelope at its stamp's gap alone, on either side of the
+          // unclamped boundary. It is single-sample indistinguishable from a
+          // re-swipe, so the reset defers to the mirror arm instead of
+          // minting a fresh contact the resumed tail pages on. Rises clear of
+          // the jump ratio are real re-swipes even on honest-stamp platforms
+          // and keep the in-frame reset.
+          this.stallProbation = true;
+          this.stallDeferral = "reset";
+          this.stallDeferralSpeed = normalized;
+          this.stallDeferralTravel = movement;
         } else {
           this.reset();
           gap = 0;
         }
+      } else if (gap >= GESTURE_IDLE_MS) {
+        // A boundary continuation whose normalized speed stayed inside the
+        // envelope is the same tail delivered late, not a new intent: freeze
+        // it uncounted for one sample instead of letting it seed the ramp
+        // detector below (a seeded boundary sample crawls the ramp and
+        // swallows the deliberate re-swipe that follows). The next sample's
+        // slope at the probation judgment above then decides between a
+        // genuine re-swipe (reset, new contact) and the decay's continuation
+        // (suppression and the page budget carry over).
+        this.stallProbation = true;
       }
     }
     // Count retained samples that moved nothing: isolated ones are the
@@ -296,11 +412,16 @@ export class DesktopWheelGesture {
           }
         }
       } else if (jump && priorFlippedRun >= RENEW_MIN_FLIPPED) {
-        this.beginRenewedGesture();
-        this.flipped = false;
-        this.travel = 0;
-        this.renewalBlocked = true;
-        this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+        // A jump-shaped sample may be a stall merge stamped at delivery
+        // cadence rather than a re-swipe - the two are indistinguishable at
+        // the single-sample level - so the re-arm waits one sample: the
+        // mirror arm confirms it on held speed with the parked travel
+        // restored, or the merge decays away and the gesture keeps its
+        // suppression and page budget.
+        this.stallProbation = true;
+        this.stallDeferral = "rearm";
+        this.stallDeferralSpeed = normalized;
+        this.stallDeferralTravel = movement;
       }
     } else {
       this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
@@ -323,7 +444,10 @@ export class DesktopWheelGesture {
       : this.flipped && !this.discrete
         ? Math.sign(movement) * Math.min(Math.abs(this.lastDelta), normalized)
         : Math.sign(movement) * normalized;
-    if (!pausedTail && !this.stallProbation) this.lastMagnitude = normalized;
+    if (!pausedTail && !this.stallProbation) {
+      this.lastMagnitude = normalized;
+      this.envelopeAtCadence = cadence;
+    }
     return { axis, movement, discrete: this.discrete, mode: delta.mode, gap, gestureId: this.gestureId,
       suppressed: !this.discrete && this.flipped, renewedTravel, probation: this.stallProbation };
   }
