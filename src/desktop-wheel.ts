@@ -132,7 +132,18 @@ export class DesktopWheelGesture {
 
   begin(delta: WheelDelta, shift: boolean, at: number): WheelMotion {
     let gap = this.lastAt === null ? 0 : at - this.lastAt;
-    if (gap < 0 || gap >= GESTURE_IDLE_MS) { this.reset(); gap = 0; }
+    // An idle-boundary gap hard-resets - except for a flipped continuous
+    // gesture: resetting there would clear the flip suppression and the page
+    // budget and hand the stall's remaining tail travel a fresh contact that
+    // pages again (the >=180ms slice of the one-swipe-many-pages family). The
+    // real gap is kept so the renewal logic below can judge the merged sample
+    // at its true delivery interval. Discrete gestures and a gesture whose
+    // stall probation died inside the gap still hard-reset, so a gesture can
+    // never outlive the stall that paused it.
+    if (gap < 0 || (gap >= GESTURE_IDLE_MS && !(this.flipped && !this.discrete && !this.stallProbation))) {
+      this.reset();
+      gap = 0;
+    }
     const horizontal = Math.abs(delta.x), vertical = Math.abs(delta.y);
     // A zero component on the held axis pauses a diagonal stream instead of
     // switching the axis; without the tolerance the axis flips and the reset
@@ -215,15 +226,28 @@ export class DesktopWheelGesture {
         // the rise vanishes at that real gap the clamp alone manufactured it,
         // so freeze the envelope for one sample and let the slope judge
         // above - resetting here would mint a fresh contact and hand the
-        // remaining tail travel a budget to page again. A rise that survives
-        // the real gap (a genuine re-swipe) keeps the reset.
-        if (!unclamped && gap > REF_DT_MS * 5
+        // remaining tail travel a budget to page again. At the >= 180ms idle
+        // boundary a live (unclamped) tail is already judged at its real gap,
+        // so the freeze stays available there too instead of the old
+        // unconditional reset. A rise that survives the real gap (a genuine
+        // re-swipe) keeps the reset.
+        if ((!unclamped || gap >= GESTURE_IDLE_MS) && gap > REF_DT_MS * 5
           && magnitude * (REF_DT_MS / gap) <= Math.abs(this.lastDelta)) {
           this.stallProbation = true;
         } else {
           this.reset();
           gap = 0;
         }
+      } else if (gap >= GESTURE_IDLE_MS) {
+        // A boundary continuation whose normalized speed stayed inside the
+        // envelope is the same tail delivered late, not a new intent: freeze
+        // it uncounted for one sample instead of letting it seed the ramp
+        // detector below (a seeded boundary sample crawls the ramp and
+        // swallows the deliberate re-swipe that follows). The next sample's
+        // slope at the probation judgment above then decides between a
+        // genuine re-swipe (reset, new contact) and the decay's continuation
+        // (suppression and the page budget carry over).
+        this.stallProbation = true;
       }
     }
     // Count retained samples that moved nothing: isolated ones are the

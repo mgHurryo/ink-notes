@@ -24659,7 +24659,7 @@ var DesktopWheelGesture = class {
   }
   begin(delta, shift, at) {
     let gap = this.lastAt === null ? 0 : at - this.lastAt;
-    if (gap < 0 || gap >= GESTURE_IDLE_MS) {
+    if (gap < 0 || gap >= GESTURE_IDLE_MS && !(this.flipped && !this.discrete && !this.stallProbation)) {
       this.reset();
       gap = 0;
     }
@@ -24687,12 +24687,14 @@ var DesktopWheelGesture = class {
       }
     } else if (renewed) {
       if (normalized > Math.abs(this.lastDelta)) {
-        if (!unclamped && gap > REF_DT_MS * 5 && magnitude * (REF_DT_MS / gap) <= Math.abs(this.lastDelta)) {
+        if ((!unclamped || gap >= GESTURE_IDLE_MS) && gap > REF_DT_MS * 5 && magnitude * (REF_DT_MS / gap) <= Math.abs(this.lastDelta)) {
           this.stallProbation = true;
         } else {
           this.reset();
           gap = 0;
         }
+      } else if (gap >= GESTURE_IDLE_MS) {
+        this.stallProbation = true;
       }
     }
     this.zeroAxisPauses = movement === 0 && axis === this.axis ? this.zeroAxisPauses + 1 : 0;
