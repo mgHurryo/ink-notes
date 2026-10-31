@@ -90,6 +90,13 @@ export class DesktopWheelGesture {
    *  momentum continuation only decays, a fresh flick rises over the settled
    *  tail without needing an implausible single-step ratio. */
   private lastMagnitude = 0;
+  /** Whether the frozen envelope's last write came from a sample delivered at
+   *  reporting cadence (gap in [2, 55)ms). The renewal heuristics normalized
+   *  speeds to that reference window, so an envelope last written by a
+   *  same-tick stall flush or by a boundary delivery carries no tail-speed
+   *  evidence and must not veto a fresh swipe at the idle boundary (see the
+   *  renewed branch below). */
+  private envelopeAtCadence = false;
   private travel = 0;
   private flipped = false;
   private notchCredit = 0;
@@ -147,6 +154,7 @@ export class DesktopWheelGesture {
     this.stallProbation = false;
     this.stallDeferral = null;
     this.stallDeferralSpeed = this.stallDeferralTravel = 0;
+    this.envelopeAtCadence = false;
     this.trackpadPages = this.zeroAxisPauses = 0;
     this.contactXPages = 0;
     this.flippedRun = 0;
@@ -199,6 +207,10 @@ export class DesktopWheelGesture {
     const normalized = magnitude * (REF_DT_MS / (unclamped
       ? Math.max(gap, 1)
       : Math.min(Math.max(gap, 1), REF_DT_MS * 5)));
+    // Captured from the arrival gap before any boundary reset zeroes it: the
+    // envelope write below records whether its value still describes a stream
+    // that was delivering at reporting cadence.
+    const cadence = gap >= 2 && gap < RENEWED_FLICK_GAP_MS;
     // A large pixel delta alone is not a notch: fast touchpad flicks also
     // exceed 80px. Recognize conventional wheel steps conservatively; once
     // continuous motion appears, keep its inertia in the same gesture.
@@ -274,7 +286,20 @@ export class DesktopWheelGesture {
       // RISING over the settled envelope; resuming at or below it is the same
       // physical flick delivered late - keep the gesture, its suppression and
       // the page budget, and let the ramp detector below re-seed instead.
-      if (normalized > Math.abs(this.lastDelta)) {
+      if (gap >= GESTURE_IDLE_MS && !this.envelopeAtCadence) {
+        // An envelope without cadence evidence cannot describe a tail speed,
+        // so it must not veto this boundary sample: freezing behind it leaves
+        // a single-event re-swipe with no follow-up sample to clear the
+        // probation, and the swallowed sample's min-chain write then converges
+        // the envelope to its own speed, freezing every later swipe in an
+        // alternating pattern (the desktop-input visual fixtures queue "5 / 5"
+        // and "5 / 6" across a save barrier there). Reset into a fresh
+        // contact - the pre-#345 idle-boundary reset, scoped to envelopes with
+        // no cadence evidence, so a cadence-earned tail keeps its freeze and
+        // with it the one-swipe-many-pages protection.
+        this.reset();
+        gap = 0;
+      } else if (normalized > Math.abs(this.lastDelta)) {
         // A settled-band stall merged sample is judged on the [1,50]ms clamp,
         // which inflates its speed gap/50x over the real delivery gap. When
         // the rise vanishes at that real gap the clamp alone manufactured it,
@@ -419,7 +444,10 @@ export class DesktopWheelGesture {
       : this.flipped && !this.discrete
         ? Math.sign(movement) * Math.min(Math.abs(this.lastDelta), normalized)
         : Math.sign(movement) * normalized;
-    if (!pausedTail && !this.stallProbation) this.lastMagnitude = normalized;
+    if (!pausedTail && !this.stallProbation) {
+      this.lastMagnitude = normalized;
+      this.envelopeAtCadence = cadence;
+    }
     return { axis, movement, discrete: this.discrete, mode: delta.mode, gap, gestureId: this.gestureId,
       suppressed: !this.discrete && this.flipped, renewedTravel, probation: this.stallProbation };
   }
