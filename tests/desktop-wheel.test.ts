@@ -94,7 +94,7 @@ describe("DesktopWheelGesture settled-tail stall continuation", () => {
   // remaining tail travel a fresh contact whose budget flipped a second page
   // inside one physical contact. A rise the clamp alone manufactures must
   // freeze for one sample; the next sample's slope decides.
-  function pagesAcrossSettledTailStall(axis: "x" | "y", stallGapMs: number): number {
+  function pagesAcrossSettledTailStall(axis: "x" | "y", stallGapMs: number, stallStampMs = stallGapMs): number {
     const gesture = new DesktopWheelGesture();
     let pages = 0;
     let at = 100;
@@ -114,15 +114,19 @@ describe("DesktopWheelGesture settled-tail stall continuation", () => {
     feed(tail(axis === "x" ? 10 : 11, 32), 10); // decays to ~3.4px/10ms, inside the settled band
     const tailSpeed = (axis === "x" ? 10 : 11) * Math.exp(-320 / 300);
     if (stallGapMs > 0) {
-      // One merged event sums the pixels the stalled tail swept across the gap.
-      at += stallGapMs - 10;
+      // One merged event sums the pixels the stalled tail swept across the
+      // real gap. stallStampMs delivers it with a shorter stamp (the gap the
+      // delivery cadence claims, AppKit-style), so the event lies about the
+      // stall it merged while the tail itself still decays across the real
+      // stall duration.
+      at += stallStampMs - 10;
       const mergedPx = tailSpeed * 30 * (1 - Math.exp(-stallGapMs / 300));
       const delta = axis === "x" ? { x: mergedPx, y: 0, mode: 0 } : { x: 0, y: mergedPx, mode: 0 };
       const merged = gesture.begin(delta, false, at);
-      // The merged event must land exactly stallGapMs after the last tail
+      // The merged event must land exactly stallStampMs after the last tail
       // sample; an off-by-10ms timestamp once read the wrong side of the
       // 180ms idle boundary.
-      expect(merged.gap).toBe(stallGapMs);
+      expect(merged.gap).toBe(stallStampMs);
       pages += gesture.pageDelta(merged, false);
       at += 10;
       feed(tail(tailSpeed, 70, stallGapMs), 10); // continuation to exhaustion
@@ -170,6 +174,80 @@ describe("DesktopWheelGesture settled-tail stall continuation", () => {
 
   it("keeps a 250ms stall to one page on the vertical mirror", () => {
     expect(pagesAcrossSettledTailStall("y", 250)).toBe(1);
+  });
+
+  // Stamped delivery (the merged event carries a delivery-cadence gap instead
+  // of its real stall gap): the clamp then reads the merge at gap/50 of its
+  // true speed, so a 100ms merge stamped at 0-10ms clears the settledRise
+  // floor and re-arms through the jump exit, and stamped at 55ms it outruns
+  // the settled envelope on "real-gap" speed alone and resets through the
+  // quiet-gap exit. Both mint a fresh contact the resumed tail pages on. The
+  // mid-band stamp stays blocked by the 12px settledRise floor (pinned), and
+  // the horizontal contact keeps its single page across every stamp because
+  // contactXPages survives a re-arm (its asymmetry with the y axis pinned).
+  it("keeps a settled-tail stall merge stamped at delivery cadence to one page (0ms)", () => {
+    expect(pagesAcrossSettledTailStall("y", 100, 0)).toBe(1);
+  });
+
+  it("keeps a settled-tail stall merge stamped at delivery cadence to one page (10ms)", () => {
+    expect(pagesAcrossSettledTailStall("y", 100, 10)).toBe(1);
+  });
+
+  it("keeps a settled-tail stall merge stamped inside the mid band to one page (30ms)", () => {
+    expect(pagesAcrossSettledTailStall("y", 100, 30)).toBe(1);
+  });
+
+  it("keeps a settled-tail stall merge stamped just past the quiet gap to one page (55ms)", () => {
+    expect(pagesAcrossSettledTailStall("y", 100, 55)).toBe(1);
+  });
+
+  it("keeps every stamped delivery of a horizontal stall merge to one page", () => {
+    for (const stamp of [0, 10, 30, 55]) expect(pagesAcrossSettledTailStall("x", 100, stamp)).toBe(1);
+  });
+});
+
+describe("DesktopWheelGesture stamped tropical stall merge", () => {
+  // A tail converging just above the release floor (~4.8px/10ms) is still hot
+  // (unclamped): its merged samples are judged at their stamp's real gap, so
+  // the settled-band clamp defense never applies. A 100ms merge (~41px)
+  // stamped at 15ms lands in the jump band and stamped at 70ms rises over the
+  // envelope through the quiet-gap exit - both re-armed and minted a fresh
+  // budget the resumed tail pages on. Delivered at its real gap the merge
+  // stays inside the envelope (anti-overfix control).
+  function pagesAcrossTropicalStallMerge(stampGapMs: number): number {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 100;
+    const feed = (magnitudes: number[], stepMs: number) => {
+      for (const magnitude of magnitudes) {
+        pages += gesture.pageDelta(gesture.begin({ x: 0, y: magnitude, mode: 0 }, false, at), false);
+        at += stepMs;
+      }
+    };
+    const windowPx = 30 * (1 - Math.exp(-10 / 300));
+    feed([140, 90, 60], 10); // fast phase: the contact's one page
+    const tailSpeed = 14 * Math.exp(-320 / 300); // converges at ~4.8px/10ms, above the release floor
+    feed(Array.from({ length: 32 }, (_, i) => 14 * Math.exp(-(i + 1) * 10 / 300) * windowPx), 10);
+    at += stampGapMs - 10;
+    const mergedPx = tailSpeed * 30 * (1 - Math.exp(-100 / 300));
+    const merged = gesture.begin({ x: 0, y: mergedPx, mode: 0 }, false, at);
+    expect(merged.gap).toBe(stampGapMs);
+    pages += gesture.pageDelta(merged, false);
+    at += 10;
+    feed(Array.from({ length: 70 }, (_, i) => tailSpeed * Math.exp(-(100 + (i + 1) * 10) / 300) * windowPx), 10);
+    return pages;
+  }
+
+  it("keeps a tropical stall merge stamped in the jump band to one page (15ms)", () => {
+    expect(pagesAcrossTropicalStallMerge(15)).toBe(1);
+  });
+
+  it("keeps a tropical stall merge stamped past the quiet gap to one page (70ms)", () => {
+    expect(pagesAcrossTropicalStallMerge(70)).toBe(1);
+  });
+
+  it("keeps the same merge delivered at its real gap to one page (100ms)", () => {
+    expect(pagesAcrossTropicalStallMerge(100)).toBe(1);
   });
 });
 

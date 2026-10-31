@@ -24584,6 +24584,7 @@ var RENEWED_FLICK_GAP_MS = 55;
 var RENEWED_FLICK_RELEASE_PX = 4;
 var RENEWED_FLICK_JUMP_PX = 24;
 var RENEWED_FLICK_JUMP_RATIO = 2.2;
+var RENEWED_FLICK_HOLD_RATIO = 0.6;
 var REF_DT_MS = 10;
 var RENEW_MIN_FLIPPED = 3;
 var PAGE_TRAVEL_PX = 100;
@@ -24623,6 +24624,20 @@ var DesktopWheelGesture = class {
      *  sample's slope decides between a real renewed flick (reset) and the same
      *  flick delivered late (keep the gesture and its suppression). */
     this.stallProbation = false;
+    /** Which exit a frozen sample deferred its action to the next sample's
+     *  slope: "rearm" (jump re-arm) or "reset" (quiet-gap reset). Null on the
+     *  settled-tail probation above, whose judgment stays the strict rise. A
+     *  stall merge stamped at the delivery cadence (the event carries a short
+     *  gap the stall never had) is indistinguishable from a real re-swipe at
+     *  the single-sample level, so exits whose predicate fired on such a shape
+     *  must not act in-frame. */
+    this.stallDeferral = null;
+    /** Normalized speed and raw travel of the frozen sample: the mirror arm
+     *  judges the next sample against the speed, and on confirmation the travel
+     *  is restored so a real re-swipe flips on the same beat an in-frame exit
+     *  would have flipped it. */
+    this.stallDeferralSpeed = 0;
+    this.stallDeferralTravel = 0;
     this.trackpadPages = 0;
     /** Pages already flipped on the x axis during the current contact. Unlike
      *  trackpadPages it survives beginRenewedGesture: a mid-tail renewal is
@@ -24651,6 +24666,8 @@ var DesktopWheelGesture = class {
     this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
     this.renewalBlocked = false;
     this.stallProbation = false;
+    this.stallDeferral = null;
+    this.stallDeferralSpeed = this.stallDeferralTravel = 0;
     this.trackpadPages = this.zeroAxisPauses = 0;
     this.contactXPages = 0;
     this.flippedRun = 0;
@@ -24680,15 +24697,39 @@ var DesktopWheelGesture = class {
       this.reset();
       gap = 0;
     } else if (this.stallProbation) {
-      this.stallProbation = false;
-      if (gap >= 2 && normalized > Math.abs(this.lastDelta) && normalized > this.lastMagnitude && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO) {
-        this.reset();
-        gap = 0;
+      if (!(movement === 0 && !this.discrete)) {
+        this.stallProbation = false;
+        if (this.stallDeferral !== null) {
+          const deferral = this.stallDeferral;
+          this.stallDeferral = null;
+          if (gap >= 2 && normalized >= this.stallDeferralSpeed * RENEWED_FLICK_HOLD_RATIO) {
+            if (deferral === "rearm") {
+              this.beginRenewedGesture();
+              this.flipped = false;
+              this.travel = this.stallDeferralTravel;
+              this.renewalBlocked = true;
+              this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+            } else {
+              this.reset();
+              gap = 0;
+              this.travel = this.stallDeferralTravel;
+            }
+          }
+          this.stallDeferralSpeed = this.stallDeferralTravel = 0;
+        } else if (gap >= 2 && normalized > Math.abs(this.lastDelta) && normalized > this.lastMagnitude && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO) {
+          this.reset();
+          gap = 0;
+        }
       }
     } else if (renewed) {
       if (normalized > Math.abs(this.lastDelta)) {
         if ((!unclamped || gap >= GESTURE_IDLE_MS) && gap > REF_DT_MS * 5 && magnitude * (REF_DT_MS / gap) <= Math.abs(this.lastDelta)) {
           this.stallProbation = true;
+        } else if (normalized < Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO) {
+          this.stallProbation = true;
+          this.stallDeferral = "reset";
+          this.stallDeferralSpeed = normalized;
+          this.stallDeferralTravel = movement;
         } else {
           this.reset();
           gap = 0;
@@ -24741,11 +24782,10 @@ var DesktopWheelGesture = class {
           }
         }
       } else if (jump && priorFlippedRun >= RENEW_MIN_FLIPPED) {
-        this.beginRenewedGesture();
-        this.flipped = false;
-        this.travel = 0;
-        this.renewalBlocked = true;
-        this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+        this.stallProbation = true;
+        this.stallDeferral = "rearm";
+        this.stallDeferralSpeed = normalized;
+        this.stallDeferralTravel = movement;
       }
     } else {
       this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
