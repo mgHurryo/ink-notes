@@ -798,6 +798,26 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(1);
     });
 
+    it("keeps a delivery-cadence stamped stall merge from renewing the decayed flick", async () => {
+      // The same burst as the stall-merged contract above, but the merged
+      // event carries a delivery-cadence stamp (timeStamp 160, gap 10ms)
+      // instead of its real 100ms stall gap - the shape platforms that stamp
+      // merged events inside the delivery rhythm produce. The short gap then
+      // reads the merge at ~5x its real speed, the jump exit re-armed and the
+      // resumed tail flipped a second page. A jump-shaped merge is
+      // indistinguishable from a real re-swipe at the single-sample level, so
+      // it must freeze for one sample; the resumed tail's decay exposes it.
+      const { scroller, wheel, settle } = await desktopSetup();
+      scroller.scrollTop = 600;
+      for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [35, 130], [20, 140], [14, 150]]) {
+        wheel(0, delta, { timeStamp: time });
+      }
+      wheel(0, 76.5, { timeStamp: 160 });
+      Array.from({ length: 45 }, (_, i) => 9 * Math.exp(-(10 + i * 10) / 300))
+        .forEach((delta, i) => wheel(0, delta, { timeStamp: 260 + i * 10 }));
+      expect(settle).toHaveBeenCalledTimes(1);
+    });
+
     it("keeps the same tail delivered without the stall to one page", async () => {
       // Control for the stall-merged regression above: the identical decaying
       // tail delivered continuously (no stall) is one page, so that regression
