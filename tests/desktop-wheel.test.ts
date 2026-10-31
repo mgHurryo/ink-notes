@@ -343,6 +343,64 @@ describe("DesktopWheelGesture idle-boundary re-arm guard", () => {
   });
 });
 
+describe("DesktopWheelGesture idle-boundary reset for cadence-less envelopes", () => {
+  // The >=180ms boundary freeze only protects a tail whose envelope was
+  // earned at delivery cadence. When the frozen envelope was last written by
+  // a same-tick flush or by a boundary delivery, it carries no tail-speed
+  // evidence, and freezing behind it swallows whole re-swipes: a single-event
+  // swipe has no follow-up sample to clear the probation, and each swallowed
+  // swipe min-chains the envelope toward its own speed so identical repeats
+  // freeze in an alternating pattern. These two shapes are the desktop-input
+  // visual fixtures ("5 / 6" single-event bursts, "5 / 5" separate sync
+  // flicks); both queue every destination across a save barrier.
+  function bursts(count: number, gapMs = 320): number {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    for (let i = 0; i < count; i++) {
+      pages += gesture.pageDelta(gesture.begin({ x: 150, y: 0, mode: 0 }, false, 10000 + i * gapMs), false);
+    }
+    return pages;
+  }
+
+  it("flips every single-event burst delivered past the idle boundary", () => {
+    expect(bursts(4)).toBe(4);
+  });
+
+  it("flips every separate sync-dispatched flick past the idle boundary", () => {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    // One synchronous task hands a flick's six samples colliding timestamps;
+    // the flicks themselves land ~200ms apart (real awaited gaps).
+    for (const start of [10000, 10200, 10400]) {
+      for (const magnitude of [140, 90, 60, 30, 10, 4]) {
+        pages += gesture.pageDelta(gesture.begin({ x: magnitude, y: 0, mode: 0 }, false, start), false);
+      }
+    }
+    expect(pages).toBe(3);
+  });
+
+  it("still freezes a cadence-earned tail merge at the boundary (stall contract)", () => {
+    // Control: the same single-event gap, but the envelope behind it was
+    // written by 10ms-cadence tail samples - the freeze must stay.
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 100;
+    const feed = (magnitudes: number[], stepMs: number) => {
+      for (const magnitude of magnitudes) {
+        pages += gesture.pageDelta(gesture.begin({ x: 0, y: magnitude, mode: 0 }, false, at), false);
+        at += stepMs;
+      }
+    };
+    feed([140, 90, 60, 30, 20, 14], 10); // fast phase: one page
+    feed([11, 9.5, 8.5, 8.2, 8], 10); // tail converges at ~8px/10ms
+    at += 190;
+    const merged = gesture.begin({ x: 0, y: 8 * 30 * (1 - Math.exp(-200 / 300)), mode: 0 }, false, at);
+    expect(merged.gap).toBe(200);
+    pages += gesture.pageDelta(merged, false);
+    expect(pages).toBe(1);
+  });
+});
+
 describe("DesktopWheelGesture gesture boundaries", () => {
   it("keeps a decaying flick to a single page (no momentum continuation)", () => {
     expect(flipCount([140, 90, 60, 30, 20, 14, 10])).toBe(1);

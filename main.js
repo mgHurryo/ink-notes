@@ -24612,6 +24612,13 @@ var DesktopWheelGesture = class {
      *  momentum continuation only decays, a fresh flick rises over the settled
      *  tail without needing an implausible single-step ratio. */
     this.lastMagnitude = 0;
+    /** Whether the frozen envelope's last write came from a sample delivered at
+     *  reporting cadence (gap in [2, 55)ms). The renewal heuristics normalized
+     *  speeds to that reference window, so an envelope last written by a
+     *  same-tick stall flush or by a boundary delivery carries no tail-speed
+     *  evidence and must not veto a fresh swipe at the idle boundary (see the
+     *  renewed branch below). */
+    this.envelopeAtCadence = false;
     this.travel = 0;
     this.flipped = false;
     this.notchCredit = 0;
@@ -24668,6 +24675,7 @@ var DesktopWheelGesture = class {
     this.stallProbation = false;
     this.stallDeferral = null;
     this.stallDeferralSpeed = this.stallDeferralTravel = 0;
+    this.envelopeAtCadence = false;
     this.trackpadPages = this.zeroAxisPauses = 0;
     this.contactXPages = 0;
     this.flippedRun = 0;
@@ -24686,6 +24694,7 @@ var DesktopWheelGesture = class {
     const magnitude = Math.abs(movement);
     const unclamped = this.flipped && !this.discrete && Math.abs(this.lastDelta) > RENEWED_FLICK_RELEASE_PX;
     const normalized = magnitude * (REF_DT_MS / (unclamped ? Math.max(gap, 1) : Math.min(Math.max(gap, 1), REF_DT_MS * 5)));
+    const cadence = gap >= 2 && gap < RENEWED_FLICK_GAP_MS;
     const pixelNotch = delta.x === 0 && (axis === "y" || shift) && magnitude >= 80 && (magnitude % 100 === 0 || magnitude % 120 === 0);
     const discrete = delta.mode !== 0 || pixelNotch;
     const reversed = this.lastDelta !== 0 && movement !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta);
@@ -24722,7 +24731,10 @@ var DesktopWheelGesture = class {
         }
       }
     } else if (renewed) {
-      if (normalized > Math.abs(this.lastDelta)) {
+      if (gap >= GESTURE_IDLE_MS && !this.envelopeAtCadence) {
+        this.reset();
+        gap = 0;
+      } else if (normalized > Math.abs(this.lastDelta)) {
         if ((!unclamped || gap >= GESTURE_IDLE_MS) && gap > REF_DT_MS * 5 && magnitude * (REF_DT_MS / gap) <= Math.abs(this.lastDelta)) {
           this.stallProbation = true;
         } else if (normalized < Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO) {
@@ -24794,7 +24806,10 @@ var DesktopWheelGesture = class {
     this.flippedPreviously = this.flipped;
     const pausedTail = movement === 0 && this.flipped && !this.discrete;
     this.lastDelta = pausedTail || this.stallProbation ? this.lastDelta : this.flipped && !this.discrete ? Math.sign(movement) * Math.min(Math.abs(this.lastDelta), normalized) : Math.sign(movement) * normalized;
-    if (!pausedTail && !this.stallProbation) this.lastMagnitude = normalized;
+    if (!pausedTail && !this.stallProbation) {
+      this.lastMagnitude = normalized;
+      this.envelopeAtCadence = cadence;
+    }
     return {
       axis,
       movement,
