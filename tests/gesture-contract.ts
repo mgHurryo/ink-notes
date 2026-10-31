@@ -241,7 +241,12 @@ export function gestureContract(create: () => Promise<any>): void {
         }
         expect(settle).toHaveBeenCalledTimes(1);
         vi.advanceTimersByTime(180);
+        // The quiet-gap re-flick still re-arms, one sample later: the boundary
+        // sample itself is frozen (140px over 180ms sits below the hot 15px
+        // envelope at its real delivery gap), and the next sample's slope
+        // (140 >= 2.2x) mints the new contact that flips.
         wheel(140, 0, { timeStamp: 340 });
+        wheel(140, 0, { timeStamp: 350 });
         expect(settle).toHaveBeenCalledTimes(2);
       } finally { vi.useRealTimers(); }
     });
@@ -674,7 +679,12 @@ export function gestureContract(create: () => Promise<any>): void {
         wheel(delta, 0, { timeStamp: time });
       }
       expect(settle).toHaveBeenCalledTimes(1);
+      // The idle-gap flick still opens the next page, one sample later: the
+      // boundary sample is frozen (140px over 310ms sits below the frozen
+      // 6px envelope at its real gap), and the next sample's slope re-arms
+      // the fresh contact that flips.
       wheel(140, 0, { timeStamp: 500 });
+      wheel(140, 0, { timeStamp: 510 });
       expect(settle).toHaveBeenCalledTimes(2);
     });
 
@@ -742,11 +752,18 @@ export function gestureContract(create: () => Promise<any>): void {
         wheel(delta, 0, { timeStamp: time });
       }
       expect(settle).toHaveBeenCalledTimes(1);
-      // A second contact (past the idle boundary) with the same shape.
+      // A second stream past the idle boundary now only flips when it rises
+      // sharply at the post-freeze sample: the boundary sample is frozen
+      // (20px over 240ms sits far below the still-hot 30px envelope), the
+      // next sample (45) stays under 2.2x that envelope, so this slow start
+      // rides the old contact - the same tradeoff the 55-179ms band shipped
+      // (#341), and the strict x contract pays nothing for it. A re-flick
+      // whose post-freeze sample clears the ratio still re-arms (the
+      // quiet-gap re-flick test above flips its second page).
       for (const [delta, time] of [[20, 400], [45, 410], [80, 420], [120, 430], [90, 440], [60, 450]]) {
         wheel(delta, 0, { timeStamp: time });
       }
-      expect(settle).toHaveBeenCalledTimes(2);
+      expect(settle).toHaveBeenCalledTimes(1);
     });
 
     it("keeps stalled tail delivery from reopening the page budget", async () => {
@@ -829,6 +846,27 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(1);
     });
 
+    it("keeps an idle-boundary stall merged sample from minting a fresh contact", async () => {
+      // The >=180ms slice of the same stall family: the boundary itself no
+      // longer resets a flipped continuous gesture - that reset wiped the
+      // suppression and the page budget, so the stall's merged sample
+      // (51px here, 105px with the continuation) flipped a second page
+      // inside one physical contact. The merged sample is frozen instead
+      // (its real-gap speed sits below the settled envelope) and the tail
+      // continuation stays suppressed.
+      const { scroller, wheel, settle } = await desktopSetup();
+      scroller.scrollTop = 600;
+      for (const [delta, time] of [[140, 100], [90, 110], [60, 120]]) wheel(0, delta, { timeStamp: time });
+      const windowPx = 30 * (1 - Math.exp(-10 / 300));
+      const tailSpeed = 11 * Math.exp(-320 / 300);
+      Array.from({ length: 32 }, (_, i) => 11 * Math.exp(-(10 + i * 10) / 300) * windowPx)
+        .forEach((delta, i) => wheel(0, delta, { timeStamp: 130 + i * 10 }));
+      wheel(0, tailSpeed * 30 * (1 - Math.exp(-180 / 300)), { timeStamp: 620 });
+      Array.from({ length: 70 }, (_, i) => tailSpeed * Math.exp(-(180 + (i + 1) * 10) / 300) * windowPx)
+        .forEach((delta, i) => wheel(0, delta, { timeStamp: 630 + i * 10 }));
+      expect(settle).toHaveBeenCalledTimes(1);
+    });
+
     it("re-arms the same moderate re-swipe speed at every report cadence on the y axis", async () => {
       const { scroller, wheel, settle } = await desktopSetup();
       // The re-arm floors are speeds (px per 10ms reference window), not
@@ -869,18 +907,23 @@ export function gestureContract(create: () => Promise<any>): void {
     });
 
     it("hands the notch stream to a fresh gesture exactly at the idle boundary", async () => {
-      const { scroller, wheel, settle } = await desktopSetup();
       // Characterization for the fixture's burst/notch distance: a first
-      // notch landing GESTURE_IDLE_MS after the burst's last sample starts a
-      // fresh gesture and flips immediately; sync with the visual fixture
-      // before changing GESTURE_IDLE_MS or the notch sensitivity window.
+      // notch landing GESTURE_IDLE_MS after the burst's last sample is
+      // frozen by the boundary judgment (its zero held-axis component pauses
+      // the stream, and 100px over 180ms sits below the burst's hot tail
+      // envelope), so the stream hands over to a fresh gesture one notch
+      // later - the next notch's slope re-arms it. Sync with the visual
+      // fixture (whose burst/notch baseline is 940ms apart and keeps its
+      // totals) before changing GESTURE_IDLE_MS or the notch sensitivity
+      // window.
+      const { scroller, wheel, settle } = await desktopSetup();
       scroller.scrollTop = 600;
       for (const [delta, time] of [[140, 9000], [90, 9010], [60, 9020], [30, 9030], [20, 9040], [14, 9050], [10, 9060]]) {
         wheel(delta, 0, { timeStamp: time });
       }
       expect(settle).toHaveBeenCalledTimes(1);
       wheel(0, 100, { timeStamp: 9240 });
-      expect(settle).toHaveBeenCalledTimes(2);
+      expect(settle).toHaveBeenCalledTimes(1);
       for (let i = 1; i < 5; i++) wheel(0, 100, { timeStamp: 9240 + i * 40 });
       expect(settle).toHaveBeenCalledTimes(3);
     });
