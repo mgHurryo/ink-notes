@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { cellKeys, StrokeIndex, tileDensity, TileRenderer } from "../src/tiles";
-import type { InkStroke } from "../src/model";
+import type { InkPage, InkStroke } from "../src/model";
 
 function stroke(id: string, x: number, y: number): InkStroke {
   return { id, pageId: "page", tool: "pen", width: 4, opacity: 1, color: "#111", createdAt: 1, updatedAt: 1,
@@ -244,6 +244,53 @@ describe("interactive tile commits", () => {
 
     expect(renderer.schedule).toHaveBeenCalledOnce();
     expect(renderer.jobs).toEqual([expect.objectContaining({ cell: "0:0", density: 2, priority: "visible" })]);
+  });
+
+  it("remounts cached tiles when a page switch lands on a fully cached page", () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => { frames.push(callback); return frames.length; }));
+    const children: any[] = [];
+    const host: any = {
+      children,
+      appendChild(node: any) { children.push(node); node.parentElement = host; },
+      replaceChildren() { for (const node of children) node.parentElement = null; children.length = 0; },
+      querySelector(selector: string) {
+        const cell = /\[data-cell="(.+)"\]/.exec(selector)?.[1];
+        return children.find(node => node.dataset.cell === cell) ?? null;
+      },
+    };
+    const setCssStyles = function(this: { style: object }, styles: object) { Object.assign(this.style, styles); };
+    const context = () => ({ setTransform: vi.fn(), drawImage: vi.fn(), save: vi.fn(), restore: vi.fn(), fill: vi.fn(), stroke: vi.fn() });
+    vi.stubGlobal("document", { createElement: vi.fn((tag: string) => {
+      if (tag === "canvas") return { width: 0, height: 0, style: {}, setCssStyles, getContext: () => context() };
+      const node: any = { dataset: {} as Record<string, string>, style: {}, setCssStyles, appendChild: vi.fn(),
+        remove() { const index = children.indexOf(node); if (index >= 0) children.splice(index, 1); node.parentElement = null; } };
+      return node;
+    }) });
+    vi.stubGlobal("Path2D", class { moveTo() {} lineTo() {} closePath() {} });
+    const renderer = new TileRenderer(host as unknown as HTMLElement);
+    const pageOne: InkPage = { id: "one", title: "one", paper: "blank", createdAt: 1, updatedAt: 1, deletedStrokeIds: [], strokes: [stroke("one", 0.05, 0.05)] };
+    const pageTwo: InkPage = { id: "two", title: "two", paper: "blank", createdAt: 1, updatedAt: 1, deletedStrokeIds: [], strokes: [stroke("two", 0.55, 0.55)] };
+    const mounted = () => children.map(node => node.dataset.cell).sort();
+
+    renderer.setPage(pageOne, 512, 512);
+    renderer.update({ x: 0, y: 0, width: 512, height: 512 }, 1, true);
+    while (frames.length) frames.shift()!(0);
+    expect(mounted()).toEqual(["0:0"]);
+
+    renderer.prewarm([pageTwo]);
+    while (frames.length) frames.shift()!(0);
+    expect((renderer as any).cache.size).toBe(2);
+    expect(mounted()).toEqual(["0:0"]);
+
+    // setPage() wipes the host but keeps visible/density, so the next refine
+    // pass must not mistake cached-but-detached tiles for a mounted frame.
+    renderer.setPage(pageTwo, 512, 512);
+    renderer.update({ x: 0, y: 0, width: 512, height: 512 }, 1, true);
+    while (frames.length) frames.shift()!(0);
+    expect(mounted()).toEqual(["2:2"]);
+    expect((renderer as any).jobs).toEqual([]);
+    vi.unstubAllGlobals();
   });
 
   it("queues only visible cells that contain strokes", () => {

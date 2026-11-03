@@ -1723,10 +1723,14 @@ export abstract class InkWritingView extends FileView {
 
   protected onWheel(event: WheelEvent): void {
     // A wheel burst may add destinations while the previous page is saving.
-    if (event.defaultPrevented || event.altKey || this.nativeMenuOpen() || this.activePointerId !== null || this.desktopPan) {
+    if (event.defaultPrevented || event.altKey || this.nativeMenuOpen()) {
       this.desktopWheel.reset();
       return;
     }
+    // Live pointer input occupying the surface only borrows the event; the
+    // wheel gesture itself survives so flip suppression and the page budget
+    // keep counting across the stroke and the tail decays on its own clock.
+    if (this.activePointerId !== null || this.desktopPan) return;
     const scroller = this.inputScroller();
     const target = event.target as HTMLElement | null;
     if (target?.closest?.('input, textarea, select, [contenteditable], [role="dialog"]')) {

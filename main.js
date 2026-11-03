@@ -24585,6 +24585,7 @@ var RENEWED_FLICK_RELEASE_PX = 4;
 var RENEWED_FLICK_JUMP_PX = 24;
 var RENEWED_FLICK_JUMP_RATIO = 2.2;
 var RENEWED_FLICK_HOLD_RATIO = 0.6;
+var RENEWED_FLICK_RESET_RISE_RATIO = 1.2;
 var REF_DT_MS = 10;
 var RENEW_MIN_FLIPPED = 3;
 var PAGE_TRAVEL_PX = 100;
@@ -24711,18 +24712,17 @@ var DesktopWheelGesture = class {
         if (this.stallDeferral !== null) {
           const deferral = this.stallDeferral;
           this.stallDeferral = null;
-          if (gap >= 2 && normalized >= this.stallDeferralSpeed * RENEWED_FLICK_HOLD_RATIO) {
-            if (deferral === "rearm") {
+          if (deferral === "rearm") {
+            if (gap >= 2 && normalized >= this.stallDeferralSpeed * RENEWED_FLICK_HOLD_RATIO) {
               this.beginRenewedGesture();
               this.flipped = false;
               this.travel = this.stallDeferralTravel;
               this.renewalBlocked = true;
               this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
-            } else {
-              this.reset();
-              gap = 0;
-              this.travel = this.stallDeferralTravel;
             }
+          } else if (gap >= 2 && normalized >= this.stallDeferralSpeed * RENEWED_FLICK_RESET_RISE_RATIO) {
+            this.reset();
+            gap = 0;
           }
           this.stallDeferralSpeed = this.stallDeferralTravel = 0;
         } else if (gap >= 2 && normalized > Math.abs(this.lastDelta) && normalized > this.lastMagnitude && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO) {
@@ -29178,10 +29178,11 @@ var InkWritingView = class extends import_obsidian7.FileView {
   }
   onWheel(event) {
     var _a;
-    if (event.defaultPrevented || event.altKey || this.nativeMenuOpen() || this.activePointerId !== null || this.desktopPan) {
+    if (event.defaultPrevented || event.altKey || this.nativeMenuOpen()) {
       this.desktopWheel.reset();
       return;
     }
+    if (this.activePointerId !== null || this.desktopPan) return;
     const scroller = this.inputScroller();
     const target = event.target;
     if ((_a = target == null ? void 0 : target.closest) == null ? void 0 : _a.call(target, 'input, textarea, select, [contenteditable], [role="dialog"]')) {
@@ -32402,7 +32403,9 @@ var TileRenderer = class {
   }
   /** True when every visible cell already holds an up-to-date tile at the
    *  exact current density, so a refine pass would only re-attach identical
-   *  rasters. get() revalidates the revision, so edited cells fail here. */
+   *  rasters. get() revalidates the revision, so edited cells fail here, and
+   *  the mount check fails after setPage(): it clears the host without
+   *  resetting visible/density, so cached-but-detached tiles must rebuild. */
   visibleCurrent() {
     if (!this.active) return false;
     for (const cell of this.visible) {
@@ -32410,7 +32413,8 @@ var TileRenderer = class {
         if (this.host.querySelector('[data-cell="' + cell + '"]')) return false;
         continue;
       }
-      if (!this.get(this.active, cell, this.density)) return false;
+      const tile = this.get(this.active, cell, this.density);
+      if (!tile || tile.node.parentElement !== this.host) return false;
     }
     return true;
   }
