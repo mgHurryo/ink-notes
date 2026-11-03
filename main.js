@@ -32402,7 +32402,9 @@ var TileRenderer = class {
   }
   /** True when every visible cell already holds an up-to-date tile at the
    *  exact current density, so a refine pass would only re-attach identical
-   *  rasters. get() revalidates the revision, so edited cells fail here. */
+   *  rasters. get() revalidates the revision, so edited cells fail here, and
+   *  the mount check fails after setPage(): it clears the host without
+   *  resetting visible/density, so cached-but-detached tiles must rebuild. */
   visibleCurrent() {
     if (!this.active) return false;
     for (const cell of this.visible) {
@@ -32410,7 +32412,8 @@ var TileRenderer = class {
         if (this.host.querySelector('[data-cell="' + cell + '"]')) return false;
         continue;
       }
-      if (!this.get(this.active, cell, this.density)) return false;
+      const tile = this.get(this.active, cell, this.density);
+      if (!tile || tile.node.parentElement !== this.host) return false;
     }
     return true;
   }
