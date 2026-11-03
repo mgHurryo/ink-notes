@@ -29178,10 +29178,11 @@ var InkWritingView = class extends import_obsidian7.FileView {
   }
   onWheel(event) {
     var _a;
-    if (event.defaultPrevented || event.altKey || this.nativeMenuOpen() || this.activePointerId !== null || this.desktopPan) {
+    if (event.defaultPrevented || event.altKey || this.nativeMenuOpen()) {
       this.desktopWheel.reset();
       return;
     }
+    if (this.activePointerId !== null || this.desktopPan) return;
     const scroller = this.inputScroller();
     const target = event.target;
     if ((_a = target == null ? void 0 : target.closest) == null ? void 0 : _a.call(target, 'input, textarea, select, [contenteditable], [role="dialog"]')) {

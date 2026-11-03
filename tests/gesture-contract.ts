@@ -207,6 +207,33 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledOnce();
     });
 
+    it("keeps swipe suppression across a pen stroke", async () => {
+      const { editor, scroller, settle, wheel } = await desktopSetup();
+      editor.capturePointer = vi.fn(); editor.releasePointer = vi.fn();
+      scroller.scrollTop = 600;
+      // One flick plus its decay tail: a single contact, one page.
+      wheel(0, 140, { timeStamp: 100 });
+      for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [10, 140]]) wheel(0, delta, { timeStamp: time });
+      expect(settle).toHaveBeenCalledTimes(1);
+      // Tail samples arriving under a live pen stroke must not reset the
+      // gesture: resetting would mint a fresh contact, so the stroke-tail
+      // travel re-pages with no input after the pen lifts. The samples are
+      // still swallowed - only the reset is dropped.
+      editor.state.tool = "pen";
+      const sample = (x: number, y: number) => ({ pointerId: 42, pointerType: "pen", clientX: x, clientY: y, pressure: .6 });
+      editor.onPointerDown(sample(200, 200));
+      for (const time of [170, 180, 190]) wheel(0, 60, { timeStamp: time });
+      editor.onPointerUp(sample(200, 200));
+      // The tail keeps decaying on the original contact's clock, suppressed.
+      for (const [delta, time] of [[40, 210], [32, 230], [24, 250], [18, 270],
+        [12, 290], [8, 310], [5, 330], [3, 350]]) wheel(0, delta, { timeStamp: time });
+      expect(settle).toHaveBeenCalledTimes(1);
+      // A deliberate re-swipe after the stroke still re-arms and flips.
+      wheel(0, 140, { timeStamp: 650 });
+      wheel(0, 140, { timeStamp: 660 });
+      expect(settle).toHaveBeenCalledTimes(2);
+    });
+
     it("turns one page for each standard vertical mouse-wheel notch", async () => {
       const { scroller, settle, wheel } = await desktopSetup();
       scroller.scrollTop = 600;
