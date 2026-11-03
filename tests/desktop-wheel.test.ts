@@ -291,6 +291,82 @@ describe("DesktopWheelGesture hot-tail stall continuation", () => {
   });
 });
 
+describe("DesktopWheelGesture plateau-tail stall merge", () => {
+  // A plateau inertia tail (integer-quantized samples oscillating 11-13px at
+  // delivery cadence) keeps the min-chain envelope parked at the tail speed,
+  // so a real >=55ms stall merge normalized at its true gap lands at ~the
+  // plateau speed: inside the stamping band, single-sample indistinguishable
+  // from a re-swipe. The mirror arm's hold-0.6x confirmation then read the
+  // plateau continuation (naturally flat at ~1.0x, ~1.08x at the ±1px jitter
+  // ceiling) as the confirmation, reset() cast a fresh contact with a fresh
+  // page budget and the residual tail flipped a phantom second page. The
+  // reset flavor must demand a real rise instead.
+  function pagesAcrossPlateauTailStall(axis: "x" | "y", stallGapMs: number, continuation?: number[]): number {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 100;
+    const feed = (magnitudes: number[], stepMs: number) => {
+      for (const magnitude of magnitudes) {
+        const delta = axis === "x" ? { x: magnitude, y: 0, mode: 0 } : { x: 0, y: magnitude, mode: 0 };
+        pages += gesture.pageDelta(gesture.begin(delta, false, at), false);
+        at += stepMs;
+      }
+    };
+    feed(Array.from({ length: 8 }, () => 20), 10); // fast phase: the contact's one page
+    feed([12, 11, 12, 13, 11, 12, 12, 11, 12, 12], 10); // plateau tail parks the envelope at ~11px/10ms
+    at += stallGapMs - 10;
+    // One merged event sums the ~84px the stalled plateau swept across the
+    // real gap; normalized at that real gap it sits at ~the plateau speed.
+    const mergedDelta = axis === "x" ? { x: 84, y: 0, mode: 0 } : { x: 0, y: 84, mode: 0 };
+    const merged = gesture.begin(mergedDelta, false, at);
+    expect(merged.gap).toBe(stallGapMs);
+    pages += gesture.pageDelta(merged, false);
+    at += 10;
+    feed(continuation ?? [12, 11, 12, 13, 11, 12, 12, 11, 12, 12, 12, 11, 12, 12], 10);
+    return pages;
+  }
+
+  it.each([55, 70, 120, 179, 200, 300])("keeps a plateau-tail stall merge stamped at its real gap to one page (%sms)", (stallGapMs) => {
+    expect(pagesAcrossPlateauTailStall("y", stallGapMs)).toBe(1);
+  });
+
+  it("keeps a plateau-tail stall merge on the x axis to its contact's one page", () => {
+    expect(pagesAcrossPlateauTailStall("x", 70)).toBe(1);
+  });
+
+  it("keeps a single low-sample poisoning merge to one page", () => {
+    // One 18px sample min-chains the fast phase's envelope down to 18; the
+    // merged 140px sample normalized at its real 70ms gap (20px/10ms) then
+    // sits inside the stamping band and the flat continuation confirmed the
+    // forged reset exactly at the hold ratio (12 >= 20 * 0.6).
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 100;
+    const feed = (magnitudes: number[], stepMs: number) => {
+      for (const magnitude of magnitudes) {
+        pages += gesture.pageDelta(gesture.begin({ x: 0, y: magnitude, mode: 0 }, false, at), false);
+        at += stepMs;
+      }
+    };
+    feed([40, 40, 40, 40], 10); // fast phase: one page, envelope at 40
+    feed([18], 10); // the single low sample poisons the envelope to 18
+    at += 70 - 10;
+    const merged = gesture.begin({ x: 0, y: 140, mode: 0 }, false, at);
+    expect(merged.gap).toBe(70);
+    pages += gesture.pageDelta(merged, false);
+    at += 10;
+    feed([12, 11, 12, 13, 11, 12, 12, 11, 12, 12, 12, 11, 12, 12], 10);
+    expect(pages).toBe(1);
+  });
+
+  it("still flips a rising re-swipe after a plateau stall to its second page", () => {
+    // Anti-overfix guard: the rejected merge sample has seeded the ramp
+    // detector, so a genuinely rising re-swipe (>=1.2x steps) still re-arms
+    // and flips the second page - two pages before and after the fix.
+    expect(pagesAcrossPlateauTailStall("y", 70, [12, 20, 26, 32, 39])).toBe(2);
+  });
+});
+
 describe("DesktopWheelGesture idle-boundary re-arm guard", () => {
   // Locks the freeze implementation of the >=180ms boundary: the boundary
   // first sample must go onto stall probation, never through to the ramp

@@ -15,6 +15,20 @@ const RENEWED_FLICK_JUMP_RATIO = 2.2;
  *  hold 0.67x) and safely above the shallowest merged-continuation fall (a
  *  70ms-stamped tropical merge decays to 0.56x). */
 const RENEWED_FLICK_HOLD_RATIO = 0.6;
+/** The quiet-gap reset's mirror arm demands a real RISE, not the hold the
+ *  rearm arm accepts. A plateau inertia tail keeps the min-chain envelope
+ *  parked at the tail speed (±1px integer quantization already pins it
+ *  there), so a real >=55ms stall merge normalized at its true gap resumes
+ *  at ~1.0x the frozen speed and tops out at ~1.08x under the jitter - the
+ *  hold ratio confirmed both, reset() cast a fresh contact and the residual
+ *  tail flipped a phantom second page. A genuine re-swipe rises >=1.2x per
+ *  sample and still clears, and its rejected first sample has already seeded
+ *  renewedPeak/renewedTravel, so a rising continuation still pages through
+ *  the ramp detector or the jump/rearm path with the page budget intact.
+ *  Accepted cost: a constant-velocity deliberate re-sweep landing exactly at
+ *  tail speed on a hot tail is swallowed - the same trade the settled band
+ *  already makes, suppression first. */
+const RENEWED_FLICK_RESET_RISE_RATIO = 1.2;
 /** Every renewal heuristic below compares speeds, not per-event amplitudes:
  *  each sample is normalized to this reference window, the reporting cadence
  *  the px floors were tuned at. A main-thread stall merges several hardware
@@ -253,26 +267,36 @@ export class DesktopWheelGesture {
         if (this.stallDeferral !== null) {
           // Mirror arm for a deferred exit: a real re-flick's fast phase holds
           // or rises over the frozen sample, a stamped merge's resumed tail
-          // decays away - and holding (not the strict rise demanded below) is
-          // the giveaway, or the constant-velocity re-sweep contract would be
-          // swallowed. The exit's action runs one beat late with the frozen
-          // sample's parked travel restored, so a real re-swipe flips on the
-          // same beat an in-frame exit would have flipped it; a fall keeps the
-          // gesture, its suppression and its page budget.
+          // decays away. Holding is the rearm giveaway - the constant-velocity
+          // re-sweep contract pins that arm to the hold ratio - while the
+          // reset flavor demands a real rise (a plateau-tail merge resumes
+          // flat; see RENEWED_FLICK_RESET_RISE_RATIO). The exit's action runs
+          // one beat late with the frozen sample's parked travel restored, so
+          // a real re-swipe flips on the same beat an in-frame exit would have
+          // flipped it; a fall keeps the gesture, its suppression and its page
+          // budget.
           const deferral = this.stallDeferral;
           this.stallDeferral = null;
-          if (gap >= 2 && normalized >= this.stallDeferralSpeed * RENEWED_FLICK_HOLD_RATIO) {
-            if (deferral === "rearm") {
+          if (deferral === "rearm") {
+            if (gap >= 2 && normalized >= this.stallDeferralSpeed * RENEWED_FLICK_HOLD_RATIO) {
               this.beginRenewedGesture();
               this.flipped = false;
               this.travel = this.stallDeferralTravel;
               this.renewalBlocked = true;
               this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
-            } else {
-              this.reset();
-              gap = 0;
-              this.travel = this.stallDeferralTravel;
             }
+          } else if (gap >= 2 && normalized >= this.stallDeferralSpeed * RENEWED_FLICK_RESET_RISE_RATIO) {
+            this.reset();
+            gap = 0;
+            // No travel restore here, unlike the rearm arm: reset() zeroed
+            // stallDeferralTravel above, so the restore statement this
+            // replaces always wrote 0 - dead - and the #346 tropical contract
+            // depends on that dead state. Do not hoist the read above
+            // reset() (the travel-lost repair): before this 1.2x rise guard
+            // existed, reviving it injected the forged merge sample's parked
+            // travel (84px in the plateau probe) straight into the wrongly
+            // minted contact and worsened the phantom double page. The travel
+            // restore is next cycle's work, gated on this guard.
           }
           this.stallDeferralSpeed = this.stallDeferralTravel = 0;
         } else if (gap >= 2 && normalized > Math.abs(this.lastDelta) && normalized > this.lastMagnitude
