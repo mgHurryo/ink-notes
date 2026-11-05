@@ -546,9 +546,13 @@ export class WheelPagePacer {
   record(pages: number, axis: "x" | "y", at: number): boolean {
     if (axis === "y" && pages > 0) {
       for (let page = 0; page < pages; page += 1) this.flips.push(at);
-      const cutoff = at - FAST_PAGING_WINDOW_MS;
-      while (this.flips.length > 0 && this.flips[0] < cutoff) this.flips.shift();
     }
+    // Every record prunes the window against its own arrival time, including
+    // horizontal ones: they never push, but a sideways flip that skips pruning
+    // would let aged-out vertical flips keep reporting engagement and re-arm
+    // the rail's collapse timer forever.
+    const cutoff = at - FAST_PAGING_WINDOW_MS;
+    while (this.flips.length > 0 && this.flips[0] < cutoff) this.flips.shift();
     this.engagedState = this.flips.length >= FAST_PAGING_PAGES;
     return this.engagedState;
   }
