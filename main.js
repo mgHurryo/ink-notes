@@ -37872,6 +37872,10 @@ var InkNotesPlugin = class extends import_obsidian15.Plugin {
     /** Recently opened notebooks; persisted in the plugin data document so the
      *  picker can offer them even after they leave the default folder. */
     this.history = new NotebookHistoryIndex();
+    /** Paths already written to the history in this session; the workspace open
+     *  event re-fires on every tab activation, and rewriting data.json each
+     *  time would not change anything the discovery sort can see. */
+    this.rememberedThisSession = /* @__PURE__ */ new Set();
     this.config = { ...DEFAULT_SETTINGS };
     /** Tool settings shared by both editors; loaded sanitized in onload and
      *  kept current by the debounced saver. */
@@ -38006,6 +38010,9 @@ var InkNotesPlugin = class extends import_obsidian15.Plugin {
     this.registerEvent(this.app.workspace.on("file-menu", (menu, file) => {
       if (!(file instanceof import_obsidian15.TFile) || file.extension.toLowerCase() !== "pdf") return;
       menu.addItem((item) => item.setTitle("Open PDF with Ink Notes handwriting").setIcon("pen-line").onClick(() => this.runAsync(this.openPdfHandwriting(file), "open PDF handwriting")));
+    }));
+    this.registerEvent(this.app.workspace.on("file-open", (file) => {
+      if (file instanceof import_obsidian15.TFile && file.extension === INK_EXTENSION) this.rememberNotebook(file);
     }));
     this.addSettingTab(new InkSettingTab(this.app, this));
     this.register(this.store.observe((file) => this.queueRefresh(file)));
@@ -38143,15 +38150,21 @@ var InkNotesPlugin = class extends import_obsidian15.Plugin {
   /** Records the open for discovery even after the notebook moves anywhere in
    *  the vault; a persistence failure must not block opening the notebook. */
   rememberNotebook(file) {
+    if (this.rememberedThisSession.has(file.path)) return;
+    this.rememberedThisSession.add(file.path);
     this.history.record(file.path, file.basename);
     void this.persistSettings().catch((error) => {
+      this.rememberedThisSession.delete(file.path);
       new import_obsidian15.Notice(`Ink Notes could not save notebook history: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
   /** Manual cleanup only: removes the given history entries (missing files)
    *  without touching the notebooks themselves. */
   async forgetNotebooks(entries) {
-    for (const entry of entries) this.history.remove(entry.path);
+    for (const entry of entries) {
+      this.rememberedThisSession.delete(entry.path);
+      this.history.remove(entry.path);
+    }
     await this.persistSettings();
   }
   runAsync(action, operation) {

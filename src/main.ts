@@ -60,6 +60,10 @@ export default class InkNotesPlugin extends Plugin {
   /** Recently opened notebooks; persisted in the plugin data document so the
    *  picker can offer them even after they leave the default folder. */
   private history = new NotebookHistoryIndex();
+  /** Paths already written to the history in this session; the workspace open
+   *  event re-fires on every tab activation, and rewriting data.json each
+   *  time would not change anything the discovery sort can see. */
+  private rememberedThisSession = new Set<string>();
   private workers!: InkWorkerService;
   private pdfStore!: PdfSidecarStore;
   private takeover!: PdfTabTakeover;
@@ -158,6 +162,12 @@ export default class InkNotesPlugin extends Plugin {
       if (!(file instanceof TFile) || file.extension.toLowerCase() !== "pdf") return;
       menu.addItem((item) => item.setTitle("Open PDF with Ink Notes handwriting").setIcon("pen-line")
         .onClick(() => this.runAsync(this.openPdfHandwriting(file), "open PDF handwriting")));
+    }));
+    // Notebooks opened outside the plugin (file explorer, quick switcher,
+    // links, sticky locate, restored tabs) never reach openFile(), so the
+    // workspace open event is the one choke point they all pass through.
+    this.registerEvent(this.app.workspace.on("file-open", (file) => {
+      if (file instanceof TFile && file.extension === INK_EXTENSION) this.rememberNotebook(file);
     }));
     this.addSettingTab(new InkSettingTab(this.app, this));
     this.register(this.store.observe((file) => this.queueRefresh(file)));
@@ -304,8 +314,12 @@ export default class InkNotesPlugin extends Plugin {
   /** Records the open for discovery even after the notebook moves anywhere in
    *  the vault; a persistence failure must not block opening the notebook. */
   private rememberNotebook(file: TFile): void {
+    if (this.rememberedThisSession.has(file.path)) return;
+    this.rememberedThisSession.add(file.path);
     this.history.record(file.path, file.basename);
     void this.persistSettings().catch((error) => {
+      // Drop the session guard so a later activation can retry the write.
+      this.rememberedThisSession.delete(file.path);
       new Notice(`Ink Notes could not save notebook history: ${error instanceof Error ? error.message : String(error)}`);
     });
   }
@@ -313,7 +327,12 @@ export default class InkNotesPlugin extends Plugin {
   /** Manual cleanup only: removes the given history entries (missing files)
    *  without touching the notebooks themselves. */
   private async forgetNotebooks(entries: NotebookDiscovery[]): Promise<void> {
-    for (const entry of entries) this.history.remove(entry.path);
+    for (const entry of entries) {
+      // Un-guard the session record so a genuine re-open after an explicit
+      // clear writes a fresh entry instead of being swallowed by the guard.
+      this.rememberedThisSession.delete(entry.path);
+      this.history.remove(entry.path);
+    }
     await this.persistSettings();
   }
 
