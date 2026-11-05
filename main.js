@@ -29177,15 +29177,19 @@ var InkWritingView = class extends import_obsidian7.FileView {
     if (pan) this.releasePointer(pan.pointerId);
   }
   onWheel(event) {
-    var _a;
+    var _a, _b;
     if (event.defaultPrevented || event.altKey || this.nativeMenuOpen()) {
       this.desktopWheel.reset();
       return;
     }
-    if (this.activePointerId !== null || this.desktopPan) return;
+    if (this.activePointerId !== null || this.desktopPan) {
+      const target2 = event.target;
+      if (!((_a = target2 == null ? void 0 : target2.closest) == null ? void 0 : _a.call(target2, 'input, textarea, select, [contenteditable], [role="dialog"]'))) event.preventDefault();
+      return;
+    }
     const scroller = this.inputScroller();
     const target = event.target;
-    if ((_a = target == null ? void 0 : target.closest) == null ? void 0 : _a.call(target, 'input, textarea, select, [contenteditable], [role="dialog"]')) {
+    if ((_b = target == null ? void 0 : target.closest) == null ? void 0 : _b.call(target, 'input, textarea, select, [contenteditable], [role="dialog"]')) {
       this.desktopWheel.reset();
       return;
     }
