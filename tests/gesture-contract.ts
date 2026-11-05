@@ -222,7 +222,13 @@ export function gestureContract(create: () => Promise<any>): void {
       editor.state.tool = "pen";
       const sample = (x: number, y: number) => ({ pointerId: 42, pointerType: "pen", clientX: x, clientY: y, pressure: .6 });
       editor.onPointerDown(sample(200, 200));
-      for (const time of [170, 180, 190]) wheel(0, 60, { timeStamp: time });
+      // Borrowed samples must still cancel the native scroll: default
+      // scrolling moves the rect the stroke maps client coordinates
+      // against, kinking the ink by exactly the scrolled amount. The
+      // ctrl+wheel page-zoom path is cancelled the same way.
+      expect(wheel(0, 60, { timeStamp: 170 }).defaultPrevented).toBe(true);
+      expect(wheel(0, 60, { timeStamp: 175, ctrlKey: true }).defaultPrevented).toBe(true);
+      for (const time of [180, 190]) wheel(0, 60, { timeStamp: time });
       editor.onPointerUp(sample(200, 200));
       // The tail keeps decaying on the original contact's clock, suppressed.
       for (const [delta, time] of [[40, 210], [32, 230], [24, 250], [18, 270],
@@ -443,6 +449,35 @@ export function gestureContract(create: () => Promise<any>): void {
         // A sideways burst never drives the rail: horizontal flips are one
         // page per contact and do not count toward the vertical page rate.
         for (const timeStamp of [2600, 2800, 3000]) wheel(140, 0, { timeStamp });
+        expect(railHidden()).toBe(true);
+      } finally { vi.useRealTimers(); }
+    });
+
+    it("does not let a sideways stream re-arm the fast-paging rail's collapse timer", async () => {
+      const { editor, scroller, wheel } = await desktopSetup();
+      const root = (editor as any).root as HTMLElement;
+      const railHidden = () => root.classList.contains("ink-rail-hidden");
+      vi.useFakeTimers();
+      try {
+        // Three notches at a 200ms cadence are separate contacts: engage the
+        // rail the same way the test above does.
+        scroller.scrollTop = 600;
+        for (const timeStamp of [1000, 1200, 1400]) wheel(0, 100, { timeStamp });
+        expect(railHidden()).toBe(false);
+        // A sideways stream keeps flipping at a <1s cadence while the vertical
+        // window ages out. Horizontal flips never count toward it, so none of
+        // them may re-arm the collapse timer: the rail must come back one
+        // quiet second after the last engaged flip, not after the last
+        // sideways one.
+        vi.advanceTimersByTime(300);
+        wheel(140, 0, { timeStamp: 2500 });
+        vi.advanceTimersByTime(300);
+        wheel(140, 0, { timeStamp: 2900 });
+        vi.advanceTimersByTime(300);
+        wheel(140, 0, { timeStamp: 3300 });
+        // 1700ms of quiet time have passed since the last engaged flip; only
+        // stale horizontal re-arms could still hold the rail open here.
+        vi.advanceTimersByTime(800);
         expect(railHidden()).toBe(true);
       } finally { vi.useRealTimers(); }
     });

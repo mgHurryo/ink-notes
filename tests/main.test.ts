@@ -220,6 +220,46 @@ describe("plugin event synchronization", () => {
     await vi.waitFor(() => expect(notice).toHaveBeenCalledWith("Ink Notes could not save notebook history: disk full"));
   });
 
+  it("records notebooks activated outside the plugin through the workspace open event", async () => {
+    const plugin = new InkNotesPlugin({} as never, {} as never);
+    await plugin.onload();
+    const on = plugin.app.workspace.on as ReturnType<typeof vi.fn>;
+    const open = on.mock.calls.find(([name]) => name === "file-open")?.[1] as ((file: unknown) => void) | undefined;
+    expect(open).toBeDefined();
+    open!(Object.assign(new TFile(), { path: "Courses/Math/Geometry.ink", basename: "Geometry", extension: "ink" }));
+    await vi.waitFor(() => expect(plugin.saveData).toHaveBeenLastCalledWith(expect.objectContaining({
+      notebookHistory: [{ path: "Courses/Math/Geometry.ink", title: "Geometry", lastOpened: expect.any(Number) }],
+    })));
+    // Tab activations of the same notebook and non-notebook files must not
+    // rewrite the persisted history again.
+    open!(Object.assign(new TFile(), { path: "Courses/Math/Geometry.ink", basename: "Geometry", extension: "ink" }));
+    open!(Object.assign(new TFile(), { path: "docs/Paper.pdf", basename: "Paper", extension: "pdf" }));
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(plugin.saveData).toHaveBeenCalledOnce();
+  });
+
+  it("re-records a cleared notebook when it is activated again in the same session", async () => {
+    const existing = { path: "Ink Notes/Algebra.ink", basename: "Algebra", extension: "ink" };
+    list.mockResolvedValue([existing]);
+    const plugin = new InkNotesPlugin({} as never, {} as never);
+    (plugin.loadData as ReturnType<typeof vi.fn>).mockResolvedValue({
+      notebookHistory: [{ path: "Ink Notes/Algebra.ink", title: "Algebra", lastOpened: 100 }],
+    });
+    await plugin.onload();
+    const on = plugin.app.workspace.on as ReturnType<typeof vi.fn>;
+    const open = on.mock.calls.find(([name]) => name === "file-open")![1] as (file: unknown) => void;
+    open(Object.assign(new TFile(), { path: existing.path, basename: existing.basename, extension: "ink" }));
+    await vi.waitFor(() => expect(plugin.saveData).toHaveBeenCalledOnce());
+    await (plugin as unknown as { openNotebook(): Promise<void> }).openNotebook();
+    const clear = pickerArguments.mock.calls[0][5] as (entries: { path: string }[]) => Promise<unknown>;
+    await clear([{ path: existing.path }]);
+    await vi.waitFor(() => expect(plugin.saveData).toHaveBeenLastCalledWith(expect.objectContaining({ notebookHistory: [] })));
+    open(Object.assign(new TFile(), { path: existing.path, basename: existing.basename, extension: "ink" }));
+    await vi.waitFor(() => expect(plugin.saveData).toHaveBeenLastCalledWith(expect.objectContaining({
+      notebookHistory: [{ path: existing.path, title: existing.basename, lastOpened: expect.any(Number) }],
+    })));
+  });
+
   it("offers missing history entries in the picker and clears them through the picker action", async () => {
     const existing = { path: "Ink Notes/Algebra.ink", basename: "Algebra", extension: "ink" };
     list.mockResolvedValue([existing]);

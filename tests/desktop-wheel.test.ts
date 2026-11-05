@@ -720,6 +720,19 @@ describe("WheelPagePacer fast-paging window", () => {
     expect(pacer.engaged).toBe(false);
   });
 
+  it("does not let horizontal flips keep stale engagement alive", () => {
+    const pacer = new WheelPagePacer();
+    pacer.record(1, "y", 0);
+    pacer.record(1, "y", 100);
+    expect(pacer.record(1, "y", 200)).toBe(true);
+    // A sideways stream must not pop the rail: every horizontal flip prunes
+    // the window by its own arrival time, so aged-out vertical flips cannot
+    // keep reporting engagement to the collapse timer.
+    expect(pacer.record(1, "x", FAST_PAGING_WINDOW_MS + 100)).toBe(false);
+    expect(pacer.record(1, "x", 2 * FAST_PAGING_WINDOW_MS + 100)).toBe(false);
+    expect(pacer.engaged).toBe(false);
+  });
+
   it("counts every page of a merged burst, not just the event", () => {
     const pacer = new WheelPagePacer();
     expect(pacer.record(2, "y", 0)).toBe(false);
