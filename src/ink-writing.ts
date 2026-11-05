@@ -1730,7 +1730,14 @@ export abstract class InkWritingView extends FileView {
     // Live pointer input occupying the surface only borrows the event; the
     // wheel gesture itself survives so flip suppression and the page budget
     // keep counting across the stroke and the tail decays on its own clock.
-    if (this.activePointerId !== null || this.desktopPan) return;
+    // The native scroll must still be cancelled: live samples map client
+    // coordinates through a live inputRect(), so default scrolling moves the
+    // basis mid-stroke and kinks the ink by exactly the scrolled amount.
+    if (this.activePointerId !== null || this.desktopPan) {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest?.('input, textarea, select, [contenteditable], [role="dialog"]')) event.preventDefault();
+      return;
+    }
     const scroller = this.inputScroller();
     const target = event.target as HTMLElement | null;
     if (target?.closest?.('input, textarea, select, [contenteditable], [role="dialog"]')) {

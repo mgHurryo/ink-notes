@@ -222,7 +222,13 @@ export function gestureContract(create: () => Promise<any>): void {
       editor.state.tool = "pen";
       const sample = (x: number, y: number) => ({ pointerId: 42, pointerType: "pen", clientX: x, clientY: y, pressure: .6 });
       editor.onPointerDown(sample(200, 200));
-      for (const time of [170, 180, 190]) wheel(0, 60, { timeStamp: time });
+      // Borrowed samples must still cancel the native scroll: default
+      // scrolling moves the rect the stroke maps client coordinates
+      // against, kinking the ink by exactly the scrolled amount. The
+      // ctrl+wheel page-zoom path is cancelled the same way.
+      expect(wheel(0, 60, { timeStamp: 170 }).defaultPrevented).toBe(true);
+      expect(wheel(0, 60, { timeStamp: 175, ctrlKey: true }).defaultPrevented).toBe(true);
+      for (const time of [180, 190]) wheel(0, 60, { timeStamp: time });
       editor.onPointerUp(sample(200, 200));
       // The tail keeps decaying on the original contact's clock, suppressed.
       for (const [delta, time] of [[40, 210], [32, 230], [24, 250], [18, 270],
