@@ -365,18 +365,22 @@ export function normalizeDynamics(value: unknown): StrokeDynamics | undefined {
   const raw = value as Partial<StrokeDynamics>;
   const percent = (candidate: unknown, fallback: number): number =>
     typeof candidate === "number" && Number.isFinite(candidate) ? clamp(Math.round(candidate), 0, 100) : fallback;
+  // NaN points survive JSON.stringify as null and become legal-looking control
+  // points on the next load, so drop them here under the same rule the
+  // renderer applies (normalizePressureCurve).
   const curve = Array.isArray(raw.pressureCurve) && raw.pressureCurve.length >= 2
-    ? raw.pressureCurve.map((point) => (Array.isArray(point) ? [Number(point[0]), Number(point[1])] : [NaN, NaN]))
+    ? raw.pressureCurve.map((point) => (Array.isArray(point) ? [Number(point[0]), Number(point[1])] : [NaN, NaN])).filter((point) => point.every((value) => Number.isFinite(value)))
     : undefined;
+  const cleaned = curve && curve.length >= 2 ? curve : undefined;
   const dynamics: StrokeDynamics = {
     taper: percent(raw.taper, 0),
     pressure: percent(raw.pressure, 100),
     speed: percent(raw.speed, 0),
   };
-  if (curve) dynamics.pressureCurve = curve;
+  if (cleaned) dynamics.pressureCurve = cleaned;
   const defaults: StrokeDynamics = { taper: 0, pressure: 100, speed: 0 };
   const plain = dynamics.taper === defaults.taper && dynamics.pressure === defaults.pressure && dynamics.speed === defaults.speed;
-  return plain && !curve ? undefined : dynamics;
+  return plain && !cleaned ? undefined : dynamics;
 }
 
 function normalizePoint(value: unknown): InkPoint | null {

@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createNotebook, createPage, mergeNotebooks, normalizeNotebook } from "../src/model";
+import { normalizePressureCurve } from "../src/rendering";
+import { parseStoredJson, serializeStoredJson } from "../src/storage-codec";
 
 describe("Ink notebook model", () => {
   it("normalizes malformed notebook data without losing valid strokes", () => {
@@ -142,5 +144,42 @@ describe("Ink notebook model", () => {
     // fresh normalize of the still-duplicated file; both copies' strokes must
     // survive that round-trip.
     expect(mergeNotebooks(normalizeNotebook(raw), notebook).pages[0].strokes.map((stroke) => stroke.id)).toEqual(["s1", "s2"]);
+  });
+
+  it("drops malformed pressureCurve points when loading", () => {
+    const stroke = (pressureCurve: unknown) => ({
+      id: "s1", pageId: "p1", tool: "pen" as const, color: "#000", width: 3, opacity: 1, points: [], createdAt: 1, updatedAt: 1,
+      dynamics: { taper: 0, pressure: 100, speed: 0, pressureCurve },
+    });
+    // Filtering leaves a single point, so the whole curve is treated as absent.
+    const dropped = normalizeNotebook({ pages: [{ id: "p1", title: "Page", strokes: [stroke([[0.1, 0.2], [1], "oops"])] }] });
+    expect(dropped.pages[0].strokes[0].dynamics?.pressureCurve).toBeUndefined();
+
+    // Invalid points are dropped while valid ones survive.
+    const mixed = normalizeNotebook({ pages: [{ id: "p1", title: "Page", strokes: [stroke([[0, 0], [0.5, "oops"], [1, 1]])] }] });
+    const kept = mixed.pages[0].strokes[0].dynamics?.pressureCurve;
+    expect(kept).toEqual([[0, 0], [1, 1]]);
+    expect(kept?.every((point) => point.every((value) => Number.isFinite(value)))).toBe(true);
+  });
+
+  it("keeps the pressureCurve stable across a storage round-trip", () => {
+    const strokes = [
+      { id: "s1", pageId: "p1", tool: "pen" as const, color: "#000", width: 3, opacity: 1, points: [], createdAt: 1, updatedAt: 1,
+        dynamics: { taper: 0, pressure: 100, speed: 0, pressureCurve: [[0.1, 0.2], [1], "oops"] } },
+      // A valid non-identity curve must survive the same round-trip unchanged.
+      { id: "s2", pageId: "p1", tool: "pen" as const, color: "#000", width: 3, opacity: 1, points: [], createdAt: 1, updatedAt: 1,
+        dynamics: { taper: 10, pressure: 100, speed: 0, pressureCurve: [[0, 0], [0.5, 0.9], [1, 1]] } },
+    ];
+    const first = normalizeNotebook({ pages: [{ id: "p1", title: "Page", strokes }] });
+    expect(first.pages[0].strokes[0].dynamics?.pressureCurve).toBeUndefined();
+    const kept = first.pages[0].strokes[1].dynamics?.pressureCurve;
+    expect(kept).toEqual([[0, 0], [0.5, 0.9], [1, 1]]);
+    expect(kept?.every((point) => point.every((value) => Number.isFinite(value)))).toBe(true);
+
+    const second = normalizeNotebook(parseStoredJson(serializeStoredJson(first)));
+    expect(second.pages[0].strokes.map((stroke) => stroke.dynamics?.pressureCurve))
+      .toEqual(first.pages[0].strokes.map((stroke) => stroke.dynamics?.pressureCurve));
+    expect(second.pages[0].strokes.map((stroke) => normalizePressureCurve(stroke.dynamics?.pressureCurve)))
+      .toEqual(first.pages[0].strokes.map((stroke) => normalizePressureCurve(stroke.dynamics?.pressureCurve)));
   });
 });
