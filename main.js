@@ -24877,9 +24877,9 @@ var WheelPagePacer = class {
   record(pages, axis, at) {
     if (axis === "y" && pages > 0) {
       for (let page = 0; page < pages; page += 1) this.flips.push(at);
-      const cutoff = at - FAST_PAGING_WINDOW_MS;
-      while (this.flips.length > 0 && this.flips[0] < cutoff) this.flips.shift();
     }
+    const cutoff = at - FAST_PAGING_WINDOW_MS;
+    while (this.flips.length > 0 && this.flips[0] < cutoff) this.flips.shift();
     this.engagedState = this.flips.length >= FAST_PAGING_PAGES;
     return this.engagedState;
   }
