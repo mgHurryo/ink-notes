@@ -31202,6 +31202,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     const removedIds = [gesture.id, ...removed.map((stroke) => stroke.id)];
     this.deleteStrokes(page, removedIds);
     page.strokes.push(...replacements);
+    page.strokes.sort((left2, right2) => left2.createdAt - right2.createdAt);
     this.markChanged(page);
     this.queueWorkerOperation({
       type: "complete-stroke",

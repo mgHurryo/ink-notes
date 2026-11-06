@@ -3830,6 +3830,7 @@ export abstract class InkWritingView extends FileView {
     const removedIds = [gesture.id, ...removed.map((stroke) => stroke.id)];
     this.deleteStrokes(page, removedIds);
     page.strokes.push(...replacements);
+    page.strokes.sort((left, right) => left.createdAt - right.createdAt);
     this.markChanged(page);
     this.queueWorkerOperation({
       type: "complete-stroke", pageId: page.id, strokeId: gesture.id,

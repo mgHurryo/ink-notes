@@ -452,6 +452,36 @@ describe("consecutive handwriting input", () => {
     }
   });
 
+  it("keeps scribble-erase fragments below newer strokes in raw array order", () => {
+    const { internal } = setup();
+    const page = internal.notebook.pages[0];
+    page.strokes.push({
+      id: "early", pageId: page.id, tool: "pen", color: "#000", width: 3, opacity: 1,
+      points: [{ x: 0.1, y: 0.5, pressure: 0.5, t: 1 }, { x: 0.9, y: 0.5, pressure: 0.5, t: 2 }], createdAt: 1000, updatedAt: 1000,
+    });
+    page.strokes.push({
+      id: "newer", pageId: page.id, tool: "pen", color: "#f00", width: 3, opacity: 1,
+      points: [{ x: 0.1, y: 0.1, pressure: 0.5, t: 3 }], createdAt: 3000, updatedAt: 3000,
+    });
+    const gesture = { id: "gesture", pageId: page.id, tool: "pen" as const, color: "#000", width: 8, opacity: 1, points: [], createdAt: 4000, updatedAt: 4000 };
+    const path = scribbleWaves(4, 50).map((point, index, all) => ({
+      x: point.x / 100, y: point.y / 100, pressure: 0.5, t: 1_000 + 1_200 * index / (all.length - 1),
+    }));
+    expect(internal.finishScribbleErase(page, gesture, path)).toBe(true);
+    expect(page.strokes.every((stroke) => stroke.id !== "early" && stroke.id !== "gesture")).toBe(true);
+    // Tile synthesis follows array order and a worker save never re-sorts the
+    // UI model, so finishScribbleErase must leave the array in createdAt
+    // order itself (asserted without a post-hoc sort here).
+    const fragments = page.strokes.filter((stroke) => stroke.id !== "newer");
+    expect(fragments.length).toBeGreaterThan(0);
+    expect(fragments.every((fragment) => fragment.createdAt === 1000)).toBe(true);
+    const newerIndex = page.strokes.findIndex((stroke) => stroke.id === "newer");
+    expect(newerIndex).toBeGreaterThanOrEqual(0);
+    for (const fragment of fragments) {
+      expect(page.strokes.indexOf(fragment)).toBeLessThan(newerIndex);
+    }
+  });
+
   it("uses rectangular hit testing for the square local eraser", () => {
     const createPointStroke = () => {
       const { internal } = setup();
