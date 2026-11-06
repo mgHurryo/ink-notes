@@ -437,11 +437,16 @@ export class DesktopWheelGesture {
         // whose first sample rises only 1.5-3x over the settled level.
         if (normalized <= RENEWED_FLICK_RELEASE_PX) this.renewalBlocked = false;
         else if (jump && normalized > this.lastMagnitude && priorFlippedRun >= RENEW_MIN_FLIPPED) {
-          this.beginRenewedGesture();
-          this.flipped = false;
-          this.travel = 0;
-          this.renewalBlocked = true;
-          this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+          // A jump-shaped sample inside the block may be a stall merge stamped
+          // at delivery cadence rather than a re-swipe - the two are
+          // indistinguishable at the single-sample level - so it defers to the
+          // mirror arm exactly like the unblocked exit below: confirmation
+          // re-arms on held speed with the parked travel restored, a decay
+          // keeps the block guarding the same sweep's tail.
+          this.stallProbation = true;
+          this.stallDeferral = "rearm";
+          this.stallDeferralSpeed = normalized;
+          this.stallDeferralTravel = movement;
         }
       } else if (this.renewedPeak > 0 || gap >= RENEWED_FLICK_GAP_MS) {
         // Not the plain quiet-gap path (a pure continuous stream resets above

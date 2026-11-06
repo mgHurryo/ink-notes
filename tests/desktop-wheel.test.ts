@@ -49,6 +49,37 @@ describe("DesktopWheelGesture blocked-window re-arm", () => {
   });
 });
 
+describe("DesktopWheelGesture blocked-window stamped stall merge", () => {
+  // A blocked-window re-arm fires on a jump-shaped sample that a main-thread
+  // stall merge stamped at delivery cadence produces too - the two are
+  // indistinguishable at the single-sample level. The unblocked exit freezes
+  // such a sample for one beat and lets the next sample's slope decide; the
+  // blocked exit used to re-arm in-frame, so the same physical sweep's
+  // inertial tail (the 12/10/9 continuation below) rode a fresh page budget
+  // and flipped a third page.
+  function pagesAcrossBlockedWindowStampedMerge(): number {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 0;
+    const feed = (magnitudes: number[]) => {
+      for (const magnitude of magnitudes) {
+        pages += gesture.pageDelta(gesture.begin({ x: 0, y: magnitude, mode: 0 }, false, at), false);
+        at += 10;
+      }
+    };
+    feed([140, 30, 20, 12]); // fast phase: one page; the tail decays
+    feed([50, 45, 170]); // re-sweep: the unblocked jump freezes, the held 45 confirms, the 170 flips the second page
+    feed([20, 16, 13]); // the renewed gesture's tail: the block is active from here
+    feed([45]); // stamped stall merge inside the block: 45 >= max(24, 2.2 * 13)
+    feed([12, 10, 9, 12, 10, 9, 12, 10, 9, 12, 10, 9]); // the same sweep's tail continuation
+    return pages;
+  }
+
+  it("keeps a blocked-window stamped stall merge from re-arming", () => {
+    expect(pagesAcrossBlockedWindowStampedMerge()).toBe(2);
+  });
+});
+
 describe("DesktopWheelGesture moderate re-swipe over a settled tail", () => {
   // A Windows precision trackpad inertia tail keeps every gap under the 55ms
   // quiet-gap threshold, so a mid-stream re-swipe can only re-arm through the
