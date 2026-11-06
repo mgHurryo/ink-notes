@@ -85,6 +85,60 @@ describe("DesktopWheelGesture moderate re-swipe over a settled tail", () => {
   it("keeps the identical vertical re-swipe with a 60ms quiet gap at two pages", () => {
     expect(pagesAcrossModerateReswipe(60)).toBe(2);
   });
+
+  // A deliberate re-swipe accelerates: the hand cannot step from the settled
+  // tail straight to its fast phase, so the ramp crosses the (4, 12)px/10ms
+  // band on the way up. Every ramp sample re-writes the raw magnitude with
+  // its own speed, so the settled gate must read the envelope that only
+  // decays - the raw-only gate died on the first mid-band sample and
+  // swallowed the whole re-swipe.
+  function pagesAcrossRampReswipe(quietGapMs: number, axis: "x" | "y" = "y"): number {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 0;
+    const feed = (magnitudes: number[], stepMs: number) => {
+      for (const magnitude of magnitudes) {
+        const delta = axis === "x" ? { x: magnitude, y: 0, mode: 0 } : { x: 0, y: magnitude, mode: 0 };
+        pages += gesture.pageDelta(gesture.begin(delta, false, at), false);
+        at += stepMs;
+      }
+    };
+    feed([140, 90, 60, 30, 20, 14], 10); // fast phase: one page
+    feed([10, 8, 6, 4, 3, 3, 2], 10); // inertia tail settles at the release level
+    at += quietGapMs;
+    feed(Array.from({ length: 12 }, (_, i) => 1.25 * (i + 1)), 10); // 120ms linear ramp 0 -> 15px/10ms
+    feed(Array.from({ length: 30 }, () => 15), 10); // fast phase holds 15px/10ms
+    return pages;
+  }
+
+  it("rearms a vertical re-swipe that ramps up through the settled band", () => {
+    expect(pagesAcrossRampReswipe(0)).toBe(2);
+  });
+
+  it("keeps the ramped horizontal re-swipe to the one page its contact already flipped", () => {
+    expect(pagesAcrossRampReswipe(0, "x")).toBe(1);
+  });
+
+  it("rearms the same ramp after a 200ms silence delivered in integral deltas", () => {
+    // A real trackpad resumes an integral stream: the first ramp sample
+    // rounds to zero (a paused tail, frozen for one sample), the rest climbs
+    // 2px per sample to the same 15px/10ms fast phase.
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 0;
+    const feed = (magnitudes: number[]) => {
+      for (const magnitude of magnitudes) {
+        pages += gesture.pageDelta(gesture.begin({ x: 0, y: magnitude, mode: 0 }, false, at), false);
+        at += 10;
+      }
+    };
+    feed([140, 90, 60, 30, 20, 14]); // fast phase: one page
+    feed([10, 8, 6, 4, 3, 3, 2]); // inertia tail settles at the release level
+    at += 200; // a real pause past the idle boundary, not the 55ms quiet gap
+    feed([0, 2, 4, 6, 8, 10, 12, 14, 15]); // integral ramp up to 15px/10ms
+    feed(Array.from({ length: 30 }, () => 15)); // fast phase holds 15px/10ms
+    expect(pages).toBe(2);
+  });
 });
 
 describe("DesktopWheelGesture settled-tail stall continuation", () => {
