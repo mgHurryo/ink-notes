@@ -176,7 +176,24 @@ export function mergeNotebooks(base: InkNotebook, incoming: InkNotebook): InkNot
   }
   const deletedPages: Record<string, number> = { ...(base.deletedPages ?? {}) };
   for (const [id, timestamp] of Object.entries(incoming.deletedPages ?? {})) deletedPages[id] = Math.max(deletedPages[id] ?? 0, timestamp);
+  const unionById = new Map(pages);
   for (const id of Object.keys(deletedPages)) pages.delete(id);
+  if (pages.size === 0) {
+    // Complementary deletions (each side deletes a different page) would leave
+    // no page at all, and the fresh "Page 1" fallback below would make that
+    // loss final on the next save. Keep the last-deleted page, mirroring the
+    // mergeSidecars revival in pdf-sidecar.ts. Its tombstone has to go too, or
+    // the next merge deletes the page again.
+    let revivedId: string | null = null;
+    let revivedAt = -Infinity;
+    for (const [id, timestamp] of Object.entries(deletedPages)) {
+      if (unionById.has(id) && timestamp > revivedAt) { revivedId = id; revivedAt = timestamp; }
+    }
+    if (revivedId !== null) {
+      pages.set(revivedId, unionById.get(revivedId)!);
+      delete deletedPages[revivedId];
+    }
+  }
   const orderSource = incoming.pageOrderUpdatedAt > base.pageOrderUpdatedAt
     || incoming.pageOrderUpdatedAt === base.pageOrderUpdatedAt && compareNotebookOrder(incoming, base) >= 0
     ? incoming : base;
