@@ -24760,7 +24760,7 @@ var DesktopWheelGesture = class {
     const priorFlippedRun = this.flippedRun;
     let renewedTravel;
     if (this.flipped && !this.discrete) {
-      const settledRise = this.lastMagnitude <= RENEWED_FLICK_RELEASE_PX && normalized > this.lastMagnitude && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO;
+      const settledRise = Math.min(this.lastMagnitude, Math.abs(this.lastDelta)) <= RENEWED_FLICK_RELEASE_PX && normalized > this.lastMagnitude && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO;
       const jump = normalized >= Math.max(
         settledRise ? RENEWED_FLICK_JUMP_PX / 2 : RENEWED_FLICK_JUMP_PX,
         Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO

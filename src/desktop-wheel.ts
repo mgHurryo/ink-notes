@@ -382,15 +382,20 @@ export class DesktopWheelGesture {
     let renewedTravel: number | undefined;
     if (this.flipped && !this.discrete) {
       // A moderate re-swipe rising straight off a settled tail is a fresh
-      // flick even below the absolute floor: with the previous raw sample at
-      // the release level the 2.2x ratio already demands several times that
+      // flick even below the absolute floor. The settled band reads the min
+      // of the raw magnitude and the min-chain envelope: across a ramp the
+      // envelope only decays and parks at the tail's settled value, while
+      // the raw magnitude is re-written by every ramp sample - the old
+      // raw-only gate died on the ramp's first sample past the release level
+      // and swallowed the whole deliberate re-swipe. With the envelope at the
+      // release level the 2.2x ratio already demands several times that
       // level, so noise cannot clear it, while the 24px floor swallowed real
-      // sub-24px re-swipes whole (the envelope tracks the raw sample there:
-      // the decayed lastDelta is its min chain). A stream that has already
-      // risen past the release level is mid-ramp, not settled, and keeps the
+      // sub-24px re-swipes whole. A stream whose envelope has already risen
+      // past the release level is mid-ramp, not settled, and keeps the
       // original floor so a single ramp cannot re-arm twice per gesture.
       // Every comparison runs on normalized speeds (px per REF_DT_MS).
-      const settledRise = this.lastMagnitude <= RENEWED_FLICK_RELEASE_PX && normalized > this.lastMagnitude
+      const settledRise = Math.min(this.lastMagnitude, Math.abs(this.lastDelta)) <= RENEWED_FLICK_RELEASE_PX
+        && normalized > this.lastMagnitude
         && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO;
       const jump = normalized >= Math.max(settledRise ? RENEWED_FLICK_JUMP_PX / 2 : RENEWED_FLICK_JUMP_PX,
         Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO);
