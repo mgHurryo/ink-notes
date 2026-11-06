@@ -553,7 +553,15 @@ describe("DesktopWheelGesture axis switch on the momentum tail", () => {
   // tail must stay suppressed instead of re-arming under the new (smaller)
   // axis threshold and spending a fresh page budget.
   it("keeps the tail suppressed across a natural drift past the retention ratio", () => {
-    expect(flipCount([[0, 140], [0, 90], [10, 60], [15, 30], [25, 18], [30, 10], [40, 6]])).toBe(1);
+    expect(flipCount([[0, 140], [0, 90], [10, 60], [15, 30], [25, 18], [30, 10], [40, 6], [45, 3]])).toBe(1);
+  });
+
+  it("keeps a diagonal arc to one page when its axis re-classifies mid-tail", () => {
+    // Constant total speed, only the axis share shifts: the re-classification
+    // must re-seed the surviving envelope to the new axis's own speed, or the
+    // old axis's decayed envelope lets the y samples cross the jump threshold
+    // and re-arm a second page out of the same physical flick.
+    expect(flipCount([[140, 20], [90, 40], [60, 90], [30, 130], [20, 140], [14, 150], [10, 160]])).toBe(1);
   });
 
   it("keeps the tail suppressed when Shift re-targets the axis mid-flight", () => {

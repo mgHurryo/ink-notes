@@ -756,6 +756,51 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(desktop.pageSwipeRequest.target).toBe(3);
     });
 
+    it("keeps a keyboard merge from erasing the wheel provenance of queued steps", async () => {
+      const { editor, wheel, finger, send } = await desktopSetup();
+      const desktop = editor as any;
+      desktop.flipSettling = true;
+      desktop.beginPageSwipe(1, 6, 0);
+      for (const timeStamp of [100, 110, 120, 130]) wheel(120, 0, { timeStamp });
+      expect(desktop.pageSwipeRequest.target).toBe(2);
+      // The keyboard merge queues non-wheel steps onto the same window; a
+      // last-writer-wins flag used to erase the wheel provenance here while
+      // the wheel steps kept riding in the target, so the next touch drag
+      // read false, skipped the discard, and was swallowed onto destinations
+      // the finger never saw.
+      desktop.desktopNavigate("next");
+      expect(desktop.pageSwipeRequest.target).toBe(3);
+      send("touchstart", [finger(1, 500, 200)]);
+      send("touchmove", [finger(1, 100, 200)]);
+      expect(desktop.pageSwipeRequest.target).toBe(1);
+      send("touchend", [], [finger(1, 100, 200)]);
+      expect(desktop.pageSwipeRequest.target).toBe(2);
+    });
+
+    it("keeps a zero-delta touch release from erasing the wheel provenance of queued steps", async () => {
+      const { editor, wheel, finger, send } = await desktopSetup();
+      const desktop = editor as any;
+      desktop.flipSettling = true;
+      desktop.beginPageSwipe(1, 6, 0);
+      // The drag starts before the wheel backlog queues, so its moves see
+      // nothing stale; the wheels then queue onto the same settle window.
+      send("touchstart", [finger(1, 500, 200)]);
+      send("touchmove", [finger(1, 480, 200)]);
+      for (const timeStamp of [100, 110, 120, 130]) wheel(120, 0, { timeStamp });
+      expect(desktop.pageSwipeRequest.target).toBe(2);
+      // A zero-delta release (spring-back) queues nothing, mirroring the
+      // endDesktopPan guard: writing the queue for it used to erase the
+      // wheel flag (and scrollEdge) while the wheel steps stayed queued.
+      send("touchend", [], [finger(1, 480, 200)]);
+      expect(desktop.pageSwipeRequest.target).toBe(2);
+      // The next drag must still discard the wheel-written backlog.
+      send("touchstart", [finger(1, 500, 200)]);
+      send("touchmove", [finger(1, 100, 200)]);
+      expect(desktop.pageSwipeRequest.target).toBe(1);
+      send("touchend", [], [finger(1, 100, 200)]);
+      expect(desktop.pageSwipeRequest.target).toBe(2);
+    });
+
     it("keeps each discrete mouse-wheel notch queued during a slow page handoff", async () => {
       const { editor, wheel } = await desktopSetup();
       const desktop = editor as any;

@@ -262,6 +262,22 @@ export class DesktopWheelGesture {
     if (axis !== this.axis && this.flipped && !this.discrete && !discrete) {
       this.travel = 0;
       this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+      if (normalized > 0) {
+        // The surviving min-chain envelope still describes the OLD axis, so
+        // the jump/settledRise comparisons below score the new axis's samples
+        // against a foreign decay: a constant-rate arc whose axis share
+        // merely shifts crosses the 2.2x ratio and re-arms under the new
+        // axis threshold - the re-flip the comment above promises cannot
+        // happen. Re-seed with this sample's own normalized speed so only a
+        // genuine total-rate rise clears its baseline; renewedPeak stays
+        // unseeded, or a steeper arc's per-step >= 1.2x climb re-opens the
+        // same gap through the ramp detector below. The > 0 guard leaves the
+        // one movement === 0 path here (a shift-redirected all-zero sample)
+        // to the pausedTail write below, which already keeps the envelope.
+        this.lastDelta = Math.sign(movement) * normalized;
+        this.lastMagnitude = normalized;
+        this.envelopeAtCadence = cadence;
+      }
     } else if (axis !== this.axis || delta.mode !== this.mode || reversed) {
       this.reset();
       gap = 0;

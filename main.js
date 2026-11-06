@@ -24716,6 +24716,11 @@ var DesktopWheelGesture = class {
     if (axis !== this.axis && this.flipped && !this.discrete && !discrete) {
       this.travel = 0;
       this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+      if (normalized > 0) {
+        this.lastDelta = Math.sign(movement) * normalized;
+        this.lastMagnitude = normalized;
+        this.envelopeAtCadence = cadence;
+      }
     } else if (axis !== this.axis || delta.mode !== this.mode || reversed) {
       this.reset();
       gap = 0;
@@ -28559,7 +28564,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     if (!this.flipSettling || !request) return false;
     request.target = Math.max(0, Math.min(request.count - 1, target));
     request.scrollEdge = scrollEdge;
-    request.wheelQueued = wheelQueued;
+    request.wheelQueued = request.wheelQueued || wheelQueued;
     return true;
   }
   queuePageSwipeDelta(delta, scrollEdge, wheelQueued = false) {
@@ -28583,19 +28588,25 @@ var InkWritingView = class extends import_obsidian7.FileView {
     if (!this.flipSettling || !request) return;
     request.target = request.activeTarget;
     request.scrollEdge = void 0;
+    request.wheelQueued = false;
   }
   /**
-   * Pages queued by earlier swipes of the same input deliberately keep riding
-   * the handoff (#229), so a fresh touch drag discards only a backlog last
-   * written by the wheel path: the drag's own release must not land on wheel
-   * destinations the finger never saw, but rapid same-input paging must not
-   * lose its queued steps either.
+   * wheelQueued records whether any wheel step has queued since the last
+   * discard or reset, so it only accumulates: a later non-wheel writer
+   * (keyboard merge, touch release) used to overwrite it last-writer-wins,
+   * erasing the provenance of wheel steps still riding in the target and
+   * letting a fresh touch drag swallow them. Pages queued by earlier swipes
+   * of the same input deliberately keep riding the handoff (#229), so a
+   * fresh touch drag discards only that wheel-written backlog: the drag's
+   * own release must not land on wheel destinations the finger never saw,
+   * but rapid same-input paging must not lose its queued steps either.
    */
   discardWheelQueuedPageSwipeSteps() {
     const request = this.pageSwipeRequest;
     if (!this.flipSettling || !request || !request.wheelQueued) return;
     request.target = request.activeTarget;
     request.scrollEdge = void 0;
+    request.wheelQueued = false;
   }
   clearPageSwipeTarget() {
     this.pageSwipeRequest = null;
@@ -28683,7 +28694,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     const crossed = Math.abs(travel) > width * 0.35;
     const delta = this.activePointerId !== null ? 0 : fling || crossed ? travel > 0 ? -1 : 1 : 0;
     if (this.flipSettling) {
-      this.queuePageSwipeDelta(delta);
+      if (delta !== 0) this.queuePageSwipeDelta(delta);
     } else {
       this.swipeSettle(delta, travel);
     }
@@ -36489,7 +36500,7 @@ var PdfInkView = class extends InkWritingView {
           if (pageId) this.toggleManagedPage(pageId);
           return;
         }
-        void this.navigatePages(index - this.noteIndex);
+        void this.explicitNavigateToPageIndex(index);
       });
       this.thumbButtons.set(index, button3);
     }
@@ -36901,10 +36912,23 @@ var PdfInkView = class extends InkWritingView {
       (window.devicePixelRatio || 1) * this.zoom
     );
   }
+  /** Mirror of InkView.explicitNavigateToPage (#361): an explicit jump must
+   *  override wheel targets queued but not yet started, so the settle drain
+   *  cannot walk the jump back through stale pages the user never chose.
+   *  Same unconditional discard precedence a direct-manipulation swipe already
+   *  gets. queuePageSwipeTarget clamps the index; outside the settle window
+   *  both hooks no-op and this is a plain navigatePages. */
+  explicitNavigateToPageIndex(index) {
+    if (this.flipSettling) {
+      this.discardQueuedPageSwipeSteps();
+      this.queuePageSwipeTarget(index);
+    }
+    return this.navigatePages(index - this.noteIndex);
+  }
   async revealStickyPage(pageId) {
     var _a, _b;
     const index = (_b = (_a = this.sidecar) == null ? void 0 : _a.notePages.findIndex((page) => page.id === pageId)) != null ? _b : -1;
-    if (index >= 0) await this.navigatePages(index - this.noteIndex);
+    if (index >= 0) await this.explicitNavigateToPageIndex(index);
   }
   setZoom(zoom, target, anchor) {
     if (this.zoomLocked || !Number.isFinite(zoom)) return;
