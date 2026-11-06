@@ -24760,7 +24760,7 @@ var DesktopWheelGesture = class {
     const priorFlippedRun = this.flippedRun;
     let renewedTravel;
     if (this.flipped && !this.discrete) {
-      const settledRise = this.lastMagnitude <= RENEWED_FLICK_RELEASE_PX && normalized > this.lastMagnitude && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO;
+      const settledRise = Math.min(this.lastMagnitude, Math.abs(this.lastDelta)) <= RENEWED_FLICK_RELEASE_PX && normalized > this.lastMagnitude && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO;
       const jump = normalized >= Math.max(
         settledRise ? RENEWED_FLICK_JUMP_PX / 2 : RENEWED_FLICK_JUMP_PX,
         Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO
@@ -31202,6 +31202,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     const removedIds = [gesture.id, ...removed.map((stroke) => stroke.id)];
     this.deleteStrokes(page, removedIds);
     page.strokes.push(...replacements);
+    page.strokes.sort((left2, right2) => left2.createdAt - right2.createdAt);
     this.markChanged(page);
     this.queueWorkerOperation({
       type: "complete-stroke",
@@ -33179,10 +33180,10 @@ var InkView = class extends InkWritingView {
     return "pen-line";
   }
   revealPage(pageId) {
-    this.navigateToPage(pageId);
+    this.explicitNavigateToPage(pageId);
   }
   revealStickyPage(pageId) {
-    return this.navigateToPage(pageId);
+    return this.explicitNavigateToPage(pageId);
   }
   async onOpen() {
     this.root = this.containerEl.children[1];
@@ -33459,7 +33460,7 @@ var InkView = class extends InkWritingView {
         event.preventDefault();
         if (!this.readingMode) this.openThumbTagPopover(button3);
       });
-      button3.addEventListener("click", () => this.pageManagement ? this.togglePageSelection(page.id) : this.navigateToPage(page.id));
+      button3.addEventListener("click", () => this.pageManagement ? this.togglePageSelection(page.id) : this.explicitNavigateToPage(page.id));
       this.scheduleThumbnail(canvas, page);
     });
     mountRailResizer(rail, { storageKey: RAIL_WIDTH_STORAGE_KEY, onDragEnd: () => this.redrawPageThumbnails() });
@@ -34269,6 +34270,20 @@ var InkView = class extends InkWritingView {
     this.renderPageRail();
     this.renderPage();
     this.scheduleSave();
+  }
+  /** An explicit jump (thumbnail click, reveal) must override wheel targets
+   *  queued but not yet started: without the discard the settle drain walks
+   *  the jump back through every stale queued page, landing the user on a
+   *  page they did not choose. Same precedence a direct-manipulation swipe
+   *  already gets. queuePageSwipeTarget clamps the index; outside the
+   *  settle window both hooks no-op, so this is a plain navigateToPage. */
+  explicitNavigateToPage(pageId) {
+    if (this.flipSettling) {
+      this.discardQueuedPageSwipeSteps();
+      const index = this.notebook.pages.findIndex((page) => page.id === pageId);
+      if (index >= 0) this.queuePageSwipeTarget(index);
+    }
+    return this.navigateToPage(pageId);
   }
   navigateToPage(pageId) {
     if (this.currentPage().id === pageId || !this.pageById(pageId)) return Promise.resolve();

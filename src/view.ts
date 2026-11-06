@@ -132,9 +132,9 @@ export class InkView extends InkWritingView {
   getIcon(): string { return "pen-line"; }
 
   revealPage(pageId: string): void {
-    this.navigateToPage(pageId);
+    this.explicitNavigateToPage(pageId);
   }
-  protected revealStickyPage(pageId: string): Promise<void> { return this.navigateToPage(pageId); }
+  protected revealStickyPage(pageId: string): Promise<void> { return this.explicitNavigateToPage(pageId); }
 
   async onOpen(): Promise<void> {
     this.root = this.containerEl.children[1] as HTMLElement;
@@ -415,7 +415,7 @@ export class InkView extends InkWritingView {
         if (!this.readingMode) this.openThumbTagPopover(button);
       });
       button.addEventListener("click", () => this.pageManagement
-        ? this.togglePageSelection(page.id) : this.navigateToPage(page.id));
+        ? this.togglePageSelection(page.id) : this.explicitNavigateToPage(page.id));
       this.scheduleThumbnail(canvas, page);
     });
     mountRailResizer(rail, { storageKey: RAIL_WIDTH_STORAGE_KEY, onDragEnd: () => this.redrawPageThumbnails() });
@@ -1201,6 +1201,21 @@ export class InkView extends InkWritingView {
     this.renderPageRail();
     this.renderPage();
     this.scheduleSave();
+  }
+
+  /** An explicit jump (thumbnail click, reveal) must override wheel targets
+   *  queued but not yet started: without the discard the settle drain walks
+   *  the jump back through every stale queued page, landing the user on a
+   *  page they did not choose. Same precedence a direct-manipulation swipe
+   *  already gets. queuePageSwipeTarget clamps the index; outside the
+   *  settle window both hooks no-op, so this is a plain navigateToPage. */
+  private explicitNavigateToPage(pageId: string): Promise<void> {
+    if (this.flipSettling) {
+      this.discardQueuedPageSwipeSteps();
+      const index = this.notebook.pages.findIndex((page) => page.id === pageId);
+      if (index >= 0) this.queuePageSwipeTarget(index);
+    }
+    return this.navigateToPage(pageId);
   }
 
   private navigateToPage(pageId: string): Promise<void> {

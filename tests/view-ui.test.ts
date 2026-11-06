@@ -1237,3 +1237,122 @@ describe("page rail tagging and filters", () => {
     expect(document.querySelector<HTMLButtonElement>('button[aria-label="Red flag"]')!.disabled).toBe(false);
   });
 });
+
+describe("explicit navigation during the page swipe settle window", () => {
+  interface FakeAnimation {
+    onfinish: (() => void) | null;
+    oncancel: (() => void) | null;
+    playState: string;
+    finish(): void;
+    cancel(): void;
+  }
+  // jsdom has no Element.animate, so a settle animation would otherwise
+  // complete synchronously and drain the queue before an explicit jump can
+  // land. The stub hands every animation to the test; finishing is
+  // idempotent so the drain pass below cannot re-fire an onfinish.
+  const fakeSwipeAnimations = (): { animations: FakeAnimation[]; restore(): void } => {
+    const animations: FakeAnimation[] = [];
+    const original = Element.prototype.animate;
+    Element.prototype.animate = function (): FakeAnimation {
+      const animation: FakeAnimation = {
+        onfinish: null, oncancel: null, playState: "running",
+        finish() {
+          if (animation.playState === "finished") return;
+          animation.playState = "finished";
+          animation.onfinish?.();
+        },
+        cancel() { animation.oncancel?.(); },
+      };
+      animations.push(animation);
+      return animation;
+    } as unknown as typeof Element.prototype.animate;
+    return { animations, restore: () => { Element.prototype.animate = original; } };
+  };
+  const settleHost = () => {
+    const host = view as unknown as {
+      addPage(): void; pageIndex: number; pageScroller: HTMLElement;
+      swipeDrag(offset: number): void; swipeSettle(delta: number, travel: number, edge?: "top" | "bottom"): void;
+      queuePageSwipeDelta(delta: number): boolean;
+      pageSwipeRequest: { target: number } | null;
+      flipSettling: boolean;
+      notebook: ReturnType<typeof createNotebook>;
+      revealPage(pageId: string): void;
+    };
+    // Four deliberate addPage calls leave the view on the last page; the
+    // stale-target scenario starts from the first page.
+    for (let i = 0; i < 4; i++) host.addPage();
+    host.pageIndex = 0;
+    // jsdom has zero layout: without a real pitch the drag clamps to it and
+    // the settle animation completes synchronously (from === to).
+    Object.defineProperties(host.pageScroller, {
+      clientWidth: { configurable: true, value: 800 },
+      clientHeight: { configurable: true, value: 700 },
+    });
+    return host;
+  };
+  /** Finish the settle animation, then keep finishing each queued drain-step
+   *  animation and flushing the task queue until the handoff loop is done. */
+  const drainPageSwipe = async (animations: FakeAnimation[]): Promise<void> => {
+    for (let guard = 0; guard < 50; guard++) {
+      animations.filter((animation) => animation.playState === "running").forEach((animation) => animation.finish());
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+      if (!animations.some((animation) => animation.playState === "running")) break;
+    }
+    await new Promise((resolve) => window.setTimeout(resolve, 0));
+  };
+  /** One deliberate wheel notch forward (the navigateWheelPages sequence),
+   *  frozen mid-settle with its stale target still queued. */
+  const beginStaleWheelSettle = (host: ReturnType<typeof settleHost>, animations: FakeAnimation[]): void => {
+    host.swipeDrag(-24);
+    host.swipeSettle(1, 0, "top");
+    expect(host.flipSettling).toBe(true);
+    expect(host.pageSwipeRequest?.target).toBe(1);
+    expect(animations.length).toBeGreaterThan(0);
+  };
+
+  it("keeps a settle-window thumbnail click on the chosen page instead of the stale wheel target", async () => {
+    const host = settleHost();
+    const { animations, restore } = fakeSwipeAnimations();
+    try {
+      beginStaleWheelSettle(host, animations);
+      document.querySelectorAll<HTMLElement>(".ink-page-thumb")[4]!.click();
+      expect(host.pageIndex).toBe(4);
+      expect(host.flipSettling).toBe(true);
+      expect(document.querySelector(".ink-page-status")?.textContent).toBe("5 / 5");
+      await drainPageSwipe(animations);
+      expect(host.pageIndex).toBe(4);
+      expect(document.querySelector(".ink-page-status")?.textContent).toBe("5 / 5");
+    } finally { restore(); }
+  });
+
+  it("still walks every wheel page queued during a settle nobody clicks away", async () => {
+    const host = settleHost();
+    const { animations, restore } = fakeSwipeAnimations();
+    try {
+      beginStaleWheelSettle(host, animations);
+      // The user keeps wheeling during the slow handoff: three more pages
+      // join the queue behind the flip already in flight. The drain must
+      // deliver all of them - its own navigate steps are legitimate
+      // navigation, never explicit jumps that may discard the queue.
+      expect(host.queuePageSwipeDelta(3)).toBe(true);
+      expect(host.pageSwipeRequest?.target).toBe(4);
+      await drainPageSwipe(animations);
+      expect(host.pageIndex).toBe(4);
+      expect(document.querySelector(".ink-page-status")?.textContent).toBe("5 / 5");
+    } finally { restore(); }
+  });
+
+  it("keeps a settle-window revealPage jump on the revealed page", async () => {
+    const host = settleHost();
+    const { animations, restore } = fakeSwipeAnimations();
+    try {
+      beginStaleWheelSettle(host, animations);
+      host.revealPage(host.notebook.pages[4].id);
+      expect(host.pageIndex).toBe(4);
+      expect(document.querySelector(".ink-page-status")?.textContent).toBe("5 / 5");
+      await drainPageSwipe(animations);
+      expect(host.pageIndex).toBe(4);
+      expect(document.querySelector(".ink-page-status")?.textContent).toBe("5 / 5");
+    } finally { restore(); }
+  });
+});
