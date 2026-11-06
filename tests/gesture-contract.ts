@@ -584,6 +584,11 @@ export function gestureContract(create: () => Promise<any>): void {
       }
       expect(settle).toHaveBeenCalledTimes(2);
       wheel(0, 200, { timeStamp: 190 });
+      // The blocked-window re-arm defers one beat: a jump-shaped sample inside
+      // the block may be a stall merge stamped at delivery cadence, so the
+      // re-arm confirms on the next sample's held speed and the renewed page
+      // flips on that beat - the stream carries one more sweep sample.
+      wheel(0, 200, { timeStamp: 200 });
       expect(settle).toHaveBeenCalledTimes(3);
     });
 

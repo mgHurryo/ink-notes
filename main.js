@@ -24800,11 +24800,10 @@ var DesktopWheelGesture = class {
       if (this.renewalBlocked) {
         if (normalized <= RENEWED_FLICK_RELEASE_PX) this.renewalBlocked = false;
         else if (jump && normalized > this.lastMagnitude && priorFlippedRun >= RENEW_MIN_FLIPPED) {
-          this.beginRenewedGesture();
-          this.flipped = false;
-          this.travel = 0;
-          this.renewalBlocked = true;
-          this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+          this.stallProbation = true;
+          this.stallDeferral = "rearm";
+          this.stallDeferralSpeed = normalized;
+          this.stallDeferralTravel = movement;
         }
       } else if (this.renewedPeak > 0 || gap >= RENEWED_FLICK_GAP_MS) {
         if (gap >= RENEWED_FLICK_GAP_MS) {
