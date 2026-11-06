@@ -146,6 +146,26 @@ describe("create + normalize", () => {
     expect(parsed.notePages.map((page) => page.id)).toEqual([sourcePageId(0), sourcePageId(1)]);
   });
 
+  it("rebuilds a lost note sequence without resurrecting tombstoned pages", () => {
+    const raw = JSON.parse(JSON.stringify(makeSidecar()));
+    raw.notePages = [];
+    raw.deletedNotePages[sourcePageId(1)] = 1500;
+    const parsed = normalizeSidecar(raw);
+    expect(parsed.notePages.map((page) => page.id)).toEqual([sourcePageId(0)]);
+    expect(parsed.deletedNotePages[sourcePageId(1)]).toBe(1500);
+    expect(parsed.notebook.pages.map((page) => page.id)).toEqual(parsed.notePages.map((page) => page.id));
+    expect(parsed.notebook.pageOrder).toEqual(parsed.notePages.map((page) => page.id));
+  });
+
+  it("falls back to an unfiltered rebuild when tombstones cover every source page", () => {
+    const raw = JSON.parse(JSON.stringify(makeSidecar()));
+    raw.notePages = [];
+    raw.deletedNotePages[sourcePageId(0)] = 1500;
+    raw.deletedNotePages[sourcePageId(1)] = 1600;
+    const parsed = normalizeSidecar(raw);
+    expect(parsed.notePages.map((page) => page.id)).toEqual([sourcePageId(0), sourcePageId(1)]);
+  });
+
   it("repairs notebook pages that the sequence lost and drops strays", () => {
     const raw = JSON.parse(JSON.stringify(makeSidecar()));
     raw.notebook.pages = [raw.notebook.pages[0]];

@@ -34,7 +34,7 @@ export function gestureContract(create: () => Promise<any>): void {
     }
 
     async function desktopSetup() {
-      const { editor } = await setup();
+      const { editor, finger, send } = await setup();
       const scroller = editor.inputScroller() as HTMLElement;
       let top = 0, left = 0;
       Object.defineProperties(scroller, {
@@ -52,7 +52,7 @@ export function gestureContract(create: () => Promise<any>): void {
         Object.defineProperty(event, "timeStamp", { configurable: true, value: timeStamp ?? (wheelTime += 200) });
         target.dispatchEvent(event); return event;
       };
-      return { editor, scroller, settle, wheel };
+      return { editor, scroller, settle, wheel, finger, send };
     }
 
     it.each(SHAPES)("draws %s live through the shape menu and finalizes one undoable stroke", async (kind, label) => {
@@ -718,6 +718,44 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(desktop.pageSwipeRequest.target).toBe(2);
     });
 
+    it("keeps a touch drag from adding a page to queued wheel gestures", async () => {
+      const { editor, wheel, finger, send } = await desktopSetup();
+      const desktop = editor as any;
+      desktop.flipSettling = true;
+      desktop.beginPageSwipe(1, 6, 0);
+      for (const timeStamp of [100, 110, 120, 130]) wheel(120, 0, { timeStamp });
+      expect(desktop.pageSwipeRequest.target).toBe(2);
+
+      // The touch mirror of the mouse pan arm above: a fresh direct-manipulation
+      // drag supersedes wheel destinations not yet started, so the settling
+      // queue falls back to the active page instead of being walked off page
+      // by page while the drag is swallowed.
+      send("touchstart", [finger(1, 500, 200)]);
+      send("touchmove", [finger(1, 100, 200)]);
+      expect(desktop.pageSwipeRequest.target).toBe(1);
+      // The drag's own release still counts its single page on the fallback.
+      send("touchend", [], [finger(1, 100, 200)]);
+      expect(desktop.pageSwipeRequest.target).toBe(2);
+    });
+
+    it("keeps pages queued by earlier touch swipes when a fresh touch drag starts", async () => {
+      const { editor, finger, send } = await desktopSetup();
+      const desktop = editor as any;
+      desktop.flipSettling = true;
+      desktop.beginPageSwipe(1, 6, 0);
+      // Same-input accumulation is deliberate (#229): a swipe queued during
+      // the handoff stays valid for the next touch drag — only a backlog last
+      // written by the wheel path is stale.
+      desktop.queuePageSwipeDelta(1);
+      expect(desktop.pageSwipeRequest.target).toBe(2);
+
+      send("touchstart", [finger(1, 500, 200)]);
+      send("touchmove", [finger(1, 100, 200)]);
+      expect(desktop.pageSwipeRequest.target).toBe(2);
+      send("touchend", [], [finger(1, 100, 200)]);
+      expect(desktop.pageSwipeRequest.target).toBe(3);
+    });
+
     it("keeps each discrete mouse-wheel notch queued during a slow page handoff", async () => {
       const { editor, wheel } = await desktopSetup();
       const desktop = editor as any;
@@ -1050,6 +1088,57 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(event.defaultPrevented).toBe(true);
       expect(settle).toHaveBeenCalledOnce();
       expect(settle).toHaveBeenCalledWith(1, 0, undefined);
+    });
+
+    it("swallows a flick tail crossing a textarea mid-flight instead of paging again", async () => {
+      const { scroller, wheel, settle } = await desktopSetup();
+      const textarea = document.createElement("textarea"); scroller.append(textarea);
+      scroller.scrollTop = 600;
+      wheel(0, 140, { timeStamp: 9000 });
+      wheel(0, 90, { timeStamp: 9010 });
+      expect(settle).toHaveBeenCalledTimes(1);
+      wheel(0, 60, { timeStamp: 9020 }, textarea);
+      wheel(0, 30, { timeStamp: 9030 }, textarea);
+      wheel(0, 90, { timeStamp: 9040 });
+      wheel(0, 60, { timeStamp: 9050 });
+      wheel(0, 30, { timeStamp: 9060 });
+      // The tail's remaining travel must not land as a fresh gesture's first
+      // page: the crossing samples keep the flip suppression alive.
+      expect(settle).toHaveBeenCalledTimes(1);
+    });
+
+    it("swallows a horizontal flick tail crossing a textarea mid-flight", async () => {
+      const { scroller, wheel, settle } = await desktopSetup();
+      const textarea = document.createElement("textarea"); scroller.append(textarea);
+      wheel(140, 0, { timeStamp: 9000 });
+      expect(settle).toHaveBeenCalledTimes(1);
+      wheel(60, 0, { timeStamp: 9010 }, textarea);
+      wheel(90, 0, { timeStamp: 9020 });
+      expect(settle).toHaveBeenCalledTimes(1);
+    });
+
+    it("swallows a flick tail crossing a nested scroll surface mid-flight", async () => {
+      const { scroller, wheel, settle } = await desktopSetup();
+      const nested = document.createElement("div"); nested.style.overflowY = "auto"; scroller.append(nested);
+      Object.defineProperties(nested, { clientHeight: { value: 100 }, scrollHeight: { value: 300 } });
+      scroller.scrollTop = 600;
+      wheel(0, 140, { timeStamp: 9000 });
+      expect(settle).toHaveBeenCalledTimes(1);
+      wheel(0, 60, { timeStamp: 9010 }, nested);
+      wheel(0, 90, { timeStamp: 9020 });
+      wheel(0, 60, { timeStamp: 9030 });
+      expect(settle).toHaveBeenCalledTimes(1);
+    });
+
+    it("still hands a fresh wheel gesture on a textarea or nested surface to the surface", async () => {
+      const { scroller, wheel, settle } = await desktopSetup();
+      const textarea = document.createElement("textarea"); scroller.append(textarea);
+      const nested = document.createElement("div"); nested.style.overflowY = "auto"; scroller.append(nested);
+      Object.defineProperties(nested, { clientHeight: { value: 100 }, scrollHeight: { value: 300 } });
+      expect(wheel(0, 140, { timeStamp: 9000 }, textarea).defaultPrevented).toBe(false);
+      expect(settle).not.toHaveBeenCalled();
+      expect(wheel(0, 140, { timeStamp: 9200 }, nested).defaultPrevented).toBe(false);
+      expect(settle).not.toHaveBeenCalled();
     });
 
     it("accepts page keys during an ongoing handoff without enabling edits", async () => {

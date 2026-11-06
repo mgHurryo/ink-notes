@@ -24667,6 +24667,18 @@ var DesktopWheelGesture = class {
     this.trackpadPages = 0;
     this.flippedRun = 0;
   }
+  /** Whether a flipped continuous gesture's tail is still mid-flight. Sample
+   *  sources that swallow a wheel event (nested scroll surfaces, text fields,
+   *  uncancelable events) must not reset() such a tail: reset() would clear
+   *  the flip suppression and the page budget and hand the tail's remaining
+   *  travel a fresh contact that pages again - one physical flick flipping a
+   *  second page, the same hazard the idle-boundary arm guards against.
+   *  Unlike that arm there is deliberately no stallProbation clause: tail
+   *  crossings deliver samples ~8-10ms apart, no real gap, so probation lives
+   *  or dies by the gesture's own contract (#345/#347/#352). */
+  get pagingTail() {
+    return this.flipped && !this.discrete;
+  }
   reset() {
     this.gestureId += 1;
     this.axis = null;
@@ -28537,21 +28549,22 @@ var InkWritingView = class extends import_obsidian7.FileView {
   }
   /** Track the requested destination, including swipes made while saving/rendering. */
   beginPageSwipe(target, count, scrollEdge) {
-    const request = { target, activeTarget: target, count, scrollEdge, wheelGestureId: null };
+    const request = { target, activeTarget: target, count, scrollEdge, wheelGestureId: null, wheelQueued: false };
     this.pageSwipeRequest = request;
     return () => this.flipSettling && this.pageSwipeRequest === request;
   }
   /** Coalesce desktop navigation into the in-flight swipe handoff. */
-  queuePageSwipeTarget(target, scrollEdge) {
+  queuePageSwipeTarget(target, scrollEdge, wheelQueued = false) {
     const request = this.pageSwipeRequest;
     if (!this.flipSettling || !request) return false;
     request.target = Math.max(0, Math.min(request.count - 1, target));
     request.scrollEdge = scrollEdge;
+    request.wheelQueued = wheelQueued;
     return true;
   }
-  queuePageSwipeDelta(delta, scrollEdge) {
+  queuePageSwipeDelta(delta, scrollEdge, wheelQueued = false) {
     const request = this.pageSwipeRequest;
-    return request ? this.queuePageSwipeTarget(request.target + delta, scrollEdge) : false;
+    return request ? this.queuePageSwipeTarget(request.target + delta, scrollEdge, wheelQueued) : false;
   }
   /** Trackpad inertia has no portable end event; coalesce each detected gesture once. */
   queueTrackpadPageSwipeDelta(delta, gestureId, scrollEdge) {
@@ -28561,12 +28574,26 @@ var InkWritingView = class extends import_obsidian7.FileView {
     request.wheelGestureId = gestureId;
     request.target = Math.max(0, Math.min(request.count - 1, request.target + delta));
     request.scrollEdge = scrollEdge;
+    request.wheelQueued = true;
     return true;
   }
   /** A fresh direct-manipulation swipe supersedes wheel destinations not yet started. */
   discardQueuedPageSwipeSteps() {
     const request = this.pageSwipeRequest;
     if (!this.flipSettling || !request) return;
+    request.target = request.activeTarget;
+    request.scrollEdge = void 0;
+  }
+  /**
+   * Pages queued by earlier swipes of the same input deliberately keep riding
+   * the handoff (#229), so a fresh touch drag discards only a backlog last
+   * written by the wheel path: the drag's own release must not land on wheel
+   * destinations the finger never saw, but rapid same-input paging must not
+   * lose its queued steps either.
+   */
+  discardWheelQueuedPageSwipeSteps() {
+    const request = this.pageSwipeRequest;
+    if (!this.flipSettling || !request || !request.wheelQueued) return;
     request.target = request.activeTarget;
     request.scrollEdge = void 0;
   }
@@ -29191,6 +29218,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     const scroller = this.inputScroller();
     const target = event.target;
     if ((_b = target == null ? void 0 : target.closest) == null ? void 0 : _b.call(target, 'input, textarea, select, [contenteditable], [role="dialog"]')) {
+      if (this.desktopWheel.pagingTail) return;
       this.desktopWheel.reset();
       return;
     }
@@ -29211,11 +29239,13 @@ var InkWritingView = class extends import_obsidian7.FileView {
       const style = ownerWindow.getComputedStyle(element);
       const nestedScroll = motion.axis === "x" ? /(auto|scroll)/.test(style.overflowX) && element.scrollWidth > element.clientWidth : /(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight;
       if (nestedScroll) {
+        if (this.desktopWheel.pagingTail) return;
         this.desktopWheel.reset();
         return;
       }
     }
     if (!event.cancelable) {
+      if (this.desktopWheel.pagingTail) return;
       this.desktopWheel.reset();
       return;
     }
@@ -29237,12 +29267,12 @@ var InkWritingView = class extends import_obsidian7.FileView {
   navigateWheelPages(pages, axis, discrete, gestureId) {
     const direction = Math.sign(pages);
     const scrollEdge = axis === "y" ? direction > 0 ? "top" : "bottom" : void 0;
-    if (discrete ? this.queuePageSwipeDelta(pages, scrollEdge) : this.queueTrackpadPageSwipeDelta(pages, gestureId, scrollEdge)) return;
+    if (discrete ? this.queuePageSwipeDelta(pages, scrollEdge, true) : this.queueTrackpadPageSwipeDelta(pages, gestureId, scrollEdge)) return;
     if (this.flipSettling) return;
     this.swipeDrag(-direction * 24);
     this.swipeSettle(direction, 0, scrollEdge);
     if (Math.abs(pages) > 1) {
-      if (discrete) this.queuePageSwipeDelta(pages - direction, scrollEdge);
+      if (discrete) this.queuePageSwipeDelta(pages - direction, scrollEdge, true);
       else this.queueTrackpadPageSwipeDelta(pages - direction, gestureId, scrollEdge);
     }
   }
@@ -30158,7 +30188,10 @@ var InkWritingView = class extends import_obsidian7.FileView {
         gesture.lastX = a.clientX;
         gesture.lastT = now;
         gesture.dragX = totalX;
-        if (this.flipSettling) this.finishPageSwipeAnimations();
+        if (this.flipSettling) {
+          this.discardWheelQueuedPageSwipeSteps();
+          this.finishPageSwipeAnimations();
+        }
         this.swipeDrag(totalX);
         return;
       }
@@ -35084,7 +35117,7 @@ function pageForNotePage(notePage, paper, now = Date.now()) {
   return page;
 }
 function normalizeSidecar(value) {
-  var _a;
+  var _a, _b;
   if (!value || typeof value !== "object") {
     throw new PdfSidecarFormatError("Sidecar is not a JSON object");
   }
@@ -35100,14 +35133,21 @@ function normalizeSidecar(value) {
     throw new PdfSidecarFormatError("Sidecar is missing a valid source fingerprint");
   }
   const sourcePages = Array.isArray(raw.sourcePages) ? raw.sourcePages.slice(0, pageCount).map(normalizeGeometry).filter((geometry) => geometry !== null) : [];
+  const deletedNotePages = normalizeTimestamps(raw.deletedNotePages);
   const notePages = Array.isArray(raw.notePages) ? raw.notePages.map(normalizeNotePage).filter((notePage) => notePage !== null && (notePage.sourceIndex === void 0 || notePage.sourceIndex < pageCount)) : [];
   if (notePages.length === 0 && pageCount > 0) {
     for (let index = 0; index < pageCount; index++) {
+      if (Object.prototype.hasOwnProperty.call(deletedNotePages, sourcePageId(index))) continue;
       const geometry = (_a = sourcePages[index]) != null ? _a : { width: 595.28, height: 841.89, rotation: 0 };
       notePages.push({ id: sourcePageId(index), sourceIndex: index, ...geometry });
     }
+    if (notePages.length === 0) {
+      for (let index = 0; index < pageCount; index++) {
+        const geometry = (_b = sourcePages[index]) != null ? _b : { width: 595.28, height: 841.89, rotation: 0 };
+        notePages.push({ id: sourcePageId(index), sourceIndex: index, ...geometry });
+      }
+    }
   }
-  const deletedNotePages = normalizeTimestamps(raw.deletedNotePages);
   const notebook = normalizeNotebook(raw.notebook);
   const notebookPages = new Map(notebook.pages.map((page) => [page.id, page]));
   const pages = notePages.map((notePage) => {
