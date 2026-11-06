@@ -90,6 +90,41 @@ describe("Ink notebook model", () => {
     expect(merged.deletedPages[deletedId]).toBeDefined();
   });
 
+  it("revives the last-deleted page when complementary deletions would wipe the notebook", () => {
+    const base = createNotebook();
+    const p1 = base.pages[0];
+    const p2 = createPage("Page 2");
+    base.pages.push(p2);
+    base.pageOrder = base.pages.map((page) => page.id);
+    p1.strokes.push({ id: "s1", pageId: p1.id, tool: "pen", color: "#000", width: 3, opacity: 1, points: [], createdAt: 1, updatedAt: 1 });
+    p2.strokes.push({ id: "s2", pageId: p2.id, tool: "pen", color: "#000", width: 3, opacity: 1, points: [], createdAt: 2, updatedAt: 2 });
+
+    // Mirror the view.ts:1050 / worker-core.ts:246 shapes: each device merged
+    // from disk carries its own deletion, and normalizeNotebook has already
+    // dropped tombstoned pages, so each side's pages only hold its own view.
+    const a = normalizeNotebook(structuredClone(base));
+    const d1 = a.pages.shift()!;
+    a.deletedPages[d1.id] = Date.now();
+    const b = normalizeNotebook(structuredClone(base));
+    const d2 = b.pages.pop()!;
+    b.deletedPages[d2.id] = Date.now() + 1;
+
+    const merged = mergeNotebooks(b, a);
+    expect(merged.pages).toHaveLength(1);
+    const survivor = merged.pages[0];
+    expect([p1.id, p2.id]).toContain(survivor.id);
+    expect(survivor.strokes).toHaveLength(1);
+    expect(["s1", "s2"]).toContain(survivor.strokes[0].id);
+    expect(merged.deletedPages[survivor.id]).toBeUndefined();
+
+    // The next save re-merges the disk copy with the merged result
+    // (storage.ts:72); the survivor must survive that pass too.
+    const resaved = mergeNotebooks(normalizeNotebook(JSON.parse(JSON.stringify(b))), merged);
+    expect(resaved.pages).toHaveLength(1);
+    expect(resaved.pages[0].id).toBe(survivor.id);
+    expect(resaved.pages[0].strokes).toHaveLength(1);
+  });
+
   it("merges concurrent page additions into a deterministic order", () => {
     const original = createNotebook();
     const left = normalizeNotebook(original);
