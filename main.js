@@ -35117,7 +35117,7 @@ function pageForNotePage(notePage, paper, now = Date.now()) {
   return page;
 }
 function normalizeSidecar(value) {
-  var _a;
+  var _a, _b;
   if (!value || typeof value !== "object") {
     throw new PdfSidecarFormatError("Sidecar is not a JSON object");
   }
@@ -35133,14 +35133,21 @@ function normalizeSidecar(value) {
     throw new PdfSidecarFormatError("Sidecar is missing a valid source fingerprint");
   }
   const sourcePages = Array.isArray(raw.sourcePages) ? raw.sourcePages.slice(0, pageCount).map(normalizeGeometry).filter((geometry) => geometry !== null) : [];
+  const deletedNotePages = normalizeTimestamps(raw.deletedNotePages);
   const notePages = Array.isArray(raw.notePages) ? raw.notePages.map(normalizeNotePage).filter((notePage) => notePage !== null && (notePage.sourceIndex === void 0 || notePage.sourceIndex < pageCount)) : [];
   if (notePages.length === 0 && pageCount > 0) {
     for (let index = 0; index < pageCount; index++) {
+      if (Object.prototype.hasOwnProperty.call(deletedNotePages, sourcePageId(index))) continue;
       const geometry = (_a = sourcePages[index]) != null ? _a : { width: 595.28, height: 841.89, rotation: 0 };
       notePages.push({ id: sourcePageId(index), sourceIndex: index, ...geometry });
     }
+    if (notePages.length === 0) {
+      for (let index = 0; index < pageCount; index++) {
+        const geometry = (_b = sourcePages[index]) != null ? _b : { width: 595.28, height: 841.89, rotation: 0 };
+        notePages.push({ id: sourcePageId(index), sourceIndex: index, ...geometry });
+      }
+    }
   }
-  const deletedNotePages = normalizeTimestamps(raw.deletedNotePages);
   const notebook = normalizeNotebook(raw.notebook);
   const notebookPages = new Map(notebook.pages.map((page) => [page.id, page]));
   const pages = notePages.map((notePage) => {

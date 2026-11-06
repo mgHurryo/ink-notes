@@ -223,17 +223,31 @@ export function normalizeSidecar(value: unknown): PdfSidecar {
   const sourcePages = Array.isArray(raw.sourcePages)
     ? raw.sourcePages.slice(0, pageCount).map(normalizeGeometry).filter((geometry): geometry is PdfSourcePageGeometry => geometry !== null)
     : [];
+  // Parsed before the sequence rebuild below: tombstones must bind there too.
+  const deletedNotePages = normalizeTimestamps(raw.deletedNotePages);
   const notePages = Array.isArray(raw.notePages)
     ? raw.notePages.map(normalizeNotePage).filter((notePage): notePage is PdfSidecarNotePage => notePage !== null && (notePage.sourceIndex === undefined || notePage.sourceIndex < pageCount))
     : [];
   if (notePages.length === 0 && pageCount > 0) {
     // Sequence lost (partial write of an older version): rebuild from source.
+    // Pages deleted before the loss stay deleted — a resurrected page would
+    // carry fresh ink the next merge silently drops.
     for (let index = 0; index < pageCount; index++) {
+      if (Object.prototype.hasOwnProperty.call(deletedNotePages, sourcePageId(index))) continue;
       const geometry = sourcePages[index] ?? { width: 595.28, height: 841.89, rotation: 0 };
       notePages.push({ id: sourcePageId(index), sourceIndex: index, ...geometry });
     }
+    if (notePages.length === 0) {
+      // Tombstones covering every source page are pathological (an external
+      // writer): fall back to an unfiltered rebuild to keep at least one page
+      // — same at-least-one-page invariant as mergeSidecars' complementary
+      // deletion protection.
+      for (let index = 0; index < pageCount; index++) {
+        const geometry = sourcePages[index] ?? { width: 595.28, height: 841.89, rotation: 0 };
+        notePages.push({ id: sourcePageId(index), sourceIndex: index, ...geometry });
+      }
+    }
   }
-  const deletedNotePages = normalizeTimestamps(raw.deletedNotePages);
   const notebook = normalizeNotebook(raw.notebook);
   const notebookPages = new Map(notebook.pages.map((page) => [page.id, page]));
   // Recreate notebook pages for sequence ids missing one, drop notebook pages
