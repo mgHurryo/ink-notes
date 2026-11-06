@@ -1741,6 +1741,9 @@ export abstract class InkWritingView extends FileView {
     const scroller = this.inputScroller();
     const target = event.target as HTMLElement | null;
     if (target?.closest?.('input, textarea, select, [contenteditable], [role="dialog"]')) {
+      // A flick tail crossing the field mid-flight keeps its suppression and
+      // page budget; only a fresh gesture resets into the field's own control.
+      if (this.desktopWheel.pagingTail) return;
       this.desktopWheel.reset();
       return;
     }
@@ -1762,11 +1765,19 @@ export abstract class InkWritingView extends FileView {
       const nestedScroll = motion.axis === "x"
         ? /(auto|scroll)/.test(style.overflowX) && element.scrollWidth > element.clientWidth
         : /(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight;
-      if (nestedScroll) { this.desktopWheel.reset(); return; }
+      if (nestedScroll) {
+        if (this.desktopWheel.pagingTail) return;
+        this.desktopWheel.reset();
+        return;
+      }
     }
     // An uncancelable wheel is still owned by the browser. Applying a second
     // scroll here would move twice and could also navigate a page underneath it.
-    if (!event.cancelable) { this.desktopWheel.reset(); return; }
+    if (!event.cancelable) {
+      if (this.desktopWheel.pagingTail) return;
+      this.desktopWheel.reset();
+      return;
+    }
     event.preventDefault();
     if (motion.suppressed) return;
     let scrolled = false;

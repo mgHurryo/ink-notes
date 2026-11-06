@@ -158,6 +158,19 @@ export class DesktopWheelGesture {
     this.flippedRun = 0;
   }
 
+  /** Whether a flipped continuous gesture's tail is still mid-flight. Sample
+   *  sources that swallow a wheel event (nested scroll surfaces, text fields,
+   *  uncancelable events) must not reset() such a tail: reset() would clear
+   *  the flip suppression and the page budget and hand the tail's remaining
+   *  travel a fresh contact that pages again - one physical flick flipping a
+   *  second page, the same hazard the idle-boundary arm guards against.
+   *  Unlike that arm there is deliberately no stallProbation clause: tail
+   *  crossings deliver samples ~8-10ms apart, no real gap, so probation lives
+   *  or dies by the gesture's own contract (#345/#347/#352). */
+  get pagingTail(): boolean {
+    return this.flipped && !this.discrete;
+  }
+
   reset(): void {
     this.gestureId += 1;
     this.axis = null;

@@ -24667,6 +24667,18 @@ var DesktopWheelGesture = class {
     this.trackpadPages = 0;
     this.flippedRun = 0;
   }
+  /** Whether a flipped continuous gesture's tail is still mid-flight. Sample
+   *  sources that swallow a wheel event (nested scroll surfaces, text fields,
+   *  uncancelable events) must not reset() such a tail: reset() would clear
+   *  the flip suppression and the page budget and hand the tail's remaining
+   *  travel a fresh contact that pages again - one physical flick flipping a
+   *  second page, the same hazard the idle-boundary arm guards against.
+   *  Unlike that arm there is deliberately no stallProbation clause: tail
+   *  crossings deliver samples ~8-10ms apart, no real gap, so probation lives
+   *  or dies by the gesture's own contract (#345/#347/#352). */
+  get pagingTail() {
+    return this.flipped && !this.discrete;
+  }
   reset() {
     this.gestureId += 1;
     this.axis = null;
@@ -29191,6 +29203,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     const scroller = this.inputScroller();
     const target = event.target;
     if ((_b = target == null ? void 0 : target.closest) == null ? void 0 : _b.call(target, 'input, textarea, select, [contenteditable], [role="dialog"]')) {
+      if (this.desktopWheel.pagingTail) return;
       this.desktopWheel.reset();
       return;
     }
@@ -29211,11 +29224,13 @@ var InkWritingView = class extends import_obsidian7.FileView {
       const style = ownerWindow.getComputedStyle(element);
       const nestedScroll = motion.axis === "x" ? /(auto|scroll)/.test(style.overflowX) && element.scrollWidth > element.clientWidth : /(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight;
       if (nestedScroll) {
+        if (this.desktopWheel.pagingTail) return;
         this.desktopWheel.reset();
         return;
       }
     }
     if (!event.cancelable) {
+      if (this.desktopWheel.pagingTail) return;
       this.desktopWheel.reset();
       return;
     }
