@@ -1162,27 +1162,28 @@ export abstract class InkWritingView extends FileView {
   protected flipSettling = false;
   private pageSwipeAnimations: Animation[] = [];
   private pageSwipeRequest: { target: number; activeTarget: number; count: number; scrollEdge?: "top" | "bottom";
-    wheelGestureId: number | null } | null = null;
+    wheelGestureId: number | null; wheelQueued: boolean } | null = null;
 
   /** Track the requested destination, including swipes made while saving/rendering. */
   protected beginPageSwipe(target: number, count: number, scrollEdge?: "top" | "bottom"): () => boolean {
-    const request = { target, activeTarget: target, count, scrollEdge, wheelGestureId: null };
+    const request = { target, activeTarget: target, count, scrollEdge, wheelGestureId: null, wheelQueued: false };
     this.pageSwipeRequest = request;
     return () => this.flipSettling && this.pageSwipeRequest === request;
   }
 
   /** Coalesce desktop navigation into the in-flight swipe handoff. */
-  protected queuePageSwipeTarget(target: number, scrollEdge?: "top" | "bottom"): boolean {
+  protected queuePageSwipeTarget(target: number, scrollEdge?: "top" | "bottom", wheelQueued = false): boolean {
     const request = this.pageSwipeRequest;
     if (!this.flipSettling || !request) return false;
     request.target = Math.max(0, Math.min(request.count - 1, target));
     request.scrollEdge = scrollEdge;
+    request.wheelQueued = wheelQueued;
     return true;
   }
 
-  protected queuePageSwipeDelta(delta: number, scrollEdge?: "top" | "bottom"): boolean {
+  protected queuePageSwipeDelta(delta: number, scrollEdge?: "top" | "bottom", wheelQueued = false): boolean {
     const request = this.pageSwipeRequest;
-    return request ? this.queuePageSwipeTarget(request.target + delta, scrollEdge) : false;
+    return request ? this.queuePageSwipeTarget(request.target + delta, scrollEdge, wheelQueued) : false;
   }
 
   /** Trackpad inertia has no portable end event; coalesce each detected gesture once. */
@@ -1193,6 +1194,7 @@ export abstract class InkWritingView extends FileView {
     request.wheelGestureId = gestureId;
     request.target = Math.max(0, Math.min(request.count - 1, request.target + delta));
     request.scrollEdge = scrollEdge;
+    request.wheelQueued = true;
     return true;
   }
 
@@ -1200,6 +1202,20 @@ export abstract class InkWritingView extends FileView {
   protected discardQueuedPageSwipeSteps(): void {
     const request = this.pageSwipeRequest;
     if (!this.flipSettling || !request) return;
+    request.target = request.activeTarget;
+    request.scrollEdge = undefined;
+  }
+
+  /**
+   * Pages queued by earlier swipes of the same input deliberately keep riding
+   * the handoff (#229), so a fresh touch drag discards only a backlog last
+   * written by the wheel path: the drag's own release must not land on wheel
+   * destinations the finger never saw, but rapid same-input paging must not
+   * lose its queued steps either.
+   */
+  protected discardWheelQueuedPageSwipeSteps(): void {
+    const request = this.pageSwipeRequest;
+    if (!this.flipSettling || !request || !request.wheelQueued) return;
     request.target = request.activeTarget;
     request.scrollEdge = undefined;
   }
@@ -1798,13 +1814,13 @@ export abstract class InkWritingView extends FileView {
   private navigateWheelPages(pages: number, axis: "x" | "y", discrete: boolean, gestureId: number): void {
     const direction = Math.sign(pages);
     const scrollEdge = axis === "y" ? (direction > 0 ? "top" : "bottom") : undefined;
-    if (discrete ? this.queuePageSwipeDelta(pages, scrollEdge)
+    if (discrete ? this.queuePageSwipeDelta(pages, scrollEdge, true)
       : this.queueTrackpadPageSwipeDelta(pages, gestureId, scrollEdge)) return;
     if (this.flipSettling) return;
     this.swipeDrag(-direction * 24);
     this.swipeSettle(direction, 0, scrollEdge);
     if (Math.abs(pages) > 1) {
-      if (discrete) this.queuePageSwipeDelta(pages - direction, scrollEdge);
+      if (discrete) this.queuePageSwipeDelta(pages - direction, scrollEdge, true);
       else this.queueTrackpadPageSwipeDelta(pages - direction, gestureId, scrollEdge);
     }
   }
@@ -2793,7 +2809,12 @@ export abstract class InkWritingView extends FileView {
         gesture.dragX = totalX;
         // A new horizontal gesture takes priority over the previous animation.
         // The storage/render barrier still runs before changing the live page.
-        if (this.flipSettling) this.finishPageSwipeAnimations();
+        if (this.flipSettling) {
+          // Only a wheel-written backlog is stale for the drag; pages queued
+          // by earlier touch swipes keep riding the handoff.
+          this.discardWheelQueuedPageSwipeSteps();
+          this.finishPageSwipeAnimations();
+        }
         this.swipeDrag(totalX);
         return;
       }

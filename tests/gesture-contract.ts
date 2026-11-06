@@ -34,7 +34,7 @@ export function gestureContract(create: () => Promise<any>): void {
     }
 
     async function desktopSetup() {
-      const { editor } = await setup();
+      const { editor, finger, send } = await setup();
       const scroller = editor.inputScroller() as HTMLElement;
       let top = 0, left = 0;
       Object.defineProperties(scroller, {
@@ -52,7 +52,7 @@ export function gestureContract(create: () => Promise<any>): void {
         Object.defineProperty(event, "timeStamp", { configurable: true, value: timeStamp ?? (wheelTime += 200) });
         target.dispatchEvent(event); return event;
       };
-      return { editor, scroller, settle, wheel };
+      return { editor, scroller, settle, wheel, finger, send };
     }
 
     it.each(SHAPES)("draws %s live through the shape menu and finalizes one undoable stroke", async (kind, label) => {
@@ -716,6 +716,44 @@ export function gestureContract(create: () => Promise<any>): void {
       editor.onPointerUp(sample(100));
 
       expect(desktop.pageSwipeRequest.target).toBe(2);
+    });
+
+    it("keeps a touch drag from adding a page to queued wheel gestures", async () => {
+      const { editor, wheel, finger, send } = await desktopSetup();
+      const desktop = editor as any;
+      desktop.flipSettling = true;
+      desktop.beginPageSwipe(1, 6, 0);
+      for (const timeStamp of [100, 110, 120, 130]) wheel(120, 0, { timeStamp });
+      expect(desktop.pageSwipeRequest.target).toBe(2);
+
+      // The touch mirror of the mouse pan arm above: a fresh direct-manipulation
+      // drag supersedes wheel destinations not yet started, so the settling
+      // queue falls back to the active page instead of being walked off page
+      // by page while the drag is swallowed.
+      send("touchstart", [finger(1, 500, 200)]);
+      send("touchmove", [finger(1, 100, 200)]);
+      expect(desktop.pageSwipeRequest.target).toBe(1);
+      // The drag's own release still counts its single page on the fallback.
+      send("touchend", [], [finger(1, 100, 200)]);
+      expect(desktop.pageSwipeRequest.target).toBe(2);
+    });
+
+    it("keeps pages queued by earlier touch swipes when a fresh touch drag starts", async () => {
+      const { editor, finger, send } = await desktopSetup();
+      const desktop = editor as any;
+      desktop.flipSettling = true;
+      desktop.beginPageSwipe(1, 6, 0);
+      // Same-input accumulation is deliberate (#229): a swipe queued during
+      // the handoff stays valid for the next touch drag — only a backlog last
+      // written by the wheel path is stale.
+      desktop.queuePageSwipeDelta(1);
+      expect(desktop.pageSwipeRequest.target).toBe(2);
+
+      send("touchstart", [finger(1, 500, 200)]);
+      send("touchmove", [finger(1, 100, 200)]);
+      expect(desktop.pageSwipeRequest.target).toBe(2);
+      send("touchend", [], [finger(1, 100, 200)]);
+      expect(desktop.pageSwipeRequest.target).toBe(3);
     });
 
     it("keeps each discrete mouse-wheel notch queued during a slow page handoff", async () => {
