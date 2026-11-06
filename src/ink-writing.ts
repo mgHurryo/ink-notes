@@ -1177,7 +1177,9 @@ export abstract class InkWritingView extends FileView {
     if (!this.flipSettling || !request) return false;
     request.target = Math.max(0, Math.min(request.count - 1, target));
     request.scrollEdge = scrollEdge;
-    request.wheelQueued = wheelQueued;
+    // Monotonic: a non-wheel writer (keyboard merge, touch release) must not
+    // erase the provenance of wheel steps still riding in the target.
+    request.wheelQueued = request.wheelQueued || wheelQueued;
     return true;
   }
 
@@ -1204,20 +1206,33 @@ export abstract class InkWritingView extends FileView {
     if (!this.flipSettling || !request) return;
     request.target = request.activeTarget;
     request.scrollEdge = undefined;
+    // This discard wipes everything queued, wheel steps included, so their
+    // provenance must go too: an explicit jump re-queues its own destination
+    // as non-wheel, and a stale flag would make a later touch drag discard
+    // the jump's target.
+    request.wheelQueued = false;
   }
 
   /**
-   * Pages queued by earlier swipes of the same input deliberately keep riding
-   * the handoff (#229), so a fresh touch drag discards only a backlog last
-   * written by the wheel path: the drag's own release must not land on wheel
-   * destinations the finger never saw, but rapid same-input paging must not
-   * lose its queued steps either.
+   * wheelQueued records whether any wheel step has queued since the last
+   * discard or reset, so it only accumulates: a later non-wheel writer
+   * (keyboard merge, touch release) used to overwrite it last-writer-wins,
+   * erasing the provenance of wheel steps still riding in the target and
+   * letting a fresh touch drag swallow them. Pages queued by earlier swipes
+   * of the same input deliberately keep riding the handoff (#229), so a
+   * fresh touch drag discards only that wheel-written backlog: the drag's
+   * own release must not land on wheel destinations the finger never saw,
+   * but rapid same-input paging must not lose its queued steps either.
    */
   protected discardWheelQueuedPageSwipeSteps(): void {
     const request = this.pageSwipeRequest;
     if (!this.flipSettling || !request || !request.wheelQueued) return;
     request.target = request.activeTarget;
     request.scrollEdge = undefined;
+    // Consuming the backlog also consumes its provenance: without this, one
+    // wheel burst would keep flagging every later touch accumulation in the
+    // window as wheel-written and discard touch steps it never wrote (#229).
+    request.wheelQueued = false;
   }
 
   protected clearPageSwipeTarget(): void { this.pageSwipeRequest = null; }
@@ -1314,7 +1329,10 @@ export abstract class InkWritingView extends FileView {
     // the stroke onto the pre-flip page and the ink would vanish.
     const delta = this.activePointerId !== null ? 0 : (fling || crossed ? (travel > 0 ? -1 : 1) : 0);
     if (this.flipSettling) {
-      this.queuePageSwipeDelta(delta);
+      // Same guard as endDesktopPan: a zero-delta release changes nothing
+      // worth re-writing the queue for (scrollEdge, and the wheel provenance
+      // before it turned monotonic).
+      if (delta !== 0) this.queuePageSwipeDelta(delta);
     } else {
       this.swipeSettle(delta, travel);
     }

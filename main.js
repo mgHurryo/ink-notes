@@ -28564,7 +28564,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     if (!this.flipSettling || !request) return false;
     request.target = Math.max(0, Math.min(request.count - 1, target));
     request.scrollEdge = scrollEdge;
-    request.wheelQueued = wheelQueued;
+    request.wheelQueued = request.wheelQueued || wheelQueued;
     return true;
   }
   queuePageSwipeDelta(delta, scrollEdge, wheelQueued = false) {
@@ -28588,19 +28588,25 @@ var InkWritingView = class extends import_obsidian7.FileView {
     if (!this.flipSettling || !request) return;
     request.target = request.activeTarget;
     request.scrollEdge = void 0;
+    request.wheelQueued = false;
   }
   /**
-   * Pages queued by earlier swipes of the same input deliberately keep riding
-   * the handoff (#229), so a fresh touch drag discards only a backlog last
-   * written by the wheel path: the drag's own release must not land on wheel
-   * destinations the finger never saw, but rapid same-input paging must not
-   * lose its queued steps either.
+   * wheelQueued records whether any wheel step has queued since the last
+   * discard or reset, so it only accumulates: a later non-wheel writer
+   * (keyboard merge, touch release) used to overwrite it last-writer-wins,
+   * erasing the provenance of wheel steps still riding in the target and
+   * letting a fresh touch drag swallow them. Pages queued by earlier swipes
+   * of the same input deliberately keep riding the handoff (#229), so a
+   * fresh touch drag discards only that wheel-written backlog: the drag's
+   * own release must not land on wheel destinations the finger never saw,
+   * but rapid same-input paging must not lose its queued steps either.
    */
   discardWheelQueuedPageSwipeSteps() {
     const request = this.pageSwipeRequest;
     if (!this.flipSettling || !request || !request.wheelQueued) return;
     request.target = request.activeTarget;
     request.scrollEdge = void 0;
+    request.wheelQueued = false;
   }
   clearPageSwipeTarget() {
     this.pageSwipeRequest = null;
@@ -28688,7 +28694,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     const crossed = Math.abs(travel) > width * 0.35;
     const delta = this.activePointerId !== null ? 0 : fling || crossed ? travel > 0 ? -1 : 1 : 0;
     if (this.flipSettling) {
-      this.queuePageSwipeDelta(delta);
+      if (delta !== 0) this.queuePageSwipeDelta(delta);
     } else {
       this.swipeSettle(delta, travel);
     }
