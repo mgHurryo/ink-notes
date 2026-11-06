@@ -24716,6 +24716,11 @@ var DesktopWheelGesture = class {
     if (axis !== this.axis && this.flipped && !this.discrete && !discrete) {
       this.travel = 0;
       this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+      if (normalized > 0) {
+        this.lastDelta = Math.sign(movement) * normalized;
+        this.lastMagnitude = normalized;
+        this.envelopeAtCadence = cadence;
+      }
     } else if (axis !== this.axis || delta.mode !== this.mode || reversed) {
       this.reset();
       gap = 0;
