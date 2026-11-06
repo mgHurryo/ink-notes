@@ -832,6 +832,89 @@ describe("pdf page preview rail", () => {
     await view.onClose();
   });
 
+  describe("explicit navigation during the PDF page swipe settle window", () => {
+    interface FakeAnimation {
+      onfinish: (() => void) | null;
+      oncancel: (() => void) | null;
+      playState: string;
+      finish(): void;
+      cancel(): void;
+    }
+    // jsdom has no Element.animate, so a settle animation would otherwise
+    // complete synchronously and drain the queue before an explicit jump can
+    // land. The stub hands every animation to the test; finishing is
+    // idempotent so the drain pass below cannot re-fire an onfinish.
+    const fakeSwipeAnimations = (): { animations: FakeAnimation[]; restore(): void } => {
+      const animations: FakeAnimation[] = [];
+      const original = Element.prototype.animate;
+      Element.prototype.animate = function (): FakeAnimation {
+        const animation: FakeAnimation = {
+          onfinish: null, oncancel: null, playState: "running",
+          finish() {
+            if (animation.playState === "finished") return;
+            animation.playState = "finished";
+            animation.onfinish?.();
+          },
+          cancel() { animation.oncancel?.(); },
+        };
+        animations.push(animation);
+        return animation;
+      } as unknown as typeof Element.prototype.animate;
+      return { animations, restore: () => { Element.prototype.animate = original; } };
+    };
+    /** Finish the settle animation, then keep finishing each queued drain-step
+     *  animation and flushing the task queue until the handoff loop is done. */
+    const drainPageSwipe = async (animations: FakeAnimation[]): Promise<void> => {
+      for (let guard = 0; guard < 50; guard++) {
+        animations.filter((animation) => animation.playState === "running").forEach((animation) => animation.finish());
+        await new Promise((resolve) => window.setTimeout(resolve, 0));
+        if (!animations.some((animation) => animation.playState === "running")) break;
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, 0));
+    };
+    const queuedTarget = (host: SwipeInternals): number | undefined =>
+      (host as unknown as { pageSwipeRequest: { target: number } | null }).pageSwipeRequest?.target;
+
+    it("keeps a settle-window thumbnail click on the chosen PDF page instead of the stale wheel target", async () => {
+      const { animations, restore } = fakeSwipeAnimations();
+      try {
+        const { view, internal, host, release } = await delayedSwipeSetup(8);
+        // The rapid swipe inside delayedSwipeSetup froze mid-settle: its flip
+        // animation is still running with target 1 queued behind it.
+        expect(host.flipSettling).toBe(true);
+        expect(queuedTarget(host)).toBe(1);
+        expect(internal.noteIndex).toBe(0);
+        (view as unknown as { root: HTMLElement }).root.classList.remove("ink-rail-hidden");
+        internal.renderAll();
+        thumbAt(7).click();
+        expect(internal.noteIndex).toBe(7);
+        expect(host.flipSettling).toBe(true);
+        release();
+        await drainPageSwipe(animations);
+        expect(internal.noteIndex).toBe(7);
+        expect(host.flipSettling).toBe(false);
+        await view.onClose();
+      } finally { restore(); }
+    });
+
+    it("keeps a settle-window revealStickyPage jump on the revealed PDF page", async () => {
+      const { animations, restore } = fakeSwipeAnimations();
+      try {
+        const { view, internal, sidecar, host, release } = await delayedSwipeSetup(8);
+        expect(host.flipSettling).toBe(true);
+        expect(queuedTarget(host)).toBe(1);
+        void (view as unknown as { revealStickyPage(pageId: string): Promise<void> })
+          .revealStickyPage(sidecar.notePages[7].id);
+        expect(internal.noteIndex).toBe(7);
+        release();
+        await drainPageSwipe(animations);
+        expect(internal.noteIndex).toBe(7);
+        expect(host.flipSettling).toBe(false);
+        await view.onClose();
+      } finally { restore(); }
+    });
+  });
+
   it("queues one trackpad page during a slow PDF handoff", async () => {
     const { view, internal, host, release } = await delayedSwipeSetup();
     const desktop = view as any;
