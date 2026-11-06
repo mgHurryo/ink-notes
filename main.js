@@ -28549,21 +28549,22 @@ var InkWritingView = class extends import_obsidian7.FileView {
   }
   /** Track the requested destination, including swipes made while saving/rendering. */
   beginPageSwipe(target, count, scrollEdge) {
-    const request = { target, activeTarget: target, count, scrollEdge, wheelGestureId: null };
+    const request = { target, activeTarget: target, count, scrollEdge, wheelGestureId: null, wheelQueued: false };
     this.pageSwipeRequest = request;
     return () => this.flipSettling && this.pageSwipeRequest === request;
   }
   /** Coalesce desktop navigation into the in-flight swipe handoff. */
-  queuePageSwipeTarget(target, scrollEdge) {
+  queuePageSwipeTarget(target, scrollEdge, wheelQueued = false) {
     const request = this.pageSwipeRequest;
     if (!this.flipSettling || !request) return false;
     request.target = Math.max(0, Math.min(request.count - 1, target));
     request.scrollEdge = scrollEdge;
+    request.wheelQueued = wheelQueued;
     return true;
   }
-  queuePageSwipeDelta(delta, scrollEdge) {
+  queuePageSwipeDelta(delta, scrollEdge, wheelQueued = false) {
     const request = this.pageSwipeRequest;
-    return request ? this.queuePageSwipeTarget(request.target + delta, scrollEdge) : false;
+    return request ? this.queuePageSwipeTarget(request.target + delta, scrollEdge, wheelQueued) : false;
   }
   /** Trackpad inertia has no portable end event; coalesce each detected gesture once. */
   queueTrackpadPageSwipeDelta(delta, gestureId, scrollEdge) {
@@ -28573,12 +28574,26 @@ var InkWritingView = class extends import_obsidian7.FileView {
     request.wheelGestureId = gestureId;
     request.target = Math.max(0, Math.min(request.count - 1, request.target + delta));
     request.scrollEdge = scrollEdge;
+    request.wheelQueued = true;
     return true;
   }
   /** A fresh direct-manipulation swipe supersedes wheel destinations not yet started. */
   discardQueuedPageSwipeSteps() {
     const request = this.pageSwipeRequest;
     if (!this.flipSettling || !request) return;
+    request.target = request.activeTarget;
+    request.scrollEdge = void 0;
+  }
+  /**
+   * Pages queued by earlier swipes of the same input deliberately keep riding
+   * the handoff (#229), so a fresh touch drag discards only a backlog last
+   * written by the wheel path: the drag's own release must not land on wheel
+   * destinations the finger never saw, but rapid same-input paging must not
+   * lose its queued steps either.
+   */
+  discardWheelQueuedPageSwipeSteps() {
+    const request = this.pageSwipeRequest;
+    if (!this.flipSettling || !request || !request.wheelQueued) return;
     request.target = request.activeTarget;
     request.scrollEdge = void 0;
   }
@@ -29252,12 +29267,12 @@ var InkWritingView = class extends import_obsidian7.FileView {
   navigateWheelPages(pages, axis, discrete, gestureId) {
     const direction = Math.sign(pages);
     const scrollEdge = axis === "y" ? direction > 0 ? "top" : "bottom" : void 0;
-    if (discrete ? this.queuePageSwipeDelta(pages, scrollEdge) : this.queueTrackpadPageSwipeDelta(pages, gestureId, scrollEdge)) return;
+    if (discrete ? this.queuePageSwipeDelta(pages, scrollEdge, true) : this.queueTrackpadPageSwipeDelta(pages, gestureId, scrollEdge)) return;
     if (this.flipSettling) return;
     this.swipeDrag(-direction * 24);
     this.swipeSettle(direction, 0, scrollEdge);
     if (Math.abs(pages) > 1) {
-      if (discrete) this.queuePageSwipeDelta(pages - direction, scrollEdge);
+      if (discrete) this.queuePageSwipeDelta(pages - direction, scrollEdge, true);
       else this.queueTrackpadPageSwipeDelta(pages - direction, gestureId, scrollEdge);
     }
   }
@@ -30173,7 +30188,10 @@ var InkWritingView = class extends import_obsidian7.FileView {
         gesture.lastX = a.clientX;
         gesture.lastT = now;
         gesture.dragX = totalX;
-        if (this.flipSettling) this.finishPageSwipeAnimations();
+        if (this.flipSettling) {
+          this.discardWheelQueuedPageSwipeSteps();
+          this.finishPageSwipeAnimations();
+        }
         this.swipeDrag(totalX);
         return;
       }
