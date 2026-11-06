@@ -1052,6 +1052,57 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledWith(1, 0, undefined);
     });
 
+    it("swallows a flick tail crossing a textarea mid-flight instead of paging again", async () => {
+      const { scroller, wheel, settle } = await desktopSetup();
+      const textarea = document.createElement("textarea"); scroller.append(textarea);
+      scroller.scrollTop = 600;
+      wheel(0, 140, { timeStamp: 9000 });
+      wheel(0, 90, { timeStamp: 9010 });
+      expect(settle).toHaveBeenCalledTimes(1);
+      wheel(0, 60, { timeStamp: 9020 }, textarea);
+      wheel(0, 30, { timeStamp: 9030 }, textarea);
+      wheel(0, 90, { timeStamp: 9040 });
+      wheel(0, 60, { timeStamp: 9050 });
+      wheel(0, 30, { timeStamp: 9060 });
+      // The tail's remaining travel must not land as a fresh gesture's first
+      // page: the crossing samples keep the flip suppression alive.
+      expect(settle).toHaveBeenCalledTimes(1);
+    });
+
+    it("swallows a horizontal flick tail crossing a textarea mid-flight", async () => {
+      const { scroller, wheel, settle } = await desktopSetup();
+      const textarea = document.createElement("textarea"); scroller.append(textarea);
+      wheel(140, 0, { timeStamp: 9000 });
+      expect(settle).toHaveBeenCalledTimes(1);
+      wheel(60, 0, { timeStamp: 9010 }, textarea);
+      wheel(90, 0, { timeStamp: 9020 });
+      expect(settle).toHaveBeenCalledTimes(1);
+    });
+
+    it("swallows a flick tail crossing a nested scroll surface mid-flight", async () => {
+      const { scroller, wheel, settle } = await desktopSetup();
+      const nested = document.createElement("div"); nested.style.overflowY = "auto"; scroller.append(nested);
+      Object.defineProperties(nested, { clientHeight: { value: 100 }, scrollHeight: { value: 300 } });
+      scroller.scrollTop = 600;
+      wheel(0, 140, { timeStamp: 9000 });
+      expect(settle).toHaveBeenCalledTimes(1);
+      wheel(0, 60, { timeStamp: 9010 }, nested);
+      wheel(0, 90, { timeStamp: 9020 });
+      wheel(0, 60, { timeStamp: 9030 });
+      expect(settle).toHaveBeenCalledTimes(1);
+    });
+
+    it("still hands a fresh wheel gesture on a textarea or nested surface to the surface", async () => {
+      const { scroller, wheel, settle } = await desktopSetup();
+      const textarea = document.createElement("textarea"); scroller.append(textarea);
+      const nested = document.createElement("div"); nested.style.overflowY = "auto"; scroller.append(nested);
+      Object.defineProperties(nested, { clientHeight: { value: 100 }, scrollHeight: { value: 300 } });
+      expect(wheel(0, 140, { timeStamp: 9000 }, textarea).defaultPrevented).toBe(false);
+      expect(settle).not.toHaveBeenCalled();
+      expect(wheel(0, 140, { timeStamp: 9200 }, nested).defaultPrevented).toBe(false);
+      expect(settle).not.toHaveBeenCalled();
+    });
+
     it("accepts page keys during an ongoing handoff without enabling edits", async () => {
       const { editor, scroller } = await desktopSetup();
       const navigate = vi.spyOn(editor, "desktopNavigate").mockImplementation(() => undefined);
