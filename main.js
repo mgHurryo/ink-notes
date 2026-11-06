@@ -36494,7 +36494,7 @@ var PdfInkView = class extends InkWritingView {
           if (pageId) this.toggleManagedPage(pageId);
           return;
         }
-        void this.navigatePages(index - this.noteIndex);
+        void this.explicitNavigateToPageIndex(index);
       });
       this.thumbButtons.set(index, button3);
     }
@@ -36906,10 +36906,23 @@ var PdfInkView = class extends InkWritingView {
       (window.devicePixelRatio || 1) * this.zoom
     );
   }
+  /** Mirror of InkView.explicitNavigateToPage (#361): an explicit jump must
+   *  override wheel targets queued but not yet started, so the settle drain
+   *  cannot walk the jump back through stale pages the user never chose.
+   *  Same unconditional discard precedence a direct-manipulation swipe already
+   *  gets. queuePageSwipeTarget clamps the index; outside the settle window
+   *  both hooks no-op and this is a plain navigatePages. */
+  explicitNavigateToPageIndex(index) {
+    if (this.flipSettling) {
+      this.discardQueuedPageSwipeSteps();
+      this.queuePageSwipeTarget(index);
+    }
+    return this.navigatePages(index - this.noteIndex);
+  }
   async revealStickyPage(pageId) {
     var _a, _b;
     const index = (_b = (_a = this.sidecar) == null ? void 0 : _a.notePages.findIndex((page) => page.id === pageId)) != null ? _b : -1;
-    if (index >= 0) await this.navigatePages(index - this.noteIndex);
+    if (index >= 0) await this.explicitNavigateToPageIndex(index);
   }
   setZoom(zoom, target, anchor) {
     if (this.zoomLocked || !Number.isFinite(zoom)) return;
