@@ -24603,6 +24603,7 @@ var RENEWED_FLICK_JUMP_PX = 24;
 var RENEWED_FLICK_JUMP_RATIO = 2.2;
 var RENEWED_FLICK_HOLD_RATIO = 0.6;
 var RENEWED_FLICK_RESET_RISE_RATIO = 1.2;
+var SLOW_SCROLL_EXIT_MS = 1200;
 var REF_DT_MS = 10;
 var RENEW_MIN_FLIPPED = 3;
 var PAGE_TRAVEL_PX = 100;
@@ -24677,11 +24678,16 @@ var DesktopWheelGesture = class {
     /** this.flipped as of the end of the previous begin(), so a pageDelta flip
      *  that landed in between can restart flippedRun. */
     this.flippedPreviously = false;
+    /** Duration and raw travel of the current run of swallowed slow samples
+     *  inside a flipped continuous gesture (see SLOW_SCROLL_EXIT_MS). */
+    this.slowScrollMs = 0;
+    this.slowScrollTravel = 0;
   }
   beginRenewedGesture() {
     this.gestureId += 1;
     this.trackpadPages = 0;
     this.flippedRun = 0;
+    this.slowScrollMs = this.slowScrollTravel = 0;
   }
   /** Whether a flipped continuous gesture's tail is still mid-flight. Sample
    *  sources that swallow a wheel event (nested scroll surfaces, text fields,
@@ -24709,6 +24715,7 @@ var DesktopWheelGesture = class {
     this.trackpadPages = this.zeroAxisPauses = 0;
     this.contactXPages = 0;
     this.flippedRun = 0;
+    this.slowScrollMs = this.slowScrollTravel = 0;
     this.flipped = this.discrete = false;
     this.mode = 0;
   }
@@ -24732,6 +24739,7 @@ var DesktopWheelGesture = class {
     if (axis !== this.axis && this.flipped && !this.discrete && !discrete) {
       this.travel = 0;
       this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+      this.slowScrollMs = this.slowScrollTravel = 0;
       if (normalized > 0) {
         this.lastDelta = Math.sign(movement) * normalized;
         this.lastMagnitude = normalized;
@@ -24743,6 +24751,7 @@ var DesktopWheelGesture = class {
     } else if (this.stallProbation) {
       if (!(movement === 0 && !this.discrete)) {
         this.stallProbation = false;
+        const frozenSettled = Math.min(this.lastMagnitude, Math.abs(this.lastDelta)) <= RENEWED_FLICK_RELEASE_PX;
         if (this.stallDeferral !== null) {
           const deferral = this.stallDeferral;
           this.stallDeferral = null;
@@ -24759,7 +24768,7 @@ var DesktopWheelGesture = class {
             gap = 0;
           }
           this.stallDeferralSpeed = this.stallDeferralTravel = 0;
-        } else if (gap >= 2 && normalized > Math.abs(this.lastDelta) && normalized > this.lastMagnitude && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO) {
+        } else if (gap >= 2 && normalized > Math.abs(this.lastDelta) && normalized > this.lastMagnitude && normalized >= Math.abs(this.lastDelta) * (frozenSettled ? RENEWED_FLICK_RESET_RISE_RATIO : RENEWED_FLICK_JUMP_RATIO)) {
           this.reset();
           gap = 0;
         }
@@ -24792,6 +24801,21 @@ var DesktopWheelGesture = class {
     if (this.flipped && !this.flippedPreviously) this.flippedRun = 0;
     const priorFlippedRun = this.flippedRun;
     let renewedTravel;
+    if (this.flipped && !this.discrete) {
+      if (!this.renewalBlocked) {
+        if (this.stallProbation || gap >= RENEWED_FLICK_GAP_MS || normalized >= RENEWED_FLICK_JUMP_PX / 2 || movement !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta)) {
+          this.slowScrollMs = this.slowScrollTravel = 0;
+        } else if (movement !== 0) {
+          this.slowScrollMs += gap;
+          this.slowScrollTravel += movement;
+          if (this.slowScrollMs >= SLOW_SCROLL_EXIT_MS) {
+            renewedTravel = this.slowScrollTravel;
+            this.flipped = false;
+            this.slowScrollMs = this.slowScrollTravel = 0;
+          }
+        }
+      }
+    }
     if (this.flipped && !this.discrete) {
       const settledRise = Math.min(this.lastMagnitude, Math.abs(this.lastDelta)) <= RENEWED_FLICK_RELEASE_PX && normalized > this.lastMagnitude && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO;
       const jump = normalized >= Math.max(

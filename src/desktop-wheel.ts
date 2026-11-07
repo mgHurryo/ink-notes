@@ -29,6 +29,21 @@ const RENEWED_FLICK_HOLD_RATIO = 0.6;
  *  tail speed on a hot tail is swallowed - the same trade the settled band
  *  already makes, suppression first. */
 const RENEWED_FLICK_RESET_RISE_RATIO = 1.2;
+/** The idle-boundary exemption keeps a flipped continuous gesture alive
+ *  across any gap, and every escape hatch it leaves is amplitude-gated
+ *  (12px settledRise, 24px jump, the probation rise ratio) with no time
+ *  bound - so a same-direction continuation under 12px/10ms is swallowed
+ *  forever: no page, and the caller preventDefaults the event so not even
+ *  the native scroll moves. This many milliseconds of CONTINUOUS sub-floor
+ *  samples (same direction, no >=55ms gap, no probation freeze) can only be
+ *  a deliberate slow scroll, not a dying tail: a tau=300ms exponential tail
+ *  dwells below the 12px floor for at most 300ms * ln(500 / 12) ~= 1119ms,
+ *  and the fixture tails peak near 720ms, so 1200ms never releases one.
+ *  The release reuses the exit shape of the quiet-gap re-arm above; it does
+ *  not re-open the page budget - the per-gesture cap still bounds the
+ *  contact, and once it is spent the suppression stays off so the caller's
+ *  native scroll takes over instead of swallowing again. */
+const SLOW_SCROLL_EXIT_MS = 1200;
 /** Every renewal heuristic below compares speeds, not per-event amplitudes:
  *  each sample is normalized to this reference window, the reporting cadence
  *  the px floors were tuned at. A main-thread stall merges several hardware
@@ -151,11 +166,16 @@ export class DesktopWheelGesture {
   /** this.flipped as of the end of the previous begin(), so a pageDelta flip
    *  that landed in between can restart flippedRun. */
   private flippedPreviously = false;
+  /** Duration and raw travel of the current run of swallowed slow samples
+   *  inside a flipped continuous gesture (see SLOW_SCROLL_EXIT_MS). */
+  private slowScrollMs = 0;
+  private slowScrollTravel = 0;
 
   private beginRenewedGesture(): void {
     this.gestureId += 1;
     this.trackpadPages = 0;
     this.flippedRun = 0;
+    this.slowScrollMs = this.slowScrollTravel = 0;
   }
 
   /** Whether a flipped continuous gesture's tail is still mid-flight. Sample
@@ -185,6 +205,7 @@ export class DesktopWheelGesture {
     this.trackpadPages = this.zeroAxisPauses = 0;
     this.contactXPages = 0;
     this.flippedRun = 0;
+    this.slowScrollMs = this.slowScrollTravel = 0;
     this.flipped = this.discrete = false;
     this.mode = 0;
   }
@@ -262,6 +283,9 @@ export class DesktopWheelGesture {
     if (axis !== this.axis && this.flipped && !this.discrete && !discrete) {
       this.travel = 0;
       this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+      // The latch counts one direction's dwell; the re-targeted stream is
+      // different motion and starts its count over.
+      this.slowScrollMs = this.slowScrollTravel = 0;
       if (normalized > 0) {
         // The surviving min-chain envelope still describes the OLD axis, so
         // the jump/settledRise comparisons below score the new axis's samples
@@ -293,6 +317,15 @@ export class DesktopWheelGesture {
       // survives pauses.
       if (!(movement === 0 && !this.discrete)) {
         this.stallProbation = false;
+        // The one-shot judgment's rise ratio follows the envelope's band: a
+        // settled envelope (<= the release floor) holds no tail speed worth
+        // protecting, so the reset mirror arm's 1.2x contract applies - a
+        // steady continuation just past the floor (3px envelope, 4px samples)
+        // is a new intent, not the decay. A hot envelope keeps the strict
+        // jump ratio: there the frozen sample guards the #341 tradeoff, where
+        // a mid-band slow start (45px over a 30px envelope) must ride the
+        // old contact instead of minting a fresh one.
+        const frozenSettled = Math.min(this.lastMagnitude, Math.abs(this.lastDelta)) <= RENEWED_FLICK_RELEASE_PX;
         if (this.stallDeferral !== null) {
           // Mirror arm for a deferred exit: a real re-flick's fast phase holds
           // or rises over the frozen sample, a stamped merge's resumed tail
@@ -329,7 +362,8 @@ export class DesktopWheelGesture {
           }
           this.stallDeferralSpeed = this.stallDeferralTravel = 0;
         } else if (gap >= 2 && normalized > Math.abs(this.lastDelta) && normalized > this.lastMagnitude
-          && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO) {
+          && normalized >= Math.abs(this.lastDelta)
+            * (frozenSettled ? RENEWED_FLICK_RESET_RISE_RATIO : RENEWED_FLICK_JUMP_RATIO)) {
           this.reset();
           gap = 0;
         }
@@ -409,6 +443,37 @@ export class DesktopWheelGesture {
     if (this.flipped && !this.flippedPreviously) this.flippedRun = 0;
     const priorFlippedRun = this.flippedRun;
     let renewedTravel: number | undefined;
+    if (this.flipped && !this.discrete) {
+      // The swallow's time exit: every other escape below is amplitude-gated,
+      // so a same-direction continuation under the 12px re-arm floor rides
+      // the flipped suppression forever. Count the continuous dwell (and its
+      // raw travel) of those samples; past SLOW_SCROLL_EXIT_MS the stream is
+      // a deliberate slow scroll, not the flick's dying tail. A probation
+      // freeze, a >=55ms gap, a >=12px sample or a reversal all clear the
+      // count, and samples inside a renewal block neither count nor clear.
+      // On release the accumulated travel rides the existing renewedTravel
+      // hand-off (pageDelta credits it before the threshold check, so the
+      // page flips on this beat wherever the native scroll cannot consume
+      // it) and only the suppression lifts - the per-gesture page budget
+      // still bounds the contact through the existing pageDelta cap, and a
+      // spent budget leaves the stream unsuppressed so the caller's native
+      // scroll takes over instead of swallowing again.
+      if (!this.renewalBlocked) {
+        if (this.stallProbation || gap >= RENEWED_FLICK_GAP_MS
+          || normalized >= RENEWED_FLICK_JUMP_PX / 2
+          || (movement !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta))) {
+          this.slowScrollMs = this.slowScrollTravel = 0;
+        } else if (movement !== 0) {
+          this.slowScrollMs += gap;
+          this.slowScrollTravel += movement;
+          if (this.slowScrollMs >= SLOW_SCROLL_EXIT_MS) {
+            renewedTravel = this.slowScrollTravel;
+            this.flipped = false;
+            this.slowScrollMs = this.slowScrollTravel = 0;
+          }
+        }
+      }
+    }
     if (this.flipped && !this.discrete) {
       // A moderate re-swipe rising straight off a settled tail is a fresh
       // flick even below the absolute floor. The settled band reads the min
