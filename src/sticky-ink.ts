@@ -14,7 +14,9 @@ export function stickyBounds(note: StickyNote, g: PageGeometry) {
 export function stickyStrokeOnPage(stroke: InkStroke, note: StickyNote, g: PageGeometry): InkStroke {
   const scale = g.width / note.boardPageWidth;
   const { x, y } = stickyPosition(note);
-  return { ...stroke, pageId: note.pageId, width: stroke.width * scale,
+  // Width inverts the storage anchor in stickyStrokeFromPage so a page →
+  // board → page round trip reproduces the pen width exactly.
+  return { ...stroke, pageId: note.pageId, width: stroke.width * STICKY_UNIT / note.boardPageWidth,
     points: stroke.points.map((p) => ({ ...p,
       x: x + (p.x * STICKY_UNIT - note.scrollX) / note.boardPageWidth,
       y: y + (STICKY_HEADER + p.y * STICKY_UNIT - note.scrollY) * scale / g.height })) };
@@ -23,7 +25,10 @@ export function stickyStrokeOnPage(stroke: InkStroke, note: StickyNote, g: PageG
 export function stickyStrokeFromPage(stroke: InkStroke, note: StickyNote, g: PageGeometry): InkStroke {
   const scale = g.width / note.boardPageWidth;
   const { x, y } = stickyPosition(note);
-  return { ...stroke, pageId: note.id, width: stroke.width / scale,
+  // Stored width anchors at boardPageWidth, never the capture viewport: the
+  // board renders stored ink against STICKY_UNIT (sticky-rendering), so the
+  // same pen stroke stores the same width from any window size.
+  return { ...stroke, pageId: note.id, width: stroke.width * note.boardPageWidth / STICKY_UNIT,
     points: stroke.points.map((p) => ({ ...p,
       x: ((p.x - x) * note.boardPageWidth + note.scrollX) / STICKY_UNIT,
       y: ((p.y - y) * g.height / scale - STICKY_HEADER + note.scrollY) / STICKY_UNIT })) };

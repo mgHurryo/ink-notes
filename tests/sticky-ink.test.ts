@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { splitStickyStroke, stickyBounds, stickyStrokeFromPage, stickyStrokeOnPage } from "../src/sticky-ink";
-import { StickyNote, stickyLink } from "../src/sticky-model";
+import { StickyNote, STICKY_UNIT, stickyLink } from "../src/sticky-model";
 import { InkStroke } from "../src/model";
 const note: StickyNote = { id: "note", pageId: "page", x: .2, y: .2, width: .4, height: .4, boardPageWidth: 600,
   scrollX: 0, scrollY: 0, title: "", text: "", keywords: "", textUpdatedAt: 1, color: "#fff1a8", collapsed: false, preview: true,
@@ -40,6 +40,17 @@ describe("inline sticky layer geometry", () => {
     expect(restored.width).toBe(3); expect(stickyBounds(n, enlarged).top).toBeCloseTo(.28);
     const moved = stickyStrokeOnPage(boardInk, { ...n, x: .3 }, enlarged);
     expect(moved.points[0].x - projection.points[0].x).toBeCloseTo(.1);
+  });
+  it("anchors stored width to the board unit instead of the capture viewport", () => {
+    // Board ink renders at stroke.width × STICKY_UNIT / boardPageWidth of the
+    // page (sticky-rendering drawInkStroke(ctx, stroke, STICKY_UNIT, …)), so
+    // storage must invert that exact factor: the same pen stroke committed
+    // from a full window and a half-pane must store the same width.
+    const boardPageWidth = 980;
+    const full = stickyStrokeFromPage(stroke(.3, .6), { ...note, boardPageWidth }, { width: 980, height: 1260 });
+    const half = stickyStrokeFromPage(stroke(.3, .6), { ...note, boardPageWidth }, { width: 490, height: 630 });
+    expect(full.width).toBeCloseTo(3 * boardPageWidth / STICKY_UNIT);
+    expect(half.width).toBeCloseTo(full.width);
   });
   it("routes and projects ink at the derived inward position without changing the folded anchor", () => {
     const n = { ...note, x: .9, y: .9 };
