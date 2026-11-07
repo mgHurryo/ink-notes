@@ -24741,6 +24741,7 @@ var DesktopWheelGesture = class {
     const reversed = this.lastDelta !== 0 && movement !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta);
     const renewed = !this.discrete && this.flipped && gap >= RENEWED_FLICK_GAP_MS;
     if (axis !== this.axis && this.flipped && !this.discrete && !discrete) {
+      if (this.stallProbation && this.stallDeferral === null) this.stallProbation = false;
       this.travel = 0;
       this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
       this.slowScrollMs = this.slowScrollTravel = 0;
@@ -24820,18 +24821,16 @@ var DesktopWheelGesture = class {
     const priorFlippedRun = this.flippedRun;
     let renewedTravel;
     if (this.flipped && !this.discrete) {
-      if (!this.renewalBlocked) {
-        if (this.stallProbation || gap >= RENEWED_FLICK_GAP_MS || normalized >= RENEWED_FLICK_JUMP_PX / 2 || movement !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta)) {
+      if (this.stallProbation || gap >= RENEWED_FLICK_GAP_MS || normalized >= RENEWED_FLICK_JUMP_PX / 2 || movement !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta)) {
+        this.slowScrollMs = this.slowScrollTravel = 0;
+      } else if (movement !== 0) {
+        this.slowScrollMs += gap;
+        this.slowScrollTravel += movement;
+        if (this.slowScrollMs >= SLOW_SCROLL_EXIT_MS) {
+          renewedTravel = this.slowScrollTravel;
+          this.flipped = false;
+          this.gestureId += 1;
           this.slowScrollMs = this.slowScrollTravel = 0;
-        } else if (movement !== 0) {
-          this.slowScrollMs += gap;
-          this.slowScrollTravel += movement;
-          if (this.slowScrollMs >= SLOW_SCROLL_EXIT_MS) {
-            renewedTravel = this.slowScrollTravel;
-            this.flipped = false;
-            this.gestureId += 1;
-            this.slowScrollMs = this.slowScrollTravel = 0;
-          }
         }
       }
     }
@@ -29375,13 +29374,24 @@ var InkWritingView = class extends import_obsidian7.FileView {
       this.onFastPagingRailExpanded();
     }
     if (this.fastPagingRailTimer !== void 0) window.clearTimeout(this.fastPagingRailTimer);
-    this.fastPagingRailTimer = window.setTimeout(() => {
-      this.fastPagingRailTimer = void 0;
-      if (!this.fastPagingRail) return;
-      this.fastPagingRail = false;
-      this.wheelPacer.end();
-      this.onFastPagingRailCollapsed();
-    }, FAST_PAGING_RAIL_IDLE_MS);
+    this.fastPagingRailTimer = window.setTimeout(() => this.quietFastPagingRail(), FAST_PAGING_RAIL_IDLE_MS);
+  }
+  /** Quiet-timer hand-back. A burst's queued flips drain as animated swipes
+   *  that can outlive this window (slow page renders, loaded machine), so a
+   *  drain still in flight re-arms instead: collapsing mid-drain hides the
+   *  rail while pages keep flipping and strands the remaining flips without
+   *  the centered follow - the quiet second belongs to the last flip, not
+   *  the last wheel event. */
+  quietFastPagingRail() {
+    this.fastPagingRailTimer = void 0;
+    if (!this.fastPagingRail) return;
+    if (this.pageSwipeRequest !== null) {
+      this.fastPagingRailTimer = window.setTimeout(() => this.quietFastPagingRail(), FAST_PAGING_RAIL_IDLE_MS);
+      return;
+    }
+    this.fastPagingRail = false;
+    this.wheelPacer.end();
+    this.onFastPagingRailCollapsed();
   }
   /** View teardown: drop the burst state and its pending collapse timer. */
   clearFastPagingRail() {
@@ -34844,8 +34854,7 @@ page: ${this.currentPage().id}
       const prepared = await session.prepareSave(raw, minimumRevision);
       if (await this.store.writeIfUnchanged(file, raw, prepared.content)) {
         try {
-          await session.commitSave(prepared.token);
-          return { revision: minimumRevision };
+          return await session.commitSave(prepared.token);
         } catch (error) {
           if (this.workerSession === session) this.disableWorkerSession(error);
           return { revision: minimumRevision, merged: await this.store.read(file) };

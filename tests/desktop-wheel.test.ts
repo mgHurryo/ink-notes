@@ -708,6 +708,68 @@ describe("DesktopWheelGesture axis switch on the momentum tail", () => {
     }
     expect(pages).toBe(-1);
   });
+
+  // A pause merged into a settled tail freezes the envelope in plain stall
+  // probation (stallDeferral null). When the next sample re-classifies the
+  // axis, the re-seed used to overwrite that frozen envelope with the
+  // recovery sample's own speed, so the following sample cleared the
+  // frozenSettled rise ratio, reset() minted a fresh page budget mid-tail
+  // and the same flick's continuation flipped a ghost second page.
+  function pagesAfterPausedDiagonalReseed(tail: number[], pauseMs: number, mergeY: number,
+    diagonal: Array<[number, number]>, continuation: Array<[number, number]>): {
+      pages: number;
+      mergedProbation: boolean;
+    } {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 100;
+    const feed = (x: number, y: number, stepMs: number) => {
+      const motion = gesture.begin({ x, y, mode: 0 }, false, at);
+      pages += gesture.pageDelta(motion, false);
+      at += stepMs;
+      return motion;
+    };
+    for (const magnitude of tail) feed(0, magnitude, 10);
+    at += pauseMs;
+    const merged = feed(0, mergeY, 10);
+    for (const [x, y] of diagonal) feed(x, y, 10);
+    for (const [x, y] of continuation) feed(x, y, 10);
+    return { pages, mergedProbation: merged.probation === true };
+  }
+
+  it("keeps a stall-frozen settled tail at one page when a diagonal re-classifies the axis", () => {
+    // The tail settles at 3px, the merged y=20 sample enters plain probation
+    // and the frozen envelope must stay there: the (4,2) re-seed used to
+    // overwrite it with 4, letting (5,2) clear the settled 1.2x rise ratio
+    // and reset() into a fresh budget the 5px/10ms continuation spent.
+    const { pages, mergedProbation } = pagesAfterPausedDiagonalReseed(
+      [140, 90, 60, 30, 20, 14, 10, 8, 6, 5, 4, 3], 100, 20,
+      [[4, 2], [5, 2]], Array.from({ length: 12 }, () => [5, 2] as [number, number]));
+    expect(mergedProbation).toBe(true);
+    expect(pages).toBe(1);
+  });
+
+  it("keeps a stall-frozen hot tail at one page when a diagonal re-classifies the axis", () => {
+    // Hot envelope (8px, frozenSettled false): without the re-seed the (5,2)
+    // judgment cannot even rise past it (5 > 8 is false), so a second page
+    // here pins the ghost page on the re-seed alone.
+    const { pages, mergedProbation } = pagesAfterPausedDiagonalReseed(
+      [140, 90, 60, 30, 20, 14, 11, 9.5, 8.5, 8.2, 8], 200, 40,
+      [[4, 2], [5, 2]], Array.from({ length: 12 }, () => [5, 2] as [number, number]));
+    expect(mergedProbation).toBe(true);
+    expect(pages).toBe(1);
+  });
+
+  it("still keeps a flat diagonal arc after the re-seed to one page", () => {
+    // Control: the same hot envelope but a non-rising (4,2) arc - the
+    // re-seed's original protection (a constant-rate arc must not re-arm
+    // under the new axis) holds with and without the probation consumption.
+    const { pages } = pagesAfterPausedDiagonalReseed(
+      [140, 90, 60, 30, 20, 14, 11, 9.5, 8.5, 8.2, 8], 200, 40,
+      Array.from({ length: 3 }, () => [4, 2] as [number, number]),
+      Array.from({ length: 12 }, () => [4, 2] as [number, number]));
+    expect(pages).toBe(1);
+  });
 });
 
 describe("DesktopWheelGesture discrete notch budget", () => {
@@ -959,6 +1021,72 @@ describe("DesktopWheelGesture swallowed slow scroll after a flick", () => {
     // 4px continuation - momentum only in name, past the release floor - was
     // swallowed whole. A settled envelope has no tail speed left to protect.
     expect(pagesAcrossFlickTailThenSlowScroll(500, 4, 60).pages).toBe(2);
+  });
+});
+
+describe("DesktopWheelGesture slow-scroll exit inside a renewal block window", () => {
+  // The renewal block's own exits are amplitude-gated (a <=4px sample or a
+  // jump-shaped rise), so while the SLOW_SCROLL_EXIT_MS time exit stayed
+  // wrapped out of reach inside the block, a mid-tail renewal's continued
+  // same-direction slow scroll was swallowed forever: no page, and the caller
+  // preventDefaults on suppressed, so not even the native scroll moved. The
+  // latch must run inside the block - 1200ms of continuous sub-12px dwell can
+  // only be a deliberate slow scroll (a tau=300ms tail dwells below the 12px
+  // floor for under that) - while the >=55ms stamps and a natural decay must
+  // stay exit-free.
+  function pagesAcrossBlockedSlowRun(continueMagnitudes: number[],
+    continueStepMs: number): { pages: number; thirdPageAt: number | null; latchRestartAt: number } {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 100;
+    let thirdPageAt: number | null = null;
+    const feed = (magnitudes: number[], stepMs: number) => {
+      for (const magnitude of magnitudes) {
+        pages += gesture.pageDelta(gesture.begin({ x: 0, y: magnitude, mode: 0 }, false, at), false);
+        if (pages > 2 && thirdPageAt === null) thirdPageAt = at;
+        at += stepMs;
+      }
+    };
+    // Fast phase, then the deferred re-arm's held 60 flips the second page
+    // and arms the block; the trailing 40px sample is the last >=12px one, so
+    // the dwell clock restarts on its beat.
+    feed([140, 90, 60, 40, 26, 60, 60, 40], 10);
+    const latchRestartAt = at - 10;
+    feed(continueMagnitudes, continueStepMs);
+    return { pages, thirdPageAt, latchRestartAt };
+  }
+
+  it("releases the slow-scroll latch inside a renewal block window", () => {
+    // A 6px/10ms continuation with no gap at all: the block's amplitude exits
+    // never fire (6 > 4, no jump), so the third page can only come from the
+    // latch release.
+    const { pages, thirdPageAt, latchRestartAt } =
+      pagesAcrossBlockedSlowRun(Array.from({ length: 160 }, () => 6), 10);
+    expect(pages).toBe(3);
+    // The dwell clock counts the opening gap into the run, so the release
+    // cannot land before a full 1200ms after the restart beat - one step
+    // short of the same span measured from the first sub-floor sample's own
+    // arrival.
+    expect(thirdPageAt! - latchRestartAt).toBeGreaterThanOrEqual(1200);
+  });
+
+  it("keeps stamped merge continuations from releasing inside the block", () => {
+    // The same continuation stamped at >=55ms delivery gaps (30px per 60ms =
+    // 5px/10ms, sub-floor but never below the release level): every stamp is
+    // a gesture boundary for the latch, so the dwell never accumulates and
+    // the stream stays at its two pages for as long as it lasts.
+    const { pages } = pagesAcrossBlockedSlowRun(Array.from({ length: 40 }, () => 30), 60);
+    expect(pages).toBe(2);
+  });
+
+  it("keeps a naturally decaying blocked tail to its page", () => {
+    // A tau=300ms decay from the 40px prefix end: it dwells below the 12px
+    // floor for ~950ms - under the exit - so its sub-floor samples must not
+    // release anything before the <=4px unblock (which lifts only the
+    // suppression, never the page budget).
+    const decay = Array.from({ length: 132 }, (_, k) => 40 * Math.exp(-k / 30));
+    const { pages } = pagesAcrossBlockedSlowRun(decay, 10);
+    expect(pages).toBe(2);
   });
 });
 

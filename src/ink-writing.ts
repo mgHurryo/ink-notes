@@ -1867,13 +1867,25 @@ export abstract class InkWritingView extends FileView {
       this.onFastPagingRailExpanded();
     }
     if (this.fastPagingRailTimer !== undefined) window.clearTimeout(this.fastPagingRailTimer);
-    this.fastPagingRailTimer = window.setTimeout(() => {
-      this.fastPagingRailTimer = undefined;
-      if (!this.fastPagingRail) return;
-      this.fastPagingRail = false;
-      this.wheelPacer.end();
-      this.onFastPagingRailCollapsed();
-    }, FAST_PAGING_RAIL_IDLE_MS);
+    this.fastPagingRailTimer = window.setTimeout(() => this.quietFastPagingRail(), FAST_PAGING_RAIL_IDLE_MS);
+  }
+
+  /** Quiet-timer hand-back. A burst's queued flips drain as animated swipes
+   *  that can outlive this window (slow page renders, loaded machine), so a
+   *  drain still in flight re-arms instead: collapsing mid-drain hides the
+   *  rail while pages keep flipping and strands the remaining flips without
+   *  the centered follow - the quiet second belongs to the last flip, not
+   *  the last wheel event. */
+  private quietFastPagingRail(): void {
+    this.fastPagingRailTimer = undefined;
+    if (!this.fastPagingRail) return;
+    if (this.pageSwipeRequest !== null) {
+      this.fastPagingRailTimer = window.setTimeout(() => this.quietFastPagingRail(), FAST_PAGING_RAIL_IDLE_MS);
+      return;
+    }
+    this.fastPagingRail = false;
+    this.wheelPacer.end();
+    this.onFastPagingRailCollapsed();
   }
 
   /** View teardown: drop the burst state and its pending collapse timer. */

@@ -297,6 +297,19 @@ export class DesktopWheelGesture {
     // again. Only the per-axis travel and ramp state go; discrete streams
     // (deliberate notches) keep their hard reset and fresh budget.
     if (axis !== this.axis && this.flipped && !this.discrete && !discrete) {
+      // A plain stall freeze parked on the old axis dies here: the reseed
+      // below (or the pausedTail write) re-targets the envelope at the NEW
+      // axis, so the next sample's slope could no longer be judged against
+      // the frozen pre-stall tail - the contract the probation judgment
+      // below relies on has no cross-axis meaning. Consume the freeze on the
+      // axis change and keep the suppression and the page budget; the
+      // continuation rides the regular settledRise/jump/ramp mechanisms over
+      // the re-seeded envelope. Hard-resetting instead (the branch below)
+      // would mint a fresh budget mid-tail - the very ghost page this
+      // gesture's contracts guard against. The deferred exits (stallDeferral
+      // non-null) keep their freeze: their mirror arm judges held speed, not
+      // the frozen envelope's slope.
+      if (this.stallProbation && this.stallDeferral === null) this.stallProbation = false;
       this.travel = 0;
       this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
       // The latch counts one direction's dwell; the re-targeted stream is
@@ -494,36 +507,37 @@ export class DesktopWheelGesture {
       // raw travel) of those samples; past SLOW_SCROLL_EXIT_MS the stream is
       // a deliberate slow scroll, not the flick's dying tail. A probation
       // freeze, a >=55ms gap, a >=12px sample or a reversal all clear the
-      // count, and samples inside a renewal block neither count nor clear.
-      // On release the accumulated travel rides the existing renewedTravel
-      // hand-off (pageDelta credits it before the threshold check, so the
-      // page flips on this beat wherever the native scroll cannot consume
-      // it) and only the suppression lifts - the per-gesture page budget
-      // still bounds the contact through the existing pageDelta cap, and a
-      // spent budget leaves the stream unsuppressed so the caller's native
-      // scroll takes over instead of swallowing again.
-      if (!this.renewalBlocked) {
-        if (this.stallProbation || gap >= RENEWED_FLICK_GAP_MS
-          || normalized >= RENEWED_FLICK_JUMP_PX / 2
-          || (movement !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta))) {
+      // count, and samples inside a renewal block count and clear the same
+      // way: 1200ms of continuous sub-12px dwell can only be a deliberate
+      // slow scroll (a tau=300ms tail from 100px dwells below the 12px floor
+      // for about 965ms, under the exit), so the block must not starve its
+      // own time exit. On release the accumulated travel rides the existing
+      // renewedTravel hand-off (pageDelta credits it before the threshold
+      // check, so the page flips on this beat wherever the native scroll
+      // cannot consume it) and only the suppression lifts - the per-gesture
+      // page budget still bounds the contact through the existing pageDelta
+      // cap, and a spent budget leaves the stream unsuppressed so the
+      // caller's native scroll takes over instead of swallowing again.
+      if (this.stallProbation || gap >= RENEWED_FLICK_GAP_MS
+        || normalized >= RENEWED_FLICK_JUMP_PX / 2
+        || (movement !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta))) {
+        this.slowScrollMs = this.slowScrollTravel = 0;
+      } else if (movement !== 0) {
+        this.slowScrollMs += gap;
+        this.slowScrollTravel += movement;
+        if (this.slowScrollMs >= SLOW_SCROLL_EXIT_MS) {
+          renewedTravel = this.slowScrollTravel;
+          this.flipped = false;
+          // The release page must reach the view as a NEW gesture id: it
+          // lands inside the first page's settle window, where
+          // queueTrackpadPageSwipeDelta coalesces per gesture id
+          // (ink-writing.ts), so reusing this gesture's id silently drops
+          // the page after pageDelta has already spent the budget. Unlike
+          // beginRenewedGesture this does not re-open the page budget - the
+          // release reuses the exit shape above without widening the
+          // per-gesture cap, and flippedRun resets through flipped=false.
+          this.gestureId += 1;
           this.slowScrollMs = this.slowScrollTravel = 0;
-        } else if (movement !== 0) {
-          this.slowScrollMs += gap;
-          this.slowScrollTravel += movement;
-          if (this.slowScrollMs >= SLOW_SCROLL_EXIT_MS) {
-            renewedTravel = this.slowScrollTravel;
-            this.flipped = false;
-            // The release page must reach the view as a NEW gesture id: it
-            // lands inside the first page's settle window, where
-            // queueTrackpadPageSwipeDelta coalesces per gesture id
-            // (ink-writing.ts), so reusing this gesture's id silently drops
-            // the page after pageDelta has already spent the budget. Unlike
-            // beginRenewedGesture this does not re-open the page budget - the
-            // release reuses the exit shape above without widening the
-            // per-gesture cap, and flippedRun resets through flipped=false.
-            this.gestureId += 1;
-            this.slowScrollMs = this.slowScrollTravel = 0;
-          }
         }
       }
     }
