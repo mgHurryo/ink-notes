@@ -1,8 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { PDFDocument, PDFRawStream, PDFArray, decodePDFRawStream } from "pdf-lib";
 import { createNotebook, InkStroke } from "../src/model";
-import { drawInkStroke } from "../src/rendering";
+import { drawInkStroke, penOutlineRings } from "../src/rendering";
 import { exportNotebookPdf, inkToSvgOutlinePath } from "../src/pdf-export";
+import { stickyStrokeFromPage } from "../src/sticky-ink";
+import { STICKY_UNIT, StickyNote } from "../src/sticky-model";
 import { InkWorkerCore } from "../src/worker-core";
 import type { InkWorkerRequest } from "../src/worker-protocol";
 
@@ -41,6 +43,17 @@ function lineStroke(width: number, tool: "pen" | "highlighter"): InkStroke {
     points: Array.from({ length: 61 }, (_, index) => ({ x: 0.3 + 0.4 * index / 60, y: 0.5, pressure: 0.5, t: index * 8 })),
     createdAt: 1, updatedAt: 1,
   };
+}
+
+/** Vertical extent of the stamped geometry: for the straight horizontal probe
+ *  strokes used here it is the exact filled band thickness. */
+function yEnvelope(rings: number[][][]): number {
+  let min = Infinity, max = -Infinity;
+  for (const ring of rings) for (const point of ring) {
+    if (point[1] < min) min = point[1];
+    if (point[1] > max) max = point[1];
+  }
+  return max - min;
 }
 
 // ---------------------------------------------------------------- rasterizer
@@ -386,5 +399,27 @@ describe("cross-renderer stroke width fidelity", () => {
     // matter which device (renderWidth) produced the export.
     expect(Math.max(...borderWidths) - Math.min(...borderWidths)).toBeLessThan(0.05);
     expect(borderWidths[0]).toBeCloseTo(18 * PAGE_WIDTH / WIDTH_REFERENCE, 1);
+  });
+
+  it("renders stored sticky board ink as thick as the page ink it came from at every capture width", () => {
+    // Sticky boards paint stored ink in the STICKY_UNIT space
+    // (drawInkStroke(ctx, stroke, STICKY_UNIT, STICKY_UNIT)), and one board px
+    // spans logicalWidth / boardPageWidth page px on screen (paintStickyFrame
+    // scale). Storage must therefore anchor width at boardPageWidth, not the
+    // capture viewport: whatever window width committed the stroke, the board
+    // envelope (mapped to page px) must equal the page envelope of the same
+    // pen stroke.
+    const boardPageWidth = 980;
+    const note: StickyNote = { id: "sticky", pageId: "page", x: .2, y: .2, width: .4, height: .4, boardPageWidth,
+      scrollX: 0, scrollY: 0, title: "", text: "", keywords: "", textUpdatedAt: 1, color: "#fff1a8", collapsed: false, preview: true,
+      strokes: [], deletedStrokeIds: [], createdAt: 1, updatedAt: 1 };
+    const pageStroke = lineStroke(3, "pen");
+    for (const logicalWidth of [490, 700, 980]) {
+      const height = logicalHeight(logicalWidth);
+      const stored = stickyStrokeFromPage(pageStroke, note, { width: logicalWidth, height });
+      const board = yEnvelope(penOutlineRings(stored, STICKY_UNIT, STICKY_UNIT)) * (logicalWidth / boardPageWidth);
+      const page = yEnvelope(penOutlineRings(pageStroke, logicalWidth, height));
+      expect(board / page, `board/page width ratio at capture width ${logicalWidth}`).toBeCloseTo(1, 6);
+    }
   });
 });
