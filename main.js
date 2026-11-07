@@ -24605,6 +24605,7 @@ var RENEWED_FLICK_JUMP_PX = 24;
 var RENEWED_FLICK_JUMP_RATIO = 2.2;
 var RENEWED_FLICK_HOLD_RATIO = 0.6;
 var RENEWED_FLICK_RESET_RISE_RATIO = 1.2;
+var RENEWED_FLICK_HOT_REARM_RATIO = 1.25;
 var SLOW_SCROLL_EXIT_MS = 1200;
 var REF_DT_MS = 10;
 var RENEW_MIN_FLIPPED = 3;
@@ -24653,11 +24654,12 @@ var DesktopWheelGesture = class {
      *  flick delivered late (keep the gesture and its suppression). */
     this.stallProbation = false;
     /** Which exit a frozen sample deferred its action to the next sample's
-     *  slope: "rearm" (jump re-arm) or "reset" (quiet-gap reset). Null on the
-     *  settled-tail probation above, whose judgment stays the strict rise. A
-     *  stall merge stamped at the delivery cadence (the event carries a short
-     *  gap the stall never had) is indistinguishable from a real re-swipe at
-     *  the single-sample level, so exits whose predicate fired on such a shape
+     *  slope: "rearm" (jump re-arm), "reset" (quiet-gap reset) or "ramp" (the
+     *  ramp detector's flip, deferred the same way). Null on the settled-tail
+     *  probation above, whose judgment stays the strict rise. A stall merge
+     *  stamped at the delivery cadence (the event carries a short gap the
+     *  stall never had) is indistinguishable from a real re-swipe at the
+     *  single-sample level, so exits whose predicate fired on such a shape
      *  must not act in-frame. */
     this.stallDeferral = null;
     /** Normalized speed and raw travel of the frozen sample: the mirror arm
@@ -24765,14 +24767,28 @@ var DesktopWheelGesture = class {
               this.renewalBlocked = true;
               this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
             }
+          } else if (deferral === "ramp") {
+            if (gap >= 2 && normalized >= this.stallDeferralSpeed * RENEWED_FLICK_HOLD_RATIO) {
+              this.beginRenewedGesture();
+              this.flipped = false;
+              this.travel = this.stallDeferralTravel;
+              this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+            }
           } else if (gap >= 2 && normalized >= this.stallDeferralSpeed * RENEWED_FLICK_RESET_RISE_RATIO) {
             this.reset();
             gap = 0;
           }
           this.stallDeferralSpeed = this.stallDeferralTravel = 0;
-        } else if (gap >= 2 && normalized > Math.abs(this.lastDelta) && normalized > this.lastMagnitude && normalized >= Math.abs(this.lastDelta) * (frozenSettled ? RENEWED_FLICK_RESET_RISE_RATIO : RENEWED_FLICK_JUMP_RATIO)) {
-          this.reset();
-          gap = 0;
+        } else if (gap >= 2 && normalized > Math.abs(this.lastDelta) && normalized > this.lastMagnitude) {
+          if (normalized >= Math.abs(this.lastDelta) * (frozenSettled ? RENEWED_FLICK_RESET_RISE_RATIO : RENEWED_FLICK_JUMP_RATIO)) {
+            this.reset();
+            gap = 0;
+          } else if (!frozenSettled && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_HOT_REARM_RATIO && normalized >= RENEWED_FLICK_JUMP_PX / 2 && normalized < Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO) {
+            this.beginRenewedGesture();
+            this.flipped = false;
+            this.renewalBlocked = true;
+            this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+          }
         }
       }
     } else if (renewed) {
@@ -24839,7 +24855,12 @@ var DesktopWheelGesture = class {
           this.renewedPeak = normalized;
           this.renewedIncreases = 0;
         } else if (this.renewedPeak > 0) {
-          if (normalized >= this.renewedPeak * 1.2) {
+          if (this.renewedIncreases === 0 && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO && normalized >= RENEWED_FLICK_JUMP_PX) {
+            this.stallProbation = true;
+            this.stallDeferral = "ramp";
+            this.stallDeferralSpeed = normalized;
+            this.stallDeferralTravel = movement;
+          } else if (normalized >= this.renewedPeak * 1.2) {
             this.renewedPeak = normalized;
             this.renewedTravel += magnitude;
             this.renewedIncreases += 1;

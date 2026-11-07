@@ -330,6 +330,27 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(2);
     });
 
+    it("rearms a constant-velocity vertical re-flick after a hot-tail mid-band gap", async () => {
+      const { scroller, wheel, settle } = await desktopSetup();
+      // A re-touch truncates the inertia tail while it is still hot (the
+      // envelope sits above the 4px release floor) and the re-flick lands
+      // 55-179ms later with a constant fast phase. The real delivery gap
+      // crushes the boundary sample under the hot envelope, the ramp detector
+      // seeds from it, and the constant phase used to stall the ramp at one
+      // rise forever - the page and the native scroll were swallowed whole.
+      scroller.scrollTop = 600;
+      wheel(0, 140, { timeStamp: 100 });
+      for (const [delta, timeStamp] of [[90, 110], [60, 120], [30, 130], [20, 140], [15, 150]]) {
+        wheel(0, delta, { timeStamp });
+      }
+      expect(settle).toHaveBeenCalledTimes(1);
+      // 140px over a 120ms gap reads 11.7px/10ms under the hot 15px envelope;
+      // the constant 140s that follow re-arm through the deferred exit.
+      wheel(0, 140, { timeStamp: 270 });
+      for (const timeStamp of [280, 290, 300, 310]) wheel(0, 140, { timeStamp });
+      expect(settle).toHaveBeenCalledTimes(2);
+    });
+
     it("rearms a moderate same-direction re-swipe over a settled tail without a quiet gap", async () => {
       const { wheel, settle } = await desktopSetup();
       // A Windows precision trackpad bridges a human re-flick with an inertia
