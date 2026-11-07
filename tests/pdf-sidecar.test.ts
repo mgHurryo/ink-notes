@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { InkStroke, createNotebook } from "../src/model";
 import { parseStoredJson, serializeStoredJson } from "../src/storage-codec";
 import {
+  PDF_SIDECAR_MAX_PAGE_COUNT,
   PdfSidecar,
   PdfSidecarConflictError,
   PdfSidecarFormatError,
@@ -164,6 +165,23 @@ describe("create + normalize", () => {
     raw.deletedNotePages[sourcePageId(1)] = 1600;
     const parsed = normalizeSidecar(raw);
     expect(parsed.notePages.map((page) => page.id)).toEqual([sourcePageId(0), sourcePageId(1)]);
+  });
+
+  it("rejects an implausible pageCount above the rebuild budget", () => {
+    const raw = JSON.parse(JSON.stringify(makeSidecar()));
+    raw.source.pageCount = PDF_SIDECAR_MAX_PAGE_COUNT + 1;
+    raw.notePages = [];
+    expect(() => normalizeSidecar(raw)).toThrow(PdfSidecarFormatError);
+  });
+
+  it("still rebuilds a lost sequence at the maximum pageCount budget", () => {
+    const raw = JSON.parse(JSON.stringify(makeSidecar()));
+    raw.source.pageCount = PDF_SIDECAR_MAX_PAGE_COUNT;
+    raw.notePages = [];
+    const parsed = normalizeSidecar(raw);
+    expect(parsed.notePages).toHaveLength(PDF_SIDECAR_MAX_PAGE_COUNT);
+    expect(parsed.notePages[0].id).toBe(sourcePageId(0));
+    expect(parsed.notePages[PDF_SIDECAR_MAX_PAGE_COUNT - 1].id).toBe(sourcePageId(PDF_SIDECAR_MAX_PAGE_COUNT - 1));
   });
 
   it("repairs notebook pages that the sequence lost and drops strays", () => {
