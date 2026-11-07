@@ -316,7 +316,11 @@ function applyStrokeStyle(ctx: CanvasRenderingContext2D, stroke: InkStroke): voi
 function drawSampleDot(ctx: CanvasRenderingContext2D, stroke: InkStroke, width: number, height: number, referenceWidth: number = STROKE_WIDTH_REFERENCE): void {
   const point = stroke.points[0];
   const gain = clampPercent(stroke.dynamics?.pressure, 100) / 100;
-  const effectivePressure = 0.5 + (point.pressure - 0.5) * gain;
+  // The dot stands in for the full outline of a one-sample stroke, so its
+  // pressure must flow through the same curve mapping as halfWidthAt —
+  // otherwise a tap visibly pops when the worker outline replaces it.
+  const pressure = samplePressureCurve(Math.max(0, Math.min(1, point.pressure)), normalizePressureCurve(stroke.dynamics?.pressureCurve));
+  const effectivePressure = 0.5 + (pressure - 0.5) * gain;
   const diameter = (stroke.tool === "highlighter" ? stroke.width : stroke.width * (0.55 + effectivePressure * 0.75)) * width / referenceWidth;
   ctx.beginPath();
   ctx.arc(point.x * width, point.y * height, diameter / 2, 0, Math.PI * 2);
