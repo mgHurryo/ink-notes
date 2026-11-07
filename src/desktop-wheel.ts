@@ -25,10 +25,25 @@ const RENEWED_FLICK_HOLD_RATIO = 0.6;
  *  sample and still clears, and its rejected first sample has already seeded
  *  renewedPeak/renewedTravel, so a rising continuation still pages through
  *  the ramp detector or the jump/rearm path with the page budget intact.
- *  Accepted cost: a constant-velocity deliberate re-sweep landing exactly at
- *  tail speed on a hot tail is swallowed - the same trade the settled band
- *  already makes, suppression first. */
+ *  Accepted cost: a constant-velocity deliberate re-sweep landing at or below
+ *  1.25x tail speed on a hot tail is swallowed - the same trade the settled
+ *  band already makes, suppression first. A re-sweep holding 1.25-2.2x clears
+ *  through the boundary freeze's hot re-arm (no reset, the blocked window
+ *  keeps guarding the budget), and anything under the 12px fast-phase floor
+ *  stays with the slow-scroll latch instead. */
 const RENEWED_FLICK_RESET_RISE_RATIO = 1.2;
+/** The >=180ms boundary freeze's hot-envelope re-arm: a re-sweep whose first
+ *  sample rises 1.25-2.2x over the frozen tail speed re-arms the gesture
+ *  without reset. The floor sits ABOVE the plateau continuation's quantized
+ *  jitter (a tail oscillating +-1px around v parks the min-chain envelope at
+ *  v-1, so its first post-stall sample reads at most (v+1)/(v-1) <= 1.2x for
+ *  every hot floor) and above the ~1.08x a stamped stall merge resumes at,
+ *  and BELOW the 1.5x a deliberate re-sweep holds; the 12px fast-phase floor
+ *  additionally excludes the wide relative jitter of small hot plateaus
+ *  (7px samples over a 5px floor read 1.4x but are no fast phase). The re-arm
+ *  carries the blocked window, so a false positive cannot spend the budget on
+ *  the tail - it only prolongs the suppression-first trade one ratio lower. */
+const RENEWED_FLICK_HOT_REARM_RATIO = 1.25;
 /** The idle-boundary exemption keeps a flipped continuous gesture alive
  *  across any gap, and every escape hatch it leaves is amplitude-gated
  *  (12px settledRise, 24px jump, the probation rise ratio) with no time
@@ -375,11 +390,26 @@ export class DesktopWheelGesture {
             // restore is next cycle's work, gated on this guard.
           }
           this.stallDeferralSpeed = this.stallDeferralTravel = 0;
-        } else if (gap >= 2 && normalized > Math.abs(this.lastDelta) && normalized > this.lastMagnitude
-          && normalized >= Math.abs(this.lastDelta)
+        } else if (gap >= 2 && normalized > Math.abs(this.lastDelta) && normalized > this.lastMagnitude) {
+          if (normalized >= Math.abs(this.lastDelta)
             * (frozenSettled ? RENEWED_FLICK_RESET_RISE_RATIO : RENEWED_FLICK_JUMP_RATIO)) {
-          this.reset();
-          gap = 0;
+            this.reset();
+            gap = 0;
+          } else if (!frozenSettled
+            && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_HOT_REARM_RATIO
+            && normalized >= RENEWED_FLICK_JUMP_PX / 2
+            && normalized < Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO) {
+            // A hot tail's medium constant-velocity re-sweep: its first sample
+            // rises well over the frozen envelope yet never clears the jump
+            // ratio, so the freeze used to stand and swallow it whole. Re-arm
+            // WITHOUT reset - the contact, its horizontal page and the blocked
+            // window all survive, so the tail continuation still cannot spend
+            // the budget the way a reset's fresh contact could.
+            this.beginRenewedGesture();
+            this.flipped = false;
+            this.renewalBlocked = true;
+            this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+          }
         }
       }
     } else if (renewed) {

@@ -463,6 +463,14 @@ describe("DesktopWheelGesture hot-tail quiet-gap re-flick", () => {
   it("rearms a 40px/10ms re-flick after a 60ms reporting gap mid-tail", () => {
     expect(pagesAcrossHotTailReflick([140, 90, 60, 45, 40], 60, 40)).toBe(2);
   });
+
+  it("rearms a 30px/10ms re-flick after a 200ms gap over a hot tail", () => {
+    // The >=180ms boundary freeze demanded the 2.2x jump ratio of the same
+    // medium constant-velocity re-sweep; the hot-envelope re-arm below the
+    // jump ratio covers it - no reset and no fresh contact, the re-arm's
+    // blocked window keeps guarding the budget against the tail continuation.
+    expect(pagesAcrossHotTailReflick([140, 90, 60, 30, 20], 200, 30)).toBe(2);
+  });
 });
 
 describe("DesktopWheelGesture plateau-tail stall merge", () => {

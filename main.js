@@ -24605,6 +24605,7 @@ var RENEWED_FLICK_JUMP_PX = 24;
 var RENEWED_FLICK_JUMP_RATIO = 2.2;
 var RENEWED_FLICK_HOLD_RATIO = 0.6;
 var RENEWED_FLICK_RESET_RISE_RATIO = 1.2;
+var RENEWED_FLICK_HOT_REARM_RATIO = 1.25;
 var SLOW_SCROLL_EXIT_MS = 1200;
 var REF_DT_MS = 10;
 var RENEW_MIN_FLIPPED = 3;
@@ -24778,9 +24779,16 @@ var DesktopWheelGesture = class {
             gap = 0;
           }
           this.stallDeferralSpeed = this.stallDeferralTravel = 0;
-        } else if (gap >= 2 && normalized > Math.abs(this.lastDelta) && normalized > this.lastMagnitude && normalized >= Math.abs(this.lastDelta) * (frozenSettled ? RENEWED_FLICK_RESET_RISE_RATIO : RENEWED_FLICK_JUMP_RATIO)) {
-          this.reset();
-          gap = 0;
+        } else if (gap >= 2 && normalized > Math.abs(this.lastDelta) && normalized > this.lastMagnitude) {
+          if (normalized >= Math.abs(this.lastDelta) * (frozenSettled ? RENEWED_FLICK_RESET_RISE_RATIO : RENEWED_FLICK_JUMP_RATIO)) {
+            this.reset();
+            gap = 0;
+          } else if (!frozenSettled && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_HOT_REARM_RATIO && normalized >= RENEWED_FLICK_JUMP_PX / 2 && normalized < Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO) {
+            this.beginRenewedGesture();
+            this.flipped = false;
+            this.renewalBlocked = true;
+            this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+          }
         }
       }
     } else if (renewed) {
