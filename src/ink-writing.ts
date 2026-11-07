@@ -1188,7 +1188,10 @@ export abstract class InkWritingView extends FileView {
     return request ? this.queuePageSwipeTarget(request.target + delta, scrollEdge, wheelQueued) : false;
   }
 
-  /** Trackpad inertia has no portable end event; coalesce each detected gesture once. */
+  /** Trackpad inertia has no portable end event; coalesce each detected gesture
+   *  once. Every wheel-side exit that lifts the flip now mints a fresh gesture
+   *  id (the slow-scroll release included), so a same-id second queue must not
+   *  recur; returning true still collapses any repeat within one gesture. */
   protected queueTrackpadPageSwipeDelta(delta: number, gestureId: number, scrollEdge?: "top" | "bottom"): boolean {
     const request = this.pageSwipeRequest;
     if (!this.flipSettling || !request) return false;

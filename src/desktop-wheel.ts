@@ -469,6 +469,15 @@ export class DesktopWheelGesture {
           if (this.slowScrollMs >= SLOW_SCROLL_EXIT_MS) {
             renewedTravel = this.slowScrollTravel;
             this.flipped = false;
+            // The release page must reach the view as a NEW gesture id: it
+            // lands inside the first page's settle window, where
+            // queueTrackpadPageSwipeDelta coalesces per gesture id
+            // (ink-writing.ts), so reusing this gesture's id silently drops
+            // the page after pageDelta has already spent the budget. Unlike
+            // beginRenewedGesture this does not re-open the page budget - the
+            // release reuses the exit shape above without widening the
+            // per-gesture cap, and flippedRun resets through flipped=false.
+            this.gestureId += 1;
             this.slowScrollMs = this.slowScrollTravel = 0;
           }
         }

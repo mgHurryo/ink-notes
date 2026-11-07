@@ -24813,6 +24813,7 @@ var DesktopWheelGesture = class {
           if (this.slowScrollMs >= SLOW_SCROLL_EXIT_MS) {
             renewedTravel = this.slowScrollTravel;
             this.flipped = false;
+            this.gestureId += 1;
             this.slowScrollMs = this.slowScrollTravel = 0;
           }
         }
@@ -28613,7 +28614,10 @@ var InkWritingView = class extends import_obsidian7.FileView {
     const request = this.pageSwipeRequest;
     return request ? this.queuePageSwipeTarget(request.target + delta, scrollEdge, wheelQueued) : false;
   }
-  /** Trackpad inertia has no portable end event; coalesce each detected gesture once. */
+  /** Trackpad inertia has no portable end event; coalesce each detected gesture
+   *  once. Every wheel-side exit that lifts the flip now mints a fresh gesture
+   *  id (the slow-scroll release included), so a same-id second queue must not
+   *  recur; returning true still collapses any repeat within one gesture. */
   queueTrackpadPageSwipeDelta(delta, gestureId, scrollEdge) {
     const request = this.pageSwipeRequest;
     if (!this.flipSettling || !request) return false;
