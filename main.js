@@ -24821,18 +24821,16 @@ var DesktopWheelGesture = class {
     const priorFlippedRun = this.flippedRun;
     let renewedTravel;
     if (this.flipped && !this.discrete) {
-      if (!this.renewalBlocked) {
-        if (this.stallProbation || gap >= RENEWED_FLICK_GAP_MS || normalized >= RENEWED_FLICK_JUMP_PX / 2 || movement !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta)) {
+      if (this.stallProbation || gap >= RENEWED_FLICK_GAP_MS || normalized >= RENEWED_FLICK_JUMP_PX / 2 || movement !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta)) {
+        this.slowScrollMs = this.slowScrollTravel = 0;
+      } else if (movement !== 0) {
+        this.slowScrollMs += gap;
+        this.slowScrollTravel += movement;
+        if (this.slowScrollMs >= SLOW_SCROLL_EXIT_MS) {
+          renewedTravel = this.slowScrollTravel;
+          this.flipped = false;
+          this.gestureId += 1;
           this.slowScrollMs = this.slowScrollTravel = 0;
-        } else if (movement !== 0) {
-          this.slowScrollMs += gap;
-          this.slowScrollTravel += movement;
-          if (this.slowScrollMs >= SLOW_SCROLL_EXIT_MS) {
-            renewedTravel = this.slowScrollTravel;
-            this.flipped = false;
-            this.gestureId += 1;
-            this.slowScrollMs = this.slowScrollTravel = 0;
-          }
         }
       }
     }
