@@ -24834,12 +24834,13 @@ var DesktopWheelGesture = class {
         }
       } else if (this.renewedPeak > 0 || gap >= RENEWED_FLICK_GAP_MS) {
         if (gap >= RENEWED_FLICK_GAP_MS) {
-          this.renewedTravel = this.renewedPeak = normalized;
+          this.renewedTravel = magnitude;
+          this.renewedPeak = normalized;
           this.renewedIncreases = 0;
         } else if (this.renewedPeak > 0) {
           if (normalized >= this.renewedPeak * 1.2) {
             this.renewedPeak = normalized;
-            this.renewedTravel += normalized;
+            this.renewedTravel += magnitude;
             this.renewedIncreases += 1;
             if (this.renewedIncreases >= 2 && this.renewedTravel >= (axis === "x" ? HORIZONTAL_PAGE_TRAVEL_PX : PAGE_TRAVEL_PX)) {
               renewedTravel = Math.sign(movement) * this.renewedTravel;

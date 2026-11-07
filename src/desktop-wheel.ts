@@ -518,14 +518,23 @@ export class DesktopWheelGesture {
         // when its resumed sample rises): this seeds stalled-delivery
         // continuations and the mixed discrete->continuous flow, whose tails
         // still need a ramp detector. Both axes re-arm through it; the re-arm
-        // travel threshold follows the axis.
+        // travel threshold follows the axis. renewedTravel accumulates RAW px
+        // while renewedPeak stays a normalized speed: the peak feeds the
+        // cadence-independent rise/fall ratios below, but the travel hands
+        // off into pageDelta's this.travel and is judged against the raw-px
+        // page threshold there - counting it in normalized units made the
+        // reswipe distance drift with the reporting cadence and under-counted
+        // merged samples by gap/REF_DT_MS. Magnitude, not the signed
+        // movement: the comparison below is one-sided, and the direction is
+        // applied once at the hand-off.
         if (gap >= RENEWED_FLICK_GAP_MS) {
-          this.renewedTravel = this.renewedPeak = normalized;
+          this.renewedTravel = magnitude;
+          this.renewedPeak = normalized;
           this.renewedIncreases = 0;
         } else if (this.renewedPeak > 0) {
           if (normalized >= this.renewedPeak * 1.2) {
             this.renewedPeak = normalized;
-            this.renewedTravel += normalized;
+            this.renewedTravel += magnitude;
             this.renewedIncreases += 1;
             if (this.renewedIncreases >= 2 && this.renewedTravel
               >= (axis === "x" ? HORIZONTAL_PAGE_TRAVEL_PX : PAGE_TRAVEL_PX)) {

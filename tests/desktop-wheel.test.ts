@@ -172,6 +172,57 @@ describe("DesktopWheelGesture moderate re-swipe over a settled tail", () => {
   });
 });
 
+describe("DesktopWheelGesture ramp reswipe travel across reporting cadences", () => {
+  // #320 normalized the ramp accumulator to speeds (px per 10ms) but kept
+  // comparing it against the raw-px page thresholds, so the real distance a
+  // reswiping hand had to cover before the page flipped drifted with the
+  // reporting cadence: an 8ms stream flipped near 80px while a 16ms stream
+  // needed ~200px, and a merged sample was under-counted by gap/10. The
+  // accumulator counts raw px again (the peak stays a normalized speed), so
+  // the same physical acceleration must flip after ~100px of real travel at
+  // every cadence. The exact crossing distance still varies within one
+  // sample's raw delta - the flip fires on the sample that crosses the
+  // threshold - which is the only cadence dependence left.
+  function reswipeTravelAtFlip(cadenceMs: number): number {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 0;
+    const feed = (magnitudes: number[], stepMs: number) => {
+      for (const magnitude of magnitudes) {
+        pages += gesture.pageDelta(gesture.begin({ x: 0, y: magnitude, mode: 0 }, false, at), false);
+        at += stepMs;
+      }
+    };
+    feed([140, 90, 60, 30, 20, 14], 10); // fast phase: the contact's one page
+    feed([11, 9.5, 8.5, 7, 6.2, 6], 10); // inertia tail converges at ~6px/10ms, still hot
+    at += 200; // silence across the idle boundary: the resume lands at gap 200ms
+    // The same physical acceleration at every cadence: speeds rise 1.3x per
+    // sample (clear of the >= 1.2x float boundary), and each sample's raw
+    // delta is speed * cadence / 10. The first resume sample is the frozen
+    // boundary sample whose raw travel seeds the ramp accumulator.
+    const speeds = [5, 6.5, 8.45, 10.985, 14.28, 18.56, 24.13, 31.37, 40.78, 53];
+    let travel = 0;
+    for (const speed of speeds) {
+      const magnitude = speed * cadenceMs / 10;
+      travel += magnitude;
+      pages += gesture.pageDelta(gesture.begin({ x: 0, y: magnitude, mode: 0 }, false, at), false);
+      at += cadenceMs;
+      if (pages > 1) return travel;
+    }
+    return Number.NaN;
+  }
+
+  it("flips a ramped reswipe after the same real travel at 8, 10 and 16ms cadences", () => {
+    for (const cadenceMs of [8, 10, 16]) {
+      const travel = reswipeTravelAtFlip(cadenceMs);
+      // The flip fires once the raw accumulator crosses the 100px page
+      // threshold; the overshoot is bounded by the crossing sample's raw.
+      expect(travel).toBeGreaterThanOrEqual(100);
+      expect(travel).toBeLessThan(100 + 53 * cadenceMs / 10);
+    }
+  });
+});
+
 describe("DesktopWheelGesture settled-tail stall continuation", () => {
   // Below the hot-tail band the [1,50]ms delivery clamp returns, so a
   // 55-180ms stall's merged sample is judged at gap/50 of its true speed:
