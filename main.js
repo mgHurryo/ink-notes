@@ -22743,10 +22743,12 @@ var NotebookStore = class {
   /** Custom creation folders follow Obsidian's forward-slash path semantics:
    *  backslashes and duplicated slashes are normalized away, and reserved
    *  filename characters are cleaned exactly like notebook titles so a pasted
-   *  path can never produce an invalid folder name. An empty result falls back
-   *  to the default folder for zero-perception compatibility. */
+   *  path can never produce an invalid folder name. Segments that begin or end
+   *  with a dot are dropped because Obsidian does not index dot-prefixed
+   *  paths, which would hide the notebooks written there. An empty result
+   *  falls back to the default folder for zero-perception compatibility. */
   resolveFolder(folder) {
-    const cleaned = (folder != null ? folder : "").trim().replace(/\\/g, "/").replace(/\/+/g, "/").split("/").map((segment) => segment.trim().replace(/[:*?"<>|#^\[\]]/g, "-")).filter((segment) => segment && segment !== "." && segment !== "..").join("/");
+    const cleaned = (folder != null ? folder : "").trim().replace(/\\/g, "/").replace(/\/+/g, "/").split("/").map((segment) => segment.trim().replace(/[:*?"<>|#^\[\]]/g, "-")).filter((segment) => segment && segment !== "." && segment !== ".." && !/^\./.test(segment) && !/\.$/.test(segment)).join("/");
     return cleaned || INK_FOLDER;
   }
   async ensureFolder(path) {
@@ -23027,7 +23029,7 @@ function cleanedNotebookFolder(raw) {
   if (!collapsed) return "";
   if (/[:*?"<>|#^\[\]]/.test(collapsed)) return null;
   const segments = collapsed.split("/");
-  if (segments.some((segment) => !segment || segment === "." || segment === "..")) return null;
+  if (segments.some((segment) => !segment || segment === "." || segment === ".." || /^\./.test(segment) || /\.$/.test(segment))) return null;
   return collapsed;
 }
 

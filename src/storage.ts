@@ -124,12 +124,14 @@ export class NotebookStore {
   /** Custom creation folders follow Obsidian's forward-slash path semantics:
    *  backslashes and duplicated slashes are normalized away, and reserved
    *  filename characters are cleaned exactly like notebook titles so a pasted
-   *  path can never produce an invalid folder name. An empty result falls back
-   *  to the default folder for zero-perception compatibility. */
+   *  path can never produce an invalid folder name. Segments that begin or end
+   *  with a dot are dropped because Obsidian does not index dot-prefixed
+   *  paths, which would hide the notebooks written there. An empty result
+   *  falls back to the default folder for zero-perception compatibility. */
   private resolveFolder(folder?: string): string {
     const cleaned = (folder ?? "").trim().replace(/\\/g, "/").replace(/\/+/g, "/")
       .split("/").map((segment) => segment.trim().replace(/[:*?"<>|#^\[\]]/g, "-"))
-      .filter((segment) => segment && segment !== "." && segment !== "..")
+      .filter((segment) => segment && segment !== "." && segment !== ".." && !/^\./.test(segment) && !/\.$/.test(segment))
       .join("/");
     return cleaned || INK_FOLDER;
   }

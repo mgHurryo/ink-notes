@@ -175,6 +175,6 @@ function cleanedNotebookFolder(raw: string): string | null {
   if (!collapsed) return "";
   if (/[:*?"<>|#^\[\]]/.test(collapsed)) return null;
   const segments = collapsed.split("/");
-  if (segments.some((segment) => !segment || segment === "." || segment === "..")) return null;
+  if (segments.some((segment) => !segment || segment === "." || segment === ".." || /^\./.test(segment) || /\.$/.test(segment))) return null;
   return collapsed;
 }
