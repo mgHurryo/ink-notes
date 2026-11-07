@@ -34844,8 +34844,7 @@ page: ${this.currentPage().id}
       const prepared = await session.prepareSave(raw, minimumRevision);
       if (await this.store.writeIfUnchanged(file, raw, prepared.content)) {
         try {
-          await session.commitSave(prepared.token);
-          return { revision: minimumRevision };
+          return await session.commitSave(prepared.token);
         } catch (error) {
           if (this.workerSession === session) this.disableWorkerSession(error);
           return { revision: minimumRevision, merged: await this.store.read(file) };

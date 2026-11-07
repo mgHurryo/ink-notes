@@ -1669,8 +1669,10 @@ export class InkView extends InkWritingView {
       const prepared = await session.prepareSave(raw, minimumRevision);
       if (await this.store.writeIfUnchanged(file, raw, prepared.content)) {
         try {
-          await session.commitSave(prepared.token);
-          return { revision: minimumRevision };
+          // commitSave's merged result carries disk content the worker absorbed
+          // during prepareSave; dropping it desyncs the in-memory model from the
+          // file until an unrelated external change or reload happens.
+          return await session.commitSave(prepared.token);
         } catch (error) {
           if (this.workerSession === session) this.disableWorkerSession(error);
           return { revision: minimumRevision, merged: await this.store.read(file) };
