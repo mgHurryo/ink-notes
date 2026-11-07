@@ -1024,6 +1024,72 @@ describe("DesktopWheelGesture swallowed slow scroll after a flick", () => {
   });
 });
 
+describe("DesktopWheelGesture slow-scroll exit inside a renewal block window", () => {
+  // The renewal block's own exits are amplitude-gated (a <=4px sample or a
+  // jump-shaped rise), so while the SLOW_SCROLL_EXIT_MS time exit stayed
+  // wrapped out of reach inside the block, a mid-tail renewal's continued
+  // same-direction slow scroll was swallowed forever: no page, and the caller
+  // preventDefaults on suppressed, so not even the native scroll moved. The
+  // latch must run inside the block - 1200ms of continuous sub-12px dwell can
+  // only be a deliberate slow scroll (a tau=300ms tail dwells below the 12px
+  // floor for under that) - while the >=55ms stamps and a natural decay must
+  // stay exit-free.
+  function pagesAcrossBlockedSlowRun(continueMagnitudes: number[],
+    continueStepMs: number): { pages: number; thirdPageAt: number | null; latchRestartAt: number } {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 100;
+    let thirdPageAt: number | null = null;
+    const feed = (magnitudes: number[], stepMs: number) => {
+      for (const magnitude of magnitudes) {
+        pages += gesture.pageDelta(gesture.begin({ x: 0, y: magnitude, mode: 0 }, false, at), false);
+        if (pages > 2 && thirdPageAt === null) thirdPageAt = at;
+        at += stepMs;
+      }
+    };
+    // Fast phase, then the deferred re-arm's held 60 flips the second page
+    // and arms the block; the trailing 40px sample is the last >=12px one, so
+    // the dwell clock restarts on its beat.
+    feed([140, 90, 60, 40, 26, 60, 60, 40], 10);
+    const latchRestartAt = at - 10;
+    feed(continueMagnitudes, continueStepMs);
+    return { pages, thirdPageAt, latchRestartAt };
+  }
+
+  it("releases the slow-scroll latch inside a renewal block window", () => {
+    // A 6px/10ms continuation with no gap at all: the block's amplitude exits
+    // never fire (6 > 4, no jump), so the third page can only come from the
+    // latch release.
+    const { pages, thirdPageAt, latchRestartAt } =
+      pagesAcrossBlockedSlowRun(Array.from({ length: 160 }, () => 6), 10);
+    expect(pages).toBe(3);
+    // The dwell clock counts the opening gap into the run, so the release
+    // cannot land before a full 1200ms after the restart beat - one step
+    // short of the same span measured from the first sub-floor sample's own
+    // arrival.
+    expect(thirdPageAt! - latchRestartAt).toBeGreaterThanOrEqual(1200);
+  });
+
+  it("keeps stamped merge continuations from releasing inside the block", () => {
+    // The same continuation stamped at >=55ms delivery gaps (30px per 60ms =
+    // 5px/10ms, sub-floor but never below the release level): every stamp is
+    // a gesture boundary for the latch, so the dwell never accumulates and
+    // the stream stays at its two pages for as long as it lasts.
+    const { pages } = pagesAcrossBlockedSlowRun(Array.from({ length: 40 }, () => 30), 60);
+    expect(pages).toBe(2);
+  });
+
+  it("keeps a naturally decaying blocked tail to its page", () => {
+    // A tau=300ms decay from the 40px prefix end: it dwells below the 12px
+    // floor for ~950ms - under the exit - so its sub-floor samples must not
+    // release anything before the <=4px unblock (which lifts only the
+    // suppression, never the page budget).
+    const decay = Array.from({ length: 132 }, (_, k) => 40 * Math.exp(-k / 30));
+    const { pages } = pagesAcrossBlockedSlowRun(decay, 10);
+    expect(pages).toBe(2);
+  });
+});
+
 describe("WheelPagePacer fast-paging window", () => {
   it("engages once three vertical pages land inside the window", () => {
     const pacer = new WheelPagePacer();
