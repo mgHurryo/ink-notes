@@ -146,6 +146,18 @@ describe("NotebookStore", () => {
     expect(vault.createFolder).toHaveBeenCalledExactlyOnceWith("Ink Notes");
   });
 
+  it("drops leading and trailing dot segments from custom folders", async () => {
+    const vault = {
+      getAbstractFileByPath: vi.fn(() => undefined),
+      createFolder: vi.fn(async () => undefined),
+      create: vi.fn(async (path: string) => ({ path }) as TFile),
+    };
+    const store = new NotebookStore({ vault } as unknown as App);
+    expect((await store.create("A", ".foo")).path).toBe("Ink Notes/A.ink");
+    expect((await store.create("A", "a/.hidden/b")).path).toBe("a/b/A.ink");
+    expect((await store.create("A", "Ink Notes.")).path).toBe("Ink Notes/A.ink");
+  });
+
   it("refuses a custom folder path occupied by a file", async () => {
     const occupant = Object.assign(new (await import("obsidian")).TFile(), { path: "Courses", extension: "md" });
     const vault = {

@@ -1037,6 +1037,24 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(1);
     });
 
+    it("releases a post-flick slow scroll to a second page once it latches", async () => {
+      // The swallow contract at the view seam: after a flick's tail settled, a
+      // steady same-direction slow scroll used to be preventDefault'd forever
+      // with no page and no native scroll. Past the latch the suppression
+      // lifts, the accumulated slow travel rides the existing renewedTravel
+      // hand-off, and the second page settles at the scroll boundary; the
+      // per-gesture budget still caps the contact after that.
+      const { scroller, wheel, settle } = await desktopSetup();
+      scroller.scrollTop = 600;
+      wheel(0, 140, { timeStamp: 100 });
+      for (const [delta, time] of [[90, 110], [60, 120], [40, 130], [25, 140], [16, 150],
+        [10, 160], [7, 170], [5, 180], [4, 190], [3, 200], [3, 210]]) wheel(0, delta, { timeStamp: time });
+      expect(settle).toHaveBeenCalledTimes(1);
+      // 500ms idle, then a steady 3px/10ms slow scroll - 3000px in total.
+      for (let i = 0; i < 1000; i++) wheel(0, 3, { timeStamp: 720 + i * 10 });
+      expect(settle).toHaveBeenCalledTimes(2);
+    });
+
     it("re-arms the same moderate re-swipe speed at every report cadence on the y axis", async () => {
       const { scroller, wheel, settle } = await desktopSetup();
       // The re-arm floors are speeds (px per 10ms reference window), not

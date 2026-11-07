@@ -777,6 +777,94 @@ describe("DesktopWheelGesture zero-component pause in the momentum tail", () => 
   });
 });
 
+describe("DesktopWheelGesture swallowed slow scroll after a flick", () => {
+  // The idle-boundary exemption keeps a flipped continuous gesture alive
+  // across a >=180ms gap, and every escape hatch below it carries an absolute
+  // floor (12px settledRise, 24px jump, the probation rise ratio), so a
+  // same-direction slow continuation under 12px/10ms is swallowed forever:
+  // no page and no native scroll (the caller preventDefaults on suppressed).
+  // A steady slow scroll must eventually read as a new intent, while a
+  // natural tau=300ms tail (which dwells below the 12px floor for at most
+  // 300ms * ln(500 / 12) ~= 1119ms) must never trip the release.
+  function pagesAcrossFlickTailThenSlowScroll(idleMs: number, steadyPx: number, steadyCount: number,
+    steadyAt?: (index: number) => number): { pages: number; slowFlipAt: number | null } {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 100;
+    let slowFlipAt: number | null = null;
+    const feed = (magnitudes: number[], stepMs = 10) => {
+      for (const magnitude of magnitudes) {
+        pages += gesture.pageDelta(gesture.begin({ x: 0, y: magnitude, mode: 0 }, false, at), false);
+        if (pages > 1 && slowFlipAt === null) slowFlipAt = at;
+        at += stepMs;
+      }
+    };
+    feed([140, 90, 60, 40, 25, 16, 10, 7, 5, 4, 3, 3]); // flick + tail settling at 3px/10ms
+    at += idleMs;
+    feed(Array.from({ length: steadyCount }, (_, i) => steadyAt ? steadyAt(i) : steadyPx));
+    return { pages, slowFlipAt };
+  }
+  const slowStartAt = (idleMs: number): number => 100 + 12 * 10 + idleMs; // after the 12 tail samples
+
+  it("flips a second page when a slow scroll follows a flick tail across an idle gap", () => {
+    // The reviewer's real-device probe: tail stops at 3px, 500ms idle, then a
+    // steady 3px/10ms scroll - beta.13 flipped the page, the latch swallows it.
+    expect(pagesAcrossFlickTailThenSlowScroll(500, 3, 1000).pages).toBe(2);
+  });
+
+  it("flips a second page when the slow scroll never idles", () => {
+    // 5px/10ms for 4500px with no gap at all: the latch used to hold for the
+    // whole stream because no exit has a time-based bound.
+    expect(pagesAcrossFlickTailThenSlowScroll(0, 5, 900).pages).toBe(2);
+  });
+
+  it("releases the latch no earlier than a second into the slow scroll", () => {
+    // A no-idle 3px/10ms stream: the release must not fire on the tail's own
+    // dwell (the tail here counts ~60ms below the floor) - the second page
+    // lands only after a full second of continuous slow samples.
+    const { pages, slowFlipAt } = pagesAcrossFlickTailThenSlowScroll(0, 3, 130);
+    expect(pages).toBeGreaterThanOrEqual(2);
+    expect(slowFlipAt).not.toBeNull();
+    expect(slowFlipAt! - slowStartAt(0)).toBeGreaterThanOrEqual(1000);
+  });
+
+  it("restarts the latch clock across a quiet gap inside the slow scroll", () => {
+    // The same stream with a >=55ms pause at 600ms: the pause is a gesture
+    // boundary for the latch, so the remaining slow samples must not flip
+    // early.
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 100;
+    const feed = (magnitudes: number[], extraGapBefore = 0) => {
+      at += extraGapBefore;
+      for (const magnitude of magnitudes) {
+        pages += gesture.pageDelta(gesture.begin({ x: 0, y: magnitude, mode: 0 }, false, at), false);
+        at += 10;
+      }
+    };
+    feed([140, 90, 60, 40, 25, 16, 10, 7, 5, 4, 3, 3]); // flick + tail settling at 3px/10ms
+    feed(Array.from({ length: 60 }, () => 3)); // 600ms of slow scroll
+    feed([3], 70); // a 70ms quiet gap restarts the latch clock
+    feed(Array.from({ length: 69 }, () => 3)); // 690ms more - under the bound
+    expect(pages).toBe(1);
+  });
+
+  it("keeps a decaying continuation after an idle gap to one page", () => {
+    // Momentum shape across the boundary: resumes at the envelope and decays
+    // to ~0.8x over a finite tail - no rise for the boundary judgment and no
+    // 1200ms of dwell for the latch (the guard pins #345/#346/#352).
+    expect(pagesAcrossFlickTailThenSlowScroll(500, 3, 70, (i) => 3 - i * 0.01).pages).toBe(1);
+  });
+
+  it("releases a settled tail's 1.2x slow rise across the idle boundary", () => {
+    // Tail stops at 3px, 500ms idle, then a steady 4px/10ms scroll: the
+    // boundary freeze's one-shot judgment used to demand 2.2x (6.6px), so the
+    // 4px continuation - momentum only in name, past the release floor - was
+    // swallowed whole. A settled envelope has no tail speed left to protect.
+    expect(pagesAcrossFlickTailThenSlowScroll(500, 4, 60).pages).toBe(2);
+  });
+});
+
 describe("WheelPagePacer fast-paging window", () => {
   it("engages once three vertical pages land inside the window", () => {
     const pacer = new WheelPagePacer();

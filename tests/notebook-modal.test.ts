@@ -128,7 +128,7 @@ describe("notebook launcher", () => {
     expect(submit).toHaveBeenCalledExactlyOnceWith("Algebra", "Courses/Math");
   });
 
-  it.each(["..", "bad:name", ".", "a/b/../c"])("rejects invalid folders without a storage call: %s", (folder) => {
+  it.each(["..", "bad:name", ".", "a/b/../c", ".foo", "a/.hidden/b", "Ink Notes.", "a/Ink Notes./b"])("rejects invalid folders without a storage call: %s", (folder) => {
     const submit = vi.fn(async () => undefined);
     const modal = new NotebookNameModal({} as never, "Create Ink notebook", "Ink Notebook", "Create", submit, { folder: true });
     modals.push(modal); modal.open();
