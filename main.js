@@ -24848,7 +24848,7 @@ var DesktopWheelGesture = class {
           this.stallDeferralSpeed = normalized;
           this.stallDeferralTravel = movement;
         }
-      } else if (this.renewedPeak > 0 || gap >= RENEWED_FLICK_GAP_MS) {
+      } else if ((this.renewedPeak > 0 || gap >= RENEWED_FLICK_GAP_MS) && Math.min(this.lastMagnitude, Math.abs(this.lastDelta)) > RENEWED_FLICK_RELEASE_PX) {
         if (gap >= RENEWED_FLICK_GAP_MS) {
           this.renewedTravel = magnitude;
           this.renewedPeak = normalized;

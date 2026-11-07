@@ -172,6 +172,75 @@ describe("DesktopWheelGesture moderate re-swipe over a settled tail", () => {
   });
 });
 
+describe("DesktopWheelGesture constant-velocity re-swipe over a settled tail", () => {
+  // The contracts above only cover the RISING re-swipe shape: every fixture's
+  // first post-gap sample rises over the settled envelope, so the stream
+  // re-arms through the settledRise/jump exit or climbs the ramp. A moderate
+  // re-swipe can also land as a CONSTANT 12-23px/10ms phase (the hand drops
+  // onto the surface already at speed): its first sample never rises past the
+  // envelope, so the >=55ms quiet gap seeds the ramp at the seed sample's
+  // clamped speed and the constant phase then closes every ramp exit at once
+  // - no 1.2x rise, no 24px jump, travel frozen at the seed plus one step -
+  // while the slow-scroll latch clears on every >=12px sample, so the whole
+  // deliberate re-swipe is swallowed: no page, and the suppression holds the
+  // caller's preventDefault over the native scroll too. The settled envelope
+  // must decline the seed and let the constant phase re-arm through the same
+  // settledRise exit a gap<55 landing already takes.
+  function pagesAcrossConstantReswipe(quietGapMs: number, constantCount = 61): number {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 0;
+    const feed = (magnitudes: number[], stepMs: number) => {
+      for (const magnitude of magnitudes) {
+        pages += gesture.pageDelta(gesture.begin({ x: 0, y: magnitude, mode: 0 }, false, at), false);
+        at += stepMs;
+      }
+    };
+    feed([140, 90, 60, 30, 20, 14, 10, 8, 6, 5, 4, 3], 10); // fast phase: one page; the tail settles at the release level
+    at += quietGapMs - 10; // the feed already stepped 10ms past the last tail sample: the resumed sample lands exactly quietGapMs after it
+    feed(Array.from({ length: constantCount }, () => 15), 10); // constant 15px/10ms: no rise over the envelope, no 24px jump
+    return pages;
+  }
+
+  it("rearms a constant moderate re-swipe landing exactly at the 55ms quiet gap", () => {
+    expect(pagesAcrossConstantReswipe(55)).toBe(2);
+  });
+
+  it("keeps the same constant re-swipe one ms below the quiet-gap threshold at two pages", () => {
+    expect(pagesAcrossConstantReswipe(54)).toBe(2);
+  });
+
+  // The settled-envelope veto must not reach a still-hot envelope: there the
+  // ramp detector stays the swallow-first trade (#391 family) and a constant
+  // phase keeps riding it. The seed sample's own speed decides which band the
+  // stream is in: a resumed sample that normalizes ABOVE the release floor
+  // (60px over a 120ms real gap -> 5px/10ms) keeps the envelope hot (the
+  // min-chain parks it at 5 > 4), so the ramp seeds and the constant phase
+  // stays swallowed. A slower seed would decay the envelope to its own speed
+  // and the stream would be a settled-tail case, not a hot one.
+  function pagesAcrossHotEnvelopeConstantReswipe(): number {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 0;
+    const feed = (magnitudes: number[], stepMs: number) => {
+      for (const magnitude of magnitudes) {
+        pages += gesture.pageDelta(gesture.begin({ x: 0, y: magnitude, mode: 0 }, false, at), false);
+        at += stepMs;
+      }
+    };
+    feed([140, 90, 60, 30, 20, 14, 10, 8], 10); // fast phase: one page
+    feed(Array.from({ length: 20 }, () => 8), 10); // hot tail parks at 8px/10ms, above the release floor
+    at += 110; // the resumed sample lands 120ms after the last tail sample
+    feed([60], 10); // 60px over the 120ms real gap normalizes to 5px/10ms: the envelope stays hot
+    feed(Array.from({ length: 61 }, () => 15), 10); // constant fast phase
+    return pages;
+  }
+
+  it("keeps a constant phase over a still-hot envelope swallowed", () => {
+    expect(pagesAcrossHotEnvelopeConstantReswipe()).toBe(1);
+  });
+});
+
 describe("DesktopWheelGesture ramp reswipe travel across reporting cadences", () => {
   // #320 normalized the ramp accumulator to speeds (px per 10ms) but kept
   // comparing it against the raw-px page thresholds, so the real distance a

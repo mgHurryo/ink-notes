@@ -580,7 +580,20 @@ export class DesktopWheelGesture {
           this.stallDeferralSpeed = normalized;
           this.stallDeferralTravel = movement;
         }
-      } else if (this.renewedPeak > 0 || gap >= RENEWED_FLICK_GAP_MS) {
+      } else if ((this.renewedPeak > 0 || gap >= RENEWED_FLICK_GAP_MS)
+        && Math.min(this.lastMagnitude, Math.abs(this.lastDelta)) > RENEWED_FLICK_RELEASE_PX) {
+        // The settled-envelope veto: the seeding and the ramp below assume the
+        // stream is still riding a tail hot enough to judge rises against. On
+        // a settled envelope (the same frozenSettled/settledRise predicate
+        // above) a moderate re-swipe landing after the quiet gap seeds the
+        // ramp at its clamped seed speed, and a CONSTANT fast phase then
+        // closes every ramp exit at once - no 1.2x rise, no 24px jump, travel
+        // frozen - and the slow-scroll latch clears on every >=12px sample, so
+        // the whole deliberate re-swipe is swallowed (no page, suppression
+        // holds). Declining the branch hands the stream to the settledRise /
+        // jump re-arm exit below, the same path a gap<55 landing already
+        // takes. A hot envelope (min > 4) keeps the ramp and with it the
+        // #391-style trades.
         // Not the plain quiet-gap path (a pure continuous stream resets above
         // when its resumed sample rises): this seeds stalled-delivery
         // continuations and the mixed discrete->continuous flow, whose tails
