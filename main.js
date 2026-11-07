@@ -23513,7 +23513,7 @@ function stickyStrokeOnPage(stroke, note, g) {
   return {
     ...stroke,
     pageId: note.pageId,
-    width: stroke.width * scale,
+    width: stroke.width * STICKY_UNIT / note.boardPageWidth,
     points: stroke.points.map((p) => ({
       ...p,
       x: x + (p.x * STICKY_UNIT - note.scrollX) / note.boardPageWidth,
@@ -23527,7 +23527,7 @@ function stickyStrokeFromPage(stroke, note, g) {
   return {
     ...stroke,
     pageId: note.id,
-    width: stroke.width / scale,
+    width: stroke.width * note.boardPageWidth / STICKY_UNIT,
     points: stroke.points.map((p) => ({
       ...p,
       x: ((p.x - x) * note.boardPageWidth + note.scrollX) / STICKY_UNIT,
