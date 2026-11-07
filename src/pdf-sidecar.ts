@@ -21,6 +21,14 @@ import { InkNotebook, InkPage, PaperStyle, createPage, mergeNotebooks, newId, no
 export const PDF_SIDECAR_FORMAT = 1;
 export const PDF_SIDECAR_EXTENSION = "pdfink.json";
 export const PDF_INK_FOLDER = "A_pdfinkwrittern";
+/**
+ * Rebuild budget for normalizeSidecar: pageCount above this is treated as
+ * corrupt. Without a cap, one malformed sidecar file (a few dozen bytes) makes
+ * the from-zero sequence rebuild allocate an unbounded array on every vault
+ * scan and PDF open — a freeze/OOM the file reader cannot see coming. 10_000
+ * is far above any real PDF and rebuilds in milliseconds.
+ */
+export const PDF_SIDECAR_MAX_PAGE_COUNT = 10_000;
 
 export class PdfSidecarFormatError extends Error {
   constructor(message: string) {
@@ -216,7 +224,7 @@ export function normalizeSidecar(value: unknown): PdfSidecar {
   const source = raw.source;
   const sha256 = typeof source?.sha256 === "string" && /^[0-9a-f]{64}$/i.test(source.sha256) ? source.sha256.toLowerCase() : null;
   const byteLength = source && typeof source.byteLength === "number" && Number.isFinite(source.byteLength) && source.byteLength >= 0 ? source.byteLength : null;
-  const pageCount = source && typeof source.pageCount === "number" && Number.isInteger(source.pageCount) && source.pageCount >= 0 ? source.pageCount : null;
+  const pageCount = source && typeof source.pageCount === "number" && Number.isInteger(source.pageCount) && source.pageCount >= 0 && source.pageCount <= PDF_SIDECAR_MAX_PAGE_COUNT ? source.pageCount : null;
   if (!sha256 || byteLength === null || pageCount === null) {
     throw new PdfSidecarFormatError("Sidecar is missing a valid source fingerprint");
   }

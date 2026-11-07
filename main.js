@@ -35075,6 +35075,7 @@ function clonePageValue(page) {
 var PDF_SIDECAR_FORMAT = 1;
 var PDF_SIDECAR_EXTENSION = "pdfink.json";
 var PDF_INK_FOLDER = "A_pdfinkwrittern";
+var PDF_SIDECAR_MAX_PAGE_COUNT = 1e4;
 var PdfSidecarFormatError = class extends Error {
   constructor(message) {
     super(message);
@@ -35185,7 +35186,7 @@ function normalizeSidecar(value) {
   const source = raw.source;
   const sha256 = typeof (source == null ? void 0 : source.sha256) === "string" && /^[0-9a-f]{64}$/i.test(source.sha256) ? source.sha256.toLowerCase() : null;
   const byteLength = source && typeof source.byteLength === "number" && Number.isFinite(source.byteLength) && source.byteLength >= 0 ? source.byteLength : null;
-  const pageCount = source && typeof source.pageCount === "number" && Number.isInteger(source.pageCount) && source.pageCount >= 0 ? source.pageCount : null;
+  const pageCount = source && typeof source.pageCount === "number" && Number.isInteger(source.pageCount) && source.pageCount >= 0 && source.pageCount <= PDF_SIDECAR_MAX_PAGE_COUNT ? source.pageCount : null;
   if (!sha256 || byteLength === null || pageCount === null) {
     throw new PdfSidecarFormatError("Sidecar is missing a valid source fingerprint");
   }
