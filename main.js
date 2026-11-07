@@ -24741,6 +24741,7 @@ var DesktopWheelGesture = class {
     const reversed = this.lastDelta !== 0 && movement !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta);
     const renewed = !this.discrete && this.flipped && gap >= RENEWED_FLICK_GAP_MS;
     if (axis !== this.axis && this.flipped && !this.discrete && !discrete) {
+      if (this.stallProbation && this.stallDeferral === null) this.stallProbation = false;
       this.travel = 0;
       this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
       this.slowScrollMs = this.slowScrollTravel = 0;

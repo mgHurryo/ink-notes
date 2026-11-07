@@ -708,6 +708,68 @@ describe("DesktopWheelGesture axis switch on the momentum tail", () => {
     }
     expect(pages).toBe(-1);
   });
+
+  // A pause merged into a settled tail freezes the envelope in plain stall
+  // probation (stallDeferral null). When the next sample re-classifies the
+  // axis, the re-seed used to overwrite that frozen envelope with the
+  // recovery sample's own speed, so the following sample cleared the
+  // frozenSettled rise ratio, reset() minted a fresh page budget mid-tail
+  // and the same flick's continuation flipped a ghost second page.
+  function pagesAfterPausedDiagonalReseed(tail: number[], pauseMs: number, mergeY: number,
+    diagonal: Array<[number, number]>, continuation: Array<[number, number]>): {
+      pages: number;
+      mergedProbation: boolean;
+    } {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 100;
+    const feed = (x: number, y: number, stepMs: number) => {
+      const motion = gesture.begin({ x, y, mode: 0 }, false, at);
+      pages += gesture.pageDelta(motion, false);
+      at += stepMs;
+      return motion;
+    };
+    for (const magnitude of tail) feed(0, magnitude, 10);
+    at += pauseMs;
+    const merged = feed(0, mergeY, 10);
+    for (const [x, y] of diagonal) feed(x, y, 10);
+    for (const [x, y] of continuation) feed(x, y, 10);
+    return { pages, mergedProbation: merged.probation === true };
+  }
+
+  it("keeps a stall-frozen settled tail at one page when a diagonal re-classifies the axis", () => {
+    // The tail settles at 3px, the merged y=20 sample enters plain probation
+    // and the frozen envelope must stay there: the (4,2) re-seed used to
+    // overwrite it with 4, letting (5,2) clear the settled 1.2x rise ratio
+    // and reset() into a fresh budget the 5px/10ms continuation spent.
+    const { pages, mergedProbation } = pagesAfterPausedDiagonalReseed(
+      [140, 90, 60, 30, 20, 14, 10, 8, 6, 5, 4, 3], 100, 20,
+      [[4, 2], [5, 2]], Array.from({ length: 12 }, () => [5, 2] as [number, number]));
+    expect(mergedProbation).toBe(true);
+    expect(pages).toBe(1);
+  });
+
+  it("keeps a stall-frozen hot tail at one page when a diagonal re-classifies the axis", () => {
+    // Hot envelope (8px, frozenSettled false): without the re-seed the (5,2)
+    // judgment cannot even rise past it (5 > 8 is false), so a second page
+    // here pins the ghost page on the re-seed alone.
+    const { pages, mergedProbation } = pagesAfterPausedDiagonalReseed(
+      [140, 90, 60, 30, 20, 14, 11, 9.5, 8.5, 8.2, 8], 200, 40,
+      [[4, 2], [5, 2]], Array.from({ length: 12 }, () => [5, 2] as [number, number]));
+    expect(mergedProbation).toBe(true);
+    expect(pages).toBe(1);
+  });
+
+  it("still keeps a flat diagonal arc after the re-seed to one page", () => {
+    // Control: the same hot envelope but a non-rising (4,2) arc - the
+    // re-seed's original protection (a constant-rate arc must not re-arm
+    // under the new axis) holds with and without the probation consumption.
+    const { pages } = pagesAfterPausedDiagonalReseed(
+      [140, 90, 60, 30, 20, 14, 11, 9.5, 8.5, 8.2, 8], 200, 40,
+      Array.from({ length: 3 }, () => [4, 2] as [number, number]),
+      Array.from({ length: 12 }, () => [4, 2] as [number, number]));
+    expect(pages).toBe(1);
+  });
 });
 
 describe("DesktopWheelGesture discrete notch budget", () => {
