@@ -232,6 +232,47 @@ describe("dynamics refinement", () => {
     expect(thicknessAt(boosted, 20, 80)).toBeGreaterThan(thicknessAt(identity, 20, 80) * 1.25);
   });
 
+  it("renders a single-sample tap dot through the pressure curve", () => {
+    // A tap lives as a lone dot during capture and as the committed pen
+    // outline after the worker/stored path takes over; both must map raw
+    // pressure through the same curve or the tap visibly pops at commit.
+    const tap: InkStroke = {
+      ...stroke(), width: 4,
+      points: [{ x: 0.5, y: 0.5, pressure: 0.3, t: 0 }],
+      dynamics: { pressureCurve: [[0, 0.85], [1, 1]] },
+    };
+    // The outline's lone disc is centered on the sample (490, 693 at
+    // 980x1386); its max vertex distance IS the committed dot radius.
+    const discRadius = Math.max(...penOutline(tap, 980, 1386, 980).map(([x, y]) => Math.hypot(x - 490, y - 693)));
+    const ctx = context();
+    drawInkStroke(ctx, tap, 980, 1386, 980);
+    expect(vi.mocked(ctx.arc).mock.calls[0][2]).toBeCloseTo(discRadius);
+  });
+
+  it("keeps the tap dot's identity-mapping diameter unchanged", () => {
+    // Without a curve the dot must keep its historical default diameter.
+    const tap: InkStroke = {
+      ...stroke(), width: 4,
+      points: [{ x: 0.5, y: 0.5, pressure: 0.3, t: 0 }],
+    };
+    const ctx = context();
+    drawInkStroke(ctx, tap, 980, 1386, 980);
+    expect(vi.mocked(ctx.arc).mock.calls[0][2]).toBeCloseTo(4 * (0.55 + 0.3 * 0.75) / 2);
+  });
+
+  it("routes the tail renderer's lone sample through the same dot", () => {
+    // drawInkStrokeTail's count===1 branch must share the mapping fix.
+    const tap: InkStroke = {
+      ...stroke(), width: 4,
+      points: [{ x: 0.5, y: 0.5, pressure: 0.3, t: 0 }],
+      dynamics: { pressureCurve: [[0, 0.85], [1, 1]] },
+    };
+    const discRadius = Math.max(...penOutline(tap, 980, 1386, 980).map(([x, y]) => Math.hypot(x - 490, y - 693)));
+    const ctx = context();
+    drawInkStrokeTail(ctx, tap, 980, 1386, 0, 980);
+    expect(vi.mocked(ctx.arc).mock.calls[0][2]).toBeCloseTo(discRadius);
+  });
+
   it("speed and pressure stay visible together", () => {
     // Alternating pressure with a fast middle: the pressure variation must
     // remain measurable even with speed compensation at full gain.
