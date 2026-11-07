@@ -139,13 +139,14 @@ export class DesktopWheelGesture {
    *  flick delivered late (keep the gesture and its suppression). */
   private stallProbation = false;
   /** Which exit a frozen sample deferred its action to the next sample's
-   *  slope: "rearm" (jump re-arm) or "reset" (quiet-gap reset). Null on the
-   *  settled-tail probation above, whose judgment stays the strict rise. A
-   *  stall merge stamped at the delivery cadence (the event carries a short
-   *  gap the stall never had) is indistinguishable from a real re-swipe at
-   *  the single-sample level, so exits whose predicate fired on such a shape
+   *  slope: "rearm" (jump re-arm), "reset" (quiet-gap reset) or "ramp" (the
+   *  ramp detector's flip, deferred the same way). Null on the settled-tail
+   *  probation above, whose judgment stays the strict rise. A stall merge
+   *  stamped at the delivery cadence (the event carries a short gap the
+   *  stall never had) is indistinguishable from a real re-swipe at the
+   *  single-sample level, so exits whose predicate fired on such a shape
    *  must not act in-frame. */
-  private stallDeferral: "rearm" | "reset" | null = null;
+  private stallDeferral: "rearm" | "reset" | "ramp" | null = null;
   /** Normalized speed and raw travel of the frozen sample: the mirror arm
    *  judges the next sample against the speed, and on confirmation the travel
    *  is restored so a real re-swipe flips on the same beat an in-frame exit
@@ -347,6 +348,19 @@ export class DesktopWheelGesture {
               this.renewalBlocked = true;
               this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
             }
+          } else if (deferral === "ramp") {
+            if (gap >= 2 && normalized >= this.stallDeferralSpeed * RENEWED_FLICK_HOLD_RATIO) {
+              // The ramp flip's own exit, one beat late: renew the gesture and
+              // hand the parked travel back, but leave NO blocked window - the
+              // re-arm flavor's block would swallow the next stream's seed,
+              // whose quiet-gap-crushed boundary sample sits just past the
+              // release floor the block clears at (the ramp flip this exit
+              // mirrors leaves the ramp reachable the same way).
+              this.beginRenewedGesture();
+              this.flipped = false;
+              this.travel = this.stallDeferralTravel;
+              this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+            }
           } else if (gap >= 2 && normalized >= this.stallDeferralSpeed * RENEWED_FLICK_RESET_RISE_RATIO) {
             this.reset();
             gap = 0;
@@ -541,7 +555,25 @@ export class DesktopWheelGesture {
           this.renewedPeak = normalized;
           this.renewedIncreases = 0;
         } else if (this.renewedPeak > 0) {
-          if (normalized >= this.renewedPeak * 1.2) {
+          // A >=55ms reporting gap crushes the seed sample under the hot
+          // envelope (the unclamped tail divides by the true gap), so the
+          // fast phase's first jump-shaped sample forms exactly one ramp
+          // rise, and a constant fast phase never reaches the second rise
+          // the page flip demands - the re-flick was swallowed whole at any
+          // speed. Such a sample is single-sample indistinguishable from a
+          // stamped merge, so it takes the deferred exit instead of counting
+          // the rise: the hold mirror arm re-arms on confirmation, a merge's
+          // tail decays away. Gated on a pristine ramp (no rise counted yet):
+          // a mid-rise sample is the ramp's own acceleration and must keep
+          // counting toward the flip.
+          if (this.renewedIncreases === 0
+            && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO
+            && normalized >= RENEWED_FLICK_JUMP_PX) {
+            this.stallProbation = true;
+            this.stallDeferral = "ramp";
+            this.stallDeferralSpeed = normalized;
+            this.stallDeferralTravel = movement;
+          } else if (normalized >= this.renewedPeak * 1.2) {
             this.renewedPeak = normalized;
             this.renewedTravel += magnitude;
             this.renewedIncreases += 1;

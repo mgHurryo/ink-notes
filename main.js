@@ -24653,11 +24653,12 @@ var DesktopWheelGesture = class {
      *  flick delivered late (keep the gesture and its suppression). */
     this.stallProbation = false;
     /** Which exit a frozen sample deferred its action to the next sample's
-     *  slope: "rearm" (jump re-arm) or "reset" (quiet-gap reset). Null on the
-     *  settled-tail probation above, whose judgment stays the strict rise. A
-     *  stall merge stamped at the delivery cadence (the event carries a short
-     *  gap the stall never had) is indistinguishable from a real re-swipe at
-     *  the single-sample level, so exits whose predicate fired on such a shape
+     *  slope: "rearm" (jump re-arm), "reset" (quiet-gap reset) or "ramp" (the
+     *  ramp detector's flip, deferred the same way). Null on the settled-tail
+     *  probation above, whose judgment stays the strict rise. A stall merge
+     *  stamped at the delivery cadence (the event carries a short gap the
+     *  stall never had) is indistinguishable from a real re-swipe at the
+     *  single-sample level, so exits whose predicate fired on such a shape
      *  must not act in-frame. */
     this.stallDeferral = null;
     /** Normalized speed and raw travel of the frozen sample: the mirror arm
@@ -24765,6 +24766,13 @@ var DesktopWheelGesture = class {
               this.renewalBlocked = true;
               this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
             }
+          } else if (deferral === "ramp") {
+            if (gap >= 2 && normalized >= this.stallDeferralSpeed * RENEWED_FLICK_HOLD_RATIO) {
+              this.beginRenewedGesture();
+              this.flipped = false;
+              this.travel = this.stallDeferralTravel;
+              this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+            }
           } else if (gap >= 2 && normalized >= this.stallDeferralSpeed * RENEWED_FLICK_RESET_RISE_RATIO) {
             this.reset();
             gap = 0;
@@ -24839,7 +24847,12 @@ var DesktopWheelGesture = class {
           this.renewedPeak = normalized;
           this.renewedIncreases = 0;
         } else if (this.renewedPeak > 0) {
-          if (normalized >= this.renewedPeak * 1.2) {
+          if (this.renewedIncreases === 0 && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO && normalized >= RENEWED_FLICK_JUMP_PX) {
+            this.stallProbation = true;
+            this.stallDeferral = "ramp";
+            this.stallDeferralSpeed = normalized;
+            this.stallDeferralTravel = movement;
+          } else if (normalized >= this.renewedPeak * 1.2) {
             this.renewedPeak = normalized;
             this.renewedTravel += magnitude;
             this.renewedIncreases += 1;

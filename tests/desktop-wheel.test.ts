@@ -427,6 +427,44 @@ describe("DesktopWheelGesture hot-tail stall continuation", () => {
   });
 });
 
+describe("DesktopWheelGesture hot-tail quiet-gap re-flick", () => {
+  // A re-touch truncates the inertia tail while it is still hot (the envelope
+  // sits above the 4px release floor), and the re-flick lands 55-179ms later.
+  // The real delivery gap crushes that first sample under the envelope (the
+  // hot tail divides by the true gap with no clamp), the ramp detector seeds
+  // from it, and the constant fast phase forms exactly one >=1.2x rise - the
+  // second rise the page flip demands never comes, so the page (and the
+  // native scroll with it) was swallowed at any speed. The jump-shaped fast
+  // phase must re-arm through the deferred exit instead.
+  function pagesAcrossHotTailReflick(tail: number[], gapMs: number, fastPx: number): number {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 100;
+    const feed = (magnitudes: number[], stepMs = 10) => {
+      for (const magnitude of magnitudes) {
+        pages += gesture.pageDelta(gesture.begin({ x: 0, y: magnitude, mode: 0 }, false, at), false);
+        at += stepMs;
+      }
+    };
+    feed(tail); // fast phase: the contact's one page; the tail is still hot
+    at += gapMs - 10; // the re-flick's first sample lands gapMs after the tail
+    feed(Array.from({ length: 10 }, () => fastPx)); // constant-velocity fast phase
+    return pages;
+  }
+
+  it("rearms a 140px/10ms re-flick after a 120ms gap over a hot tail", () => {
+    expect(pagesAcrossHotTailReflick([140, 90, 60, 30, 20, 15], 120, 140)).toBe(2);
+  });
+
+  it("rearms a 30px/10ms re-flick after a 120ms gap over a hot tail", () => {
+    expect(pagesAcrossHotTailReflick([140, 90, 60, 30, 20], 120, 30)).toBe(2);
+  });
+
+  it("rearms a 40px/10ms re-flick after a 60ms reporting gap mid-tail", () => {
+    expect(pagesAcrossHotTailReflick([140, 90, 60, 45, 40], 60, 40)).toBe(2);
+  });
+});
+
 describe("DesktopWheelGesture plateau-tail stall merge", () => {
   // A plateau inertia tail (integer-quantized samples oscillating 11-13px at
   // delivery cadence) keeps the min-chain envelope parked at the tail speed,
