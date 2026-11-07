@@ -297,6 +297,19 @@ export class DesktopWheelGesture {
     // again. Only the per-axis travel and ramp state go; discrete streams
     // (deliberate notches) keep their hard reset and fresh budget.
     if (axis !== this.axis && this.flipped && !this.discrete && !discrete) {
+      // A plain stall freeze parked on the old axis dies here: the reseed
+      // below (or the pausedTail write) re-targets the envelope at the NEW
+      // axis, so the next sample's slope could no longer be judged against
+      // the frozen pre-stall tail - the contract the probation judgment
+      // below relies on has no cross-axis meaning. Consume the freeze on the
+      // axis change and keep the suppression and the page budget; the
+      // continuation rides the regular settledRise/jump/ramp mechanisms over
+      // the re-seeded envelope. Hard-resetting instead (the branch below)
+      // would mint a fresh budget mid-tail - the very ghost page this
+      // gesture's contracts guard against. The deferred exits (stallDeferral
+      // non-null) keep their freeze: their mirror arm judges held speed, not
+      // the frozen envelope's slope.
+      if (this.stallProbation && this.stallDeferral === null) this.stallProbation = false;
       this.travel = 0;
       this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
       // The latch counts one direction's dwell; the re-targeted stream is
