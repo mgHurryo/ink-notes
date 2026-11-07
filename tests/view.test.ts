@@ -777,7 +777,10 @@ describe("consecutive handwriting input", () => {
         if (worker.prepareSave.mock.calls.length === 1) await new Promise((resolve) => window.setTimeout(resolve, 500));
         return { token: "slow-save", content: "worker-json", revision: 1 };
       }),
-      commitSave: vi.fn(async () => ({ revision: 1 })),
+      // Echoes the in-flight attempt's minimumRevision like worker-core's
+      // commit-save does; a stale hardcoded revision would loop performSave
+      // forever now that its result is consumed.
+      commitSave: vi.fn(async () => ({ revision: worker.prepareSave.mock.calls.length })),
       abortSave: vi.fn(),
       apply: vi.fn(async (revision: number) => ({ type: "operation-applied", revision })),
     };
@@ -939,6 +942,52 @@ describe("consecutive handwriting input", () => {
     expect(store.save).not.toHaveBeenCalled();
     expect(internal.savedRevision).toBe(0);
     expect(internal.dirtyRevision).toBe(1);
+  });
+
+  it("feeds the Worker commitSave merged result into the in-memory notebook", async () => {
+    const { internal, store } = setup();
+    // Mirrors worker-core commit-save with reconcile=true: while preparing the
+    // save the worker absorbed a peer page that arrived on disk, so commitSave
+    // hands back the merged notebook. Dropping it leaves the view model blind
+    // to peer ink until an unrelated reload.
+    const peerPage = createPage("From peer");
+    const merged = structuredClone(internal.notebook);
+    merged.pages.push(peerPage);
+    merged.pageOrder.push(peerPage.id);
+    const worker = {
+      barrier: vi.fn(async () => 1),
+      prepareSave: vi.fn(async () => ({ token: "save-1", content: "worker-json", revision: 1 })),
+      commitSave: vi.fn(async () => ({ revision: 1, merged })),
+      abortSave: vi.fn(),
+      apply: vi.fn(async (revision: number) => ({ type: "operation-applied", revision })),
+    };
+    Object.assign(internal, { workerSession: worker, workerRevision: 1, dirtyRevision: 1 });
+    Object.assign(store, { readRaw: vi.fn(async () => "disk-json"), writeIfUnchanged: vi.fn(async () => true) });
+
+    await internal.save();
+
+    expect(worker.commitSave).toHaveBeenCalledOnce();
+    expect(internal.notebook.pages.some((page) => page.id === peerPage.id)).toBe(true);
+    expect(internal.savedRevision).toBe(1);
+  });
+
+  it("completes a Worker save when commitSave returns no merged notebook", async () => {
+    const { internal, store } = setup();
+    const worker = {
+      barrier: vi.fn(async () => 1),
+      prepareSave: vi.fn(async () => ({ token: "save-1", content: "worker-json", revision: 1 })),
+      commitSave: vi.fn(async () => ({ revision: 1 })),
+      abortSave: vi.fn(),
+      apply: vi.fn(async (revision: number) => ({ type: "operation-applied", revision })),
+    };
+    Object.assign(internal, { workerSession: worker, workerRevision: 1, dirtyRevision: 1 });
+    Object.assign(store, { readRaw: vi.fn(async () => "disk-json"), writeIfUnchanged: vi.fn(async () => true) });
+
+    await expect(internal.save()).resolves.toBeUndefined();
+
+    expect(worker.commitSave).toHaveBeenCalledOnce();
+    expect(internal.notebook.pages).toHaveLength(1);
+    expect(internal.savedRevision).toBe(1);
   });
 
   it("does not rebuild any UI when a self-save returns equivalent notebook data", async () => {
