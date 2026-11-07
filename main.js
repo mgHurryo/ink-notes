@@ -24813,6 +24813,7 @@ var DesktopWheelGesture = class {
           if (this.slowScrollMs >= SLOW_SCROLL_EXIT_MS) {
             renewedTravel = this.slowScrollTravel;
             this.flipped = false;
+            this.gestureId += 1;
             this.slowScrollMs = this.slowScrollTravel = 0;
           }
         }
@@ -24834,12 +24835,13 @@ var DesktopWheelGesture = class {
         }
       } else if (this.renewedPeak > 0 || gap >= RENEWED_FLICK_GAP_MS) {
         if (gap >= RENEWED_FLICK_GAP_MS) {
-          this.renewedTravel = this.renewedPeak = normalized;
+          this.renewedTravel = magnitude;
+          this.renewedPeak = normalized;
           this.renewedIncreases = 0;
         } else if (this.renewedPeak > 0) {
           if (normalized >= this.renewedPeak * 1.2) {
             this.renewedPeak = normalized;
-            this.renewedTravel += normalized;
+            this.renewedTravel += magnitude;
             this.renewedIncreases += 1;
             if (this.renewedIncreases >= 2 && this.renewedTravel >= (axis === "x" ? HORIZONTAL_PAGE_TRAVEL_PX : PAGE_TRAVEL_PX)) {
               renewedTravel = Math.sign(movement) * this.renewedTravel;
@@ -28612,7 +28614,10 @@ var InkWritingView = class extends import_obsidian7.FileView {
     const request = this.pageSwipeRequest;
     return request ? this.queuePageSwipeTarget(request.target + delta, scrollEdge, wheelQueued) : false;
   }
-  /** Trackpad inertia has no portable end event; coalesce each detected gesture once. */
+  /** Trackpad inertia has no portable end event; coalesce each detected gesture
+   *  once. Every wheel-side exit that lifts the flip now mints a fresh gesture
+   *  id (the slow-scroll release included), so a same-id second queue must not
+   *  recur; returning true still collapses any repeat within one gesture. */
   queueTrackpadPageSwipeDelta(delta, gestureId, scrollEdge) {
     const request = this.pageSwipeRequest;
     if (!this.flipSettling || !request) return false;
@@ -35070,6 +35075,7 @@ function clonePageValue(page) {
 var PDF_SIDECAR_FORMAT = 1;
 var PDF_SIDECAR_EXTENSION = "pdfink.json";
 var PDF_INK_FOLDER = "A_pdfinkwrittern";
+var PDF_SIDECAR_MAX_PAGE_COUNT = 1e4;
 var PdfSidecarFormatError = class extends Error {
   constructor(message) {
     super(message);
@@ -35180,7 +35186,7 @@ function normalizeSidecar(value) {
   const source = raw.source;
   const sha256 = typeof (source == null ? void 0 : source.sha256) === "string" && /^[0-9a-f]{64}$/i.test(source.sha256) ? source.sha256.toLowerCase() : null;
   const byteLength = source && typeof source.byteLength === "number" && Number.isFinite(source.byteLength) && source.byteLength >= 0 ? source.byteLength : null;
-  const pageCount = source && typeof source.pageCount === "number" && Number.isInteger(source.pageCount) && source.pageCount >= 0 ? source.pageCount : null;
+  const pageCount = source && typeof source.pageCount === "number" && Number.isInteger(source.pageCount) && source.pageCount >= 0 && source.pageCount <= PDF_SIDECAR_MAX_PAGE_COUNT ? source.pageCount : null;
   if (!sha256 || byteLength === null || pageCount === null) {
     throw new PdfSidecarFormatError("Sidecar is missing a valid source fingerprint");
   }

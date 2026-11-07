@@ -3,7 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 vi.mock("obsidian", () => ({ Modal: class {}, FileView: class {} }));
 
 import { InkView } from "../src/view";
-import { DesktopWheelGesture } from "../src/desktop-wheel";
+import { DesktopWheelGesture, WheelPagePacer } from "../src/desktop-wheel";
 
 // Exercise the real view handlers with scroll bounds and centered-page geometry.
 function setup(viewportWidth = 800) {
@@ -503,5 +503,80 @@ describe("page touch navigation", () => {
     view.onTouchStart(event);
     expect(view.touchGesture).toBeNull();
     expect(event.preventDefault).not.toHaveBeenCalled();
+  });
+});
+
+describe("desktop wheel release pages inside a settle window", () => {
+  // Mirrors the view's wheel handoff (the tail of onWheel): begin → pageDelta,
+  // then noteWheelPages + navigateWheelPages for every flipped page.
+  function feedWheel(view: any, deltaY: number, at: number): void {
+    const motion = view.desktopWheel.begin({ x: 0, y: deltaY, mode: 0 }, false, at);
+    const pages = view.desktopWheel.pageDelta(motion, false);
+    if (pages !== 0) {
+      view.noteWheelPages(Math.abs(pages), motion.axis, at);
+      view.navigateWheelPages(pages, motion.axis, motion.discrete, motion.gestureId);
+    }
+  }
+
+  function feedStream(view: any, deltas: number[], startAt: number, stepMs = 10): void {
+    let at = startAt;
+    for (const deltaY of deltas) {
+      feedWheel(view, deltaY, at);
+      at += stepMs;
+    }
+  }
+
+  // A flick that flips page 1, then creeps at 3px/10ms under the 12px release
+  // floor until the SLOW_SCROLL_EXIT_MS release trips (~114 slow samples in)
+  // and flips page 2 - the same fixture the desktop-wheel latch tests use.
+  const flickThenCreep = [140, 90, 60, 40, 25, 16, 10, 7, 5, 4, 3, 3, ...Array(130).fill(3)];
+
+  function setupWheelView() {
+    const { view } = setup();
+    view.wheelPacer = new WheelPagePacer();
+    view.swipeSettle = vi.fn();
+    return view;
+  }
+
+  it("queues a slow-scroll release page as a fresh gesture inside a settle window", () => {
+    // The first page's settle window is still draining when the release fires:
+    // the release page must reach the window under a NEW gesture id, or the
+    // per-gesture dedup in queueTrackpadPageSwipeDelta silently swallows it
+    // while pageDelta has already spent the budget - the page is lost with
+    // no feedback and no native scroll either.
+    const view = setupWheelView();
+    view.beginPageSwipe(0, 10);
+    view.flipSettling = true;
+    feedStream(view, flickThenCreep, 0);
+    expect(view.desktopWheel.trackpadPages).toBe(2); // the flip happened and spent the budget
+    expect(view.swipeSettle).not.toHaveBeenCalled(); // the queue claimed it, then dropped it
+    expect(view.pageSwipeRequest.target).toBe(2);
+  });
+
+  it("keeps the per-gesture budget closed after a slow-scroll release", () => {
+    // A second release past the spent budget must only lift the suppression,
+    // not re-open the budget: renewing the whole gesture here (trackpadPages
+    // reset) would let one contact page forever.
+    const view = setupWheelView();
+    view.beginPageSwipe(0, 10);
+    view.flipSettling = true;
+    feedStream(view, flickThenCreep, 0);
+    expect(view.pageSwipeRequest.target).toBe(2);
+    feedStream(view, Array(130).fill(3), 1420); // creeps past a second slow-scroll exit
+    expect(view.desktopWheel.trackpadPages).toBe(2);
+    expect(view.pageSwipeRequest.target).toBe(2);
+    expect(view.desktopWheel.flipped).toBe(false);
+  });
+
+  it("keeps the swipe-settle fallback for release pages outside a settle window", () => {
+    // Control: with no draining window neither flip touches the per-gesture
+    // queue, so both surface through the swipeSettle fallback - the fresh
+    // gesture id for the release page must not change that path.
+    const view = setupWheelView();
+    feedStream(view, flickThenCreep, 0);
+    expect(view.swipeSettle).toHaveBeenCalledTimes(2);
+    expect(view.swipeSettle).toHaveBeenCalledWith(1, 0, "top");
+    expect(view.desktopWheel.trackpadPages).toBe(2);
+    expect(view.pageSwipeRequest).toBeUndefined();
   });
 });

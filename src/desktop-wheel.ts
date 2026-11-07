@@ -469,6 +469,15 @@ export class DesktopWheelGesture {
           if (this.slowScrollMs >= SLOW_SCROLL_EXIT_MS) {
             renewedTravel = this.slowScrollTravel;
             this.flipped = false;
+            // The release page must reach the view as a NEW gesture id: it
+            // lands inside the first page's settle window, where
+            // queueTrackpadPageSwipeDelta coalesces per gesture id
+            // (ink-writing.ts), so reusing this gesture's id silently drops
+            // the page after pageDelta has already spent the budget. Unlike
+            // beginRenewedGesture this does not re-open the page budget - the
+            // release reuses the exit shape above without widening the
+            // per-gesture cap, and flippedRun resets through flipped=false.
+            this.gestureId += 1;
             this.slowScrollMs = this.slowScrollTravel = 0;
           }
         }
@@ -518,14 +527,23 @@ export class DesktopWheelGesture {
         // when its resumed sample rises): this seeds stalled-delivery
         // continuations and the mixed discrete->continuous flow, whose tails
         // still need a ramp detector. Both axes re-arm through it; the re-arm
-        // travel threshold follows the axis.
+        // travel threshold follows the axis. renewedTravel accumulates RAW px
+        // while renewedPeak stays a normalized speed: the peak feeds the
+        // cadence-independent rise/fall ratios below, but the travel hands
+        // off into pageDelta's this.travel and is judged against the raw-px
+        // page threshold there - counting it in normalized units made the
+        // reswipe distance drift with the reporting cadence and under-counted
+        // merged samples by gap/REF_DT_MS. Magnitude, not the signed
+        // movement: the comparison below is one-sided, and the direction is
+        // applied once at the hand-off.
         if (gap >= RENEWED_FLICK_GAP_MS) {
-          this.renewedTravel = this.renewedPeak = normalized;
+          this.renewedTravel = magnitude;
+          this.renewedPeak = normalized;
           this.renewedIncreases = 0;
         } else if (this.renewedPeak > 0) {
           if (normalized >= this.renewedPeak * 1.2) {
             this.renewedPeak = normalized;
-            this.renewedTravel += normalized;
+            this.renewedTravel += magnitude;
             this.renewedIncreases += 1;
             if (this.renewedIncreases >= 2 && this.renewedTravel
               >= (axis === "x" ? HORIZONTAL_PAGE_TRAVEL_PX : PAGE_TRAVEL_PX)) {
