@@ -1113,6 +1113,44 @@ describe("page rail thumbnails and resizing", () => {
     expect(hidden()).toBe(false);
   });
 
+  it("hands the fast paging rail back only after the burst's queued flips drain", () => {
+    const internal = view as unknown as {
+      noteWheelPages(pages: number, axis: "x" | "y", at: number): void;
+      pageSwipeRequest: unknown;
+      fastPagingRail: boolean;
+      onFastPagingRailCollapsed(): void;
+    };
+    const collapsed = vi.spyOn(internal, "onFastPagingRailCollapsed");
+    vi.useFakeTimers();
+    try {
+      // Three vertical flips inside the window engage the burst; with no
+      // queued drain in flight the quiet window still hands the rail back.
+      internal.noteWheelPages(1, "y", 200);
+      internal.noteWheelPages(1, "y", 400);
+      internal.noteWheelPages(1, "y", 600);
+      expect(internal.fastPagingRail).toBe(true);
+      vi.advanceTimersByTime(1000);
+      expect(internal.fastPagingRail).toBe(false);
+      expect(collapsed).toHaveBeenCalledTimes(1);
+      // A burst whose queued swipes outlive the quiet window (slow page
+      // renders, loaded machine) must not collapse mid-drain: the remaining
+      // flips would lose the centered follow. The hand-back waits for the
+      // drain, then takes its own quiet second.
+      internal.noteWheelPages(1, "y", 4000);
+      internal.noteWheelPages(1, "y", 4200);
+      internal.noteWheelPages(1, "y", 4400);
+      expect(internal.fastPagingRail).toBe(true);
+      internal.pageSwipeRequest = { target: 4, activeTarget: 3, count: 6, scrollEdge: "top", wheelGestureId: null, wheelQueued: true };
+      vi.advanceTimersByTime(1000);
+      expect(internal.fastPagingRail).toBe(true);
+      expect(collapsed).toHaveBeenCalledTimes(1);
+      internal.pageSwipeRequest = null;
+      vi.advanceTimersByTime(1000);
+      expect(internal.fastPagingRail).toBe(false);
+      expect(collapsed).toHaveBeenCalledTimes(2);
+    } finally { vi.useRealTimers(); }
+  });
+
   it("applies a stored rail width on open and ignores out-of-range values", async () => {
     window.localStorage.setItem("ink-notes-page-rail-width", "300");
     document.body.innerHTML = '<div id="host"><div></div><main></main></div>';
