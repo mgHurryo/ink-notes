@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createNotebook, createPage, getStrokeBounds, mergeNotebooks, normalizeNotebook } from "../src/model";
+import { createNotebook, createPage, getStrokeBounds, mergeNotebooks, normalizeNotebook, normalizeNotebookInSlices } from "../src/model";
 import { normalizePressureCurve } from "../src/rendering";
 import { parseStoredJson, serializeStoredJson } from "../src/storage-codec";
 
@@ -7,6 +7,23 @@ describe("Ink notebook model", () => {
   it("normalizes malformed notebook data without losing valid strokes", () => {
     const notebook = normalizeNotebook({ pages: [{ id: "p1", title: "Page", strokes: [{ id: "s1", pageId: "p1", points: [{ x: 0.5, y: 2, pressure: 2 }] }] }] });
     expect(notebook.pages[0].strokes[0].points[0]).toMatchObject({ x: 0.5, y: 1, pressure: 1 });
+  });
+
+  it("normalizes notebook strokes in slices with the same result as the synchronous path", async () => {
+    const source = createNotebook("Sliced normalization");
+    const page = source.pages[0];
+    page.strokes = Array.from({ length: 96 }, (_, index) => ({
+      id: `stroke-${index}`, pageId: page.id, tool: "pen" as const, color: "#000", width: 3, opacity: 1,
+      points: [{ x: index / 100, y: 0.5, pressure: 0.5, t: index + 1 }], createdAt: index + 1, updatedAt: index + 1,
+    }));
+    page.deletedStrokeIds = ["stroke-3"];
+    const raw = JSON.parse(JSON.stringify(source));
+    raw.pages[0].strokes[4].points[0].unknown = true;
+
+    const expected = normalizeNotebook(raw, { reuseCanonicalPoints: true });
+    const actual = await normalizeNotebookInSlices(raw, { reuseCanonicalPoints: true });
+
+    expect(actual).toEqual(expected);
   });
 
   it("reuses point bounds from canonical parsed strokes and refreshes them after point replacement", () => {

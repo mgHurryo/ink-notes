@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { App, TFile } from "obsidian";
 import { createNotebook } from "../src/model";
 import { NotebookFormatError, NotebookStore } from "../src/storage";
-import { parseStoredJson, serializeStoredJson } from "../src/storage-codec";
+import { parseStoredJson, parseStoredJsonProgressively, serializeStoredJson } from "../src/storage-codec";
 
 describe("NotebookStore", () => {
   afterEach(() => vi.useRealTimers());
@@ -34,6 +34,45 @@ describe("NotebookStore", () => {
     const result=await store.save(file,local);
     expect(result.pages[0].strokes.map(s=>s.id)).toEqual(["remote","local"]);
     expect(parseStoredJson(raw).pages[0].strokes[0].points).toEqual(dense.points);
+  });
+
+  it("progressively parses plain and compressed notebook stroke arrays without changing their data", async () => {
+    const notebook = createNotebook("Progressive open");
+    const page = notebook.pages[0];
+    page.strokes = Array.from({ length: 32 }, (_, index) => ({
+      ...stroke(`stroke-${index}`, page.id, index + 1),
+      points: [{ x: index / 40, y: 0.5, pressure: 0.5, t: index + 1 }],
+    }));
+    const expected = JSON.parse(JSON.stringify(notebook));
+    const previews: number[] = [];
+    const plain = await parseStoredJsonProgressively(JSON.stringify(notebook), (_partial, count) => {
+      previews.push(count);
+      return true;
+    });
+    expect(plain).toEqual(expected);
+    expect(previews).toEqual([8]);
+
+    const compressed = serializeStoredJson(notebook);
+    expect(compressed).toContain("INK-GZIP-1");
+    const restored = await parseStoredJsonProgressively(compressed, () => true);
+    expect(restored).toEqual(expected);
+  });
+
+  it("rejects malformed JSON through the progressive open parser", async () => {
+    await expect(parseStoredJsonProgressively('{"pages":[}', () => undefined)).rejects.toThrow();
+  });
+
+  it("stops parsing when a newer notebook open cancels the current generation", async () => {
+    const notebook = createNotebook("Cancelled open");
+    notebook.pages[0].strokes = Array.from({ length: 32 }, (_, index) => ({
+      ...stroke(`cancel-${index}`, notebook.pages[0].id, index + 1),
+      points: [{ x: index / 40, y: 0.5, pressure: 0.5, t: index + 1 }],
+    }));
+    let cancelled = false;
+    const preview = vi.fn(() => { cancelled = true; });
+
+    await expect(parseStoredJsonProgressively(JSON.stringify(notebook), preview, () => cancelled)).rejects.toThrow();
+    expect(preview).toHaveBeenCalledOnce();
   });
 
   it("refuses corrupted compressed files and preserves their exact disk contents",async()=>{
