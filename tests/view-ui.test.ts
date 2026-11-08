@@ -958,9 +958,11 @@ describe("page rail thumbnails and resizing", () => {
     // The observer reports the first thumb visible: exactly that one paints.
     withBox(canvases[0], 152, 208);
     const drawSpy = vi.spyOn(view as unknown as { drawPageThumbnail: (c: HTMLCanvasElement, p: unknown) => void }, "drawPageThumbnail");
-    reports[0].callback([
-      { isIntersecting: true, target: canvases[0] } as unknown as IntersectionObserverEntry,
-    ], { disconnect() {}, unobserve() {}, observe() {} } as unknown as IntersectionObserver);
+    const bounds = { x: 0, y: 0, left: 0, top: 0, right: 152, bottom: 208, width: 152, height: 208,
+      toJSON: () => ({}) } as DOMRectReadOnly;
+    const entry = Object.assign({ isIntersecting: true, target: canvases[0] },
+      { intersectionRect: bounds, boundingClientRect: bounds }) as unknown as IntersectionObserverEntry;
+    reports[0].callback([entry], { disconnect() {}, unobserve() {}, observe() {} } as unknown as IntersectionObserver);
     const drawn = vi.mocked(drawInkStroke).mock.calls;
     expect(drawSpy).toHaveBeenCalledOnce();
     expect(drawn.length).toBe(1);

@@ -213,7 +213,7 @@ export function pageForNotePage(notePage: PdfSidecarNotePage, paper: PaperStyle,
  * corrupt JSON wrappers or unknown format versions — callers must stop
  * writing in that case instead of silently overwriting unreadable data.
  */
-export function normalizeSidecar(value: unknown): PdfSidecar {
+export function normalizeSidecar(value: unknown, options: { reuseCanonicalPoints?: boolean } = {}): PdfSidecar {
   if (!value || typeof value !== "object") {
     throw new PdfSidecarFormatError("Sidecar is not a JSON object");
   }
@@ -256,7 +256,7 @@ export function normalizeSidecar(value: unknown): PdfSidecar {
       }
     }
   }
-  const notebook = normalizeNotebook(raw.notebook);
+  const notebook = normalizeNotebook(raw.notebook, options);
   const notebookPages = new Map(notebook.pages.map((page) => [page.id, page]));
   // Recreate notebook pages for sequence ids missing one, drop notebook pages
   // the sequence does not know (they would be unreachable anyway).

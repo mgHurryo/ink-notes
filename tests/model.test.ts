@@ -197,6 +197,31 @@ describe("Ink notebook model", () => {
     expect(kept?.every((point) => point.every((value) => Number.isFinite(value)))).toBe(true);
   });
 
+  it("reuses canonical points only when normalizing an owned parsed notebook", () => {
+    const parsed = JSON.parse(JSON.stringify({ pages: [{ id: "p1", title: "Page", strokes: [{
+      id: "s1", pageId: "p1", tool: "pen", color: "#000", width: 3, opacity: 1,
+      points: [{ x: 0.5, y: 0.25, pressure: 0.5, t: 1 }], createdAt: 1, updatedAt: 1,
+    }] }] }));
+    const parsedPoint = parsed.pages[0].strokes[0].points[0];
+    const reused = normalizeNotebook(parsed, { reuseCanonicalPoints: true });
+    expect(reused.pages[0].strokes[0].points[0]).toBe(parsedPoint);
+
+    const shared = { pages: [{ id: "p1", title: "Page", strokes: [{
+      id: "s1", pageId: "p1", tool: "pen", color: "#000", width: 3, opacity: 1,
+      points: [{ x: 0.5, y: 0.25, pressure: 0.5, t: 1 }], createdAt: 1, updatedAt: 1,
+    }] }] };
+    const independent = normalizeNotebook(shared);
+    expect(independent.pages[0].strokes[0].points[0]).not.toBe(shared.pages[0].strokes[0].points[0]);
+
+    const malformed = JSON.parse(JSON.stringify(shared));
+    malformed.pages[0].strokes[0].points[0].x = 2;
+    malformed.pages[0].strokes[0].points[0].unknown = true;
+    const sanitized = normalizeNotebook(malformed, { reuseCanonicalPoints: true }).pages[0].strokes[0].points[0];
+    expect(sanitized.x).toBe(1);
+    expect(sanitized).not.toHaveProperty("unknown");
+    expect(sanitized).not.toBe(malformed.pages[0].strokes[0].points[0]);
+  });
+
   it("keeps the pressureCurve stable across a storage round-trip", () => {
     const strokes = [
       { id: "s1", pageId: "p1", tool: "pen" as const, color: "#000", width: 3, opacity: 1, points: [], createdAt: 1, updatedAt: 1,

@@ -30,7 +30,8 @@ describe("InkWorkerCore persistence mirror", () => {
       points:Array.from({length:500},(_,i)=>({x:i/1000,y:.3,pressure:.7,t:i+1,tiltX:12,tiltY:-6}))}];
     const raw=serializeStoredJson(book); expect(raw).toContain("INK-GZIP-1");
     const initialized=await response(core,request({type:"initialize-raw",raw,revision:0}));
-    expect(initialized).toMatchObject({type:"initialized",notebook:{pages:[{strokes:[{points:p.strokes[0].points}]}]}});
+    expect(initialized).toMatchObject({type:"initialized",revision:0});
+    expect("notebook" in initialized).toBe(false);
     const serialized=await response(core,request({type:"serialize-storage",value:{notebook:book,format:1}},2));
     if(serialized.type!=="storage-serialized")throw new Error("snapshot not serialized");
     expect(parseStoredJson(serialized.content)).toEqual({notebook:book,format:1});

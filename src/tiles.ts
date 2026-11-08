@@ -485,6 +485,7 @@ export class TileRenderer {
     // of clearing and re-deriving them every frame.
     if (sameDensity && sameVisible && this.visibleCurrent()) return;
     this.jobs = [];
+    const mountedCells = new Set(Array.from(this.host.children, (node) => (node as HTMLElement).dataset.cell ?? ""));
     for (const node of Array.from(this.host.children)) {
       const cell = (node as HTMLElement).dataset.cell ?? "";
       if (!this.visible.has(cell) || !this.active.index.hasCell(cell)) node.remove();
@@ -495,12 +496,12 @@ export class TileRenderer {
       const exact = this.get(this.active, cell, this.density);
       const fallback = exact ?? this.fallback(this.active, cell);
       if (fallback) this.attach(fallback);
-      // A cold page otherwise stays blank until its first Worker bitmap
-      // round-trip. Paint only the first visible cell at low density so the
-      // user's first frame contains ink; the full-density Worker tile replaces
-      // it as soon as it arrives. Limiting this to one cell bounds main-thread
-      // work even when the viewport spans many tiles.
-      if (!exact && !fallback && this.backend && refine && this.density >= 1 && !immediatePreviewPainted) {
+      // Paint the first visible cell even while the Worker is still opening
+      // the notebook. A low-density main-thread preview makes first ink
+      // independent of Worker startup; the full-density Worker tile replaces
+      // it when ready. Limiting this to one cell bounds the synchronous work.
+      if (!exact && !fallback && !mountedCells.has(cell) && refine && this.density >= 1 && !immediatePreviewPainted
+        && typeof this.active.index.query === "function") {
         const preview = this.paint({ state: this.active, cell, density: Math.min(1, this.density), priority: "visible" });
         this.attach(preview);
         immediatePreviewPainted = true;

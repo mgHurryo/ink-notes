@@ -254,6 +254,7 @@ export class InkWorkerSession {
   private generation = 0;
   private mirroredRevision = 0;
   private initialized = false;
+  private initializationTail: Promise<void> = Promise.resolve();
   private operationTail: Promise<void> = Promise.resolve();
   constructor(
     private readonly service: InkWorkerService,
@@ -265,21 +266,24 @@ export class InkWorkerSession {
     return this.service.canRenderTiles();
   }
 
-  async initializeRaw(raw: string, revision: number): Promise<InkNotebook> {
+  async initializeRaw(raw: string, revision: number): Promise<void> {
     this.generation += 1;
     this.initialized = false;
-    const response = await this.service.send({
+    const initialization = this.service.send({
       type: "initialize-raw", sessionId: this.id, generation: this.generation,
       notebookRevision: revision, raw, revision,
+    }).then((response) => {
+      if (response.type !== "initialized") throw unexpected(response);
+      this.mirroredRevision = response.revision;
+      this.initialized = true;
     });
-    if (response.type !== "initialized") throw unexpected(response);
-    this.mirroredRevision = response.revision;
-    this.initialized = true;
-    return response.notebook;
+    this.initializationTail = initialization;
+    await initialization;
   }
 
   async apply(revision: number, operation: NotebookOperation, transfer?: Transferable[]): Promise<InkWorkerResponse> {
     const apply = this.operationTail.then(async () => {
+      await this.initializationTail;
       if (revision <= this.mirroredRevision) return this.applied(revision);
       // A transferred point buffer cannot be retried after detachment. The
       // session snapshot is also the recovery source for ordinary operations:
@@ -306,6 +310,7 @@ export class InkWorkerSession {
   }
 
   async barrier(minimumRevision: number): Promise<number> {
+    await this.initializationTail;
     await this.operationTail;
     const response = await this.service.send({
       type: "barrier", sessionId: this.id, generation: this.generation,
@@ -317,6 +322,7 @@ export class InkWorkerSession {
 
   /** Caller supplies a detached snapshot; compression runs in the existing worker. */
   async serializeStorage(value: unknown): Promise<string> {
+    await this.initializationTail;
     await this.operationTail;
     const response = await this.service.send({
       type: "serialize-storage", sessionId: this.id, generation: this.generation,
@@ -327,6 +333,7 @@ export class InkWorkerSession {
   }
 
   async prepareSave(raw: string, minimumRevision: number): Promise<{ token: string; content: string; revision: number }> {
+    await this.initializationTail;
     await this.operationTail;
     const response = await this.service.send({
       type: "prepare-save", sessionId: this.id, generation: this.generation,
@@ -339,6 +346,7 @@ export class InkWorkerSession {
   async renderTile(pageId: string, cell: string, density: number, revision: number, width: number, height: number,
     renderGeneration = 0, priority: "visible" | "prewarm" = "visible",
     excludedStrokeIds?: readonly string[], candidateStrokeIds?: readonly string[]): Promise<RenderTileResult> {
+    await this.initializationTail;
     await this.operationTail;
     const response = await this.service.send({
       type: "render-tile", sessionId: this.id, generation: this.generation,
@@ -376,6 +384,7 @@ export class InkWorkerSession {
   }
 
   async mergeExternal(raw: string): Promise<InkNotebook | undefined> {
+    await this.initializationTail;
     await this.operationTail;
     const response = await this.service.send({
       type: "merge-external", sessionId: this.id, generation: this.generation,

@@ -34,7 +34,7 @@ export class NotebookStore {
 
   async read(file: TFile): Promise<InkNotebook> {
     const raw = await this.readRaw(file);
-    return normalizeNotebook(parseStoredJson(raw));
+    return normalizeNotebook(parseStoredJson(raw), { reuseCanonicalPoints: true });
   }
 
   async readRaw(file: TFile): Promise<string> {
@@ -65,7 +65,7 @@ export class NotebookStore {
       await this.vault.process(file, (raw) => {
         let latest: InkNotebook;
         try {
-          latest = normalizeNotebook(parseStoredJson(raw));
+          latest = normalizeNotebook(parseStoredJson(raw), { reuseCanonicalPoints: true });
         } catch (error) {
           throw new NotebookFormatError(`Cannot save ${file.path || "notebook"}: existing file is corrupt or uses an unsupported encoding`);
         }

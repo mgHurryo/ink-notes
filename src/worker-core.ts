@@ -110,7 +110,7 @@ export class InkWorkerCore {
         strokeLookups: new Map(),
         outlineCache: new Map(),
       });
-      return this.response(request, { type: "initialized", notebook, revision: request.revision });
+      return this.response(request, { type: "initialized", revision: request.revision });
     }
     if (request.type === "initialize-notebook") {
       if (request.notebookRevision !== request.revision) {
@@ -125,7 +125,7 @@ export class InkWorkerCore {
         strokeLookups: new Map(),
         outlineCache: new Map(),
       });
-      return this.response(request, { type: "initialized", notebook, revision: request.revision });
+      return this.response(request, { type: "initialized", revision: request.revision });
     }
 
     const session = this.sessions.get(request.sessionId);
@@ -360,7 +360,7 @@ function drawWorkerStroke(ctx: CanvasRenderingContext2D, stroke: InkStroke, widt
 
 function parseNotebook(raw: string): InkNotebook {
   try {
-    return normalizeNotebook(parseStoredJson(raw));
+    return normalizeNotebook(parseStoredJson(raw), { reuseCanonicalPoints: true });
   } catch {
     throw new ProtocolError("invalid-format", "Existing ink notebook is corrupt or uses an unsupported encoding");
   }

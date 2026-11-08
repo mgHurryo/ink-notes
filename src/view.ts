@@ -9,7 +9,9 @@ import {
   createNotebook,
   mergeNotebooks,
   newId,
+  normalizeNotebook,
 } from "./model";
+import { parseStoredJson } from "./storage-codec";
 import { NotebookStore } from "./storage";
 import { reconcileNotebook } from "./notebook-reconciliation";
 import { exportNotebookPdf, exportPathFor, notebookHasInk } from "./pdf-export";
@@ -49,6 +51,7 @@ import {
 import { cloneSticky } from "./sticky-model";
 import { BrushPopoverController, BrushSettings } from "./brush-popover";
 import { TileRenderer, cellKeys } from "./tiles";
+import { ThumbnailWorkQueue } from "./thumbnail-work-queue";
 import type { NotebookOperation } from "./worker-protocol";
 import { InkWorkerRequestError, InkWorkerService, InkWorkerSession } from "./worker-service";
 
@@ -73,9 +76,6 @@ const RAIL_TRANSITION_MS = 200;
 const THUMB_ASPECT = 0.73;
 const SWIPE_PREVIEW_IDLE_DELAY_MS = 120;
 const SWIPE_PREVIEW_RETRY_MS = 50;
-const THUMBNAIL_FRAME_BUDGET_MS = 6;
-const THUMBNAIL_SYNC_STROKE_LIMIT = 96;
-const THUMBNAIL_SYNC_POINT_LIMIT = 2_400;
 
 class SaveConflictError extends Error {
   constructor(message: string) {
@@ -114,8 +114,8 @@ export class InkView extends InkWritingView {
   private railRevealTimer: number | undefined;
   private thumbnailRefreshFrame: number | null = null;
   private thumbnailPaintTokens = new WeakMap<HTMLCanvasElement, number>();
-  private thumbnailPaintFrames = new WeakMap<HTMLCanvasElement, number>();
   private thumbnailPaintCompletions = new WeakMap<HTMLCanvasElement, () => void>();
+  private thumbnailWork = new ThumbnailWorkQueue<HTMLCanvasElement>();
   private thumbObserver: IntersectionObserver | null = null;
   private pendingThumbs = new WeakMap<HTMLCanvasElement, InkPage>();
   private pageManagement = false;
@@ -176,6 +176,7 @@ export class InkView extends InkWritingView {
     this.railRevealTimer = undefined;
     if (this.thumbnailRefreshFrame !== null) window.cancelAnimationFrame(this.thumbnailRefreshFrame);
     this.thumbnailRefreshFrame = null;
+    this.thumbnailWork.dispose();
     this.thumbObserver?.disconnect();
     this.thumbObserver = null;
     if (this.renderFrame !== null) window.cancelAnimationFrame(this.renderFrame);
@@ -205,42 +206,79 @@ export class InkView extends InkWritingView {
     this.workerSession?.dispose();
     this.workerSession = null;
     this.workerRevision = 0;
+
+    let notebook: InkNotebook | undefined;
+    let finishWorkerLoad: (() => void) | undefined;
     if (this.workers) {
-      // The Worker revision includes transient start/append operations that do
-      // not advance the persisted dirty revision until pointerup.
       const session = this.workers.createSession(() => ({ notebook: this.notebook, revision: this.workerRevision }));
+      this.workerSession = session;
+      let raw: string | undefined;
       try {
-        const raw = await this.store.readRaw(file);
-        if (loadGeneration !== this.notebookLoadGeneration) { session.dispose(); return; }
-        const notebook = await session.initializeRaw(raw, 0);
-        if (loadGeneration !== this.notebookLoadGeneration) { session.dispose(); return; }
-        this.notebook = notebook;
-        this.workerSession = session;
-        this.workerRevision = 0;
-        if (session.canRenderTiles()) this.tiles?.setBackend(session, (error) => {
-          if (this.workerSession === session) this.disableWorkerSession(error);
-        });
+        raw = await this.store.readRaw(file);
       } catch {
+        // A store may support parsed reads but not raw reads; preserve its
+        // existing fallback and surface errors from that authoritative path.
         session.dispose();
         if (loadGeneration !== this.notebookLoadGeneration) return;
+        if (this.workerSession === session) this.workerSession = null;
         try {
-          this.notebook = await this.store.read(file);
+          notebook = await this.store.read(file);
         } catch (loadError) {
           if (loadGeneration === this.notebookLoadGeneration) this.showNotebookLoadError(file.basename, loadError);
           throw loadError;
         }
       }
-    } else {
+      if (loadGeneration !== this.notebookLoadGeneration) { session.dispose(); return; }
+      if (raw !== undefined) {
+        let modelReady = false;
+        let workerReady = false;
+        let workerFailed = false;
+        let workerError: unknown;
+        const connectWorker = (): void => {
+          if (!modelReady || loadGeneration !== this.notebookLoadGeneration || this.workerSession !== session) return;
+          if (workerFailed) { this.disableWorkerSession(workerError); return; }
+          if (!workerReady || !session.canRenderTiles()) return;
+          this.tiles?.setBackend(session, (error) => {
+            if (this.workerSession === session) this.disableWorkerSession(error);
+          });
+          this.tiles?.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
+        };
+        // The UI needs its own editable model, but cloning an 80k-point object
+        // tree back from the Worker stalls the opening thread. Both sides read
+        // the same raw snapshot; the Worker stays authoritative for background
+        // operations while the main thread normalizes the UI copy.
+        void session.initializeRaw(raw, 0).then(() => {
+          workerReady = true;
+          connectWorker();
+        }).catch((error) => {
+          workerFailed = true;
+          workerError = error;
+          connectWorker();
+        });
+        try {
+          notebook = normalizeNotebook(parseStoredJson(raw), { reuseCanonicalPoints: true });
+        } catch (loadError) {
+          session.dispose();
+          if (this.workerSession === session) this.workerSession = null;
+          if (loadGeneration === this.notebookLoadGeneration) this.showNotebookLoadError(file.basename, loadError);
+          throw loadError;
+        }
+        finishWorkerLoad = () => {
+          modelReady = true;
+          connectWorker();
+        };
+      }
+    }
+    if (!notebook) {
       try {
-        const notebook = await this.store.read(file);
-        if (loadGeneration !== this.notebookLoadGeneration) return;
-        this.notebook = notebook;
+        notebook = await this.store.read(file);
       } catch (error) {
         if (loadGeneration === this.notebookLoadGeneration) this.showNotebookLoadError(file.basename, error);
         throw error;
       }
     }
     if (loadGeneration !== this.notebookLoadGeneration) return;
+    this.notebook = notebook;
     this.pageIndex = 0;
     this.undoStack = [];
     this.redoStack = [];
@@ -250,6 +288,7 @@ export class InkView extends InkWritingView {
     this.workerRevision = 0;
     this.renderAll();
     this.hideNotebookLoadFeedback();
+    finishWorkerLoad?.();
   }
 
   async onUnloadFile(file: TFile): Promise<void> {
@@ -608,37 +647,35 @@ export class InkView extends InkWritingView {
     window.setTimeout(paint, SWIPE_PREVIEW_IDLE_DELAY_MS);
   }
 
-  /** Paints a thumbnail now when it is on screen, defers offscreen ones to
-   *  the intersection observer. The synchronous probe keeps the common cases
-   *  (short page lists, the active thumb after a rebuild) painted in the same
-   *  tick as before — no flash between a rail rebuild and the observer's
-   *  async first report — while a long scrolled list only paints what the
-   *  user can actually see. Hosts without IntersectionObserver (tests) and
-   *  any geometry the probe cannot judge fall back to immediate painting. */
+  /** Defer thumbnail painting until the browser reports visibility. Avoid a
+   *  geometry read per inserted page: it forces layout during rail building. */
   private scheduleThumbnail(canvas: HTMLCanvasElement, page: InkPage): void {
-    let onScreen = true;
-    const scroller = canvas.closest(".ink-page-rail");
-    if (scroller && typeof IntersectionObserver === "function") {
-      const box = scroller.getBoundingClientRect();
-      const rect = canvas.getBoundingClientRect();
-      onScreen = rect.width > 0 && rect.bottom > box.top && rect.top < box.bottom;
-    }
-    if (onScreen || typeof IntersectionObserver !== "function") {
-      this.drawPageThumbnail(canvas, page);
+    if (typeof IntersectionObserver !== "function") {
+      const isActive = canvas.closest(".ink-page-thumb")?.classList.contains("is-active") ?? false;
+      this.drawPageThumbnail(canvas, page, undefined, undefined, isActive);
       return;
     }
     this.pendingThumbs.set(canvas, page);
     this.thumbObserver ??= new IntersectionObserver((entries) => {
+      const visible: Array<{ canvas: HTMLCanvasElement; page: InkPage; width: number; height: number }> = [];
       for (const entry of entries) {
-        if (!entry.isIntersecting) continue;
+        if (!entry.isIntersecting || entry.intersectionRect.width <= 0 || entry.intersectionRect.height <= 0) continue;
         this.thumbObserver?.unobserve(entry.target);
         const thumb = entry.target as HTMLCanvasElement;
         const deferred = this.pendingThumbs.get(thumb);
         if (deferred) {
           this.pendingThumbs.delete(thumb);
-          this.drawPageThumbnail(thumb, deferred);
+          visible.push({ canvas: thumb, page: deferred, width: entry.boundingClientRect.width,
+            height: entry.boundingClientRect.height });
         }
       }
+      // Read all visible geometry before setting canvas dimensions or paper
+      // styles, so a rail with many thumbnails does not alternate layout reads
+      // and writes for each page. Only the selected page gets an immediate
+      // ink slice; the other visible previews join the shared frame queue.
+      const first = visible.find((item) => item.canvas.closest(".ink-page-thumb")?.classList.contains("is-active"))
+        ?? visible[0];
+      for (const item of visible) this.drawPageThumbnail(item.canvas, item.page, item.width, item.height, item === first);
     });
     this.thumbObserver.observe(canvas);
   }
@@ -650,19 +687,18 @@ export class InkView extends InkWritingView {
    * paper background. Skipped while the rail has no width (collapsed): the
    * redraw scheduled by the expand toggle repaints at the real size.
    */
-  private drawPageThumbnail(canvas: HTMLCanvasElement, page: InkPage, widthHint?: number): void {
+  private drawPageThumbnail(canvas: HTMLCanvasElement, page: InkPage, widthHint?: number, heightHint?: number,
+    immediateFirstSlice = true): void {
     try {
       const width = widthHint ?? canvas.clientWidth;
       if (width <= 0) return;
-      const previousFrame = this.thumbnailPaintFrames.get(canvas);
-      if (previousFrame !== undefined) window.cancelAnimationFrame(previousFrame);
-      this.thumbnailPaintFrames.delete(canvas);
+      this.cancelQueuedThumbnailWork(canvas);
       const previousCompletion = this.thumbnailPaintCompletions.get(canvas);
       this.thumbnailPaintCompletions.delete(canvas);
       previousCompletion?.();
       const token = (this.thumbnailPaintTokens.get(canvas) ?? 0) + 1;
       this.thumbnailPaintTokens.set(canvas, token);
-      const height = canvas.clientHeight || Math.round(width / THUMB_ASPECT);
+      const height = heightHint || canvas.clientHeight || Math.round(width / THUMB_ASPECT);
       const dpr = window.devicePixelRatio || 1;
       canvas.width = Math.max(1, Math.round(width * dpr));
       canvas.height = Math.max(1, Math.round(height * dpr));
@@ -678,24 +714,15 @@ export class InkView extends InkWritingView {
       // instead of a sparse re-flow.
       const paper = canvas.closest(".ink-page-thumb")?.querySelector<HTMLElement>(".ink-page-thumb-paper");
       if (paper) paper.style.setProperty("--ink-page-scale", String(scale));
-      const pointCount = page.strokes.reduce((total, stroke) => total + stroke.points.length, 0);
-      const progressive = page.strokes.length > THUMBNAIL_SYNC_STROKE_LIMIT || pointCount > THUMBNAIL_SYNC_POINT_LIMIT;
       let paintPass = 0;
-      canvas.dataset.previewReady = progressive ? "false" : "true";
+      canvas.dataset.previewReady = page.strokes.length === 0 ? "true" : "false";
       paintPageImages(this.imageLibrary, canvas, page, (context) => context.clearRect(0, 0, canvas.width, canvas.height), (context) => {
-        const previousFrame = this.thumbnailPaintFrames.get(canvas);
-        if (previousFrame !== undefined) window.cancelAnimationFrame(previousFrame);
-        this.thumbnailPaintFrames.delete(canvas);
+        this.cancelQueuedThumbnailWork(canvas);
         const previousCompletion = this.thumbnailPaintCompletions.get(canvas);
         this.thumbnailPaintCompletions.delete(canvas);
         previousCompletion?.();
         const activePass = ++paintPass;
-        if (!progressive) {
-          context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
-          for (const stroke of page.strokes) drawInkStroke(context, scaledStroke(stroke, scale), width, height);
-          context.setTransform(1, 0, 0, 1, 0, 0);
-          return;
-        }
+        if (page.strokes.length === 0) return;
         return new Promise<void>((resolve) => {
           let strokeIndex = 0;
           let settled = false;
@@ -704,45 +731,55 @@ export class InkView extends InkWritingView {
             if (settled) return;
             settled = true;
             if (this.thumbnailPaintCompletions.get(canvas) === completion) this.thumbnailPaintCompletions.delete(canvas);
-            this.thumbnailPaintFrames.delete(canvas);
+            this.cancelQueuedThumbnailWork(canvas);
             if (complete && this.thumbnailPaintTokens.get(canvas) === token && paintPass === activePass) {
               canvas.dataset.previewReady = "true";
             }
             resolve();
           };
-          const drawChunk = () => {
+          const drawUntil = (deadline: number): boolean => {
             if (this.thumbnailPaintTokens.get(canvas) !== token || paintPass !== activePass
-              || !canvas.isConnected || canvas.clientWidth <= 0 || !this.viewReady) {
+              || !canvas.isConnected || width <= 0) {
               finish(false);
-              return;
+              return true;
             }
-            const startedAt = performance.now();
+            if (performance.now() >= deadline) return false;
             context.save();
             try {
               context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
-              while (strokeIndex < page.strokes.length
-                && (strokeIndex === 0 || performance.now() - startedAt < THUMBNAIL_FRAME_BUDGET_MS)) {
+              while (strokeIndex < page.strokes.length && performance.now() < deadline) {
                 drawInkStroke(context, scaledStroke(page.strokes[strokeIndex++], scale), width, height);
               }
             } catch (error) {
               console.warn("Ink Notes could not render a page thumbnail", error);
               finish(true);
-              return;
+              return true;
             } finally {
               context.restore();
             }
-            if (strokeIndex < page.strokes.length) {
-              this.thumbnailPaintFrames.set(canvas, window.requestAnimationFrame(drawChunk));
-            } else finish(true);
+            if (strokeIndex < page.strokes.length) return false;
+            finish(true);
+            return true;
           };
           completion = () => finish(false);
           this.thumbnailPaintCompletions.set(canvas, completion);
-          drawChunk();
+          // Paint a small first slice immediately so a visible rail never
+          // waits for a later animation frame to show its first handwriting.
+          // Remaining work shares the frame budget across all thumbnails.
+          if (!immediateFirstSlice || !drawUntil(performance.now() + 2)) this.queueThumbnailWork(canvas, drawUntil);
         });
       });
     } catch (error) {
       console.warn("Ink Notes could not render a page thumbnail", error);
     }
+  }
+
+  private cancelQueuedThumbnailWork(canvas: HTMLCanvasElement): void {
+    this.thumbnailWork.cancel(canvas);
+  }
+
+  private queueThumbnailWork(canvas: HTMLCanvasElement, drawUntil: (deadline: number) => boolean): void {
+    this.thumbnailWork.enqueue(canvas, drawUntil, () => this.thumbnailPaintCompletions.get(canvas)?.());
   }
 
   /** Repaints every thumbnail from the live model (expand settle, drag end).
@@ -754,7 +791,7 @@ export class InkView extends InkWritingView {
       const pageId = thumb.dataset.pageId;
       const page = pageId ? this.pageById(pageId) : undefined;
       const canvas = thumb.querySelector<HTMLCanvasElement>("canvas");
-      if (page && canvas) this.drawPageThumbnail(canvas, page);
+      if (page && canvas) this.scheduleThumbnail(canvas, page);
     });
   }
 

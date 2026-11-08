@@ -10,54 +10,89 @@ interface ResponsivenessProbe {
 }
 type WindowWithProbe = Window & { __inkResponsiveness?: ResponsivenessProbe };
 
-test("opening a large page rail keeps direct tool input responsive", async ({ page }) => {
+test("opening the page rail keeps toolbar feedback live while thumbnails paint", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.addInitScript(() => {
-    const probe: ResponsivenessProbe = {
-      intentAt: null, pagesClickAt: null, highlightClickAt: null, highlightFrameAt: null, pageFrameAt: null, longTasks: [],
-    };
-    (window as WindowWithProbe).__inkResponsiveness = probe;
+    const probe = { intentAt: 0, interactions: [] as { label: string; intentAt: number; eventAt: number;
+      appliedAt: number; frameAt: number; pressed: string | null }[], longTasks: [] as number[] };
+    (window as unknown as { __inkResponsiveness: typeof probe }).__inkResponsiveness = probe;
     if (typeof PerformanceObserver === "function") {
       new PerformanceObserver((list) => probe.longTasks.push(...list.getEntries().map((entry) => entry.duration)))
         .observe({ type: "longtask", buffered: true });
     }
     document.addEventListener("click", (event) => {
       const target = event.target instanceof Element ? event.target.closest("button") : null;
-      if (target?.getAttribute("aria-label") === "Pages") probe.pagesClickAt = performance.now();
-      if (target?.getAttribute("aria-label") === "Highlight") {
-        probe.highlightClickAt = performance.now();
-        requestAnimationFrame(() => { probe.highlightFrameAt = performance.now(); });
-      }
+      const label = target?.getAttribute("aria-label");
+      if (label !== "Pages" && label !== "Highlight") return;
+      const interaction = { label, intentAt: probe.intentAt, eventAt: performance.now(), appliedAt: 0,
+        frameAt: 0, pressed: null as string | null };
+      probe.interactions.push(interaction);
+      requestAnimationFrame(() => {
+        interaction.frameAt = performance.now();
+        interaction.pressed = label === "Pages"
+          ? document.querySelector<HTMLButtonElement>('button[aria-label="Pages"]')?.getAttribute("aria-pressed") ?? null
+          : document.querySelector<HTMLButtonElement>('.ink-tool-button[data-tool="highlighter"]')?.getAttribute("aria-pressed") ?? null;
+      });
     }, true);
+    document.addEventListener("click", (event) => {
+      const target = event.target instanceof Element ? event.target.closest("button") : null;
+      const label = target?.getAttribute("aria-label");
+      if (label !== "Pages" && label !== "Highlight") return;
+      const interaction = probe.interactions[probe.interactions.length - 1];
+      if (!interaction || interaction.label !== label) return;
+      interaction.appliedAt = performance.now();
+      interaction.pressed = label === "Pages"
+        ? document.querySelector<HTMLButtonElement>('button[aria-label="Pages"]')?.getAttribute("aria-pressed") ?? null
+        : document.querySelector<HTMLButtonElement>('.ink-tool-button[data-tool="highlighter"]')?.getAttribute("aria-pressed") ?? null;
+    });
   });
-  await page.goto("/?performance");
+  await page.goto("/?performance&pages=100");
   await expect.poll(() => page.locator("html").getAttribute("data-ink-ready"), { timeout: 15_000 }).toBe("true");
-  await page.waitForTimeout(750);
   await page.evaluate(() => {
-    const probe = (window as WindowWithProbe).__inkResponsiveness!;
+    const probe = (window as unknown as { __inkResponsiveness: { intentAt: number; interactions: unknown[]; longTasks: number[] } })
+      .__inkResponsiveness;
+    probe.interactions.length = 0;
     probe.longTasks.length = 0;
+    probe.intentAt = performance.now();
+    document.querySelector<HTMLButtonElement>('button[aria-label="Pages"]')?.click();
+    window.setTimeout(() => {
+      probe.intentAt = performance.now();
+      document.querySelector<HTMLButtonElement>('[aria-label="Highlight"]')?.click();
+    }, 0);
+    // Exercise a second control while the delayed thumbnail repaint is active.
+    window.setTimeout(() => {
+      probe.intentAt = performance.now();
+      document.querySelector<HTMLButtonElement>('button[aria-label="Pages"]')?.click();
+    }, 300);
   });
-
-  await page.getByRole("button", { name: "Pages", exact: true }).click();
-  await expect(page.locator(".ink-notes-view")).not.toHaveClass(/ink-rail-hidden/);
-  await page.waitForTimeout(250);
-  await page.evaluate(() => {
-    (window as WindowWithProbe).__inkResponsiveness!.intentAt = performance.now();
+  await page.waitForFunction(() => {
+    const interactions = (window as unknown as { __inkResponsiveness: { interactions: { frameAt: number }[] } })
+      .__inkResponsiveness.interactions;
+    return interactions.length === 3 && interactions.every((interaction) => interaction.frameAt > 0);
   });
-  await page.getByRole("button", { name: "Highlight", exact: true }).click();
-  await expect(page.locator('.ink-tool-button[data-tool="highlighter"]')).toHaveAttribute("aria-pressed", "true");
-  await page.waitForFunction(() => (window as WindowWithProbe).__inkResponsiveness?.highlightFrameAt !== null);
-
+  await page.waitForTimeout(50);
   const result = await page.evaluate(() => {
-    const probe = (window as WindowWithProbe).__inkResponsiveness!;
+    const probe = (window as unknown as { __inkResponsiveness: { interactions: {
+      label: string; intentAt: number; eventAt: number; appliedAt: number; frameAt: number; pressed: string | null;
+    }[]; longTasks: number[] } }).__inkResponsiveness;
     return {
-      inputDelayMs: probe.highlightClickAt! - probe.intentAt!,
-      feedbackFrameMs: probe.highlightFrameAt! - probe.highlightClickAt!,
+      interactions: probe.interactions.map(({ label, intentAt, eventAt, appliedAt, frameAt, pressed }) => ({
+        label, inputDelayMs: eventAt - intentAt, applyDelayMs: appliedAt - eventAt,
+        feedbackFrameMs: frameAt - eventAt, pressed,
+      })),
       longTasks: probe.longTasks.filter((duration) => duration >= 50),
     };
   });
-  expect(result.inputDelayMs).toBeLessThan(50);
-  expect(result.feedbackFrameMs).toBeLessThan(20);
+  expect(result.interactions).toHaveLength(3);
+  console.log("rail responsiveness", result.interactions);
+  for (const interaction of result.interactions) {
+    expect(interaction.inputDelayMs).toBeLessThan(5);
+    expect(interaction.applyDelayMs).toBeLessThan(10);
+    expect(interaction.feedbackFrameMs).toBeLessThan(45);
+  }
+  expect(result.interactions[0].pressed).toBe("true");
+  expect(result.interactions[1].pressed).toBe("true");
+  expect(result.interactions[2].pressed).toBe("false");
   expect(result.longTasks).toEqual([]);
 });
 
@@ -106,9 +141,86 @@ test("direct page selection updates before a dirty notebook finishes saving", as
   expect(result.saving).toEqual({ started: true, done: false });
 });
 
+test("inserting a page and returning to large existing ink stays live while saving", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 });
+  await page.addInitScript(() => {
+    const probe = { intentAt: 0, actions: [] as { label: string; intentAt: number; eventAt: number;
+      frameAt: number; status: string }[], saveStarted: false, saveDone: false, longTasks: [] as number[] };
+    (window as unknown as { __inkInsertProbe: typeof probe }).__inkInsertProbe = probe;
+    if (typeof PerformanceObserver === "function") new PerformanceObserver((list) => {
+      probe.longTasks.push(...list.getEntries().map((entry) => entry.duration));
+    }).observe({ type: "longtask", buffered: true });
+    document.addEventListener("click", (event) => {
+      const button = event.target instanceof Element ? event.target.closest<HTMLButtonElement>("button") : null;
+      const label = button?.getAttribute("aria-label") ?? button?.textContent?.trim();
+      if (label !== "Add page after current" && label !== "1: Page 1") return;
+      const action = { label, intentAt: probe.intentAt, eventAt: performance.now(), frameAt: 0, status: "" };
+      probe.actions.push(action);
+      requestAnimationFrame(() => {
+        action.frameAt = performance.now();
+        action.status = document.querySelector<HTMLElement>(".ink-page-status")?.textContent ?? "";
+      });
+    }, true);
+  });
+  await page.goto("/?performance");
+  await expect(page.locator("html")).toHaveAttribute("data-ink-ready", "true", { timeout: 15_000 });
+  await page.evaluate(async () => {
+    const win = window as unknown as { __inkInsertProbe: { saveStarted: boolean; saveDone: boolean;
+      actions: unknown[]; longTasks: number[] };
+      __inkNotesPreview: { view: { workerSession?: { initializationTail?: Promise<void> }; store: {
+        writeIfUnchanged: (...args: unknown[]) => Promise<boolean>;
+      } } } };
+    await win.__inkNotesPreview.view.workerSession?.initializationTail;
+    win.__inkInsertProbe.actions.length = 0;
+    win.__inkInsertProbe.longTasks.length = 0;
+    const store = win.__inkNotesPreview.view.store;
+    const write = store.writeIfUnchanged.bind(store);
+    store.writeIfUnchanged = async (...args: unknown[]) => {
+      win.__inkInsertProbe.saveStarted = true;
+      await new Promise<void>((resolve) => window.setTimeout(resolve, 800));
+      const result = await write(...args);
+      win.__inkInsertProbe.saveDone = true;
+      return result;
+    };
+  });
+  await page.getByRole("button", { name: "Add page", exact: true }).click();
+  await page.evaluate(() => {
+    const probe = (window as unknown as { __inkInsertProbe: { intentAt: number } }).__inkInsertProbe;
+    const item = Array.from(document.querySelectorAll<HTMLButtonElement>(".preview-menu button"))
+      .find((button) => button.textContent?.trim() === "Add page after current");
+    probe.intentAt = performance.now();
+    item?.click();
+  });
+  await expect(page.locator(".ink-page-status")).toHaveText("2 / 2");
+  await page.getByRole("button", { name: "Pages", exact: true }).click();
+  await page.evaluate(() => {
+    const probe = (window as unknown as { __inkInsertProbe: { intentAt: number } }).__inkInsertProbe;
+    probe.intentAt = performance.now();
+    document.querySelector<HTMLButtonElement>('button[aria-label="1: Page 1"]')?.click();
+  });
+  await expect(page.locator(".ink-page-status")).toHaveText("1 / 2");
+  await page.waitForFunction(() => (window as unknown as { __inkInsertProbe: { saveStarted: boolean } })
+    .__inkInsertProbe.saveStarted);
+  const result = await page.evaluate(() => (window as unknown as { __inkInsertProbe: {
+    actions: { label: string; intentAt: number; eventAt: number; frameAt: number; status: string }[];
+    saveStarted: boolean; saveDone: boolean; longTasks: number[];
+  } }).__inkInsertProbe);
+  expect(result.actions).toHaveLength(2);
+  expect(result.actions[0].eventAt - result.actions[0].intentAt).toBeLessThan(5);
+  expect(result.actions[1].eventAt - result.actions[1].intentAt).toBeLessThan(5);
+  expect(result.actions[0].frameAt - result.actions[0].eventAt).toBeLessThan(20);
+  expect(result.actions[1].frameAt - result.actions[1].eventAt).toBeLessThan(20);
+  expect(result.actions[0].status).toBe("2 / 2");
+  expect(result.actions[1].status).toBe("1 / 2");
+  expect(result.saveStarted).toBe(true);
+  expect(result.saveDone).toBe(false);
+  expect(result.longTasks.filter((duration) => duration >= 50)).toEqual([]);
+});
+
 test("opening feedback appears in one frame and toolbar input stays live", async ({ page }) => {
   await page.addInitScript(() => {
-    const probe = { startedAt: 0, visibleFrameAt: 0, clickAt: 0, clickFrameAt: 0, longTasks: [] as { start: number; duration: number }[] };
+    const probe = { startedAt: 0, visibleFrameAt: 0, clickAt: 0, clickAppliedAt: 0, clickFrameAt: 0,
+      longTasks: [] as { start: number; duration: number }[] };
     (window as unknown as { __inkLoadProbe: typeof probe }).__inkLoadProbe = probe;
     if (typeof PerformanceObserver === "function") new PerformanceObserver((list) => {
       probe.longTasks.push(...list.getEntries().map((entry) => ({ start: entry.startTime, duration: entry.duration })));
@@ -119,6 +231,10 @@ test("opening feedback appears in one frame and toolbar input stays live", async
       probe.clickAt = performance.now();
       requestAnimationFrame(() => { probe.clickFrameAt = performance.now(); });
     }, true);
+    document.addEventListener("click", (event) => {
+      const target = event.target instanceof Element ? event.target.closest("button") : null;
+      if (target?.getAttribute("aria-label") === "Highlight") probe.clickAppliedAt = performance.now();
+    });
   });
   await page.goto("/?performance");
   await expect.poll(() => page.locator("html").getAttribute("data-ink-ready"), { timeout: 15_000 }).toBe("true");
@@ -143,53 +259,152 @@ test("opening feedback appears in one frame and toolbar input stays live", async
   await expect(page.locator('.ink-tool-button[data-tool="highlighter"]')).toHaveAttribute("aria-pressed", "true");
   await page.waitForFunction(() => (window as unknown as { __inkLoadProbe: { clickFrameAt: number } }).__inkLoadProbe.clickFrameAt > 0);
   const result = await page.evaluate(() => (window as unknown as { __inkLoadProbe: {
-    startedAt: number; visibleFrameAt: number; clickAt: number; clickFrameAt: number; longTasks: { start: number; duration: number }[];
+    startedAt: number; visibleFrameAt: number; clickAt: number; clickAppliedAt: number; clickFrameAt: number;
+    longTasks: { start: number; duration: number }[];
   } }).__inkLoadProbe);
   expect(result.visibleFrameAt - result.startedAt).toBeLessThan(20);
-  expect(result.clickFrameAt - result.clickAt).toBeLessThan(20);
+  expect(result.clickAppliedAt - result.clickAt).toBeLessThan(10);
+  expect(result.clickFrameAt - result.clickAt).toBeLessThan(35);
+  expect(result.longTasks.filter((task) => task.duration >= 50)).toEqual([]);
   await expect(page.locator(".ink-notes-view")).toHaveAttribute("aria-busy", "false", { timeout: 5_000 });
   await expect(page.locator(".ink-notebook-load-feedback")).toBeHidden();
 });
 
-test("large notebook shows load feedback immediately and paints its first tile within 100ms", async ({ page }) => {
+test("reopening a large notebook paints visible ink and services input within strict latency budgets", async ({ page }) => {
   await page.addInitScript(() => {
-    const probe = { feedbackAt: 0, firstTileAt: 0,
+    const probe = { openAt: 0, rawReadAt: 0, feedbackAt: 0, firstTileAt: 0, firstInkFrameAt: 0, inkStableFrameAt: 0,
+      clickTaskAt: 0, clickAppliedAt: 0, highlighterPressed: false, feedbackShownSynchronously: false,
+      stages: [] as { name: string; duration: number }[],
       longTasks: [] as { start: number; duration: number }[] };
     (window as unknown as { __inkOpenProbe: typeof probe }).__inkOpenProbe = probe;
     if (typeof PerformanceObserver === "function") new PerformanceObserver((list) => {
       probe.longTasks.push(...list.getEntries().map((entry) => ({ start: entry.startTime, duration: entry.duration })));
     }).observe({ type: "longtask", buffered: true });
+    const hasInk = (canvas: HTMLCanvasElement): boolean => {
+      const context = canvas.getContext("2d");
+      if (!context || canvas.width === 0 || canvas.height === 0) return false;
+      // The fixture's first stroke starts near the top-left of the first tile;
+      // sample only that patch so the probe itself cannot stall the UI thread.
+      const pixels = context.getImageData(0, 0, Math.min(128, canvas.width), Math.min(128, canvas.height)).data;
+      for (let offset = 3; offset < pixels.length; offset += 4) if (pixels[offset] > 0) return true;
+      return false;
+    };
     new MutationObserver((records) => {
       for (const record of records) {
         const target = record.target instanceof HTMLElement ? record.target : null;
-        if (target?.matches(".ink-notebook-load-feedback") && !target.hidden && probe.feedbackAt === 0)
+        if (target?.matches(".ink-notebook-load-feedback") && !target.hidden && probe.feedbackAt === 0) {
           probe.feedbackAt = performance.now();
-        if (target?.matches(".ink-tile-layer") && target.childElementCount > 0 && probe.firstTileAt === 0)
-          probe.firstTileAt = performance.now();
+          requestAnimationFrame(() => window.setTimeout(() => {
+            probe.clickTaskAt = performance.now();
+            document.querySelector<HTMLButtonElement>('[aria-label="Highlight"]')?.click();
+            probe.highlighterPressed = document.querySelector<HTMLButtonElement>(
+              '.ink-tool-button[data-tool="highlighter"]')?.getAttribute("aria-pressed") === "true";
+            probe.clickAppliedAt = performance.now();
+          }, 0));
+        }
+        const layers = new Set<HTMLElement>();
+        if (target?.matches(".ink-tile-layer")) layers.add(target);
         for (const node of Array.from(record.addedNodes)) {
           if (!(node instanceof HTMLElement)) continue;
           const layer = node.matches(".ink-tile-layer") ? node : node.querySelector<HTMLElement>(".ink-tile-layer");
-          if (layer?.childElementCount && probe.firstTileAt === 0) probe.firstTileAt = performance.now();
+          if (layer) layers.add(layer);
+        }
+        for (const layer of layers) {
+          if (!layer.childElementCount) continue;
+          if (probe.firstTileAt === 0) probe.firstTileAt = performance.now();
+          const canvas = layer.querySelector<HTMLCanvasElement>("canvas");
+          if (!canvas || probe.firstInkFrameAt > 0) continue;
+          const scrollerRect = document.querySelector<HTMLElement>(".ink-page-scroller")?.getBoundingClientRect();
+          const canvasRect = canvas.getBoundingClientRect();
+          const visible = !!scrollerRect && canvasRect.width > 0 && canvasRect.height > 0
+            && canvasRect.right > scrollerRect.left && canvasRect.left < scrollerRect.right
+            && canvasRect.bottom > scrollerRect.top && canvasRect.top < scrollerRect.bottom;
+          if (!visible) continue;
+          requestAnimationFrame(() => {
+            if (!canvas.isConnected || !hasInk(canvas)) return;
+            probe.firstInkFrameAt = performance.now();
+            requestAnimationFrame(() => {
+              if (canvas.isConnected && hasInk(canvas)) probe.inkStableFrameAt = performance.now();
+            });
+          });
         }
       }
     }).observe(document, { attributes: true, childList: true, subtree: true, attributeFilter: ["hidden"] });
   });
   await page.goto("/?performance");
   await expect(page.locator("html")).toHaveAttribute("data-ink-ready", "true", { timeout: 15_000 });
-  await page.waitForFunction(() => (window as unknown as { __inkOpenProbe: { firstTileAt: number } }).__inkOpenProbe.firstTileAt > 0,
-    undefined, { timeout: 5_000 });
+  await page.waitForTimeout(150);
+  await page.evaluate(() => {
+    const win = window as unknown as { __inkOpenProbe: {
+      openAt: number; rawReadAt: number; feedbackAt: number; firstTileAt: number; firstInkFrameAt: number; inkStableFrameAt: number;
+      clickTaskAt: number; clickAppliedAt: number; highlighterPressed: boolean; feedbackShownSynchronously: boolean;
+      stages: { name: string; duration: number }[]; longTasks: { start: number; duration: number }[];
+    }; __inkNotesPreview: { view: any } };
+    const probe = win.__inkOpenProbe;
+    const view = win.__inkNotesPreview.view;
+    const measured = (name: string, target: any, method: string) => {
+      const original = target[method].bind(target);
+      target[method] = (...args: unknown[]) => {
+        const started = performance.now();
+        const value = original(...args);
+        probe.stages.push({ name, duration: performance.now() - started });
+        return value;
+      };
+    };
+    measured("renderPageRail", view, "renderPageRail");
+    measured("renderPage", view, "renderPage");
+    measured("renderAll", view, "renderAll");
+    measured("tile.setPage", view.tiles, "setPage");
+    measured("tile.update", view.tiles, "update");
+    const readRaw = view.store.readRaw.bind(view.store);
+    view.store.readRaw = async (...args: unknown[]) => {
+      const raw = await readRaw(...args);
+      probe.rawReadAt = performance.now();
+      return raw;
+    };
+    probe.openAt = performance.now();
+    probe.feedbackAt = 0;
+    probe.stages.length = 0;
+    probe.longTasks.length = 0;
+    probe.firstTileAt = 0;
+    probe.firstInkFrameAt = 0;
+    probe.inkStableFrameAt = 0;
+    void view.onLoadFile(view.file);
+    const overlay = document.querySelector<HTMLElement>(".ink-notebook-load-feedback");
+    probe.feedbackShownSynchronously = !!overlay && !overlay.hidden;
+  });
+  await page.waitForFunction(() => (window as unknown as { __inkOpenProbe: { firstInkFrameAt: number } })
+    .__inkOpenProbe.firstInkFrameAt > 0, undefined, { timeout: 5_000 });
   const result = await page.evaluate(() => (window as unknown as { __inkOpenProbe: {
-    feedbackAt: number; firstTileAt: number; longTasks: { start: number; duration: number }[];
+    openAt: number; rawReadAt: number; feedbackAt: number; firstTileAt: number; firstInkFrameAt: number; inkStableFrameAt: number;
+    clickTaskAt: number; clickAppliedAt: number; highlighterPressed: boolean; feedbackShownSynchronously: boolean;
+    stages: { name: string; duration: number }[];
+    longTasks: { start: number; duration: number }[];
   } }).__inkOpenProbe);
-  const firstTileMs = result.firstTileAt - result.feedbackAt;
-  const openingLongTasks = result.longTasks.filter((task) => task.start >= result.feedbackAt && task.start < result.firstTileAt);
+  await page.waitForTimeout(50);
+  const inkVisibleMs = result.firstInkFrameAt - result.openAt;
+  const clickReadyMs = result.clickTaskAt - result.feedbackAt;
+  const openingLongTasks = result.longTasks.filter((task) => task.start >= result.openAt && task.start < result.firstInkFrameAt);
+  console.log("large notebook reopen", { openToFeedbackMs: result.feedbackAt - result.openAt,
+    openToRawReadMs: result.rawReadAt - result.openAt,
+    feedbackToTileMs: result.firstTileAt - result.feedbackAt,
+    feedbackToInkMs: result.firstInkFrameAt - result.feedbackAt, inkVisibleMs, clickReadyMs, stages: result.stages,
+    clickApplyMs: result.clickAppliedAt - result.clickTaskAt,
+    longTasks: openingLongTasks.map((task) => Math.round(task.duration)) });
   expect(result.feedbackAt).toBeGreaterThan(0);
-  expect(firstTileMs).toBeGreaterThanOrEqual(0);
-  expect(firstTileMs).toBeLessThan(100);
-  expect(openingLongTasks).toEqual([]);
+  expect(result.feedbackShownSynchronously).toBe(true);
+  expect(result.firstTileAt).toBeGreaterThan(0);
+  expect(result.inkStableFrameAt).toBeGreaterThan(result.firstInkFrameAt);
+  expect(result.highlighterPressed).toBe(true);
+  expect(result.firstTileAt - result.feedbackAt).toBeLessThan(30);
+  expect(inkVisibleMs).toBeLessThan(80);
+  expect(clickReadyMs).toBeLessThan(80);
+  expect(result.clickAppliedAt - result.clickTaskAt).toBeLessThan(5);
+  expect(Math.max(...result.stages.map((stage) => stage.duration))).toBeLessThan(16.7);
+  expect(openingLongTasks.filter((task) => task.duration >= 50)).toEqual([]);
 });
 
-test("large notebook gives synchronous feedback and keeps input live without Worker", async ({ page }) => {
+test("large notebook paints visible ink and keeps input live without Worker", async ({ page }) => {
   await page.setViewportSize({ width: 720, height: 900 });
   await page.addInitScript(() => {
     const nativeWorker = window.Worker;
@@ -203,25 +418,56 @@ test("large notebook gives synchronous feedback and keeps input live without Wor
         return fixtureWorker;
       },
     });
-    const probe = { workerUnavailable: false, loadCallAt: 0, feedbackAt: 0, feedbackShownSynchronously: false,
-      feedbackSyncMs: 0, clickDurationMs: 0, highlighterPressedAfterClick: false, firstTileAt: 0,
+    const probe = { workerUnavailable: false, loadCallAt: 0, feedbackAt: 0, clickTaskAt: 0,
+      feedbackShownSynchronously: false, feedbackSyncMs: 0, clickDurationMs: 0,
+      highlighterPressedAfterClick: false, firstTileAt: 0, firstInkAt: 0, inkStableAt: 0,
       longTasks: [] as { start: number; duration: number }[] };
     (window as unknown as { __inkFallbackProbe: typeof probe }).__inkFallbackProbe = probe;
     if (typeof PerformanceObserver === "function") new PerformanceObserver((list) => {
       probe.longTasks.push(...list.getEntries().map((entry) => ({ start: entry.startTime, duration: entry.duration })));
     }).observe({ type: "longtask", buffered: true });
+    const hasInk = (canvas: HTMLCanvasElement): boolean => {
+      const context = canvas.getContext("2d");
+      if (!context || canvas.width === 0 || canvas.height === 0) return false;
+      const pixels = context.getImageData(0, 0, Math.min(128, canvas.width), Math.min(128, canvas.height)).data;
+      for (let offset = 3; offset < pixels.length; offset += 4) if (pixels[offset] > 0) return true;
+      return false;
+    };
     const observer = new MutationObserver((records) => {
       for (const record of records) {
         const target = record.target instanceof HTMLElement ? record.target : null;
         if (target?.matches(".ink-notebook-load-feedback") && !target.hidden && probe.feedbackAt === 0) {
           probe.feedbackAt = performance.now();
+          requestAnimationFrame(() => window.setTimeout(() => {
+            probe.clickTaskAt = performance.now();
+            const button = document.querySelector<HTMLButtonElement>('[aria-label="Highlight"]');
+            const clickStartedAt = performance.now();
+            button?.click();
+            probe.clickDurationMs = performance.now() - clickStartedAt;
+            probe.highlighterPressedAfterClick = button?.getAttribute("aria-pressed") === "true";
+          }, 0));
         }
-        if (target?.matches(".ink-tile-layer") && target.childElementCount > 0 && probe.firstTileAt === 0)
-          probe.firstTileAt = performance.now();
+        const layers = new Set<HTMLElement>();
+        if (target?.matches(".ink-tile-layer")) layers.add(target);
         for (const node of Array.from(record.addedNodes)) {
           if (!(node instanceof HTMLElement)) continue;
           const layer = node.matches(".ink-tile-layer") ? node : node.querySelector<HTMLElement>(".ink-tile-layer");
-          if (layer?.childElementCount && probe.firstTileAt === 0) probe.firstTileAt = performance.now();
+          if (layer) layers.add(layer);
+        }
+        for (const layer of layers) {
+          if (!layer.childElementCount) continue;
+          if (probe.firstTileAt === 0) probe.firstTileAt = performance.now();
+          const canvas = layer.querySelector<HTMLCanvasElement>("canvas");
+          const scroller = document.querySelector<HTMLElement>(".ink-page-scroller");
+          if (!canvas || !scroller || probe.firstInkAt > 0) continue;
+          const canvasRect = canvas.getBoundingClientRect(), scrollerRect = scroller.getBoundingClientRect();
+          if (canvasRect.width <= 0 || canvasRect.height <= 0 || canvasRect.right <= scrollerRect.left
+            || canvasRect.left >= scrollerRect.right || canvasRect.bottom <= scrollerRect.top || canvasRect.top >= scrollerRect.bottom) continue;
+          requestAnimationFrame(() => {
+            if (!canvas.isConnected || !hasInk(canvas)) return;
+            probe.firstInkAt = performance.now();
+            requestAnimationFrame(() => { if (canvas.isConnected && hasInk(canvas)) probe.inkStableAt = performance.now(); });
+          });
         }
       }
     });
@@ -233,11 +479,15 @@ test("large notebook gives synchronous feedback and keeps input live without Wor
   await page.evaluate(() => {
     const probe = (window as unknown as { __inkFallbackProbe: {
       loadCallAt: number; feedbackAt: number; feedbackShownSynchronously: boolean; feedbackSyncMs: number;
-      clickDurationMs: number; highlighterPressedAfterClick: boolean; firstTileAt: number;
+      clickTaskAt: number; clickDurationMs: number; highlighterPressedAfterClick: boolean;
+      firstTileAt: number; firstInkAt: number; inkStableAt: number;
       longTasks: { start: number; duration: number }[];
     } }).__inkFallbackProbe;
     probe.firstTileAt = 0;
+    probe.firstInkAt = 0;
+    probe.inkStableAt = 0;
     probe.feedbackAt = 0;
+    probe.clickTaskAt = 0;
     probe.longTasks.length = 0;
     const view = (window as unknown as { __inkNotesPreview: { view: { file: unknown; onLoadFile(file: unknown): Promise<void> } } })
       .__inkNotesPreview.view;
@@ -248,26 +498,28 @@ test("large notebook gives synchronous feedback and keeps input live without Wor
     probe.feedbackShownSynchronously = !!overlay && !overlay.hidden && root?.getAttribute("aria-busy") === "true";
     probe.feedbackSyncMs = performance.now() - probe.loadCallAt;
 
-    const button = document.querySelector<HTMLButtonElement>('[aria-label="Highlight"]');
-    const clickStartedAt = performance.now();
-    button?.click();
-    probe.clickDurationMs = performance.now() - clickStartedAt;
-    probe.highlighterPressedAfterClick = button?.getAttribute("aria-pressed") === "true";
   });
-  await page.waitForFunction(() => (window as unknown as { __inkFallbackProbe: { firstTileAt: number } })
-    .__inkFallbackProbe.firstTileAt > 0, undefined, { timeout: 5_000 });
+  await page.waitForFunction(() => (window as unknown as { __inkFallbackProbe: { firstInkAt: number } })
+    .__inkFallbackProbe.firstInkAt > 0, undefined, { timeout: 5_000 });
+  await page.waitForTimeout(50);
   const result = await page.evaluate(() => (window as unknown as { __inkFallbackProbe: {
     workerUnavailable: boolean; loadCallAt: number; feedbackAt: number; feedbackShownSynchronously: boolean;
-    feedbackSyncMs: number; clickDurationMs: number; highlighterPressedAfterClick: boolean; firstTileAt: number;
+    feedbackSyncMs: number; clickTaskAt: number; clickDurationMs: number; highlighterPressedAfterClick: boolean;
+    firstTileAt: number; firstInkAt: number; inkStableAt: number;
     longTasks: { start: number; duration: number }[];
   } }).__inkFallbackProbe);
-  const firstTileMs = result.firstTileAt - result.feedbackAt;
-  const openingLongTasks = result.longTasks.filter((task) => task.start >= result.loadCallAt && task.start < result.firstTileAt);
+  const openingLongTasks = result.longTasks.filter((task) => task.start >= result.loadCallAt && task.start < result.firstInkAt);
+  const openToInkMs = result.firstInkAt - result.loadCallAt;
+  const clickReadyMs = result.clickTaskAt - result.feedbackAt;
   expect(result.workerUnavailable).toBe(true);
   expect(result.feedbackShownSynchronously).toBe(true);
   expect(result.feedbackSyncMs).toBeLessThan(5);
   expect(result.highlighterPressedAfterClick).toBe(true);
   expect(result.clickDurationMs).toBeLessThan(5);
-  expect(firstTileMs).toBeLessThan(100);
-  expect(openingLongTasks).toEqual([]);
+  expect(result.firstTileAt).toBeGreaterThan(0);
+  expect(result.inkStableAt).toBeGreaterThan(result.firstInkAt);
+  expect(result.firstTileAt - result.feedbackAt).toBeLessThan(30);
+  expect(openToInkMs).toBeLessThan(80);
+  expect(clickReadyMs).toBeLessThan(80);
+  expect(openingLongTasks.filter((task) => task.duration >= 50)).toEqual([]);
 });

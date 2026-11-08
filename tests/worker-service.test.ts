@@ -35,10 +35,10 @@ class FakeWorker {
     queueMicrotask(() => {
       if (request.type === "initialize-raw") this.emit({ type: "initialized", requestId: request.requestId,
         sessionId: request.sessionId, generation: request.generation, notebookRevision: request.notebookRevision,
-        notebook: JSON.parse(request.raw), revision: request.revision });
+        revision: request.revision });
       else if (request.type === "initialize-notebook") this.emit({ type: "initialized", requestId: request.requestId,
         sessionId: request.sessionId, generation: request.generation, notebookRevision: request.notebookRevision,
-        notebook: request.notebook, revision: request.revision });
+        revision: request.revision });
       else if (request.type === "apply-operation" && !FakeWorker.holdApplyResponses) this.emit({ type: "operation-applied", requestId: request.requestId,
         sessionId: request.sessionId, generation: request.generation, notebookRevision: request.notebookRevision,
         revision: request.revision });

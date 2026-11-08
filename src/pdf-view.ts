@@ -405,7 +405,7 @@ export class PdfInkView extends InkWritingView {
       return;
     }
     try {
-      const sidecar = normalizeSidecar(parseStoredJson(raw));
+      const sidecar = normalizeSidecar(parseStoredJson(raw), { reuseCanonicalPoints: true });
       this.clearExternalSidecarSyncError();
       this.receiveMergedSidecar(sidecar);
     } catch (error) {
@@ -579,7 +579,7 @@ export class PdfInkView extends InkWritingView {
       try {
         const raw = await this.store.readRaw(existing);
         if (generation !== this.loadGeneration) return;
-        const sidecar = normalizeSidecar(parseStoredJson(raw));
+        const sidecar = normalizeSidecar(parseStoredJson(raw), { reuseCanonicalPoints: true });
         if (sidecar.source.sha256 !== fingerprint.sha256 || sidecar.source.byteLength !== fingerprint.byteLength) {
           // A case twin (Docs/Notes.pdf vs docs/notes.pdf) folds into this
           // lowercased slot on case-sensitive disks. The vault index holding
@@ -643,7 +643,7 @@ export class PdfInkView extends InkWritingView {
       try {
         const raw = await this.store.readRaw(existing);
         if (generation !== this.loadGeneration) return;
-        const sidecar = normalizeSidecar(parseStoredJson(raw));
+        const sidecar = normalizeSidecar(parseStoredJson(raw), { reuseCanonicalPoints: true });
         if (sidecar.source.sha256 !== fingerprint.sha256 || sidecar.source.byteLength !== fingerprint.byteLength) {
           this.writeBlockedReason = "This PDF changed since these notes were created; handwriting is read-only for this copy";
         } else if (sidecar.source.path !== file.path) {
@@ -692,7 +692,7 @@ export class PdfInkView extends InkWritingView {
       const created = await this.store.createFor(file, fingerprint, this.sourcePages, slotPath);
       const raw = await this.store.readRaw(created);
       if (generation !== this.loadGeneration) return;
-      this.attachSidecar(normalizeSidecar(parseStoredJson(raw)), raw, created);
+      this.attachSidecar(normalizeSidecar(parseStoredJson(raw), { reuseCanonicalPoints: true }), raw, created);
     } catch (error) {
       if (generation === this.loadGeneration) this.setStatus(`Could not create the notes file: ${messageOf(error)}`, true);
     }
@@ -706,7 +706,7 @@ export class PdfInkView extends InkWritingView {
     new RecoveryChoiceModal(this.app, candidates, async (chosen) => {
       if (!chosen || !this.file) return;
       try {
-        const sidecar = normalizeSidecar(parseStoredJson(await this.store.readRaw(chosen)));
+        const sidecar = normalizeSidecar(parseStoredJson(await this.store.readRaw(chosen)), { reuseCanonicalPoints: true });
         sidecar.source.path = this.file.path;
         if (!this.store.sidecarFileFor(this.file.path)) {
           await this.app.vault.rename(chosen, sidecarPathFor(this.file.path));
@@ -1402,7 +1402,7 @@ export class PdfInkView extends InkWritingView {
     if (!this.sidecar) return;
     this.destroySwipeStage();
     try {
-      this.sidecar = normalizeSidecar(JSON.parse(snapshot));
+      this.sidecar = normalizeSidecar(JSON.parse(snapshot), { reuseCanonicalPoints: true });
       const selected = this.sidecar.notePages.findIndex((page) => page.id === pageId);
       this.noteIndex = selected < 0 ? Math.min(this.noteIndex, this.sidecar.notePages.length - 1) : selected;
       this.markSidecarChanged();
@@ -2276,7 +2276,7 @@ export class PdfInkView extends InkWritingView {
       if (this.writeBlockedReason) return { status: "failed", message: this.writeBlockedReason };
       let latest: PdfSidecar;
       try {
-        latest = normalizeSidecar(parseStoredJson(latestRaw));
+        latest = normalizeSidecar(parseStoredJson(latestRaw), { reuseCanonicalPoints: true });
       } catch {
         return this.saveConflictCopy(latestRaw, "the notes file on disk is corrupt or uses an unknown format");
       }

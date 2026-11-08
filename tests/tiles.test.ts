@@ -249,7 +249,7 @@ describe("interactive tile commits", () => {
   it("paints one low-resolution tile before queuing full-resolution Worker tiles", () => {
     const host = { children: [] };
     const state = { id: 1, index: { width: 384, height: 128,
-      revisions: new Map([["0:0", 1], ["1:0", 1], ["2:0", 1]]), hasCell: () => true } };
+      revisions: new Map([["0:0", 1], ["1:0", 1], ["2:0", 1]]), hasCell: () => true, query: () => [] } };
     const preview = { cell: "0:0", density: 1 };
     const renderer = Object.create(TileRenderer.prototype) as any;
     Object.assign(renderer, {

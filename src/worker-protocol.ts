@@ -140,7 +140,7 @@ interface ResponseBase {
 
 export type InkWorkerResponse =
   | { type: "ready"; requestId: 0; sessionId: ""; generation: 0; notebookRevision: 0; capabilities: WorkerCapabilities }
-  | ResponseBase & { type: "initialized"; notebook: InkNotebook; revision: number }
+  | ResponseBase & { type: "initialized"; revision: number }
   | ResponseBase & {
     type: "operation-applied";
     revision: number;
