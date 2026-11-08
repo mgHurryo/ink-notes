@@ -387,16 +387,16 @@ function normalizeStroke(value: unknown, reuseCanonicalPoints: boolean): InkStro
  * notebooks. The default normalizer still clones points for shared inputs.
  */
 function isCanonicalPointArray(points: unknown[]): boolean {
-  for (const value of points) {
+  for (let index = 0; index < points.length; index++) {
+    const value = points[index];
     if (!value || typeof value !== "object") return false;
     const point = value as Record<string, unknown>;
     for (const key in point) {
-      if (!Object.prototype.hasOwnProperty.call(point, key)) continue;
       if (key !== "x" && key !== "y" && key !== "pressure" && key !== "tiltX" && key !== "tiltY" && key !== "t") return false;
     }
-    if (typeof point.x !== "number" || !Number.isFinite(point.x) || point.x < 0 || point.x > 1
-      || typeof point.y !== "number" || !Number.isFinite(point.y) || point.y < 0 || point.y > 1
-      || typeof point.pressure !== "number" || !Number.isFinite(point.pressure) || point.pressure < 0.05 || point.pressure > 1
+    if (typeof point.x !== "number" || !(point.x >= 0 && point.x <= 1)
+      || typeof point.y !== "number" || !(point.y >= 0 && point.y <= 1)
+      || typeof point.pressure !== "number" || !(point.pressure >= 0.05 && point.pressure <= 1)
       || typeof point.t !== "number" || !Number.isFinite(point.t) || point.t <= 0
       || "tiltX" in point && typeof point.tiltX !== "number"
       || "tiltY" in point && typeof point.tiltY !== "number") return false;
