@@ -33595,14 +33595,6 @@ var InkView = class extends InkWritingView {
           });
           (_b2 = this.tiles) == null ? void 0 : _b2.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
         };
-        void session.initializeRaw(raw, 0).then(() => {
-          workerReady = true;
-          connectWorker();
-        }).catch((error) => {
-          workerFailed = true;
-          workerError = error;
-          connectWorker();
-        });
         try {
           notebook = normalizeNotebook(parseStoredJson(raw), { reuseCanonicalPoints: true });
         } catch (loadError) {
@@ -33613,7 +33605,20 @@ var InkView = class extends InkWritingView {
         }
         finishWorkerLoad = () => {
           modelReady = true;
-          connectWorker();
+          window.requestAnimationFrame(() => {
+            if (loadGeneration !== this.notebookLoadGeneration || this.workerSession !== session) {
+              session.dispose();
+              return;
+            }
+            void session.initializeRaw(raw, 0).then(() => {
+              workerReady = true;
+              connectWorker();
+            }).catch((error) => {
+              workerFailed = true;
+              workerError = error;
+              connectWorker();
+            });
+          });
         };
       }
     }

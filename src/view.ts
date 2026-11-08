@@ -244,17 +244,9 @@ export class InkView extends InkWritingView {
           this.tiles?.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
         };
         // The UI needs its own editable model, but cloning an 80k-point object
-        // tree back from the Worker stalls the opening thread. Both sides read
-        // the same raw snapshot; the Worker stays authoritative for background
-        // operations while the main thread normalizes the UI copy.
-        void session.initializeRaw(raw, 0).then(() => {
-          workerReady = true;
-          connectWorker();
-        }).catch((error) => {
-          workerFailed = true;
-          workerError = error;
-          connectWorker();
-        });
+        // tree back from the Worker stalls the opening thread. Start the
+        // Worker from the same raw snapshot only after the first UI frame so
+        // duplicate parsing cannot delay the visible page and input feedback.
         try {
           notebook = normalizeNotebook(parseStoredJson(raw), { reuseCanonicalPoints: true });
         } catch (loadError) {
@@ -265,7 +257,20 @@ export class InkView extends InkWritingView {
         }
         finishWorkerLoad = () => {
           modelReady = true;
-          connectWorker();
+          window.requestAnimationFrame(() => {
+            if (loadGeneration !== this.notebookLoadGeneration || this.workerSession !== session) {
+              session.dispose();
+              return;
+            }
+            void session.initializeRaw(raw, 0).then(() => {
+              workerReady = true;
+              connectWorker();
+            }).catch((error) => {
+              workerFailed = true;
+              workerError = error;
+              connectWorker();
+            });
+          });
         };
       }
     }
