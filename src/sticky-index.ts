@@ -27,9 +27,9 @@ export async function collectStickyEntries(app: App, signal: AbortSignal): Promi
     try {
       const raw = parseStoredJson(await app.vault.read(file));
       if (signal.aborted) break;
-      const sidecar = pdf ? normalizeSidecar(raw) : undefined;
+      const sidecar = pdf ? normalizeSidecar(raw, { reuseCanonicalPoints: true }) : undefined;
       if (!sidecar && (raw.schema !== 2 || !Array.isArray(raw.pages))) throw new Error("Invalid notebook format");
-      const notebook = sidecar?.notebook ?? normalizeNotebook(raw), path = sidecar?.source.path ?? file.path;
+      const notebook = sidecar?.notebook ?? normalizeNotebook(raw, { reuseCanonicalPoints: true }), path = sidecar?.source.path ?? file.path;
       if (sidecar && !(app.vault.getAbstractFileByPath(path) instanceof TFile)) continue;
       for (const page of notebook.pages) for (const note of page.stickyNotes ?? []) {
         const entry: StickySearchEntry = { file: path, pageId: page.id, pageTitle: page.title, note: cloneSticky(note) };

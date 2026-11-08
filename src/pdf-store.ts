@@ -58,7 +58,7 @@ export class PdfSidecarStore {
 
   /** Parse + repair; throws PdfSidecarFormatError for corrupt/unknown files. */
   async read(file: TFile): Promise<PdfSidecar> {
-    return normalizeSidecar(parseStoredJson(await this.readRaw(file)));
+    return normalizeSidecar(parseStoredJson(await this.readRaw(file)), { reuseCanonicalPoints: true });
   }
 
   /**
@@ -149,7 +149,7 @@ export class PdfSidecarStore {
   private async recordSourcePath(file: TFile, pdfPath: string): Promise<void> {
     try {
       await this.vault.process(file, (raw) => {
-        const sidecar = normalizeSidecar(parseStoredJson(raw));
+        const sidecar = normalizeSidecar(parseStoredJson(raw), { reuseCanonicalPoints: true });
         if (sidecar.source.path === pdfPath) return raw;
         sidecar.source.path = pdfPath;
         return serializeSidecar(sidecar);

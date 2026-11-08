@@ -9,7 +9,8 @@
     "build": "node build.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vitest run --exclude \"tests/visual/**\"",
-    "test:visual": "playwright test"
+    "test:visual": "playwright test",
+    "test:visual:smoke": "playwright test tests/visual/responsiveness.spec.ts tests/visual/page-insertion.spec.ts tests/visual/page-swipe.spec.ts --workers=1"
   },
   "devDependencies": {
     "@playwright/test": "^1.63.0",

@@ -7,6 +7,7 @@ class FakeWorker {
   static instances: FakeWorker[] = [];
   static transferable = true;
   static holdApplyResponses = false;
+  static silenceNextType: InkWorkerRequest["type"] | null = null;
   onmessage: ((event: MessageEvent<InkWorkerResponse>) => void) | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
   terminated = false;
@@ -22,6 +23,10 @@ class FakeWorker {
   postMessage(value: InkWorkerRequest, transfer: Transferable[] = []): void {
     const request = transfer.length > 0 ? structuredClone(value, { transfer }) : structuredClone(value);
     this.requests.push(request);
+    if (request.type === FakeWorker.silenceNextType) {
+      FakeWorker.silenceNextType = null;
+      return;
+    }
     if (request.type === "apply-operation" && this.crashNextApply) {
       this.crashNextApply = false;
       queueMicrotask(() => this.onerror?.({} as ErrorEvent));
@@ -30,13 +35,16 @@ class FakeWorker {
     queueMicrotask(() => {
       if (request.type === "initialize-raw") this.emit({ type: "initialized", requestId: request.requestId,
         sessionId: request.sessionId, generation: request.generation, notebookRevision: request.notebookRevision,
-        notebook: JSON.parse(request.raw), revision: request.revision });
+        revision: request.revision });
       else if (request.type === "initialize-notebook") this.emit({ type: "initialized", requestId: request.requestId,
         sessionId: request.sessionId, generation: request.generation, notebookRevision: request.notebookRevision,
-        notebook: request.notebook, revision: request.revision });
+        revision: request.revision });
       else if (request.type === "apply-operation" && !FakeWorker.holdApplyResponses) this.emit({ type: "operation-applied", requestId: request.requestId,
         sessionId: request.sessionId, generation: request.generation, notebookRevision: request.notebookRevision,
         revision: request.revision });
+      else if (request.type === "barrier") this.emit({ type: "barrier-complete", requestId: request.requestId,
+        sessionId: request.sessionId, generation: request.generation, notebookRevision: request.notebookRevision,
+        revision: Math.max(request.notebookRevision, request.minimumRevision) });
       else if (request.type === "dispose-session") this.emit({ type: "session-disposed", requestId: request.requestId,
         sessionId: request.sessionId, generation: request.generation, notebookRevision: request.notebookRevision });
     });
@@ -54,11 +62,46 @@ describe("InkWorkerService recovery", () => {
     FakeWorker.instances = [];
     FakeWorker.transferable = true;
     FakeWorker.holdApplyResponses = false;
+    FakeWorker.silenceNextType = null;
     vi.stubGlobal("Worker", FakeWorker);
     vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:ink-worker"), revokeObjectURL: vi.fn() });
   });
 
-  afterEach(() => vi.unstubAllGlobals());
+afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+  it("sends raw notebook snapshots in an immutable Blob", async () => {
+    const notebook = createNotebook("Blob snapshot");
+    const service = new InkWorkerService(vi.fn());
+    const session = service.createSession(() => ({ notebook, revision: 0 }));
+    await session.initializeRaw(JSON.stringify(notebook), 0);
+    const request = FakeWorker.instances[0].requests.find((item) => item.type === "initialize-raw");
+    expect(request?.type).toBe("initialize-raw");
+    if (request?.type !== "initialize-raw") throw new Error("raw initialization was not sent");
+    expect(request.raw).toBeInstanceOf(Blob);
+    if (typeof request.raw === "string") throw new Error("raw initialization did not use a Blob");
+    if (request.raw instanceof ArrayBuffer) throw new Error("raw initialization unexpectedly used bytes");
+    expect(await request.raw.text()).toBe(JSON.stringify(notebook));
+    service.dispose();
+  });
+
+  it("transfers vault snapshot bytes without cloning them on the UI thread", async () => {
+    const notebook = createNotebook("Transferred snapshot");
+    const text = JSON.stringify(notebook);
+    const bytes = new TextEncoder().encode(text);
+    const raw = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    const service = new InkWorkerService(vi.fn());
+    const session = service.createSession(() => ({ notebook, revision: 0 }));
+
+    await session.initializeRaw(raw, 0);
+
+    expect(raw.byteLength).toBe(0);
+    const request = FakeWorker.instances[0].requests.find((item) => item.type === "initialize-raw");
+    expect(request?.type).toBe("initialize-raw");
+    if (request?.type !== "initialize-raw" || typeof request.raw === "string" || request.raw instanceof Blob)
+      throw new Error("vault snapshot bytes were not transferred");
+    expect(new TextDecoder().decode(request.raw)).toBe(text);
+    service.dispose();
+  });
 
   it("recovers once from a crash without replaying a detached operation", async () => {
     const report = vi.fn();
@@ -168,6 +211,53 @@ describe("InkWorkerService recovery", () => {
     worker.emit({ type: "operation-applied", requestId: request.requestId, sessionId: request.sessionId,
       generation: request.generation + 1, notebookRevision: 1, revision: 1 });
     await expect(applying).rejects.toMatchObject({ code: "stale-response" });
+    service.dispose();
+  });
+
+  it("bounds a silent barrier and retries it after worker recovery", async () => {
+    vi.useFakeTimers();
+    const service = new InkWorkerService(vi.fn());
+    const notebook = createNotebook();
+    const session = service.createSession(() => ({ notebook, revision: 0 }));
+    await session.initializeRaw(JSON.stringify(notebook), 0);
+    FakeWorker.silenceNextType = "barrier";
+
+    const barrier = session.barrier(0);
+    await vi.waitFor(() => expect(FakeWorker.instances[0].requests.some(request => request.type === "barrier")).toBe(true));
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    await expect(barrier).resolves.toBe(0);
+    expect(FakeWorker.instances).toHaveLength(2);
+    expect(FakeWorker.instances[0].terminated).toBe(true);
+    expect(FakeWorker.instances[1].requests.filter(request => request.type === "barrier")).toHaveLength(1);
+    service.dispose();
+  });
+
+  it("recovers a timed-out transferred operation from the UI snapshot without replay", async () => {
+    vi.useFakeTimers();
+    const service = new InkWorkerService(vi.fn());
+    const notebook = createNotebook();
+    const page = notebook.pages[0]!;
+    page.strokes.push({ id: "stroke-1", pageId: page.id, tool: "pen", color: "#111111", width: 4, opacity: 1,
+      points: [{ x: 0.1, y: 0.2, pressure: 0.5, t: 1 }], createdAt: 1, updatedAt: 1 });
+    let revision = 0;
+    const session = service.createSession(() => ({ notebook, revision }));
+    await session.initializeRaw(JSON.stringify(notebook), revision);
+    page.strokes[0]!.points.push({ x: 0.2, y: 0.3, pressure: 0.5, t: 2 });
+    revision = 1;
+    FakeWorker.silenceNextType = "apply-operation";
+    const packed = new Float64Array([0.2, 0.3, 0.5, Number.NaN, Number.NaN, 2]);
+
+    const applying = session.apply(revision, { type: "append-stroke-points", pageId: page.id, strokeId: "stroke-1", points: packed,
+      pageUpdatedAt: 2, notebookUpdatedAt: 2 }, [packed.buffer]);
+    await vi.waitFor(() => expect(FakeWorker.instances[0].requests.some(request => request.type === "apply-operation")).toBe(true));
+    await vi.advanceTimersByTimeAsync(2_000);
+
+    await expect(applying).resolves.toMatchObject({ type: "operation-applied", revision: 1 });
+    expect(packed.byteLength).toBe(0);
+    const recovered = FakeWorker.instances[1];
+    expect(recovered.requests.filter(request => request.type === "initialize-notebook")).toHaveLength(1);
+    expect(recovered.requests.filter(request => request.type === "apply-operation" && request.revision === 1)).toHaveLength(0);
     service.dispose();
   });
 });

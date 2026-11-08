@@ -34,6 +34,32 @@ export interface InkStroke {
   updatedAt: number;
 }
 
+export interface StrokeBounds {
+  minX: number;
+  minY: number;
+  maxX: number;
+  maxY: number;
+}
+
+interface CachedStrokeBounds {
+  points: InkPoint[];
+  count: number;
+  updatedAt: number;
+  bounds: StrokeBounds;
+}
+
+const strokeBoundsCache = new WeakMap<InkStroke, CachedStrokeBounds>();
+
+/** Bounds are derived from a stroke's current point array and never serialized. */
+export function getStrokeBounds(stroke: InkStroke): StrokeBounds {
+  const cached = strokeBoundsCache.get(stroke);
+  if (cached && cached.points === stroke.points && cached.count === stroke.points.length
+    && cached.updatedAt === stroke.updatedAt) return cached.bounds;
+  const bounds = calculateStrokeBounds(stroke.points);
+  strokeBoundsCache.set(stroke, { points: stroke.points, count: stroke.points.length, updatedAt: stroke.updatedAt, bounds });
+  return bounds;
+}
+
 export interface StrokeDynamics {
   /** 0-100: end shape, 0 = round caps, 100 = tapered to a point. */
   taper?: number;
@@ -127,11 +153,12 @@ export function createPage(title: string, paper: PaperStyle = "ruled", now = Dat
   return { id: newId("page"), title, paper, strokes: [], deletedStrokeIds: [], createdAt: now, updatedAt: now };
 }
 
-export function normalizeNotebook(value: unknown): InkNotebook {
+export function normalizeNotebook(value: unknown, options: { reuseCanonicalPoints?: boolean } = {}): InkNotebook {
   if (!value || typeof value !== "object") return createNotebook();
   const raw = value as Partial<InkNotebook>;
   const pages = Array.isArray(raw.pages) ? raw.pages : [];
-  const normalizedPages = pages.map(normalizePage).filter((page): page is InkPage => page !== null);
+  const normalizedPages = pages.map((page) => normalizePage(page, options.reuseCanonicalPoints === true))
+    .filter((page): page is InkPage => page !== null);
   // External rewrites and manual sync-conflict merges can leave two entries
   // with the same page id in one file. Folding them with mergePages keeps
   // every copy's content; without this, the byId map below would silently
@@ -296,7 +323,7 @@ function mergePages(base: InkPage, incoming: InkPage): InkPage {
   };
 }
 
-function normalizePage(value: unknown): InkPage | null {
+function normalizePage(value: unknown, reuseCanonicalPoints: boolean): InkPage | null {
   if (!value || typeof value !== "object") return null;
   const raw = value as Partial<InkPage>;
   const strokes = Array.isArray(raw.strokes) ? raw.strokes : [];
@@ -309,7 +336,8 @@ function normalizePage(value: unknown): InkPage | null {
     id: pageId,
     title: typeof raw.title === "string" ? raw.title : "Untitled",
     paper: isPaperStyle(raw.paper) ? raw.paper : "ruled",
-    strokes: strokes.map(normalizeStroke).filter((stroke): stroke is InkStroke => stroke !== null && !deleted.has(stroke.id)),
+    strokes: strokes.map((stroke) => normalizeStroke(stroke, reuseCanonicalPoints))
+      .filter((stroke): stroke is InkStroke => stroke !== null && !deleted.has(stroke.id)),
     deletedStrokeIds,
     ...(Array.isArray(raw.stickyNotes) || raw.deletedStickyNotes ? {
       stickyNotes: (Array.isArray(raw.stickyNotes) ? raw.stickyNotes : []).map((note) => normalizeSticky(note, pageId))
@@ -358,23 +386,70 @@ function normalizeImage(value: unknown, pageId: string): InkImage | null {
     width, height, foreground: raw.foreground === true, createdAt: finitePositive(raw.createdAt, Date.now()), updatedAt: finitePositive(raw.updatedAt, Date.now()) };
 }
 
-function normalizeStroke(value: unknown): InkStroke | null {
+function normalizeStroke(value: unknown, reuseCanonicalPoints: boolean): InkStroke | null {
   if (!value || typeof value !== "object") return null;
   const raw = value as Partial<InkStroke>;
   if (typeof raw.id !== "string" || typeof raw.pageId !== "string") return null;
   const points = Array.isArray(raw.points) ? raw.points : [];
-  return {
+  const canonicalBounds = reuseCanonicalPoints ? canonicalPointArrayBounds(points) : undefined;
+  const stroke: InkStroke = {
     id: raw.id,
     pageId: raw.pageId,
     tool: raw.tool === "highlighter" ? "highlighter" : "pen",
     color: typeof raw.color === "string" ? raw.color : "#1b1b1b",
     width: finitePositive(raw.width, 3),
     opacity: clamp(finitePositive(raw.opacity, 1), 0.05, 1),
-    points: points.map(normalizePoint).filter((point): point is InkPoint => point !== null),
+    points: canonicalBounds ? points as InkPoint[] : points.map(normalizePoint).filter((point): point is InkPoint => point !== null),
     dynamics: normalizeDynamics(raw.dynamics),
     createdAt: finitePositive(raw.createdAt, Date.now()),
     updatedAt: finitePositive(raw.updatedAt, Date.now()),
   };
+  if (canonicalBounds) strokeBoundsCache.set(stroke, {
+    points: stroke.points, count: stroke.points.length, updatedAt: stroke.updatedAt, bounds: canonicalBounds,
+  });
+  return stroke;
+}
+
+/**
+ * A file has just been parsed into a detached object graph. Reuse its point
+ * objects only when they already satisfy the complete normalized shape;
+ * this avoids allocating a second point object for every sample in large
+ * notebooks. The default normalizer still clones points for shared inputs.
+ */
+function canonicalPointArrayBounds(points: unknown[]): StrokeBounds | undefined {
+  const bounds: StrokeBounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  for (let index = 0; index < points.length; index++) {
+    const value = points[index];
+    if (!value || typeof value !== "object") return undefined;
+    const point = value as Record<string, unknown>;
+    for (const key in point) {
+      if (key !== "x" && key !== "y" && key !== "pressure" && key !== "tiltX" && key !== "tiltY" && key !== "t") return undefined;
+    }
+    if (typeof point.x !== "number" || !(point.x >= 0 && point.x <= 1)
+      || typeof point.y !== "number" || !(point.y >= 0 && point.y <= 1)
+      || typeof point.pressure !== "number" || !(point.pressure >= 0.05 && point.pressure <= 1)
+      || typeof point.t !== "number" || !Number.isFinite(point.t) || point.t <= 0
+      || "tiltX" in point && typeof point.tiltX !== "number"
+      || "tiltY" in point && typeof point.tiltY !== "number") return undefined;
+    const x = point.x as number, y = point.y as number;
+    if (x < bounds.minX) bounds.minX = x;
+    if (y < bounds.minY) bounds.minY = y;
+    if (x > bounds.maxX) bounds.maxX = x;
+    if (y > bounds.maxY) bounds.maxY = y;
+  }
+  return bounds;
+}
+
+function calculateStrokeBounds(points: readonly InkPoint[]): StrokeBounds {
+  const bounds: StrokeBounds = { minX: Infinity, minY: Infinity, maxX: -Infinity, maxY: -Infinity };
+  for (let index = 0; index < points.length; index++) {
+    const point = points[index];
+    if (point.x < bounds.minX) bounds.minX = point.x;
+    if (point.y < bounds.minY) bounds.minY = point.y;
+    if (point.x > bounds.maxX) bounds.maxX = point.x;
+    if (point.y > bounds.maxY) bounds.maxY = point.y;
+  }
+  return bounds;
 }
 
 export function normalizeDynamics(value: unknown): StrokeDynamics | undefined {

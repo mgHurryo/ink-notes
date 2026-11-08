@@ -13,7 +13,7 @@ import { createNotebook } from "../src/model";
 import type { InkPage, InkStroke } from "../src/model";
 import { defaultToolState } from "../src/tool-state";
 import type { NotebookStore } from "../src/storage";
-import type { WorkspaceLeaf } from "obsidian";
+import type { TFile, WorkspaceLeaf } from "obsidian";
 import { Menu } from "obsidian";
 import { gestureContract } from "./gesture-contract";
 
@@ -55,6 +55,56 @@ afterEach(async () => {
 gestureContract(async () => view);
 
 describe("reference-style editor", () => {
+  it("shows notebook-open feedback before the asynchronous read finishes", async () => {
+    let finishRead!: (book: ReturnType<typeof createNotebook>) => void;
+    const read = new Promise<ReturnType<typeof createNotebook>>((resolve) => { finishRead = resolve; });
+    const store = (view as unknown as { store: { read: unknown } }).store;
+    (store as unknown as { read: () => Promise<ReturnType<typeof createNotebook>> }).read = vi.fn(() => read);
+    const file = { basename: "Fast open" } as TFile;
+
+    const opening = view.onLoadFile(file);
+    expect(document.querySelector(".ink-notebook-load-feedback")?.hasAttribute("hidden")).toBe(false);
+    expect(document.querySelector(".ink-notebook-load-feedback")?.textContent).toContain("Opening Fast open");
+    expect(document.querySelector(".ink-notes-view")?.getAttribute("aria-busy")).toBe("true");
+
+    finishRead(createNotebook("Fast open"));
+    await opening;
+    expect(document.querySelector(".ink-notebook-load-feedback")?.hasAttribute("hidden")).toBe(true);
+    expect(document.querySelector(".ink-notes-view")?.getAttribute("aria-busy")).toBe("false");
+  });
+
+  it("keeps the newest notebook when an earlier file read resolves last", async () => {
+    const reads = new Map<string, (book: ReturnType<typeof createNotebook>) => void>();
+    const store = (view as unknown as { store: { read: unknown } }).store;
+    (store as unknown as { read: (file: TFile) => Promise<ReturnType<typeof createNotebook>> }).read = vi.fn((file) =>
+      new Promise<ReturnType<typeof createNotebook>>((resolve) => reads.set(file.basename, resolve)));
+    const first = { basename: "Slow first" } as TFile;
+    const second = { basename: "Fast second" } as TFile;
+
+    const openingFirst = view.onLoadFile(first);
+    const openingSecond = view.onLoadFile(second);
+    reads.get("Fast second")!(createNotebook("Fast second"));
+    await openingSecond;
+    reads.get("Slow first")!(createNotebook("Slow first"));
+    await openingFirst;
+
+    expect((view as unknown as { notebook: ReturnType<typeof createNotebook> }).notebook.title).toBe("Fast second");
+    expect(document.querySelector(".ink-notes-view")?.getAttribute("aria-busy")).toBe("false");
+    expect(document.querySelector(".ink-notebook-load-feedback")?.hasAttribute("hidden")).toBe(true);
+  });
+
+  it("shows a retry action when the notebook cannot be read", async () => {
+    const store = (view as unknown as { store: { read: unknown } }).store;
+    (store as unknown as { read: () => Promise<never> }).read = vi.fn(async () => { throw new Error("file read failed"); });
+
+    await expect(view.onLoadFile({ basename: "Unreadable" } as TFile)).rejects.toThrow("file read failed");
+    const feedback = document.querySelector<HTMLElement>(".ink-notebook-load-feedback");
+    expect(feedback?.getAttribute("role")).toBe("alert");
+    expect(feedback?.textContent).toContain("Could not open Unreadable");
+    expect(feedback?.querySelector("button")?.hidden).toBe(false);
+    expect(document.querySelector(".ink-notes-view")?.getAttribute("aria-busy")).toBe("false");
+  });
+
   it("duplicates sticky boards with independent note/stroke ownership and content", () => {
     const host = view as any, page = host.notebook.pages[0];
     button("Add sticky note").click();
@@ -307,6 +357,7 @@ describe("reference-style editor", () => {
     Array.from(document.querySelectorAll<HTMLButtonElement>(".preview-menu button"))
       .find((item) => item.textContent === label)!.click();
     const added = host.notebook.pages[index];
+    const originalAddedId = added.id;
     expect(host.pageIndex).toBe(index);
     expect(added).toMatchObject({ paper: "blank", strokes: [] });
     expect(host.notebook.pageOrder).toEqual(host.notebook.pages.map((page) => page.id));
@@ -317,6 +368,7 @@ describe("reference-style editor", () => {
     button("Redo").click();
     expect(host.pageIndex).toBe(index);
     expect(host.notebook.pages[index].strokes).toEqual([]);
+    expect(host.notebook.pages[index].id).not.toBe(originalAddedId);
   });
 
   it("switches between the plus and options menus and toggles plus closed", () => {
@@ -908,9 +960,11 @@ describe("page rail thumbnails and resizing", () => {
     // The observer reports the first thumb visible: exactly that one paints.
     withBox(canvases[0], 152, 208);
     const drawSpy = vi.spyOn(view as unknown as { drawPageThumbnail: (c: HTMLCanvasElement, p: unknown) => void }, "drawPageThumbnail");
-    reports[0].callback([
-      { isIntersecting: true, target: canvases[0] } as unknown as IntersectionObserverEntry,
-    ], { disconnect() {}, unobserve() {}, observe() {} } as unknown as IntersectionObserver);
+    const bounds = { x: 0, y: 0, left: 0, top: 0, right: 152, bottom: 208, width: 152, height: 208,
+      toJSON: () => ({}) } as DOMRectReadOnly;
+    const entry = Object.assign({ isIntersecting: true, target: canvases[0] },
+      { intersectionRect: bounds, boundingClientRect: bounds }) as unknown as IntersectionObserverEntry;
+    reports[0].callback([entry], { disconnect() {}, unobserve() {}, observe() {} } as unknown as IntersectionObserver);
     const drawn = vi.mocked(drawInkStroke).mock.calls;
     expect(drawSpy).toHaveBeenCalledOnce();
     expect(drawn.length).toBe(1);

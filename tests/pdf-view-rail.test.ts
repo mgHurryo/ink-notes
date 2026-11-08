@@ -1541,7 +1541,8 @@ describe("pdf page preview rail", () => {
       points: [{ x: 0.1, y: 0.1, pressure: 0.5, t: 0 }], createdAt: 0, updatedAt: 0 });
     // A recording ctx: the shared beforeEach stub returns fresh spies per
     // property access, which cannot be asserted on.
-    const ctx = { clearRect: vi.fn(), drawImage: vi.fn(), save: vi.fn(), restore: vi.fn(), setTransform: vi.fn() };
+    const ctx = { clearRect: vi.fn(), drawImage: vi.fn(), save: vi.fn(), restore: vi.fn(), setTransform: vi.fn(),
+      beginPath: vi.fn(), arc: vi.fn(), fill: vi.fn() };
     const canvasSpy = vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(ctx as unknown as CanvasRenderingContext2D);
     internal.renderAll();
     await new Promise((resolve) => setTimeout(resolve, 0));

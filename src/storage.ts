@@ -34,11 +34,19 @@ export class NotebookStore {
 
   async read(file: TFile): Promise<InkNotebook> {
     const raw = await this.readRaw(file);
-    return normalizeNotebook(parseStoredJson(raw));
+    return normalizeNotebook(parseStoredJson(raw), { reuseCanonicalPoints: true });
   }
 
   async readRaw(file: TFile): Promise<string> {
     return this.vault.read(file);
+  }
+
+  /** Reads notebook text and its transferable bytes without re-encoding text on the UI thread. */
+  async readRawSnapshot(file: TFile): Promise<{ raw: string; workerBytes?: ArrayBuffer }> {
+    if (typeof this.vault.readBinary !== "function") return { raw: await this.readRaw(file) };
+    const workerBytes = await this.vault.readBinary(file);
+    const raw = new TextDecoder("utf-8", { fatal: true }).decode(workerBytes);
+    return { raw, workerBytes };
   }
 
   async writeIfUnchanged(file: TFile, expectedRaw: string, nextRaw: string): Promise<boolean> {
@@ -65,7 +73,7 @@ export class NotebookStore {
       await this.vault.process(file, (raw) => {
         let latest: InkNotebook;
         try {
-          latest = normalizeNotebook(parseStoredJson(raw));
+          latest = normalizeNotebook(parseStoredJson(raw), { reuseCanonicalPoints: true });
         } catch (error) {
           throw new NotebookFormatError(`Cannot save ${file.path || "notebook"}: existing file is corrupt or uses an unsupported encoding`);
         }

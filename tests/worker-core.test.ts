@@ -24,13 +24,35 @@ async function response(core: InkWorkerCore, value: InkWorkerRequest): Promise<I
 }
 
 describe("InkWorkerCore persistence mirror", () => {
+  it("reads an immutable raw snapshot asynchronously from a Blob", async () => {
+    const core = new InkWorkerCore({ offscreenCanvas: false, imageBitmap: false });
+    const notebook = createNotebook("Blob snapshot");
+    const initialized = await response(core, request({
+      type: "initialize-raw", raw: new Blob([JSON.stringify(notebook)], { type: "text/plain" }), revision: 0,
+    }));
+    expect(initialized).toMatchObject({ type: "initialized", revision: 0 });
+    expect(await response(core, request({ type: "barrier", minimumRevision: 0 }, 2)))
+      .toMatchObject({ type: "barrier-complete", revision: 0 });
+  });
+
+  it("decodes transferred UTF-8 notebook bytes in the worker", async () => {
+    const core = new InkWorkerCore({ offscreenCanvas: false, imageBitmap: false });
+    const notebook = createNotebook("Transferred bytes");
+    const raw = new TextEncoder().encode(JSON.stringify(notebook)).buffer as ArrayBuffer;
+    expect(await response(core, request({ type: "initialize-raw", raw, revision: 0 })))
+      .toMatchObject({ type: "initialized", revision: 0 });
+    expect(await response(core, request({ type: "barrier", minimumRevision: 0 }, 2)))
+      .toMatchObject({ type: "barrier-complete", revision: 0 });
+  });
+
   it("loads compressed disk state, preserves samples and serializes a sidecar snapshot without changing the mirror",async()=>{
     const core=new InkWorkerCore({offscreenCanvas:false,imageBitmap:false}), book=createNotebook(), p=book.pages[0];
     p.strokes=[{id:"compressed",pageId:p.id,tool:"pen",color:"#000",width:3,opacity:1,createdAt:1,updatedAt:2,
       points:Array.from({length:500},(_,i)=>({x:i/1000,y:.3,pressure:.7,t:i+1,tiltX:12,tiltY:-6}))}];
     const raw=serializeStoredJson(book); expect(raw).toContain("INK-GZIP-1");
     const initialized=await response(core,request({type:"initialize-raw",raw,revision:0}));
-    expect(initialized).toMatchObject({type:"initialized",notebook:{pages:[{strokes:[{points:p.strokes[0].points}]}]}});
+    expect(initialized).toMatchObject({type:"initialized",revision:0});
+    expect("notebook" in initialized).toBe(false);
     const serialized=await response(core,request({type:"serialize-storage",value:{notebook:book,format:1}},2));
     if(serialized.type!=="storage-serialized")throw new Error("snapshot not serialized");
     expect(parseStoredJson(serialized.content)).toEqual({notebook:book,format:1});
@@ -304,6 +326,39 @@ describe("InkWorkerCore persistence mirror", () => {
           .toMatchObject({ type: "tile-rendered", cell });
       }
       expect(fill).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("renders only tile candidates supplied by the view without building a worker spatial index", async () => {
+    const stroke = vi.fn(), fill = vi.fn();
+    class FakeOffscreenCanvas {
+      constructor(public width: number, public height: number) {}
+      getContext() {
+        return { setTransform: vi.fn(), save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), moveTo: vi.fn(),
+          quadraticCurveTo: vi.fn(), lineTo: vi.fn(), stroke, fill, arc: vi.fn(), closePath: vi.fn() };
+      }
+      transferToImageBitmap() { return { close: vi.fn() } as unknown as ImageBitmap; }
+    }
+    vi.stubGlobal("OffscreenCanvas", FakeOffscreenCanvas);
+    try {
+      const core = new InkWorkerCore({ offscreenCanvas: true, imageBitmap: true });
+      const notebook = createNotebook();
+      const page = notebook.pages[0];
+      page.strokes.push(
+        { id: "visible-candidate", pageId: page.id, tool: "pen", color: "#000", width: 3, opacity: 1,
+          points: [{ x: 0.1, y: 0.1, pressure: 0.5, t: 1 }], createdAt: 1, updatedAt: 1 },
+        { id: "off-tile", pageId: page.id, tool: "highlighter", color: "#ff0", width: 3, opacity: 1,
+          points: [{ x: 0.2, y: 0.2, pressure: 0.5, t: 1 }], createdAt: 2, updatedAt: 2 },
+      );
+      await response(core, request({ type: "initialize-notebook", notebook, revision: 0 }));
+      const tile = await response(core, request({ type: "render-tile", pageId: page.id, cell: "0:0", density: 2,
+        revision: 0, renderGeneration: 1, priority: "visible", width: notebook.pageWidth, height: notebook.pageHeight,
+        candidateStrokeIds: ["visible-candidate"] }, 2, 0));
+      expect(tile).toMatchObject({ type: "tile-rendered", cell: "0:0" });
+      expect(fill).toHaveBeenCalledOnce();
+      expect(stroke).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
     }

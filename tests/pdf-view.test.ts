@@ -50,6 +50,7 @@ interface PdfViewInternals {
   redo(): void;
   startPendingInkCommit(page: PdfSidecar["notebook"]["pages"][number]): void;
   renderAll(): void;
+  setStatus(message: string, isError?: boolean): void;
 }
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
@@ -408,6 +409,35 @@ describe("split-pane sidecar synchronization", () => {
     resolve(serializeSidecar(left.internal.sidecar));
     await refresh;
     expect(right.internal.sidecar).toBeNull();
+  });
+
+  it("reports an external sidecar read failure and clears it after a successful check", async () => {
+    const { view, internal, store, sidecar, sidecarFile } = setup();
+    store.readRaw.mockRejectedValueOnce(new Error("vault unavailable"));
+
+    await view.reloadExternalSidecar(sidecarFile.path);
+
+    expect(internal.sidecar).toBe(sidecar);
+    expect(internal.setStatus).toHaveBeenCalledWith(expect.stringContaining("vault unavailable"), true);
+    store.readRaw.mockResolvedValueOnce(internal.sidecarRaw);
+    await view.reloadExternalSidecar(sidecarFile.path);
+    expect(internal.setStatus).toHaveBeenLastCalledWith("");
+  });
+
+  it("reports corrupt external sidecar data while preserving the last good notes", async () => {
+    const { view, internal, store, sidecar, sidecarFile } = setup();
+    const previousRaw = internal.sidecarRaw;
+    store.readRaw.mockResolvedValue("{broken sidecar");
+
+    await view.reloadExternalSidecar(sidecarFile.path);
+    await view.reloadExternalSidecar(sidecarFile.path);
+
+    expect(internal.sidecar).toBe(sidecar);
+    expect(internal.sidecarRaw).toBe(previousRaw);
+    expect(internal.writeBlockedReason).toBeNull();
+    expect(internal.setStatus).toHaveBeenCalledTimes(1);
+    expect(internal.setStatus).toHaveBeenCalledWith(expect.stringContaining("could not be applied"), true);
+    expect(store.writeIfUnchanged).not.toHaveBeenCalled();
   });
 
   it("blocks stale saves after a source revision change and keeps deferred peer ink in recovery", async () => {

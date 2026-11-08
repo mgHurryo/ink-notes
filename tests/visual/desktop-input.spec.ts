@@ -83,7 +83,7 @@ for (const mode of ["ink", "pdf"] as const) {
   });
 }
 
-test("separate trackpad flicks and page keys queue while the previous page is still saving", async ({ page }) => {
+test("separate trackpad flicks and page keys respond while a save barrier is pending", async ({ page }) => {
   await page.goto("/");
   await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
   await page.evaluate(async () => {
@@ -115,7 +115,7 @@ test("separate trackpad flicks and page keys queue while the previous page is st
     await new Promise<void>(resolve => setTimeout(resolve, 200));
   });
   await page.keyboard.press("PageDown");
-  await expect(page.locator(".ink-page-status")).toHaveText("1 / 5");
+  await expect(page.locator(".ink-page-status")).toHaveText("5 / 5");
   await page.evaluate(() => (window as any).releaseWheelBarrier());
   await expect(page.locator(".ink-page-status")).toHaveText("5 / 5");
   await expect(page.locator(".ink-swipe-stage")).toHaveCount(0);
@@ -570,7 +570,7 @@ test("a zoomed mouse pan continues into a page swipe at the edge and cancellatio
   await expect(page.locator(".ink-page-extent")).toHaveCSS("transform", "none");
 });
 
-test("separate trackpad bursts keep every destination across a slow notebook save barrier", async ({ page }) => {
+test("separate trackpad bursts reach every destination before the slow save barrier ends", async ({ page }) => {
   await page.goto("/");
   await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
   await page.evaluate(async () => {
@@ -598,7 +598,7 @@ test("separate trackpad bursts keep every destination across a slow notebook sav
     await page.waitForTimeout(220);
     await page.evaluate(() => (window as any).sendPageWheel());
   }
-  await expect(page.locator(".ink-page-status")).toHaveText("1 / 6");
+  await expect(page.locator(".ink-page-status")).toHaveText("5 / 6");
   await page.evaluate(() => (window as any).releaseDesktopBarrier());
   await expect(page.locator(".ink-page-status")).toHaveText("5 / 6");
   await expect(page.locator(".ink-swipe-stage")).toHaveCount(0);

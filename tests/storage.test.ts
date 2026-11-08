@@ -6,6 +6,22 @@ import { parseStoredJson, serializeStoredJson } from "../src/storage-codec";
 
 describe("NotebookStore", () => {
   afterEach(() => vi.useRealTimers());
+  it("reads transferable notebook bytes and decoded text from one vault snapshot", async () => {
+    const raw = serializeStoredJson(createNotebook("Transferable"));
+    const bytes = new TextEncoder().encode(raw);
+    const buffer = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    const vault = { read: vi.fn(), readBinary: vi.fn(async () => buffer) };
+    const store = new NotebookStore({ vault } as unknown as App);
+
+    const snapshot = await store.readRawSnapshot({ path: "Ink Notes/Transferable.ink" } as TFile);
+
+    expect(snapshot.raw).toBe(raw);
+    expect(snapshot.workerBytes).toBe(buffer);
+    expect(new TextDecoder().decode(snapshot.workerBytes)).toBe(raw);
+    expect(vault.read).not.toHaveBeenCalled();
+    expect(vault.readBinary).toHaveBeenCalledOnce();
+  });
+
   it("reads compressed notebooks and merges peer strokes without reviving deletion tombstones", async () => {
     const remote=createNotebook(), page=remote.pages[0];
     const dense={...stroke("remote",page.id,1),points:Array.from({length:500},(_,i)=>({x:i/1000,y:.3,pressure:.7,t:i+1}))};

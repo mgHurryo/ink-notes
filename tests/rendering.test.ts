@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { canvasResolution, drawInkStroke, drawInkStrokeTail, normalizePressureCurve, penOutline, smoothOutlineCenterline, smoothPenPressures } from "../src/rendering";
+import { canvasResolution, drawInkStroke, drawInkStrokePreview, drawInkStrokeTail, normalizePressureCurve, penOutline, smoothOutlineCenterline, smoothPenPressures } from "../src/rendering";
 import { translatePoints } from "../src/ink-writing";
 import type { InkStroke } from "../src/model";
 
@@ -365,6 +365,15 @@ describe("continuous pen rendering", () => {
     expect(ctx.fill).toHaveBeenCalledTimes(2);
     expect(vi.mocked(ctx.fill).mock.calls[1][0]).toBe(path);
     expect(ctx.stroke).not.toHaveBeenCalled();
+    expect(ctx.globalAlpha).toBe(0.5);
+  });
+  it("draws a coarse first-frame preview without building the full pen outline", () => {
+    const ctx = context();
+    drawInkStrokePreview(ctx, stroke(), 800, 1000);
+    expect(ctx.stroke).toHaveBeenCalledOnce();
+    expect(ctx.fill).not.toHaveBeenCalled();
+    expect(ctx.moveTo).toHaveBeenCalledOnce();
+    expect(vi.mocked(ctx.lineTo).mock.calls.length).toBeLessThanOrEqual(13);
     expect(ctx.globalAlpha).toBe(0.5);
   });
   it("renders the outline as a faithful polygon without cutting sparse corners", () => {

@@ -139,6 +139,8 @@ export class PdfInkView extends InkWritingView {
   private sidecarFile: TFile | null = null;
   /** Set when fingerprint mismatch or an unreadable sidecar blocks writing. */
   private writeBlockedReason: string | null = null;
+  /** Deduplicates external-sync errors while leaving the current notes usable. */
+  private externalSidecarSyncStatus: string | null = null;
   private pendingMergedSidecar: PdfSidecar | null = null;
 
   private sourcePages: PdfSourcePageGeometry[] = [];
@@ -388,15 +390,43 @@ export class PdfInkView extends InkWritingView {
     if (!this.sidecar || !this.sidecarFile || this.sidecarFile.path !== changedPath) return;
     const file = this.sidecarFile;
     const generation = this.loadGeneration;
-    const raw = await this.store.readRaw(file).catch(() => null);
-    if (generation !== this.loadGeneration || this.sidecarFile !== file || !this.sidecar) return;
-    if (raw === null || raw === this.sidecarRaw) return;
+    let raw: string;
     try {
-      const sidecar = normalizeSidecar(parseStoredJson(raw));
-      this.receiveMergedSidecar(sidecar);
-    } catch {
-      // Corrupt external state: keep the in-memory sidecar, never write over it.
+      raw = await this.store.readRaw(file);
+    } catch (error) {
+      if (generation === this.loadGeneration && this.sidecarFile === file && this.sidecar) {
+        this.setExternalSidecarSyncError(`Could not read external PDF notes: ${messageOf(error)}`);
+      }
+      return;
     }
+    if (generation !== this.loadGeneration || this.sidecarFile !== file || !this.sidecar) return;
+    if (raw === this.sidecarRaw) {
+      this.clearExternalSidecarSyncError();
+      return;
+    }
+    try {
+      const sidecar = normalizeSidecar(parseStoredJson(raw), { reuseCanonicalPoints: true });
+      this.clearExternalSidecarSyncError();
+      this.receiveMergedSidecar(sidecar);
+    } catch (error) {
+      // Keep the last known good model and let the CAS save path protect the
+      // corrupt file; the user still needs to know that the peer update failed.
+      this.setExternalSidecarSyncError(`External PDF notes could not be applied: ${messageOf(error)}`);
+    }
+  }
+
+  private setExternalSidecarSyncError(message: string): void {
+    if (message === this.externalSidecarSyncStatus) return;
+    this.externalSidecarSyncStatus = message;
+    this.setStatus(message, true);
+  }
+
+  private clearExternalSidecarSyncError(): void {
+    const previous = this.externalSidecarSyncStatus;
+    if (!previous) return;
+    this.externalSidecarSyncStatus = null;
+    // Do not clear a newer status message written by another PDF operation.
+    if (!this.statusEl || this.statusEl.textContent === previous) this.setStatus("");
   }
 
   private receiveMergedSidecar(sidecar: PdfSidecar): void {
@@ -549,7 +579,7 @@ export class PdfInkView extends InkWritingView {
       try {
         const raw = await this.store.readRaw(existing);
         if (generation !== this.loadGeneration) return;
-        const sidecar = normalizeSidecar(parseStoredJson(raw));
+        const sidecar = normalizeSidecar(parseStoredJson(raw), { reuseCanonicalPoints: true });
         if (sidecar.source.sha256 !== fingerprint.sha256 || sidecar.source.byteLength !== fingerprint.byteLength) {
           // A case twin (Docs/Notes.pdf vs docs/notes.pdf) folds into this
           // lowercased slot on case-sensitive disks. The vault index holding
@@ -613,7 +643,7 @@ export class PdfInkView extends InkWritingView {
       try {
         const raw = await this.store.readRaw(existing);
         if (generation !== this.loadGeneration) return;
-        const sidecar = normalizeSidecar(parseStoredJson(raw));
+        const sidecar = normalizeSidecar(parseStoredJson(raw), { reuseCanonicalPoints: true });
         if (sidecar.source.sha256 !== fingerprint.sha256 || sidecar.source.byteLength !== fingerprint.byteLength) {
           this.writeBlockedReason = "This PDF changed since these notes were created; handwriting is read-only for this copy";
         } else if (sidecar.source.path !== file.path) {
@@ -662,7 +692,7 @@ export class PdfInkView extends InkWritingView {
       const created = await this.store.createFor(file, fingerprint, this.sourcePages, slotPath);
       const raw = await this.store.readRaw(created);
       if (generation !== this.loadGeneration) return;
-      this.attachSidecar(normalizeSidecar(parseStoredJson(raw)), raw, created);
+      this.attachSidecar(normalizeSidecar(parseStoredJson(raw), { reuseCanonicalPoints: true }), raw, created);
     } catch (error) {
       if (generation === this.loadGeneration) this.setStatus(`Could not create the notes file: ${messageOf(error)}`, true);
     }
@@ -676,7 +706,7 @@ export class PdfInkView extends InkWritingView {
     new RecoveryChoiceModal(this.app, candidates, async (chosen) => {
       if (!chosen || !this.file) return;
       try {
-        const sidecar = normalizeSidecar(parseStoredJson(await this.store.readRaw(chosen)));
+        const sidecar = normalizeSidecar(parseStoredJson(await this.store.readRaw(chosen)), { reuseCanonicalPoints: true });
         sidecar.source.path = this.file.path;
         if (!this.store.sidecarFileFor(this.file.path)) {
           await this.app.vault.rename(chosen, sidecarPathFor(this.file.path));
@@ -1372,7 +1402,7 @@ export class PdfInkView extends InkWritingView {
     if (!this.sidecar) return;
     this.destroySwipeStage();
     try {
-      this.sidecar = normalizeSidecar(JSON.parse(snapshot));
+      this.sidecar = normalizeSidecar(JSON.parse(snapshot), { reuseCanonicalPoints: true });
       const selected = this.sidecar.notePages.findIndex((page) => page.id === pageId);
       this.noteIndex = selected < 0 ? Math.min(this.noteIndex, this.sidecar.notePages.length - 1) : selected;
       this.markSidecarChanged();
@@ -2149,6 +2179,7 @@ export class PdfInkView extends InkWritingView {
     this.noteIndex = 0;
     this.zoom = 1;
     this.writeBlockedReason = null;
+    this.externalSidecarSyncStatus = null;
     this.pendingRecoveryCandidates = null;
     this.undoStack = [];
     this.redoStack = [];
@@ -2245,7 +2276,7 @@ export class PdfInkView extends InkWritingView {
       if (this.writeBlockedReason) return { status: "failed", message: this.writeBlockedReason };
       let latest: PdfSidecar;
       try {
-        latest = normalizeSidecar(parseStoredJson(latestRaw));
+        latest = normalizeSidecar(parseStoredJson(latestRaw), { reuseCanonicalPoints: true });
       } catch {
         return this.saveConflictCopy(latestRaw, "the notes file on disk is corrupt or uses an unknown format");
       }

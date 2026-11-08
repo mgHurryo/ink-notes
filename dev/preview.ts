@@ -20,6 +20,53 @@ import { openPdfPreview } from "./pdf-preview";
 
 type RendererComparisonMode = "pen" | "highlighter" | "stroke-eraser" | "circle-eraser" | "square-eraser" | "lasso";
 
+function createPerformanceNotebookRaw(baseRaw: string, pageId: string, pageCount: number): Promise<string> {
+  // Build the large fixture off the UI thread so its setup does not hide the
+  // very loading and input latency that this route is meant to measure.
+  const source = `self.onmessage = ({ data }) => {
+    const notebook = JSON.parse(data.raw);
+    const page = notebook.pages.find((candidate) => candidate.id === data.pageId);
+    const points = Array.from({ length: 80 }, (_, pointIndex) => ({
+      x: 0.02 + pointIndex / 80 * 0.035,
+      y: 0.02 + Math.sin(pointIndex / 8) * 0.002,
+      pressure: 0.35 + pointIndex / 200,
+      t: pointIndex + 1,
+    }));
+    page.strokes = Array.from({ length: 1001 }, (_, strokeIndex) => ({
+      id: 'performance-' + strokeIndex, pageId: page.id, tool: 'pen',
+      color: strokeIndex % 3 === 0 ? '#195bff' : '#171717', width: 4, opacity: 1,
+      points: points.map((point) => ({ ...point, x: point.x + (strokeIndex % 20) * 0.047,
+        y: point.y + Math.floor(strokeIndex / 20) * 0.018 })),
+      createdAt: 1, updatedAt: 1,
+    }));
+    for (let pageIndex = 1; pageIndex < data.pageCount; pageIndex++) {
+      const id = 'performance-page-' + pageIndex;
+      const pagePoints = points.slice(0, 24);
+      const added = {
+        id, title: 'Page ' + (pageIndex + 1), paper: 'ruled', deletedStrokeIds: [],
+        strokes: Array.from({ length: 48 }, (_, strokeIndex) => ({
+          id: id + '-stroke-' + strokeIndex, pageId: id, tool: 'pen',
+          color: strokeIndex % 3 === 0 ? '#195bff' : '#171717', width: 4, opacity: 1,
+          points: pagePoints.map((point) => ({ ...point, x: point.x + (strokeIndex % 12) * 0.065,
+            y: point.y + Math.floor(strokeIndex / 12) * 0.04 })),
+          createdAt: pageIndex + 1, updatedAt: pageIndex + 1,
+        })),
+        createdAt: pageIndex + 1, updatedAt: pageIndex + 1,
+      };
+      notebook.pages.push(added);
+      notebook.pageOrder.push(id);
+    }
+    self.postMessage(JSON.stringify(notebook));
+  };`;
+  const url = URL.createObjectURL(new Blob([source], { type: "text/javascript" }));
+  const worker = new Worker(url);
+  return new Promise((resolve, reject) => {
+    worker.onmessage = (event: MessageEvent<string>) => { worker.terminate(); URL.revokeObjectURL(url); resolve(event.data); };
+    worker.onerror = (event) => { worker.terminate(); URL.revokeObjectURL(url); reject(new Error(event.message)); };
+    worker.postMessage({ raw: baseRaw, pageId, pageCount });
+  });
+}
+
 const notebook = createNotebook("Ink Notebook");
 const page = notebook.pages[0];
 const previewStroke = {
@@ -30,28 +77,22 @@ const previewStroke = {
   })),
   createdAt: 1, updatedAt: 1,
 } satisfies InkStroke;
-if (new URLSearchParams(location.search).has("performance")) {
-  page.strokes = Array.from({ length: 1001 }, (_, strokeIndex) => ({
-    ...previewStroke,
-    id: `performance-${strokeIndex}`,
-    color: strokeIndex % 3 === 0 ? "#195bff" : "#171717",
-    points: Array.from({ length: 80 }, (_, pointIndex) => ({
-      x: 0.02 + (strokeIndex % 20) * 0.047 + pointIndex / 80 * 0.035,
-      y: 0.02 + Math.floor(strokeIndex / 20) * 0.018 + Math.sin(pointIndex / 8) * 0.002,
-      pressure: 0.35 + pointIndex / 200,
-      t: pointIndex + 1,
-    })),
-  }));
-} else {
+const performanceNotebook = new URLSearchParams(location.search).has("performance");
+const performancePageCount = Math.min(100, Math.max(1, Number(new URLSearchParams(location.search).get("pages")) || 1));
+if (!performanceNotebook) {
   page.strokes.push(previewStroke);
 }
 let diskRaw = JSON.stringify(notebook);
+let diskBytes = new TextEncoder().encode(diskRaw).buffer;
+const sourceRaw = performanceNotebook ? createPerformanceNotebookRaw(diskRaw, page.id, performancePageCount) : Promise.resolve(diskRaw);
 const store = {
-  read: async () => normalizeNotebook(parseStoredJson(diskRaw)),
+  read: async () => normalizeNotebook(parseStoredJson(diskRaw), { reuseCanonicalPoints: true }),
   readRaw: async () => diskRaw,
+  readRawSnapshot: async () => ({ raw: diskRaw, workerBytes: diskBytes.slice(0) }),
   writeIfUnchanged: async (_file: unknown, expected: string, next: string) => {
     if (expected !== diskRaw) return false;
     diskRaw = next;
+    diskBytes = new TextEncoder().encode(diskRaw).buffer;
     return true;
   },
   save: async (_file: unknown, value: unknown) => value,
@@ -65,6 +106,11 @@ void (async () => {
   await view.setState({ readingMode: false }, { history: false });
   await view.onOpen();
   view.file = Object.assign(new TFile(), { path: "Ink Notes/Preview.ink", basename: "Preview", extension: "ink" });
+  // A real note is already on disk when a user opens it. Keep synthetic
+  // fixture construction outside the measured open path as well.
+  diskRaw = await sourceRaw;
+  diskBytes = new TextEncoder().encode(diskRaw).buffer;
+  void workers.warm().catch(() => undefined);
   await view.onLoadFile(view.file);
   const compareRenderer = async (mode: RendererComparisonMode = "pen") => {
     const internal = view as unknown as { workerSession: { renderTile(...args: unknown[]): Promise<any>;
