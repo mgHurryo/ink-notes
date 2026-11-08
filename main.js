@@ -23744,16 +23744,14 @@ function reconcileNotebook(target, incoming, selectedPageId, previousPageIndex) 
   };
 }
 function reconcilePage(target, incoming, metadataOnlyChanges) {
-  var _a, _b, _c, _d;
+  var _a, _b, _c, _d, _e;
   const stickyResult = reconcileStickyNotes(target.stickyNotes, incoming.stickyNotes);
   const stickyChanged = stickyResult.changed;
   if (stickyChanged) target.stickyNotes = stickyResult.notes;
-  if (incoming.deletedStickyNotes) target.deletedStickyNotes = { ...incoming.deletedStickyNotes };
-  else delete target.deletedStickyNotes;
+  target.deletedStickyNotes = { ...incoming.deletedStickyNotes };
   const imagesChanged = JSON.stringify((_a = target.images) != null ? _a : []) !== JSON.stringify((_b = incoming.images) != null ? _b : []);
   if (imagesChanged) target.images = (_c = incoming.images) == null ? void 0 : _c.map((image) => ({ ...image }));
-  if (incoming.deletedImageIds) target.deletedImageIds = [...incoming.deletedImageIds];
-  else delete target.deletedImageIds;
+  target.deletedImageIds = [...(_d = incoming.deletedImageIds) != null ? _d : []];
   const previousStrokes = target.strokes;
   const previousById = new Map(previousStrokes.map((stroke) => [stroke.id, stroke]));
   const strokes = incoming.strokes.map((incomingStroke) => {
@@ -23766,7 +23764,7 @@ function reconcilePage(target, incoming, metadataOnlyChanges) {
   const inkChanged = previousStrokes.length !== strokes.length || previousStrokes.some((stroke, index) => stroke !== strokes[index]);
   target.title = incoming.title;
   target.paper = incoming.paper;
-  if ((_d = incoming.tags) == null ? void 0 : _d.length) target.tags = [...incoming.tags];
+  if ((_e = incoming.tags) == null ? void 0 : _e.length) target.tags = [...incoming.tags];
   else delete target.tags;
   target.flag = incoming.flag;
   if (inkChanged) target.strokes = strokes;
