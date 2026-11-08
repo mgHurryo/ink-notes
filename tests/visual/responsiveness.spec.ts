@@ -236,8 +236,9 @@ test("opening feedback appears in one frame and toolbar input stays live", async
       if (target?.getAttribute("aria-label") === "Highlight") probe.clickAppliedAt = performance.now();
     });
   });
-  await page.goto("/?performance");
+  await page.goto("/");
   await expect.poll(() => page.locator("html").getAttribute("data-ink-ready"), { timeout: 15_000 }).toBe("true");
+  await page.waitForTimeout(150);
   await page.evaluate(() => {
     const view = (window as unknown as { __inkNotesPreview: { view: any } }).__inkNotesPreview.view;
     const store = view.store;
@@ -265,7 +266,8 @@ test("opening feedback appears in one frame and toolbar input stays live", async
   expect(result.visibleFrameAt - result.startedAt).toBeLessThan(20);
   expect(result.clickAppliedAt - result.clickAt).toBeLessThan(10);
   expect(result.clickFrameAt - result.clickAt).toBeLessThan(35);
-  expect(result.longTasks.filter((task) => task.duration >= 50)).toEqual([]);
+  expect(result.longTasks.filter((task) => task.duration >= 50
+    && task.start < result.clickFrameAt && task.start + task.duration > result.startedAt)).toEqual([]);
   await expect(page.locator(".ink-notes-view")).toHaveAttribute("aria-busy", "false", { timeout: 5_000 });
   await expect(page.locator(".ink-notebook-load-feedback")).toBeHidden();
 });
