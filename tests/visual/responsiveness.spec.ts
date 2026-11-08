@@ -241,10 +241,10 @@ test("opening feedback appears in one frame and toolbar input stays live", async
   await page.evaluate(() => {
     const view = (window as unknown as { __inkNotesPreview: { view: any } }).__inkNotesPreview.view;
     const store = view.store;
-    const readRaw = store.readRaw.bind(store);
-    store.readRaw = async (...args: unknown[]) => {
+    const readRawSnapshot = store.readRawSnapshot.bind(store);
+    store.readRawSnapshot = async (...args: unknown[]) => {
       await new Promise<void>((resolve) => setTimeout(resolve, 500));
-      return readRaw(...args);
+      return readRawSnapshot(...args);
     };
     const probe = (window as unknown as { __inkLoadProbe: { startedAt: number; visibleFrameAt: number } }).__inkLoadProbe;
     probe.startedAt = performance.now();
@@ -272,7 +272,7 @@ test("opening feedback appears in one frame and toolbar input stays live", async
 
 test("reopening a large notebook paints visible ink and services input within strict latency budgets", async ({ page }) => {
   await page.addInitScript(() => {
-    const probe = { openAt: 0, rawReadAt: 0, feedbackAt: 0, firstTileAt: 0, firstInkFrameAt: 0, inkStableFrameAt: 0,
+    const probe = { openAt: 0, rawReadAt: 0, feedbackAt: 0, firstTileAt: 0, firstInkFrameAt: 0, fullTileAt: 0, inkStableFrameAt: 0,
       clickTaskAt: 0, clickAppliedAt: 0, highlighterPressed: false, feedbackShownSynchronously: false,
       stages: [] as { name: string; duration: number }[],
       longTasks: [] as { start: number; duration: number }[] };
@@ -280,15 +280,7 @@ test("reopening a large notebook paints visible ink and services input within st
     if (typeof PerformanceObserver === "function") new PerformanceObserver((list) => {
       probe.longTasks.push(...list.getEntries().map((entry) => ({ start: entry.startTime, duration: entry.duration })));
     }).observe({ type: "longtask", buffered: true });
-    const hasInk = (canvas: HTMLCanvasElement): boolean => {
-      const context = canvas.getContext("2d");
-      if (!context || canvas.width === 0 || canvas.height === 0) return false;
-      // The fixture's first stroke starts near the top-left of the first tile;
-      // sample only that patch so the probe itself cannot stall the UI thread.
-      const pixels = context.getImageData(0, 0, Math.min(128, canvas.width), Math.min(128, canvas.height)).data;
-      for (let offset = 3; offset < pixels.length; offset += 4) if (pixels[offset] > 0) return true;
-      return false;
-    };
+    const scheduledInkChecks = new WeakSet<HTMLElement>();
     new MutationObserver((records) => {
       for (const record of records) {
         const target = record.target instanceof HTMLElement ? record.target : null;
@@ -312,19 +304,35 @@ test("reopening a large notebook paints visible ink and services input within st
         for (const layer of layers) {
           if (!layer.childElementCount) continue;
           if (probe.firstTileAt === 0) probe.firstTileAt = performance.now();
-          const canvas = layer.querySelector<HTMLCanvasElement>("canvas");
-          if (!canvas || probe.firstInkFrameAt > 0) continue;
           const scrollerRect = document.querySelector<HTMLElement>(".ink-page-scroller")?.getBoundingClientRect();
-          const canvasRect = canvas.getBoundingClientRect();
-          const visible = !!scrollerRect && canvasRect.width > 0 && canvasRect.height > 0
-            && canvasRect.right > scrollerRect.left && canvasRect.left < scrollerRect.right
-            && canvasRect.bottom > scrollerRect.top && canvasRect.top < scrollerRect.bottom;
-          if (!visible) continue;
+          const visibleCanvases = Array.from(layer.querySelectorAll<HTMLCanvasElement>("canvas")).filter((canvas) => {
+            const rect = canvas.getBoundingClientRect();
+            if (!scrollerRect || rect.width <= 0 || rect.height <= 0 || rect.right <= scrollerRect.left
+              || rect.left >= scrollerRect.right || rect.bottom <= scrollerRect.top || rect.top >= scrollerRect.bottom) return false;
+            const cssWidth = Number.parseFloat(canvas.style.width);
+            if (cssWidth > 0 && canvas.width / cssWidth >= 0.9 && probe.fullTileAt === 0) probe.fullTileAt = performance.now();
+            return true;
+          });
+          if (visibleCanvases.length === 0 || probe.inkStableFrameAt > 0 || scheduledInkChecks.has(layer)) continue;
+          scheduledInkChecks.add(layer);
           requestAnimationFrame(() => {
-            if (!canvas.isConnected || !hasInk(canvas)) return;
-            probe.firstInkFrameAt = performance.now();
+            scheduledInkChecks.delete(layer);
+            const currentInk = Array.from(layer.querySelectorAll<HTMLCanvasElement>("canvas")).some((canvas) => {
+              const rect = canvas.getBoundingClientRect();
+              return canvas.isConnected && canvas.width > 0 && !!scrollerRect && rect.width > 0 && rect.height > 0
+                && rect.right > scrollerRect.left && rect.left < scrollerRect.right
+                && rect.bottom > scrollerRect.top && rect.top < scrollerRect.bottom;
+            });
+            if (!currentInk) return;
+            if (probe.firstInkFrameAt === 0) probe.firstInkFrameAt = performance.now();
             requestAnimationFrame(() => {
-              if (canvas.isConnected && hasInk(canvas)) probe.inkStableFrameAt = performance.now();
+              const stableInk = Array.from(layer.querySelectorAll<HTMLCanvasElement>("canvas")).some((canvas) => {
+                const rect = canvas.getBoundingClientRect();
+                return canvas.isConnected && canvas.width > 0 && !!scrollerRect && rect.width > 0 && rect.height > 0
+                  && rect.right > scrollerRect.left && rect.left < scrollerRect.right
+                  && rect.bottom > scrollerRect.top && rect.top < scrollerRect.bottom;
+              });
+              if (stableInk) probe.inkStableFrameAt = performance.now();
             });
           });
         }
@@ -336,7 +344,7 @@ test("reopening a large notebook paints visible ink and services input within st
   await page.waitForTimeout(150);
   await page.evaluate(() => {
     const win = window as unknown as { __inkOpenProbe: {
-      openAt: number; rawReadAt: number; feedbackAt: number; firstTileAt: number; firstInkFrameAt: number; inkStableFrameAt: number;
+      openAt: number; rawReadAt: number; feedbackAt: number; firstTileAt: number; firstInkFrameAt: number; fullTileAt: number; inkStableFrameAt: number;
       clickTaskAt: number; clickAppliedAt: number; highlighterPressed: boolean; feedbackShownSynchronously: boolean;
       stages: { name: string; duration: number }[]; longTasks: { start: number; duration: number }[];
     }; __inkNotesPreview: { view: any } };
@@ -356,9 +364,9 @@ test("reopening a large notebook paints visible ink and services input within st
     measured("renderAll", view, "renderAll");
     measured("tile.setPage", view.tiles, "setPage");
     measured("tile.update", view.tiles, "update");
-    const readRaw = view.store.readRaw.bind(view.store);
-    view.store.readRaw = async (...args: unknown[]) => {
-      const raw = await readRaw(...args);
+    const readRawSnapshot = view.store.readRawSnapshot.bind(view.store);
+    view.store.readRawSnapshot = async (...args: unknown[]) => {
+      const raw = await readRawSnapshot(...args);
       probe.rawReadAt = performance.now();
       return raw;
     };
@@ -368,6 +376,7 @@ test("reopening a large notebook paints visible ink and services input within st
     probe.longTasks.length = 0;
     probe.firstTileAt = 0;
     probe.firstInkFrameAt = 0;
+    probe.fullTileAt = 0;
     probe.inkStableFrameAt = 0;
     void view.onLoadFile(view.file);
     const overlay = document.querySelector<HTMLElement>(".ink-notebook-load-feedback");
@@ -375,8 +384,10 @@ test("reopening a large notebook paints visible ink and services input within st
   });
   await page.waitForFunction(() => (window as unknown as { __inkOpenProbe: { firstInkFrameAt: number } })
     .__inkOpenProbe.firstInkFrameAt > 0, undefined, { timeout: 5_000 });
+  await page.waitForFunction(() => (window as unknown as { __inkOpenProbe: { fullTileAt: number } })
+    .__inkOpenProbe.fullTileAt > 0, undefined, { timeout: 5_000 });
   const result = await page.evaluate(() => (window as unknown as { __inkOpenProbe: {
-    openAt: number; rawReadAt: number; feedbackAt: number; firstTileAt: number; firstInkFrameAt: number; inkStableFrameAt: number;
+    openAt: number; rawReadAt: number; feedbackAt: number; firstTileAt: number; firstInkFrameAt: number; fullTileAt: number; inkStableFrameAt: number;
     clickTaskAt: number; clickAppliedAt: number; highlighterPressed: boolean; feedbackShownSynchronously: boolean;
     stages: { name: string; duration: number }[];
     longTasks: { start: number; duration: number }[];
@@ -388,7 +399,8 @@ test("reopening a large notebook paints visible ink and services input within st
   console.log("large notebook reopen", { openToFeedbackMs: result.feedbackAt - result.openAt,
     openToRawReadMs: result.rawReadAt - result.openAt,
     feedbackToTileMs: result.firstTileAt - result.feedbackAt,
-    feedbackToInkMs: result.firstInkFrameAt - result.feedbackAt, inkVisibleMs, clickReadyMs, stages: result.stages,
+    feedbackToInkMs: result.firstInkFrameAt - result.feedbackAt, inkVisibleMs,
+    fullTileMs: result.fullTileAt - result.openAt, clickReadyMs, stages: result.stages,
     clickApplyMs: result.clickAppliedAt - result.clickTaskAt,
     longTasks: openingLongTasks.map((task) => Math.round(task.duration)) });
   expect(result.feedbackAt).toBeGreaterThan(0);
@@ -396,9 +408,10 @@ test("reopening a large notebook paints visible ink and services input within st
   expect(result.firstTileAt).toBeGreaterThan(0);
   expect(result.inkStableFrameAt).toBeGreaterThan(result.firstInkFrameAt);
   expect(result.highlighterPressed).toBe(true);
-  expect(result.firstTileAt - result.feedbackAt).toBeLessThan(30);
-  expect(inkVisibleMs).toBeLessThan(80);
-  expect(clickReadyMs).toBeLessThan(80);
+  expect(result.firstTileAt - result.feedbackAt).toBeLessThan(25);
+  expect(inkVisibleMs).toBeLessThan(50);
+  expect(result.fullTileAt - result.openAt).toBeLessThan(80);
+  expect(clickReadyMs).toBeLessThan(50);
   expect(result.clickAppliedAt - result.clickTaskAt).toBeLessThan(5);
   expect(Math.max(...result.stages.map((stage) => stage.duration))).toBeLessThan(16.7);
   expect(openingLongTasks.filter((task) => task.duration >= 50)).toEqual([]);
@@ -419,20 +432,14 @@ test("large notebook paints visible ink and keeps input live without Worker", as
       },
     });
     const probe = { workerUnavailable: false, loadCallAt: 0, feedbackAt: 0, clickTaskAt: 0,
-      feedbackShownSynchronously: false, feedbackSyncMs: 0, clickDurationMs: 0,
+      feedbackShownSynchronously: false, feedbackSyncMs: 0, clickDurationMs: 0, fullTileAt: 0,
       highlighterPressedAfterClick: false, firstTileAt: 0, firstInkAt: 0, inkStableAt: 0,
       longTasks: [] as { start: number; duration: number }[] };
     (window as unknown as { __inkFallbackProbe: typeof probe }).__inkFallbackProbe = probe;
     if (typeof PerformanceObserver === "function") new PerformanceObserver((list) => {
       probe.longTasks.push(...list.getEntries().map((entry) => ({ start: entry.startTime, duration: entry.duration })));
     }).observe({ type: "longtask", buffered: true });
-    const hasInk = (canvas: HTMLCanvasElement): boolean => {
-      const context = canvas.getContext("2d");
-      if (!context || canvas.width === 0 || canvas.height === 0) return false;
-      const pixels = context.getImageData(0, 0, Math.min(128, canvas.width), Math.min(128, canvas.height)).data;
-      for (let offset = 3; offset < pixels.length; offset += 4) if (pixels[offset] > 0) return true;
-      return false;
-    };
+    const scheduledInkChecks = new WeakSet<HTMLElement>();
     const observer = new MutationObserver((records) => {
       for (const record of records) {
         const target = record.target instanceof HTMLElement ? record.target : null;
@@ -457,16 +464,37 @@ test("large notebook paints visible ink and keeps input live without Worker", as
         for (const layer of layers) {
           if (!layer.childElementCount) continue;
           if (probe.firstTileAt === 0) probe.firstTileAt = performance.now();
-          const canvas = layer.querySelector<HTMLCanvasElement>("canvas");
           const scroller = document.querySelector<HTMLElement>(".ink-page-scroller");
-          if (!canvas || !scroller || probe.firstInkAt > 0) continue;
-          const canvasRect = canvas.getBoundingClientRect(), scrollerRect = scroller.getBoundingClientRect();
-          if (canvasRect.width <= 0 || canvasRect.height <= 0 || canvasRect.right <= scrollerRect.left
-            || canvasRect.left >= scrollerRect.right || canvasRect.bottom <= scrollerRect.top || canvasRect.top >= scrollerRect.bottom) continue;
+          const scrollerRect = scroller?.getBoundingClientRect();
+          const visibleCanvases = Array.from(layer.querySelectorAll<HTMLCanvasElement>("canvas")).filter((canvas) => {
+            const rect = canvas.getBoundingClientRect();
+            if (!scrollerRect || rect.width <= 0 || rect.height <= 0 || rect.right <= scrollerRect.left
+              || rect.left >= scrollerRect.right || rect.bottom <= scrollerRect.top || rect.top >= scrollerRect.bottom) return false;
+            const cssWidth = Number.parseFloat(canvas.style.width);
+            if (cssWidth > 0 && canvas.width / cssWidth >= 0.9 && probe.fullTileAt === 0) probe.fullTileAt = performance.now();
+            return true;
+          });
+          if (visibleCanvases.length === 0 || probe.inkStableAt > 0 || scheduledInkChecks.has(layer)) continue;
+          scheduledInkChecks.add(layer);
           requestAnimationFrame(() => {
-            if (!canvas.isConnected || !hasInk(canvas)) return;
-            probe.firstInkAt = performance.now();
-            requestAnimationFrame(() => { if (canvas.isConnected && hasInk(canvas)) probe.inkStableAt = performance.now(); });
+            scheduledInkChecks.delete(layer);
+            const currentInk = Array.from(layer.querySelectorAll<HTMLCanvasElement>("canvas")).some((canvas) => {
+              const rect = canvas.getBoundingClientRect();
+              return canvas.isConnected && canvas.width > 0 && !!scrollerRect && rect.width > 0 && rect.height > 0
+                && rect.right > scrollerRect.left && rect.left < scrollerRect.right
+                && rect.bottom > scrollerRect.top && rect.top < scrollerRect.bottom;
+            });
+            if (!currentInk) return;
+            if (probe.firstInkAt === 0) probe.firstInkAt = performance.now();
+            requestAnimationFrame(() => {
+              const stableInk = Array.from(layer.querySelectorAll<HTMLCanvasElement>("canvas")).some((canvas) => {
+                const rect = canvas.getBoundingClientRect();
+                return canvas.isConnected && canvas.width > 0 && !!scrollerRect && rect.width > 0 && rect.height > 0
+                  && rect.right > scrollerRect.left && rect.left < scrollerRect.right
+                  && rect.bottom > scrollerRect.top && rect.top < scrollerRect.bottom;
+              });
+              if (stableInk) probe.inkStableAt = performance.now();
+            });
           });
         }
       }
@@ -480,12 +508,13 @@ test("large notebook paints visible ink and keeps input live without Worker", as
     const probe = (window as unknown as { __inkFallbackProbe: {
       loadCallAt: number; feedbackAt: number; feedbackShownSynchronously: boolean; feedbackSyncMs: number;
       clickTaskAt: number; clickDurationMs: number; highlighterPressedAfterClick: boolean;
-      firstTileAt: number; firstInkAt: number; inkStableAt: number;
+      firstTileAt: number; firstInkAt: number; inkStableAt: number; fullTileAt: number;
       longTasks: { start: number; duration: number }[];
     } }).__inkFallbackProbe;
     probe.firstTileAt = 0;
     probe.firstInkAt = 0;
     probe.inkStableAt = 0;
+    probe.fullTileAt = 0;
     probe.feedbackAt = 0;
     probe.clickTaskAt = 0;
     probe.longTasks.length = 0;
@@ -501,9 +530,11 @@ test("large notebook paints visible ink and keeps input live without Worker", as
   });
   await page.waitForFunction(() => (window as unknown as { __inkFallbackProbe: { firstInkAt: number } })
     .__inkFallbackProbe.firstInkAt > 0, undefined, { timeout: 5_000 });
+  await page.waitForFunction(() => (window as unknown as { __inkFallbackProbe: { fullTileAt: number } })
+    .__inkFallbackProbe.fullTileAt > 0, undefined, { timeout: 5_000 });
   await page.waitForTimeout(50);
   const result = await page.evaluate(() => (window as unknown as { __inkFallbackProbe: {
-    workerUnavailable: boolean; loadCallAt: number; feedbackAt: number; feedbackShownSynchronously: boolean;
+    workerUnavailable: boolean; loadCallAt: number; feedbackAt: number; feedbackShownSynchronously: boolean; fullTileAt: number;
     feedbackSyncMs: number; clickTaskAt: number; clickDurationMs: number; highlighterPressedAfterClick: boolean;
     firstTileAt: number; firstInkAt: number; inkStableAt: number;
     longTasks: { start: number; duration: number }[];
@@ -511,6 +542,9 @@ test("large notebook paints visible ink and keeps input live without Worker", as
   const openingLongTasks = result.longTasks.filter((task) => task.start >= result.loadCallAt && task.start < result.firstInkAt);
   const openToInkMs = result.firstInkAt - result.loadCallAt;
   const clickReadyMs = result.clickTaskAt - result.feedbackAt;
+  console.log("large notebook without Worker", { openToInkMs, feedbackToTileMs: result.firstTileAt - result.feedbackAt,
+    clickReadyMs, fullTileMs: result.fullTileAt - result.loadCallAt, clickDurationMs: result.clickDurationMs,
+    longTasks: openingLongTasks.map((task) => Math.round(task.duration)) });
   expect(result.workerUnavailable).toBe(true);
   expect(result.feedbackShownSynchronously).toBe(true);
   expect(result.feedbackSyncMs).toBeLessThan(5);
@@ -518,8 +552,9 @@ test("large notebook paints visible ink and keeps input live without Worker", as
   expect(result.clickDurationMs).toBeLessThan(5);
   expect(result.firstTileAt).toBeGreaterThan(0);
   expect(result.inkStableAt).toBeGreaterThan(result.firstInkAt);
-  expect(result.firstTileAt - result.feedbackAt).toBeLessThan(30);
-  expect(openToInkMs).toBeLessThan(80);
-  expect(clickReadyMs).toBeLessThan(80);
+  expect(result.firstTileAt - result.feedbackAt).toBeLessThan(25);
+  expect(openToInkMs).toBeLessThan(50);
+  expect(result.fullTileAt - result.loadCallAt).toBeLessThan(80);
+  expect(clickReadyMs).toBeLessThan(50);
   expect(openingLongTasks.filter((task) => task.duration >= 50)).toEqual([]);
 });

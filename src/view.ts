@@ -209,12 +209,17 @@ export class InkView extends InkWritingView {
 
     let notebook: InkNotebook | undefined;
     let finishWorkerLoad: (() => void) | undefined;
+    let workerBytes: ArrayBuffer | undefined;
     if (this.workers) {
       const session = this.workers.createSession(() => ({ notebook: this.notebook, revision: this.workerRevision }));
       this.workerSession = session;
       let raw: string | undefined;
       try {
-        raw = await this.store.readRaw(file);
+        if (typeof Worker !== "undefined" && typeof this.store.readRawSnapshot === "function") {
+          const snapshot = await this.store.readRawSnapshot(file);
+          raw = snapshot.raw;
+          workerBytes = snapshot.workerBytes;
+        } else raw = await this.store.readRaw(file);
       } catch {
         // A store may support parsed reads but not raw reads; preserve its
         // existing fallback and surface errors from that authoritative path.
@@ -257,12 +262,17 @@ export class InkView extends InkWritingView {
         }
         finishWorkerLoad = () => {
           modelReady = true;
+          if (typeof Worker === "undefined") {
+            session.dispose();
+            if (this.workerSession === session) this.workerSession = null;
+            return;
+          }
           window.requestAnimationFrame(() => {
             if (loadGeneration !== this.notebookLoadGeneration || this.workerSession !== session) {
               session.dispose();
               return;
             }
-            void session.initializeRaw(raw, 0).then(() => {
+            void session.initializeRaw(workerBytes ?? raw, 0).then(() => {
               workerReady = true;
               connectWorker();
             }).catch((error) => {
@@ -338,17 +348,14 @@ export class InkView extends InkWritingView {
     const toggle = this.addIconButton(navigation, "panel-left", "Pages", () => {
       const hidden = !this.root.hasClass("ink-rail-hidden");
       this.root.toggleClass("ink-rail-hidden", hidden);
+      if (hidden) this.thumbnailWork.cancelAll();
       // An explicit toggle reclaims the rail, so a pending fast-paging burst
       // must not hand it back to the state the user just overrode.
       this.fastPagingRailBorrowed = false;
       toggle.setAttribute("aria-pressed", String(!hidden));
-      // The rail state and button feedback are already visible. Defer geometry
-      // reads and canvas resizing until the next frame so this click handler
-      // stays short while a large page is rendering.
-      window.requestAnimationFrame(() => this.resizeCanvas());
-      // Thumbnails skipped painting while the rail was collapsed (zero
-      // width); repaint once the expand transition has revealed them.
-      if (!hidden) this.scheduleRailThumbnailRefresh();
+      // Keep the button feedback synchronous; resize once after the rail's
+      // width animation instead of rerasterizing on every intermediate size.
+      this.scheduleRailTransitionSettle();
     });
     toggle.setAttribute("aria-pressed", String(!this.root.hasClass("ink-rail-hidden")));
     this.buildWritingSections(toolbar, start);
@@ -439,7 +446,14 @@ export class InkView extends InkWritingView {
       this.finishPinchRender();
       this.onTouchCancel(event);
     }, { passive: false });
-    const observer = new ResizeObserver(() => { this.resizeCanvas(); this.revealInlineEditor(); });
+    const observer = new ResizeObserver(() => {
+      // The page rail animates its width for 200ms. Resizing the backing
+      // canvas on every intermediate width makes the rest of the editor miss
+      // frames; the transition settle callback performs one final resize.
+      if (this.railRevealTimer !== undefined) return;
+      this.resizeCanvas();
+      this.revealInlineEditor();
+    });
     observer.observe(this.pageScroller);
     this.register(() => observer.disconnect());
   }
@@ -774,7 +788,7 @@ export class InkView extends InkWritingView {
           // Paint a small first slice immediately so a visible rail never
           // waits for a later animation frame to show its first handwriting.
           // Remaining work shares the frame budget across all thumbnails.
-          if (!immediateFirstSlice || !drawUntil(performance.now() + 2)) this.queueThumbnailWork(canvas, drawUntil);
+          if (!immediateFirstSlice || !drawUntil(performance.now() + 1)) this.queueThumbnailWork(canvas, drawUntil);
         });
       });
     } catch (error) {
@@ -817,13 +831,15 @@ export class InkView extends InkWritingView {
     });
   }
 
-  /** Thumbnails blank-paint while the expand transition starts from 0; once
-   *  the rail reached its width, repaint them at full resolution. */
-  private scheduleRailThumbnailRefresh(): void {
+  /** Resize once after the rail animation; repaint visible thumbnails if it opened. */
+  private scheduleRailTransitionSettle(): void {
     if (this.railRevealTimer !== undefined) window.clearTimeout(this.railRevealTimer);
     this.railRevealTimer = window.setTimeout(() => {
       this.railRevealTimer = undefined;
-      if (this.viewReady && !this.root.hasClass("ink-rail-hidden")) this.redrawPageThumbnails();
+      if (!this.viewReady) return;
+      this.resizeCanvas();
+      this.revealInlineEditor();
+      if (!this.root.hasClass("ink-rail-hidden")) this.redrawPageThumbnails();
     }, RAIL_TRANSITION_MS + 30);
   }
 
@@ -834,15 +850,15 @@ export class InkView extends InkWritingView {
     if (!this.viewReady || !this.root.hasClass("ink-rail-hidden")) return;
     this.fastPagingRailBorrowed = true;
     this.root.removeClass("ink-rail-hidden");
-    this.resizeCanvas();
-    this.scheduleRailThumbnailRefresh();
+    this.scheduleRailTransitionSettle();
   }
 
   protected onFastPagingRailCollapsed(): void {
     if (!this.fastPagingRailBorrowed) return;
     this.fastPagingRailBorrowed = false;
     this.root.addClass("ink-rail-hidden");
-    this.resizeCanvas();
+    this.thumbnailWork.cancelAll();
+    this.scheduleRailTransitionSettle();
   }
 
   private renderPage(): void {
@@ -1363,21 +1379,16 @@ export class InkView extends InkWritingView {
     this.destroySwipeStage();
     this.pageNavigationGeneration += 1;
     this.finishPointerInput(false);
-    const before = cloneNotebook(this.notebook);
     const beforePageId = this.currentPage().id;
     const now = Date.now();
     index = Math.max(0, Math.min(index, this.notebook.pages.length));
     const page: InkPage = { id: newId("page"), title: `Page ${this.notebook.pages.length + 1}`, paper: "blank", strokes: [], deletedStrokeIds: [], createdAt: now, updatedAt: now };
     this.notebook.pages.splice(index, 0, page);
-    this.notebook.pageOrder.splice(index, 0, page.id);
-    this.notebook.pageOrderUpdatedAt = now;
-    this.notebook.updatedAt = now;
-    this.dirtyRevision += 1;
-    this.queueWorkerOperation({ type: "page-operation", action: "add", page: clonePage(page),
-      pageOrder: [...this.notebook.pageOrder], pageOrderUpdatedAt: now, notebookUpdatedAt: now });
     this.pageIndex = index;
     this.resetPageView();
-    this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, page.id);
+    this.finishPageOrderChange(now, { type: "page-operation", action: "add", page: clonePage(page),
+      pageOrder: this.notebook.pages.map((candidate) => candidate.id), pageOrderUpdatedAt: now, notebookUpdatedAt: now });
+    this.pushCommand(this.pageAdditionCommand(page, index, beforePageId));
     this.renderPageRail();
     this.renderPage();
     this.scheduleSave();
@@ -1592,6 +1603,37 @@ export class InkView extends InkWritingView {
     this.dirtyRevision += 1;
     this.queueWorkerOperation(operation ?? { type: "page-operation", action: "reorder",
       pageOrder: [...this.notebook.pageOrder], pageOrderUpdatedAt: now, notebookUpdatedAt: now });
+  }
+
+  private pageAdditionCommand(page: InkPage, insertionIndex: number, previousPageId: string): EditCommand {
+    let currentPage = page;
+    return {
+      undo: () => {
+        const index = this.notebook.pages.findIndex((candidate) => candidate.id === currentPage.id);
+        if (index < 0 || this.notebook.pages.length <= 1) return;
+        const [removed] = this.notebook.pages.splice(index, 1);
+        const now = Date.now();
+        this.notebook.deletedPages[removed.id] = Math.max(this.notebook.deletedPages[removed.id] ?? 0, now);
+        const selectedIndex = this.notebook.pages.findIndex((candidate) => candidate.id === previousPageId);
+        this.pageIndex = selectedIndex >= 0 ? selectedIndex : Math.max(0, Math.min(index, this.notebook.pages.length - 1));
+        this.resetPageView();
+        this.finishPageOrderChange(now, { type: "page-operation", action: "delete", pageId: removed.id,
+          deletedAt: now, pageOrder: this.notebook.pages.map((candidate) => candidate.id),
+          pageOrderUpdatedAt: now, notebookUpdatedAt: now });
+      },
+      redo: () => {
+        const now = Date.now();
+        if (currentPage.id in this.notebook.deletedPages) currentPage = clonePageAsNew(currentPage, currentPage.title, now);
+        const index = Math.max(0, Math.min(insertionIndex, this.notebook.pages.length));
+        this.notebook.pages.splice(index, 0, currentPage);
+        this.pageIndex = index;
+        this.resetPageView();
+        this.finishPageOrderChange(now, { type: "page-operation", action: "add", page: clonePage(currentPage),
+          pageOrder: this.notebook.pages.map((candidate) => candidate.id), pageOrderUpdatedAt: now,
+          notebookUpdatedAt: now });
+      },
+      rebuild: true,
+    };
   }
 
   private pushNotebookCommand(before: InkNotebook, after: InkNotebook, beforePageId: string, afterPageId: string): void {

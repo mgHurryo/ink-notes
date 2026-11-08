@@ -98,7 +98,10 @@ export class InkWorkerCore {
       if (request.notebookRevision !== request.revision) {
         throw new ProtocolError("revision-gap", "Initialize request revision metadata does not match its notebook revision");
       }
-      const notebook = parseNotebook(request.raw);
+      const raw = typeof request.raw === "string" ? request.raw
+        : request.raw instanceof ArrayBuffer ? new TextDecoder("utf-8", { fatal: true }).decode(request.raw)
+          : await request.raw.text();
+      const notebook = parseNotebook(raw);
       this.sessions.set(request.sessionId, {
         generation: request.generation,
         notebook,

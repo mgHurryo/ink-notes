@@ -266,13 +266,18 @@ export class InkWorkerSession {
     return this.service.canRenderTiles();
   }
 
-  async initializeRaw(raw: string, revision: number): Promise<void> {
+  async initializeRaw(raw: string | Blob | ArrayBuffer, revision: number): Promise<void> {
     this.generation += 1;
     this.initialized = false;
+    // Vault snapshots transfer their existing UTF-8 bytes without copying or
+    // re-encoding the notebook-sized text on the UI thread. String-only stores
+    // retain a Blob fallback for a cheaper structured clone.
+    const payload = typeof raw === "string" && typeof Worker !== "undefined" && typeof Blob !== "undefined"
+      ? new Blob([raw], { type: "text/plain" }) : raw;
     const initialization = this.service.send({
       type: "initialize-raw", sessionId: this.id, generation: this.generation,
-      notebookRevision: revision, raw, revision,
-    }).then((response) => {
+      notebookRevision: revision, raw: payload, revision,
+    }, true, false, payload instanceof ArrayBuffer ? [payload] : []).then((response) => {
       if (response.type !== "initialized") throw unexpected(response);
       this.mirroredRevision = response.revision;
       this.initialized = true;

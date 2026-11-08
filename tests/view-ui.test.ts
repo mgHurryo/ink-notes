@@ -357,6 +357,7 @@ describe("reference-style editor", () => {
     Array.from(document.querySelectorAll<HTMLButtonElement>(".preview-menu button"))
       .find((item) => item.textContent === label)!.click();
     const added = host.notebook.pages[index];
+    const originalAddedId = added.id;
     expect(host.pageIndex).toBe(index);
     expect(added).toMatchObject({ paper: "blank", strokes: [] });
     expect(host.notebook.pageOrder).toEqual(host.notebook.pages.map((page) => page.id));
@@ -367,6 +368,7 @@ describe("reference-style editor", () => {
     button("Redo").click();
     expect(host.pageIndex).toBe(index);
     expect(host.notebook.pages[index].strokes).toEqual([]);
+    expect(host.notebook.pages[index].id).not.toBe(originalAddedId);
   });
 
   it("switches between the plus and options menus and toggles plus closed", () => {

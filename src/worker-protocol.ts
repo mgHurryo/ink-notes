@@ -100,7 +100,7 @@ interface RequestBase {
 }
 
 export type InkWorkerRequest =
-  | RequestBase & { type: "initialize-raw"; raw: string; revision: number }
+  | RequestBase & { type: "initialize-raw"; raw: string | Blob | ArrayBuffer; revision: number }
   | RequestBase & { type: "initialize-notebook"; notebook: InkNotebook; revision: number }
   | RequestBase & { type: "apply-operation"; operation: NotebookOperation; revision: number }
   | RequestBase & { type: "barrier"; minimumRevision: number }

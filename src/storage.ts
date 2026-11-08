@@ -41,6 +41,14 @@ export class NotebookStore {
     return this.vault.read(file);
   }
 
+  /** Reads notebook text and its transferable bytes without re-encoding text on the UI thread. */
+  async readRawSnapshot(file: TFile): Promise<{ raw: string; workerBytes?: ArrayBuffer }> {
+    if (typeof this.vault.readBinary !== "function") return { raw: await this.readRaw(file) };
+    const workerBytes = await this.vault.readBinary(file);
+    const raw = new TextDecoder("utf-8", { fatal: true }).decode(workerBytes);
+    return { raw, workerBytes };
+  }
+
   async writeIfUnchanged(file: TFile, expectedRaw: string, nextRaw: string): Promise<boolean> {
     let matched = false;
     try {

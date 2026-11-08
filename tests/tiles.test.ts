@@ -53,6 +53,22 @@ describe("tile spatial index", () => {
     a.updatedAt++; index.sync([a]);
     expect(index.revisions.get("0:0")).toBeGreaterThan(revision);
   });
+  it("reuses an unchanged page index across navigation and syncs changed page revisions", () => {
+    const page = { id: "page", title: "Page", paper: "ruled" as const, strokes: [stroke("a", 0.1, 0.1)],
+      deletedStrokeIds: [], createdAt: 1, updatedAt: 1 } as InkPage;
+    const renderer = new TileRenderer({ replaceChildren: vi.fn() } as unknown as HTMLElement);
+    renderer.setPage(page, 1000, 1000);
+    const index = (renderer as unknown as { active: { index: StrokeIndex } }).active.index;
+    const sync = vi.spyOn(index, "sync");
+
+    renderer.setPage(page, 1000, 1000);
+    expect(sync).not.toHaveBeenCalled();
+    page.updatedAt += 1;
+    renderer.setPage(page, 1000, 1000);
+    expect(sync).toHaveBeenCalledOnce();
+    expect(sync).toHaveBeenCalledWith(page.strokes, undefined);
+    renderer.dispose();
+  });
   it.each(["pen", "highlighter"] as const)("excludes the live %s until committed", (tool) => {
     const index = new StrokeIndex(1000, 1000), a = { ...stroke("a", 0.1, 0.1), tool };
     index.sync([a], a);
@@ -250,19 +266,19 @@ describe("interactive tile commits", () => {
     const host = { children: [] };
     const state = { id: 1, index: { width: 384, height: 128,
       revisions: new Map([["0:0", 1], ["1:0", 1], ["2:0", 1]]), hasCell: () => true, query: () => [] } };
-    const preview = { cell: "0:0", density: 1 };
+    const preview = { cell: "0:0", density: 0.5 };
     const renderer = Object.create(TileRenderer.prototype) as any;
     Object.assign(renderer, {
       active: state, disposed: false, host, density: 1, visible: new Set(), viewport: { x: 0, y: 0, width: 1, height: 1 },
       cache: new Map(), jobs: [], heldCells: new Set(), backend: { renderTile: vi.fn() },
-      get: vi.fn(() => undefined), fallback: vi.fn(() => undefined), paint: vi.fn(() => preview),
+      get: vi.fn(() => undefined), fallback: vi.fn(() => undefined), preview: vi.fn(() => preview),
       attach: vi.fn(), isHeld: vi.fn(() => false), schedule: vi.fn(),
     });
 
     renderer.update({ x: 0, y: 0, width: 384, height: 128 }, 2, true);
 
-    expect(renderer.paint).toHaveBeenCalledOnce();
-    expect(renderer.paint).toHaveBeenCalledWith(expect.objectContaining({ cell: "0:0", density: 1 }));
+    expect(renderer.preview).toHaveBeenCalledOnce();
+    expect(renderer.preview).toHaveBeenCalledWith(expect.objectContaining({ cell: "0:0", density: 0.5 }));
     expect(renderer.attach).toHaveBeenCalledOnce();
     expect(renderer.attach).toHaveBeenCalledWith(preview);
     expect(renderer.jobs).toHaveLength(3);
@@ -283,7 +299,8 @@ describe("interactive tile commits", () => {
       },
     };
     const setCssStyles = function(this: { style: object }, styles: object) { Object.assign(this.style, styles); };
-    const context = () => ({ setTransform: vi.fn(), drawImage: vi.fn(), save: vi.fn(), restore: vi.fn(), fill: vi.fn(), stroke: vi.fn() });
+    const context = () => ({ setTransform: vi.fn(), drawImage: vi.fn(), save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(),
+      moveTo: vi.fn(), lineTo: vi.fn(), arc: vi.fn(), fill: vi.fn(), stroke: vi.fn() });
     vi.stubGlobal("document", { createElement: vi.fn((tag: string) => {
       if (tag === "canvas") return { width: 0, height: 0, style: {}, setCssStyles, getContext: () => context() };
       const node: any = { dataset: {} as Record<string, string>, style: {}, setCssStyles, appendChild: vi.fn(),
@@ -543,7 +560,7 @@ describe("interactive tile commits", () => {
       frame: null, active: state, renderGeneration: 0, pendingTiles: new Map(), cache: new Map(), jobs: [],
       heldCells: new Set(), droppedRefine: false, host: { children: [] },
       get: vi.fn(() => undefined), fallback: vi.fn(() => undefined), isHeld: vi.fn(() => false),
-      paint: vi.fn(() => ({})), attach: vi.fn(),
+      paint: vi.fn(() => ({})), preview: vi.fn(() => ({})), attach: vi.fn(),
       schedule: vi.fn(function(this: any) { proto.schedule.call(this); }) });
     const viewport = { x: 0, y: 0, width: 128, height: 128 };
     renderer.commitInteractive(viewport, 3, true, onComplete);

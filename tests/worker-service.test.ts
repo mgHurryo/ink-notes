@@ -69,6 +69,40 @@ describe("InkWorkerService recovery", () => {
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
 
+  it("sends raw notebook snapshots in an immutable Blob", async () => {
+    const notebook = createNotebook("Blob snapshot");
+    const service = new InkWorkerService(vi.fn());
+    const session = service.createSession(() => ({ notebook, revision: 0 }));
+    await session.initializeRaw(JSON.stringify(notebook), 0);
+    const request = FakeWorker.instances[0].requests.find((item) => item.type === "initialize-raw");
+    expect(request?.type).toBe("initialize-raw");
+    if (request?.type !== "initialize-raw") throw new Error("raw initialization was not sent");
+    expect(request.raw).toBeInstanceOf(Blob);
+    if (typeof request.raw === "string") throw new Error("raw initialization did not use a Blob");
+    if (request.raw instanceof ArrayBuffer) throw new Error("raw initialization unexpectedly used bytes");
+    expect(await request.raw.text()).toBe(JSON.stringify(notebook));
+    service.dispose();
+  });
+
+  it("transfers vault snapshot bytes without cloning them on the UI thread", async () => {
+    const notebook = createNotebook("Transferred snapshot");
+    const text = JSON.stringify(notebook);
+    const bytes = new TextEncoder().encode(text);
+    const raw = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+    const service = new InkWorkerService(vi.fn());
+    const session = service.createSession(() => ({ notebook, revision: 0 }));
+
+    await session.initializeRaw(raw, 0);
+
+    expect(raw.byteLength).toBe(0);
+    const request = FakeWorker.instances[0].requests.find((item) => item.type === "initialize-raw");
+    expect(request?.type).toBe("initialize-raw");
+    if (request?.type !== "initialize-raw" || typeof request.raw === "string" || request.raw instanceof Blob)
+      throw new Error("vault snapshot bytes were not transferred");
+    expect(new TextDecoder().decode(request.raw)).toBe(text);
+    service.dispose();
+  });
+
   it("recovers once from a crash without replaying a detached operation", async () => {
     const report = vi.fn();
     const notebook = createNotebook();

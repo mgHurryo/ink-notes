@@ -83,13 +83,16 @@ if (!performanceNotebook) {
   page.strokes.push(previewStroke);
 }
 let diskRaw = JSON.stringify(notebook);
+let diskBytes = new TextEncoder().encode(diskRaw).buffer;
 const sourceRaw = performanceNotebook ? createPerformanceNotebookRaw(diskRaw, page.id, performancePageCount) : Promise.resolve(diskRaw);
 const store = {
   read: async () => normalizeNotebook(parseStoredJson(diskRaw), { reuseCanonicalPoints: true }),
   readRaw: async () => diskRaw,
+  readRawSnapshot: async () => ({ raw: diskRaw, workerBytes: diskBytes.slice(0) }),
   writeIfUnchanged: async (_file: unknown, expected: string, next: string) => {
     if (expected !== diskRaw) return false;
     diskRaw = next;
+    diskBytes = new TextEncoder().encode(diskRaw).buffer;
     return true;
   },
   save: async (_file: unknown, value: unknown) => value,
@@ -106,6 +109,7 @@ void (async () => {
   // A real note is already on disk when a user opens it. Keep synthetic
   // fixture construction outside the measured open path as well.
   diskRaw = await sourceRaw;
+  diskBytes = new TextEncoder().encode(diskRaw).buffer;
   void workers.warm().catch(() => undefined);
   await view.onLoadFile(view.file);
   const compareRenderer = async (mode: RendererComparisonMode = "pen") => {
