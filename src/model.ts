@@ -159,6 +159,39 @@ export function normalizeNotebook(value: unknown, options: { reuseCanonicalPoint
   const pages = Array.isArray(raw.pages) ? raw.pages : [];
   const normalizedPages = pages.map((page) => normalizePage(page, options.reuseCanonicalPoints === true))
     .filter((page): page is InkPage => page !== null);
+  return normalizeNotebookFromPages(raw, normalizedPages);
+}
+
+/** Normalize parsed notebook strokes in bounded slices so opening stays interactive. */
+export async function normalizeNotebookInSlices(value: unknown,
+  options: { reuseCanonicalPoints?: boolean } = {}, isCancelled: () => boolean = () => false): Promise<InkNotebook> {
+  if (!value || typeof value !== "object") return createNotebook();
+  const raw = value as Partial<InkNotebook>;
+  const pages = Array.isArray(raw.pages) ? raw.pages : [];
+  const normalizedPages: InkPage[] = [];
+  const reuseCanonicalPoints = options.reuseCanonicalPoints === true;
+  let deadline = performance.now() + 4;
+  for (const rawPage of pages) {
+    const pageValue = rawPage && typeof rawPage === "object" ? rawPage as Partial<InkPage> : null;
+    const rawStrokes = Array.isArray(pageValue?.strokes) ? pageValue.strokes : [];
+    const page = normalizePage(pageValue ? { ...pageValue, strokes: [] } : rawPage, reuseCanonicalPoints);
+    if (!page) continue;
+    const deleted = new Set(page.deletedStrokeIds);
+    for (const rawStroke of rawStrokes) {
+      if (isCancelled()) throw new Error("Notebook open cancelled");
+      const stroke = normalizeStroke(rawStroke, reuseCanonicalPoints);
+      if (stroke && !deleted.has(stroke.id)) page.strokes.push(stroke);
+      if (performance.now() >= deadline) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        deadline = performance.now() + 4;
+      }
+    }
+    normalizedPages.push(page);
+  }
+  return normalizeNotebookFromPages(raw, normalizedPages);
+}
+
+function normalizeNotebookFromPages(raw: Partial<InkNotebook>, normalizedPages: InkPage[]): InkNotebook {
   // External rewrites and manual sync-conflict merges can leave two entries
   // with the same page id in one file. Folding them with mergePages keeps
   // every copy's content; without this, the byId map below would silently

@@ -10,8 +10,9 @@ import {
   mergeNotebooks,
   newId,
   normalizeNotebook,
+  normalizeNotebookInSlices,
 } from "./model";
-import { parseStoredJson } from "./storage-codec";
+import { parseStoredJson, parseStoredJsonProgressively } from "./storage-codec";
 import { NotebookStore } from "./storage";
 import { reconcileNotebook } from "./notebook-reconciliation";
 import { exportNotebookPdf, exportPathFor, notebookHasInk } from "./pdf-export";
@@ -58,6 +59,9 @@ import { InkWorkerRequestError, InkWorkerService, InkWorkerSession } from "./wor
 export const VIEW_TYPE_INK = "ink-notes-view";
 
 const SAVE_CONFLICT_RETRIES = 3;
+// Above this raw size, synchronous parse and schema validation can occupy
+// more than one input frame on supported low-power devices.
+const PROGRESSIVE_NOTEBOOK_OPEN_BYTES = 256 * 1024;
 
 const OVERLAY_RESIZE_BUDGET = 4_000_000;
 /** Swipe previews must match live tile density (dpr x zoom): the 4M overlay
@@ -199,6 +203,8 @@ export class InkView extends InkWritingView {
 
   async onLoadFile(file: TFile): Promise<void> {
     const loadGeneration = ++this.notebookLoadGeneration;
+    const previousNotebook = this.notebook;
+    const previousPageIndex = this.pageIndex;
     this.showNotebookLoadFeedback(file.basename);
     this.pageNavigationGeneration += 1;
     this.destroySwipeStage();
@@ -210,6 +216,7 @@ export class InkView extends InkWritingView {
     let notebook: InkNotebook | undefined;
     let finishWorkerLoad: (() => void) | undefined;
     let workerBytes: ArrayBuffer | undefined;
+    let progressivePreviewInstalled = false;
     if (this.workers) {
       const session = this.workers.createSession(() => ({ notebook: this.notebook, revision: this.workerRevision }));
       this.workerSession = session;
@@ -238,6 +245,7 @@ export class InkView extends InkWritingView {
         let modelReady = false;
         let workerReady = false;
         let workerFailed = false;
+        let workerLoadStarted = false;
         let workerError: unknown;
         const connectWorker = (): void => {
           if (!modelReady || loadGeneration !== this.notebookLoadGeneration || this.workerSession !== session) return;
@@ -248,19 +256,9 @@ export class InkView extends InkWritingView {
           });
           this.tiles?.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
         };
-        // The UI needs its own editable model, but cloning an 80k-point object
-        // tree back from the Worker stalls the opening thread. Start the
-        // Worker from the same raw snapshot only after the first UI frame so
-        // duplicate parsing cannot delay the visible page and input feedback.
-        try {
-          notebook = normalizeNotebook(parseStoredJson(raw), { reuseCanonicalPoints: true });
-        } catch (loadError) {
-          session.dispose();
-          if (this.workerSession === session) this.workerSession = null;
-          if (loadGeneration === this.notebookLoadGeneration) this.showNotebookLoadError(file.basename, loadError);
-          throw loadError;
-        }
         finishWorkerLoad = () => {
+          if (workerLoadStarted) return;
+          workerLoadStarted = true;
           modelReady = true;
           if (typeof Worker === "undefined") {
             session.dispose();
@@ -282,6 +280,48 @@ export class InkView extends InkWritingView {
             });
           });
         };
+
+        try {
+          if (raw.length >= PROGRESSIVE_NOTEBOOK_OPEN_BYTES) {
+            // Let the opening state reach the screen and the event loop before
+            // parsing a large file. The parser then yields between small stroke
+            // records and provides an initial page preview as soon as possible.
+            await waitForOpenFeedbackFrame();
+            if (loadGeneration !== this.notebookLoadGeneration) { session.dispose(); return; }
+            const parsed = await parseStoredJsonProgressively(raw, (partialNotebook) => {
+              if (loadGeneration !== this.notebookLoadGeneration) return true;
+              const partial = normalizeNotebook(partialNotebook, { reuseCanonicalPoints: true });
+              if (partial.pages[0]?.strokes.length === 0) return false;
+              this.notebook = partial;
+              this.pageIndex = 0;
+              // The page rail is disabled during progressive opening and its
+              // thumbnails can repaint every page; only render the visible
+              // page until the complete model is ready.
+              this.renderPage();
+              const layer = this.pageElement?.querySelector<HTMLElement>(".ink-tile-layer");
+              if (!layer?.childElementCount) return false;
+              progressivePreviewInstalled = true;
+              this.root?.classList.add("is-progressive-opening");
+              this.loadFeedback.classList.add("is-progressive");
+              finishWorkerLoad?.();
+              return true;
+            }, () => loadGeneration !== this.notebookLoadGeneration);
+            if (loadGeneration !== this.notebookLoadGeneration) { session.dispose(); return; }
+            notebook = await normalizeNotebookInSlices(parsed, { reuseCanonicalPoints: true },
+              () => loadGeneration !== this.notebookLoadGeneration);
+          } else notebook = normalizeNotebook(parseStoredJson(raw), { reuseCanonicalPoints: true });
+        } catch (loadError) {
+          session.dispose();
+          if (this.workerSession === session) this.workerSession = null;
+          if (loadGeneration !== this.notebookLoadGeneration) return;
+          if (progressivePreviewInstalled) {
+            this.notebook = previousNotebook;
+            this.pageIndex = previousPageIndex;
+            this.renderAll();
+          }
+          this.showNotebookLoadError(file.basename, loadError);
+          throw loadError;
+        }
       }
     }
     if (!notebook) {
@@ -460,7 +500,9 @@ export class InkView extends InkWritingView {
 
   private showNotebookLoadFeedback(title: string): void {
     this.root?.setAttribute("aria-busy", "true");
+    this.root?.classList.add("is-notebook-opening");
     this.loadFeedback.hidden = false;
+    this.loadFeedback.classList.remove("is-progressive", "is-error");
     this.loadFeedback.setAttribute("role", "status");
     this.loadFeedback.setAttribute("aria-live", "polite");
     this.loadFeedback.classList.remove("is-error");
@@ -470,7 +512,9 @@ export class InkView extends InkWritingView {
 
   private showNotebookLoadError(title: string, error: unknown): void {
     this.root?.setAttribute("aria-busy", "false");
+    this.root?.classList.remove("is-notebook-opening", "is-progressive-opening");
     this.loadFeedback.hidden = false;
+    this.loadFeedback.classList.remove("is-progressive");
     this.loadFeedback.setAttribute("role", "alert");
     this.loadFeedback.setAttribute("aria-live", "assertive");
     this.loadFeedback.classList.add("is-error");
@@ -482,6 +526,8 @@ export class InkView extends InkWritingView {
   private hideNotebookLoadFeedback(): void {
     if (!this.loadFeedback) return;
     this.loadFeedback.hidden = true;
+    this.loadFeedback.classList.remove("is-progressive");
+    this.root?.classList.remove("is-notebook-opening", "is-progressive-opening");
     this.root?.setAttribute("aria-busy", "false");
   }
 
@@ -1986,4 +2032,8 @@ function clonePageAsNew(page: InkPage, title: string, now = Date.now()): InkPage
 
 function notebooksEqual(left: InkNotebook, right: InkNotebook): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function waitForOpenFeedbackFrame(): Promise<void> {
+  return new Promise((resolve) => window.requestAnimationFrame(() => window.setTimeout(resolve, 0)));
 }

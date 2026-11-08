@@ -489,8 +489,20 @@
   place-items: center;
   background: color-mix(in srgb, var(--ink-workspace) 84%, transparent);
   cursor: progress;
+  pointer-events: none;
 }
 .ink-notebook-load-feedback[hidden] { display: none; }
+.ink-notebook-load-feedback.is-progressive {
+  inset: auto 10px 10px auto;
+  width: max-content;
+  max-width: calc(100% - 20px);
+  place-items: end;
+  background: transparent;
+}
+.ink-notebook-load-feedback.is-progressive .ink-notebook-load-card { padding: 8px 10px; box-shadow: none; }
+.ink-notebook-load-feedback.is-error { pointer-events: auto; }
+.ink-notes-view.is-notebook-opening .ink-page-scroller,
+.ink-notes-view.is-notebook-opening .ink-page-rail { pointer-events: none; }
 .ink-notebook-load-card {
   display: flex;
   max-width: min(520px, calc(100% - 32px));

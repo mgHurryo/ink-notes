@@ -276,6 +276,7 @@ test("reopening a large notebook paints visible ink and services input within st
   await page.addInitScript(() => {
     const probe = { openAt: 0, rawReadAt: 0, feedbackAt: 0, firstTileAt: 0, firstInkFrameAt: 0, fullTileAt: 0, inkStableFrameAt: 0,
       clickTaskAt: 0, clickAppliedAt: 0, highlighterPressed: false, feedbackShownSynchronously: false,
+      loadCompleteAt: 0,
       stages: [] as { name: string; duration: number }[],
       longTasks: [] as { start: number; duration: number }[] };
     (window as unknown as { __inkOpenProbe: typeof probe }).__inkOpenProbe = probe;
@@ -348,6 +349,7 @@ test("reopening a large notebook paints visible ink and services input within st
     const win = window as unknown as { __inkOpenProbe: {
       openAt: number; rawReadAt: number; feedbackAt: number; firstTileAt: number; firstInkFrameAt: number; fullTileAt: number; inkStableFrameAt: number;
       clickTaskAt: number; clickAppliedAt: number; highlighterPressed: boolean; feedbackShownSynchronously: boolean;
+      loadCompleteAt: number;
       stages: { name: string; duration: number }[]; longTasks: { start: number; duration: number }[];
     }; __inkNotesPreview: { view: any } };
     const probe = win.__inkOpenProbe;
@@ -380,7 +382,8 @@ test("reopening a large notebook paints visible ink and services input within st
     probe.firstInkFrameAt = 0;
     probe.fullTileAt = 0;
     probe.inkStableFrameAt = 0;
-    void view.onLoadFile(view.file);
+    probe.loadCompleteAt = 0;
+    void view.onLoadFile(view.file).then(() => { probe.loadCompleteAt = performance.now(); });
     const overlay = document.querySelector<HTMLElement>(".ink-notebook-load-feedback");
     probe.feedbackShownSynchronously = !!overlay && !overlay.hidden;
   });
@@ -391,6 +394,7 @@ test("reopening a large notebook paints visible ink and services input within st
   const result = await page.evaluate(() => (window as unknown as { __inkOpenProbe: {
     openAt: number; rawReadAt: number; feedbackAt: number; firstTileAt: number; firstInkFrameAt: number; fullTileAt: number; inkStableFrameAt: number;
     clickTaskAt: number; clickAppliedAt: number; highlighterPressed: boolean; feedbackShownSynchronously: boolean;
+    loadCompleteAt: number;
     stages: { name: string; duration: number }[];
     longTasks: { start: number; duration: number }[];
   } }).__inkOpenProbe);
@@ -417,6 +421,11 @@ test("reopening a large notebook paints visible ink and services input within st
   expect(result.clickAppliedAt - result.clickTaskAt).toBeLessThan(5);
   expect(Math.max(...result.stages.map((stage) => stage.duration))).toBeLessThan(16.7);
   expect(openingLongTasks.filter((task) => task.duration >= 50)).toEqual([]);
+  await page.waitForFunction(() => (window as unknown as { __inkOpenProbe: { loadCompleteAt: number } })
+    .__inkOpenProbe.loadCompleteAt > 0, undefined, { timeout: 10_000 });
+  expect(await page.evaluate(() => (window as unknown as { __inkNotesPreview: { view: { notebook: { pages: { strokes: unknown[] }[] } } } })
+    .__inkNotesPreview.view.notebook.pages[0].strokes.length)).toBe(1001);
+  await expect(page.locator(".ink-notes-view")).toHaveAttribute("aria-busy", "false");
 });
 
 test("large notebook paints visible ink and keeps input live without Worker", async ({ page }) => {
@@ -436,6 +445,7 @@ test("large notebook paints visible ink and keeps input live without Worker", as
     const probe = { workerUnavailable: false, loadCallAt: 0, feedbackAt: 0, clickTaskAt: 0,
       feedbackShownSynchronously: false, feedbackSyncMs: 0, clickDurationMs: 0, fullTileAt: 0,
       highlighterPressedAfterClick: false, firstTileAt: 0, firstInkAt: 0, inkStableAt: 0,
+      loadCompleteAt: 0, readReleasedAt: 0, progressivePointerEvents: "",
       longTasks: [] as { start: number; duration: number }[] };
     (window as unknown as { __inkFallbackProbe: typeof probe }).__inkFallbackProbe = probe;
     if (typeof PerformanceObserver === "function") new PerformanceObserver((list) => {
@@ -455,6 +465,10 @@ test("large notebook paints visible ink and keeps input live without Worker", as
             probe.clickDurationMs = performance.now() - clickStartedAt;
             probe.highlighterPressedAfterClick = button?.getAttribute("aria-pressed") === "true";
           }, 0));
+        }
+        if (target?.matches(".ink-notebook-load-feedback") && target.classList.contains("is-progressive")) {
+          const scroller = document.querySelector<HTMLElement>(".ink-page-scroller");
+          if (scroller) probe.progressivePointerEvents = getComputedStyle(scroller).pointerEvents;
         }
         const layers = new Set<HTMLElement>();
         if (target?.matches(".ink-tile-layer")) layers.add(target);
@@ -501,7 +515,7 @@ test("large notebook paints visible ink and keeps input live without Worker", as
         }
       }
     });
-    observer.observe(document, { attributes: true, childList: true, subtree: true, attributeFilter: ["hidden"] });
+    observer.observe(document, { attributes: true, childList: true, subtree: true, attributeFilter: ["hidden", "class"] });
   });
 
   await page.goto("/?performance");
@@ -510,7 +524,7 @@ test("large notebook paints visible ink and keeps input live without Worker", as
     const probe = (window as unknown as { __inkFallbackProbe: {
       loadCallAt: number; feedbackAt: number; feedbackShownSynchronously: boolean; feedbackSyncMs: number;
       clickTaskAt: number; clickDurationMs: number; highlighterPressedAfterClick: boolean;
-      firstTileAt: number; firstInkAt: number; inkStableAt: number; fullTileAt: number;
+      firstTileAt: number; firstInkAt: number; inkStableAt: number; fullTileAt: number; loadCompleteAt: number;
       longTasks: { start: number; duration: number }[];
     } }).__inkFallbackProbe;
     probe.firstTileAt = 0;
@@ -519,16 +533,38 @@ test("large notebook paints visible ink and keeps input live without Worker", as
     probe.fullTileAt = 0;
     probe.feedbackAt = 0;
     probe.clickTaskAt = 0;
+    probe.loadCompleteAt = 0;
     probe.longTasks.length = 0;
-    const view = (window as unknown as { __inkNotesPreview: { view: { file: unknown; onLoadFile(file: unknown): Promise<void> } } })
+    const view = (window as unknown as { __inkNotesPreview: { view: {
+      file: unknown; onLoadFile(file: unknown): Promise<void>; store: { readRaw(file: unknown): Promise<string> };
+    } } })
       .__inkNotesPreview.view;
+    let releaseRead!: () => void;
+    const readGate = new Promise<void>((resolve) => { releaseRead = resolve; });
+    const readRaw = view.store.readRaw.bind(view.store);
+    view.store.readRaw = async (...args: [unknown]) => {
+      const raw = await readRaw(...args);
+      await readGate;
+      return raw;
+    };
+    (window as unknown as { __releaseNotebookRead: () => void }).__releaseNotebookRead = releaseRead;
     probe.loadCallAt = performance.now();
-    void view.onLoadFile(view.file);
+    void view.onLoadFile(view.file).then(() => { probe.loadCompleteAt = performance.now(); });
     const overlay = document.querySelector<HTMLElement>(".ink-notebook-load-feedback");
     const root = document.querySelector<HTMLElement>(".ink-notes-view");
     probe.feedbackShownSynchronously = !!overlay && !overlay.hidden && root?.getAttribute("aria-busy") === "true";
     probe.feedbackSyncMs = performance.now() - probe.loadCallAt;
 
+  });
+  await page.locator('[aria-label="Highlight"]').click();
+  expect(await page.locator('[aria-label="Highlight"]').getAttribute("aria-pressed")).toBe("true");
+  await page.evaluate(() => {
+    const probe = (window as unknown as { __inkFallbackProbe: { highlighterPressedAfterClick: boolean; readReleasedAt: number } })
+      .__inkFallbackProbe;
+    probe.highlighterPressedAfterClick = document.querySelector<HTMLButtonElement>('[aria-label="Highlight"]')
+      ?.getAttribute("aria-pressed") === "true";
+    probe.readReleasedAt = performance.now();
+    (window as unknown as { __releaseNotebookRead: () => void }).__releaseNotebookRead();
   });
   await page.waitForFunction(() => (window as unknown as { __inkFallbackProbe: { firstInkAt: number } })
     .__inkFallbackProbe.firstInkAt > 0, undefined, { timeout: 5_000 });
@@ -538,25 +574,32 @@ test("large notebook paints visible ink and keeps input live without Worker", as
   const result = await page.evaluate(() => (window as unknown as { __inkFallbackProbe: {
     workerUnavailable: boolean; loadCallAt: number; feedbackAt: number; feedbackShownSynchronously: boolean; fullTileAt: number;
     feedbackSyncMs: number; clickTaskAt: number; clickDurationMs: number; highlighterPressedAfterClick: boolean;
-    firstTileAt: number; firstInkAt: number; inkStableAt: number;
+    firstTileAt: number; firstInkAt: number; inkStableAt: number; loadCompleteAt: number; readReleasedAt: number;
+    progressivePointerEvents: string;
     longTasks: { start: number; duration: number }[];
   } }).__inkFallbackProbe);
   const openingLongTasks = result.longTasks.filter((task) => task.start >= result.loadCallAt && task.start < result.firstInkAt);
-  const openToInkMs = result.firstInkAt - result.loadCallAt;
+  const openToInkMs = result.firstInkAt - result.readReleasedAt;
   const clickReadyMs = result.clickTaskAt - result.feedbackAt;
-  console.log("large notebook without Worker", { openToInkMs, feedbackToTileMs: result.firstTileAt - result.feedbackAt,
-    clickReadyMs, fullTileMs: result.fullTileAt - result.loadCallAt, clickDurationMs: result.clickDurationMs,
+  console.log("large notebook without Worker", { openToInkMs, feedbackToTileMs: result.firstTileAt - result.readReleasedAt,
+    clickReadyMs, fullTileMs: result.fullTileAt - result.readReleasedAt, clickDurationMs: result.clickDurationMs,
     longTasks: openingLongTasks.map((task) => Math.round(task.duration)) });
   expect(result.workerUnavailable).toBe(true);
   expect(result.feedbackShownSynchronously).toBe(true);
   expect(result.feedbackSyncMs).toBeLessThan(5);
   expect(result.highlighterPressedAfterClick).toBe(true);
+  expect(result.progressivePointerEvents).toBe("none");
   expect(result.clickDurationMs).toBeLessThan(5);
   expect(result.firstTileAt).toBeGreaterThan(0);
   expect(result.inkStableAt).toBeGreaterThan(result.firstInkAt);
-  expect(result.firstTileAt - result.feedbackAt).toBeLessThan(25);
+  expect(result.firstTileAt - result.readReleasedAt).toBeLessThan(25);
   expect(openToInkMs).toBeLessThan(50);
-  expect(result.fullTileAt - result.loadCallAt).toBeLessThan(80);
+  expect(result.fullTileAt - result.readReleasedAt).toBeLessThan(80);
   expect(clickReadyMs).toBeLessThan(50);
   expect(openingLongTasks.filter((task) => task.duration >= 50)).toEqual([]);
+  await page.waitForFunction(() => (window as unknown as { __inkFallbackProbe: { loadCompleteAt: number } })
+    .__inkFallbackProbe.loadCompleteAt > 0, undefined, { timeout: 10_000 });
+  expect(await page.evaluate(() => (window as unknown as { __inkNotesPreview: { view: { notebook: { pages: { strokes: unknown[] }[] } } } })
+    .__inkNotesPreview.view.notebook.pages[0].strokes.length)).toBe(1001);
+  await expect(page.locator(".ink-notes-view")).toHaveAttribute("aria-busy", "false");
 });
