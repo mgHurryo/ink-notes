@@ -14,8 +14,22 @@ test("opening the page rail keeps toolbar feedback live while thumbnails paint",
   await page.setViewportSize({ width: 1280, height: 900 });
   await page.addInitScript(() => {
     const probe = { intentAt: 0, interactions: [] as { label: string; intentAt: number; eventAt: number;
-      appliedAt: number; frameAt: number; pressed: string | null }[], longTasks: [] as number[] };
+      appliedAt: number; frameAt: number; frameBudgetMs: number; pressed: string | null }[],
+      frameIntervals: [] as number[], lastFrameAt: 0, longTasks: [] as number[] };
     (window as unknown as { __inkResponsiveness: typeof probe }).__inkResponsiveness = probe;
+    const sampleFrame = () => {
+      const now = performance.now();
+      if (probe.lastFrameAt > 0) {
+        const interval = now - probe.lastFrameAt;
+        if (interval < 100) {
+          probe.frameIntervals.push(interval);
+          if (probe.frameIntervals.length > 60) probe.frameIntervals.shift();
+        }
+      }
+      probe.lastFrameAt = now;
+      requestAnimationFrame(sampleFrame);
+    };
+    requestAnimationFrame(sampleFrame);
     if (typeof PerformanceObserver === "function") {
       new PerformanceObserver((list) => probe.longTasks.push(...list.getEntries().map((entry) => entry.duration)))
         .observe({ type: "longtask", buffered: true });
@@ -24,8 +38,11 @@ test("opening the page rail keeps toolbar feedback live while thumbnails paint",
       const target = event.target instanceof Element ? event.target.closest("button") : null;
       const label = target?.getAttribute("aria-label");
       if (label !== "Pages" && label !== "Highlight") return;
+      const recentFrames = probe.frameIntervals.slice(-10).sort((left, right) => left - right);
+      const frameBudgetMs = recentFrames.length > 0
+        ? recentFrames[Math.floor(recentFrames.length / 2)] + 2 : 20;
       const interaction = { label, intentAt: probe.intentAt, eventAt: performance.now(), appliedAt: 0,
-        frameAt: 0, pressed: null as string | null };
+        frameAt: 0, frameBudgetMs, pressed: null as string | null };
       probe.interactions.push(interaction);
       requestAnimationFrame(() => {
         interaction.frameAt = performance.now();
@@ -73,12 +90,13 @@ test("opening the page rail keeps toolbar feedback live while thumbnails paint",
   await page.waitForTimeout(50);
   const result = await page.evaluate(() => {
     const probe = (window as unknown as { __inkResponsiveness: { interactions: {
-      label: string; intentAt: number; eventAt: number; appliedAt: number; frameAt: number; pressed: string | null;
+      label: string; intentAt: number; eventAt: number; appliedAt: number; frameAt: number;
+      frameBudgetMs: number; pressed: string | null;
     }[]; longTasks: number[] } }).__inkResponsiveness;
     return {
-      interactions: probe.interactions.map(({ label, intentAt, eventAt, appliedAt, frameAt, pressed }) => ({
+      interactions: probe.interactions.map(({ label, intentAt, eventAt, appliedAt, frameAt, frameBudgetMs, pressed }) => ({
         label, inputDelayMs: eventAt - intentAt, applyDelayMs: appliedAt - eventAt,
-        feedbackFrameMs: frameAt - eventAt, pressed,
+        feedbackFrameMs: frameAt - eventAt, frameBudgetMs, pressed,
       })),
       longTasks: probe.longTasks.filter((duration) => duration >= 50),
     };
@@ -88,7 +106,8 @@ test("opening the page rail keeps toolbar feedback live while thumbnails paint",
   for (const interaction of result.interactions) {
     expect(interaction.inputDelayMs).toBeLessThan(5);
     expect(interaction.applyDelayMs).toBeLessThan(10);
-    expect(interaction.feedbackFrameMs).toBeLessThan(45);
+    expect(interaction.frameBudgetMs).toBeLessThan(25);
+    expect(interaction.feedbackFrameMs).toBeLessThan(interaction.frameBudgetMs);
   }
   expect(result.interactions[0].pressed).toBe("true");
   expect(result.interactions[1].pressed).toBe("true");
