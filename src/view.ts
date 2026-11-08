@@ -283,10 +283,9 @@ export class InkView extends InkWritingView {
 
         try {
           if (raw.length >= PROGRESSIVE_NOTEBOOK_OPEN_BYTES) {
-            // Let the opening state reach the screen and the event loop before
-            // parsing a large file. The parser then yields between small stroke
-            // records and provides an initial page preview as soon as possible.
-            await waitForOpenFeedbackFrame();
+            // Parsing yields to the browser every few milliseconds, so it can
+            // paint the opening state without adding a full frame of startup
+            // latency before the first visible ink.
             if (loadGeneration !== this.notebookLoadGeneration) { session.dispose(); return; }
             const parsed = await parseStoredJsonProgressively(raw, (partialNotebook) => {
               if (loadGeneration !== this.notebookLoadGeneration) return true;
@@ -2032,8 +2031,4 @@ function clonePageAsNew(page: InkPage, title: string, now = Date.now()): InkPage
 
 function notebooksEqual(left: InkNotebook, right: InkNotebook): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
-}
-
-function waitForOpenFeedbackFrame(): Promise<void> {
-  return new Promise((resolve) => window.requestAnimationFrame(() => window.setTimeout(resolve, 0)));
 }

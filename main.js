@@ -33965,7 +33965,6 @@ var InkView = class extends InkWritingView {
         };
         try {
           if (raw.length >= PROGRESSIVE_NOTEBOOK_OPEN_BYTES) {
-            await waitForOpenFeedbackFrame();
             if (loadGeneration !== this.notebookLoadGeneration) {
               session.dispose();
               return;
@@ -35732,9 +35731,6 @@ function clonePageAsNew(page, title, now = Date.now()) {
 }
 function notebooksEqual(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
-}
-function waitForOpenFeedbackFrame() {
-  return new Promise((resolve) => window.requestAnimationFrame(() => window.setTimeout(resolve, 0)));
 }
 
 // src/embed.ts
