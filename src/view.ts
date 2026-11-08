@@ -337,7 +337,10 @@ export class InkView extends InkWritingView {
       // must not hand it back to the state the user just overrode.
       this.fastPagingRailBorrowed = false;
       toggle.setAttribute("aria-pressed", String(!hidden));
-      this.resizeCanvas();
+      // The rail state and button feedback are already visible. Defer geometry
+      // reads and canvas resizing until the next frame so this click handler
+      // stays short while a large page is rendering.
+      window.requestAnimationFrame(() => this.resizeCanvas());
       // Thumbnails skipped painting while the rail was collapsed (zero
       // width); repaint once the expand transition has revealed them.
       if (!hidden) this.scheduleRailThumbnailRefresh();

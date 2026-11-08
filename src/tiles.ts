@@ -93,9 +93,17 @@ export class StrokeIndex {
     // those cells never repaint the overflow.
     const padding = stroke.width * (this.width / STROKE_WIDTH_REFERENCE) * 0.7 + BLEED;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const p of stroke.points) {
-      minX = Math.min(minX, p.x * this.width); maxX = Math.max(maxX, p.x * this.width);
-      minY = Math.min(minY, p.y * this.height); maxY = Math.max(maxY, p.y * this.height);
+    const points = stroke.points;
+    const width = this.width;
+    const height = this.height;
+    for (let index = 0; index < points.length; index++) {
+      const point = points[index];
+      const x = point.x * width;
+      const y = point.y * height;
+      if (x < minX) minX = x;
+      if (x > maxX) maxX = x;
+      if (y < minY) minY = y;
+      if (y > maxY) maxY = y;
     }
     const keys = cellKeys({ x: minX - padding, y: minY - padding, width: maxX - minX + padding * 2, height: maxY - minY + padding * 2 }, this.width, this.height);
     const entry = { stroke, points: stroke.points, count: stroke.points.length, revision: stroke.updatedAt, order,
