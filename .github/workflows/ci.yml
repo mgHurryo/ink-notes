@@ -45,6 +45,12 @@ jobs:
       - name: Run tests
         run: npm test
 
+      - name: Install Chrome for browser smoke tests
+        run: npx playwright install --with-deps chrome
+
+      - name: Run browser smoke tests
+        run: npm run test:visual:smoke
+
       - name: Audit dependencies
         run: npm audit --audit-level=high
 

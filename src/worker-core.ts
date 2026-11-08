@@ -24,62 +24,23 @@ interface WorkerSessionState {
   notebook: InkNotebook;
   revision: number;
   pendingSave: Map<string, SaveCandidate>;
-  indexes: Map<string, WorkerPageIndex>;
+  strokeLookups: Map<string, WorkerStrokeLookup>;
   outlineCache: OutlineCache;
 }
 
 interface IndexedWorkerStroke {
   stroke: InkStroke;
   order: number;
-  cells: string[];
 }
 
-class WorkerPageIndex {
+class WorkerStrokeLookup {
   private entries = new Map<string, IndexedWorkerStroke>();
-  private cells = new Map<string, Set<IndexedWorkerStroke>>();
-  private strokeWidths = new Map<number, number>();
-  private maximumStrokeWidth = 0;
-
-  constructor(private readonly width: number, private readonly height: number) {}
-
-  sync(page: InkNotebook["pages"][number]): void {
-    this.entries.clear();
-    this.cells.clear();
-    this.strokeWidths.clear();
-    this.maximumStrokeWidth = 0;
-    page.strokes.forEach((stroke, order) => this.upsert(stroke, order));
-  }
 
   upsert(stroke: InkStroke, order: number): void {
-    this.remove(stroke.id);
-    const entry = { stroke, order, cells: workerStrokeCells(stroke, this.width, this.height) };
-    this.entries.set(stroke.id, entry);
-    this.strokeWidths.set(stroke.width, (this.strokeWidths.get(stroke.width) ?? 0) + 1);
-    this.maximumStrokeWidth = Math.max(this.maximumStrokeWidth, stroke.width);
-    for (const cell of entry.cells) {
-      let bucket = this.cells.get(cell);
-      if (!bucket) this.cells.set(cell, bucket = new Set());
-      bucket.add(entry);
-    }
+    this.entries.set(stroke.id, { stroke, order });
   }
 
-  remove(strokeId: string): void {
-    const entry = this.entries.get(strokeId);
-    if (!entry) return;
-    this.entries.delete(strokeId);
-    const widthCount = (this.strokeWidths.get(entry.stroke.width) ?? 1) - 1;
-    if (widthCount > 0) this.strokeWidths.set(entry.stroke.width, widthCount);
-    else this.strokeWidths.delete(entry.stroke.width);
-    if (entry.stroke.width === this.maximumStrokeWidth && widthCount <= 0) {
-      this.maximumStrokeWidth = 0;
-      for (const width of this.strokeWidths.keys()) this.maximumStrokeWidth = Math.max(this.maximumStrokeWidth, width);
-    }
-    for (const cell of entry.cells) {
-      const bucket = this.cells.get(cell);
-      bucket?.delete(entry);
-      if (bucket?.size === 0) this.cells.delete(cell);
-    }
-  }
+  remove(strokeId: string): void { this.entries.delete(strokeId); }
 
   updateOrder(page: InkNotebook["pages"][number]): void {
     page.strokes.forEach((stroke, order) => {
@@ -90,31 +51,6 @@ class WorkerPageIndex {
 
   getStroke(strokeId: string): InkStroke | undefined { return this.entries.get(strokeId)?.stroke; }
   getOrder(strokeId: string): number | undefined { return this.entries.get(strokeId)?.order; }
-
-  query(cell: string, queryWidth = this.width, queryHeight = this.height): InkStroke[] {
-    if (queryWidth === this.width && queryHeight === this.height) {
-      return [...(this.cells.get(cell) ?? [])]
-        .sort((left, right) => left.order - right.order)
-        .map((entry) => entry.stroke);
-    }
-    const [column, row] = cell.split(":").map(Number);
-    const x = column * 128;
-    const y = row * 128;
-    const padding = this.maximumStrokeWidth * 0.7 + 4;
-    const paddingX = padding * this.width / queryWidth;
-    const paddingY = padding * this.height / queryHeight;
-    const keys = workerCellKeys({
-      x: x * this.width / queryWidth - paddingX,
-      y: y * this.height / queryHeight - paddingY,
-      width: Math.min(128, queryWidth - x) * this.width / queryWidth + paddingX * 2,
-      height: Math.min(128, queryHeight - y) * this.height / queryHeight + paddingY * 2,
-    }, this.width, this.height);
-    const found = new Set<IndexedWorkerStroke>();
-    for (const key of keys) for (const entry of this.cells.get(key) ?? []) found.add(entry);
-    return [...found]
-      .sort((left, right) => left.order - right.order)
-      .map((entry) => entry.stroke);
-  }
 }
 
 const OUTLINE_CACHE_LIMIT = 512;
@@ -162,16 +98,22 @@ export class InkWorkerCore {
       if (request.notebookRevision !== request.revision) {
         throw new ProtocolError("revision-gap", "Initialize request revision metadata does not match its notebook revision");
       }
-      const notebook = parseNotebook(request.raw);
+      const raw = typeof request.raw === "string" ? request.raw
+        : request.raw instanceof ArrayBuffer ? new TextDecoder("utf-8", { fatal: true }).decode(request.raw)
+          : await request.raw.text();
+      const notebook = parseNotebook(raw);
       this.sessions.set(request.sessionId, {
         generation: request.generation,
         notebook,
         revision: request.revision,
         pendingSave: new Map(),
-        indexes: workerIndexes(notebook),
+        // The view already owns a spatial index and sends tile candidates.
+        // Keeping a second point-scanned index here made opening a large page
+        // wait for the same geometry to be indexed twice.
+        strokeLookups: new Map(),
         outlineCache: new Map(),
       });
-      return this.response(request, { type: "initialized", notebook, revision: request.revision });
+      return this.response(request, { type: "initialized", revision: request.revision });
     }
     if (request.type === "initialize-notebook") {
       if (request.notebookRevision !== request.revision) {
@@ -183,10 +125,10 @@ export class InkWorkerCore {
         notebook,
         revision: request.revision,
         pendingSave: new Map(),
-        indexes: workerIndexes(notebook),
+        strokeLookups: new Map(),
         outlineCache: new Map(),
       });
-      return this.response(request, { type: "initialized", notebook, revision: request.revision });
+      return this.response(request, { type: "initialized", revision: request.revision });
     }
 
     const session = this.sessions.get(request.sessionId);
@@ -208,20 +150,20 @@ export class InkWorkerCore {
       }
       const operation = request.operation;
       invalidateOperationOutlines(session.outlineCache, operation);
-      const operationIndex = "pageId" in operation && typeof operation.pageId === "string"
-        ? session.indexes.get(operation.pageId)
+      const operationLookup = "pageId" in operation && typeof operation.pageId === "string"
+        ? session.strokeLookups.get(operation.pageId)
         : undefined;
-      const outline = applyNotebookOperation(session.notebook, operation, session.outlineCache, operationIndex);
+      const outline = applyNotebookOperation(session.notebook, operation, session.outlineCache, operationLookup);
       if (operation.type === "replace-notebook" || operation.type === "history-restore" || operation.type === "page-operation") {
-        session.indexes = workerIndexes(session.notebook);
+        session.strokeLookups = new Map();
         session.outlineCache.clear();
       } else {
         const pageId = operation.pageId;
         const page = session.notebook.pages.find((candidate) => candidate.id === pageId);
         if (page) {
-          let index = session.indexes.get(pageId);
-          if (!index) session.indexes.set(pageId, index = new WorkerPageIndex(session.notebook.pageWidth, session.notebook.pageHeight));
-          updateWorkerIndex(index, page, operation, outline?.stroke);
+          let lookup = session.strokeLookups.get(pageId);
+          if (!lookup) session.strokeLookups.set(pageId, lookup = new WorkerStrokeLookup());
+          updateWorkerLookup(lookup, page, operation, outline?.stroke);
         }
       }
       session.revision = request.revision;
@@ -254,9 +196,9 @@ export class InkWorkerCore {
       return this.response(request, { type: "save-prepared", token, content: serializeNotebook(merged), revision: session.revision });
     }
     if (request.type === "render-tile") {
-      const rendered = renderTile(session.notebook, session.indexes.get(request.pageId), session.outlineCache,
+      const rendered = renderTile(session.notebook, session.outlineCache,
         request.pageId, request.cell, request.density, request.revision, request.renderGeneration, request.width, request.height,
-        request.excludedStrokeIds);
+        request.excludedStrokeIds, request.candidateStrokeIds);
       return this.response(request, { type: "tile-rendered", ...rendered });
     }
     if (request.type === "cancel-render-generation") {
@@ -267,7 +209,7 @@ export class InkWorkerCore {
       if (!candidate) throw new ProtocolError("missing-session", "Prepared save is no longer available");
       session.pendingSave.delete(request.token);
       session.notebook = mergeNotebooks(candidate.notebook, session.notebook);
-      session.indexes = workerIndexes(session.notebook);
+      session.strokeLookups = new Map();
       session.outlineCache.clear();
       return this.response(request, {
         type: "save-committed",
@@ -287,7 +229,7 @@ export class InkWorkerCore {
       // a fresh object graph even when the content is unchanged, and stale
       // indexes would send index-first operations (append/complete/translate)
       // into the orphaned graph, silently dropping the edits from the next save.
-      session.indexes = workerIndexes(session.notebook);
+      session.strokeLookups = new Map();
       session.outlineCache.clear();
       return this.response(request, { type: "external-merged", notebook: changed ? session.notebook : undefined, revision: session.revision });
     }
@@ -335,9 +277,9 @@ interface RenderedTile {
   bitmap: ImageBitmap;
 }
 
-function renderTile(notebook: InkNotebook, index: WorkerPageIndex | undefined, outlineCache: OutlineCache,
+function renderTile(notebook: InkNotebook, outlineCache: OutlineCache,
   pageId: string, cell: string, density: number, revision: number, renderGeneration: number, pageWidth: number, pageHeight: number,
-  excludedStrokeIds?: readonly string[]): RenderedTile {
+  excludedStrokeIds?: readonly string[], candidateStrokeIds?: readonly string[]): RenderedTile {
   const page = notebook.pages.find((candidate) => candidate.id === pageId);
   if (!page) throw new Error(`Ink worker page is unavailable: ${pageId}`);
   const Canvas = (globalThis as unknown as { OffscreenCanvas?: RasterCanvasConstructor }).OffscreenCanvas;
@@ -356,7 +298,8 @@ function renderTile(notebook: InkNotebook, index: WorkerPageIndex | undefined, o
   const ctx = canvas.getContext("2d") as CanvasRenderingContext2D | null;
   if (!ctx) throw new Error("Ink worker could not create a 2D tile context");
   ctx.setTransform(safeDensity, 0, 0, safeDensity, bleedPixels - x * safeDensity, bleedPixels - y * safeDensity);
-  const candidates = index?.query(cell, pageWidth, pageHeight) ?? [];
+  const candidateIds = candidateStrokeIds === undefined ? null : new Set(candidateStrokeIds);
+  const candidates = candidateIds ? page.strokes.filter((stroke) => candidateIds.has(stroke.id)) : page.strokes;
   for (const stroke of candidates) {
     // The mirror received these strokes via complete-stroke while the main
     // thread still renders them from its preview layer; skipping them here
@@ -369,41 +312,6 @@ function renderTile(notebook: InkNotebook, index: WorkerPageIndex | undefined, o
     pageId, cell, density: safeDensity, revision, renderGeneration, x, y, width, height,
     canvasWidth, canvasHeight, bitmap: canvas.transferToImageBitmap(),
   };
-}
-
-function workerIndexes(notebook: InkNotebook): Map<string, WorkerPageIndex> {
-  const indexes = new Map<string, WorkerPageIndex>();
-  for (const page of notebook.pages) {
-    const index = new WorkerPageIndex(notebook.pageWidth, notebook.pageHeight);
-    index.sync(page);
-    indexes.set(page.id, index);
-  }
-  return indexes;
-}
-
-function workerStrokeCells(stroke: InkStroke, pageWidth: number, pageHeight: number): string[] {
-  if (stroke.points.length === 0) return [];
-  const padding = stroke.width * 0.7 + 4;
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const point of stroke.points) {
-    minX = Math.min(minX, point.x * pageWidth);
-    minY = Math.min(minY, point.y * pageHeight);
-    maxX = Math.max(maxX, point.x * pageWidth);
-    maxY = Math.max(maxY, point.y * pageHeight);
-  }
-  return workerCellKeys({ x: minX - padding, y: minY - padding, width: maxX - minX + padding * 2, height: maxY - minY + padding * 2 }, pageWidth, pageHeight);
-}
-
-function workerCellKeys(rect: { x: number; y: number; width: number; height: number }, pageWidth: number, pageHeight: number): string[] {
-  if (!Number.isFinite(rect.x + rect.y + rect.width + rect.height) || rect.width <= 0 || rect.height <= 0
-    || rect.x >= pageWidth || rect.y >= pageHeight || rect.x + rect.width <= 0 || rect.y + rect.height <= 0) return [];
-  const cells: string[] = [];
-  for (let row = Math.floor(Math.max(0, rect.y) / 128); row < Math.ceil(Math.min(pageHeight, rect.y + rect.height) / 128); row++) {
-    for (let column = Math.floor(Math.max(0, rect.x) / 128); column < Math.ceil(Math.min(pageWidth, rect.x + rect.width) / 128); column++) {
-      cells.push(`${column}:${row}`);
-    }
-  }
-  return cells;
 }
 
 function drawWorkerStroke(ctx: CanvasRenderingContext2D, stroke: InkStroke, width: number, height: number, cache: OutlineCache): void {
@@ -455,7 +363,7 @@ function drawWorkerStroke(ctx: CanvasRenderingContext2D, stroke: InkStroke, widt
 
 function parseNotebook(raw: string): InkNotebook {
   try {
-    return normalizeNotebook(parseStoredJson(raw));
+    return normalizeNotebook(parseStoredJson(raw), { reuseCanonicalPoints: true });
   } catch {
     throw new ProtocolError("invalid-format", "Existing ink notebook is corrupt or uses an unsupported encoding");
   }
@@ -470,7 +378,7 @@ interface OperationOutline {
 }
 
 export function applyNotebookOperation(notebook: InkNotebook, operation: NotebookOperation, cache?: OutlineCache,
-  index?: WorkerPageIndex): OperationOutline | undefined {
+  index?: WorkerStrokeLookup): OperationOutline | undefined {
   if (operation.type === "replace-notebook" || operation.type === "history-restore") {
     Object.assign(notebook, normalizeNotebook(operation.notebook));
     return undefined;
@@ -627,7 +535,7 @@ function invalidateOperationOutlines(cache: OutlineCache, operation: NotebookOpe
   }
 }
 
-function updateWorkerIndex(index: WorkerPageIndex, page: InkNotebook["pages"][number], operation: Exclude<NotebookOperation,
+function updateWorkerLookup(index: WorkerStrokeLookup, page: InkNotebook["pages"][number], operation: Exclude<NotebookOperation,
   { type: "replace-notebook" } | { type: "history-restore" } | { type: "page-operation" }>, outlinedStroke?: InkStroke): void {
   if (operation.type === "start-stroke" || operation.type === "finalize-stroke") {
     const stroke = outlinedStroke;

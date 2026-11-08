@@ -99,6 +99,7 @@ export default class InkNotesPlugin extends Plugin {
     this.store = new NotebookStore(this.app);
     if (this.app.vault) this.imageLibrary = new ImageLibraryStore(this.app);
     this.workers = new InkWorkerService((message) => new Notice(message));
+    void this.workers.warm().catch(() => undefined);
     this.register(() => this.workers.dispose());
     this.registerView(VIEW_TYPE_INK, (leaf) => this.createView(leaf));
     this.registerExtensions([INK_EXTENSION], VIEW_TYPE_INK);

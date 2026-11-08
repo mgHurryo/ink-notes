@@ -1,5 +1,6 @@
+import { getStrokeBounds } from "./model";
 import type { InkPage, InkPoint, InkStroke } from "./model";
-import { drawInkStroke, STROKE_WIDTH_REFERENCE } from "./rendering";
+import { drawInkStroke, drawInkStrokePreview, STROKE_WIDTH_REFERENCE } from "./rendering";
 
 export interface RenderTileResult {
   pageId: string;
@@ -18,7 +19,8 @@ export interface RenderTileResult {
 
 export interface RenderBackend {
   renderTile(pageId: string, cell: string, density: number, revision: number, width: number, height: number,
-    renderGeneration?: number, priority?: "visible" | "prewarm", excludedStrokeIds?: readonly string[]): Promise<RenderTileResult>;
+    renderGeneration?: number, priority?: "visible" | "prewarm", excludedStrokeIds?: readonly string[],
+    candidateStrokeIds?: readonly string[]): Promise<RenderTileResult>;
   cancelGeneration?(renderGeneration: number): void;
   dispose(): void;
 }
@@ -28,6 +30,7 @@ const TILE = 128;
 // Bleed is measured in logical page pixels. Keeping it independent from
 // backing density prevents high-DPR tiles from exposing seams at boundaries.
 const BLEED = 4;
+const FIRST_FRAME_PREVIEW_STROKE_LIMIT = 64;
 const MAX_PIXELS = 16_000_000;
 const MAX_TILE_DENSITY = 9;
 
@@ -91,11 +94,9 @@ export class StrokeIndex {
     // overflowing wide-page indexes (uncapped PDF panes) unregistered, and
     // those cells never repaint the overflow.
     const padding = stroke.width * (this.width / STROKE_WIDTH_REFERENCE) * 0.7 + BLEED;
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const p of stroke.points) {
-      minX = Math.min(minX, p.x * this.width); maxX = Math.max(maxX, p.x * this.width);
-      minY = Math.min(minY, p.y * this.height); maxY = Math.max(maxY, p.y * this.height);
-    }
+    const bounds = getStrokeBounds(stroke);
+    let minX = bounds.minX * this.width, minY = bounds.minY * this.height;
+    let maxX = bounds.maxX * this.width, maxY = bounds.maxY * this.height;
     const keys = cellKeys({ x: minX - padding, y: minY - padding, width: maxX - minX + padding * 2, height: maxY - minY + padding * 2 }, this.width, this.height);
     const entry = { stroke, points: stroke.points, count: stroke.points.length, revision: stroke.updatedAt, order,
       tool: stroke.tool, color: stroke.color, width: stroke.width, opacity: stroke.opacity, cells: keys };
@@ -191,7 +192,13 @@ export function cellKeys(rect: Rect, width: number, height: number): string[] {
   return keys;
 }
 
-interface PageTiles { page: InkPage; index: StrokeIndex; id: number }
+interface PageTiles {
+  page: InkPage;
+  index: StrokeIndex;
+  id: number;
+  syncedStrokes: InkStroke[] | null;
+  syncedPageRevision: number;
+}
 interface Tile { node: HTMLDivElement; canvas: HTMLCanvasElement; revision: number; pixels: number; used: number; state: PageTiles; cell: string; density: number }
 interface Job { state: PageTiles; cell: string; density: number; priority?: "visible" | "prewarm" }
 interface InkCommit {
@@ -280,7 +287,11 @@ export class TileRenderer {
       this.active = state;
       this.jobs = [];
     }
-    state.index.sync(page.strokes, exclude);
+    if (exclude || state.syncedStrokes !== page.strokes || state.syncedPageRevision !== page.updatedAt) {
+      state.index.sync(page.strokes, exclude);
+      state.syncedStrokes = exclude ? null : page.strokes;
+      state.syncedPageRevision = page.updatedAt;
+    }
     this.workerExclude = this.exclusionIds(exclude);
   }
 
@@ -290,7 +301,10 @@ export class TileRenderer {
   }
 
   sync(strokes: InkStroke[], exclude?: StrokeExclusion): void {
-    this.active?.index.sync(strokes, exclude);
+    if (!this.active) return;
+    this.active.index.sync(strokes, exclude);
+    this.active.syncedStrokes = !exclude && strokes === this.active.page.strokes ? strokes : null;
+    this.active.syncedPageRevision = this.active.page.updatedAt;
     this.workerExclude = this.exclusionIds(exclude);
   }
 
@@ -484,15 +498,27 @@ export class TileRenderer {
     // of clearing and re-deriving them every frame.
     if (sameDensity && sameVisible && this.visibleCurrent()) return;
     this.jobs = [];
+    const mountedCells = new Set(Array.from(this.host.children, (node) => (node as HTMLElement).dataset.cell ?? ""));
     for (const node of Array.from(this.host.children)) {
       const cell = (node as HTMLElement).dataset.cell ?? "";
       if (!this.visible.has(cell) || !this.active.index.hasCell(cell)) node.remove();
     }
+    let immediatePreviewPainted = false;
     for (const cell of this.visible) {
       if (!this.active.index.hasCell(cell)) continue;
       const exact = this.get(this.active, cell, this.density);
       const fallback = exact ?? this.fallback(this.active, cell);
       if (fallback) this.attach(fallback);
+      // Paint the first visible cell even while the Worker is still opening
+      // the notebook. A low-density main-thread preview makes first ink
+      // independent of Worker startup; the full-density Worker tile replaces
+      // it when ready. Limiting this to one cell bounds the synchronous work.
+      if (!exact && !fallback && !mountedCells.has(cell) && refine && this.density >= 1 && !immediatePreviewPainted
+        && typeof this.active.index.query === "function") {
+        const preview = this.preview({ state: this.active, cell, density: Math.min(0.5, this.density), priority: "visible" });
+        this.attach(preview);
+        immediatePreviewPainted = true;
+      }
       // Missing newly exposed tiles get a cheap preview during motion.
       if (!exact && (refine || !fallback)) {
         const job = { state: this.active, cell, density: refine ? this.density : Math.min(1, this.density), priority: "visible" as const };
@@ -513,6 +539,8 @@ export class TileRenderer {
     for (const page of pages) {
       const state = this.state(page, this.active.index.width, this.active.index.height);
       state.index.sync(page.strokes);
+      state.syncedStrokes = page.strokes;
+      state.syncedPageRevision = page.updatedAt;
       // Preload only the same visible region, not entire neighboring pages.
       for (const cell of cellKeys(this.viewport, state.index.width, state.index.height)) {
         if (!state.index.hasCell(cell)) continue;
@@ -541,8 +569,8 @@ export class TileRenderer {
     let state = this.states.get(page);
     if (!state || state.index.width !== width || state.index.height !== height) {
       if (state) for (const [key, tile] of this.cache) if (tile.state === state) this.drop(key, tile);
-      state = { page, index: new StrokeIndex(width, height), id: ++this.sequence };
-      state.index.sync(page.strokes);
+      state = { page, index: new StrokeIndex(width, height), id: ++this.sequence,
+        syncedStrokes: null, syncedPageRevision: -1 };
       this.states.set(page, state);
     }
     return state;
@@ -586,7 +614,12 @@ export class TileRenderer {
   }
 
   private schedule(): void {
-    if (this.frame !== null || !this.jobs.length || this.disposed || this.inkCommitPaused || this.inkCommit) return;
+    if (!this.jobs.length || this.disposed || this.inkCommitPaused || this.inkCommit) return;
+    if (this.backend && this.frame === null) {
+      const firstVisible = this.jobs.findIndex((job) => job.priority !== "prewarm");
+      if (firstVisible >= 0) this.requestWorkerTile(this.jobs.splice(firstVisible, 1)[0]);
+    }
+    if (this.frame !== null) return;
     this.frame = requestAnimationFrame(() => {
       this.frame = null;
       // The worker owns a priority queue, so feed it the visible batch at once
@@ -622,7 +655,8 @@ export class TileRenderer {
       if (this.backend) {
         const generation = this.renderGeneration;
         this.backend.renderTile(job.state.page.id, job.cell, job.density, job.state.index.revisions.get(job.cell) ?? 0,
-          job.state.index.width, job.state.index.height, generation, job.priority ?? "visible", commit.excluded)
+          job.state.index.width, job.state.index.height, generation, job.priority ?? "visible", commit.excluded,
+          this.candidateStrokeIds(job.state, job.cell))
           .then((result) => {
             // The commit was aborted or replaced: finishing it here would
             // release holds or fire the replacement's callback, so only the
@@ -713,6 +747,10 @@ export class TileRenderer {
     return tile;
   }
 
+  private preview(job: Job): Tile {
+    return this.createTileFrom(job, undefined, [], true);
+  }
+
   private requestWorkerTile(job: Job): void {
     if (!this.backend || this.disposed) return;
     const key = this.key(job.state, job.cell, job.density);
@@ -721,7 +759,7 @@ export class TileRenderer {
     const generation = this.renderGeneration;
     this.pendingTiles.set(key, generation);
     this.backend.renderTile(job.state.page.id, job.cell, job.density, revision, job.state.index.width, job.state.index.height,
-      generation, job.priority ?? "visible", this.workerExclusionSnapshot())
+      generation, job.priority ?? "visible", this.workerExclusionSnapshot(), this.candidateStrokeIds(job.state, job.cell))
       .then((result) => {
         if (this.pendingTiles.get(key) === generation) this.pendingTiles.delete(key);
         if (this.disposed || generation !== this.renderGeneration || result.pageId !== job.state.page.id || result.cell !== job.cell) {
@@ -746,6 +784,13 @@ export class TileRenderer {
         this.backendError?.(error);
         this.schedule();
       });
+  }
+
+  private candidateStrokeIds(state: PageTiles, cell: string): string[] {
+    const [column, row] = cell.split(":").map(Number);
+    const x = column * TILE, y = row * TILE;
+    return state.index.query({ x, y, width: Math.min(TILE, state.index.width - x),
+      height: Math.min(TILE, state.index.height - y) }).map((stroke) => stroke.id);
   }
 
   private tileFromBitmap(job: Job, result: RenderTileResult): Tile {
@@ -785,7 +830,7 @@ export class TileRenderer {
     return this.createTileFrom(job, base, additions);
   }
 
-  private createTileFrom(job: Job, base?: Tile, additions: readonly InkStroke[] = []): Tile {
+  private createTileFrom(job: Job, base?: Tile, additions: readonly InkStroke[] = [], preview = false): Tile {
     const { state, cell, density } = job;
     const [column, row] = cell.split(":").map(Number);
     const x = column * TILE, y = row * TILE;
@@ -804,8 +849,12 @@ export class TileRenderer {
     ctx.setTransform(density, 0, 0, density, bleedPixels - x * density, bleedPixels - y * density);
     // Index bounds already include the bleed; querying adjacent cells again duplicates work.
     const rect = { x, y, width, height };
-    const strokes = base ? additions : state.index.query(rect);
-    for (const stroke of strokes) drawInkStroke(ctx, stroke, state.index.width, state.index.height);
+    const candidates = base ? additions : state.index.query(rect);
+    const strokes = preview ? samplePreviewStrokes(candidates) : candidates;
+    for (const stroke of strokes) {
+      if (preview) drawInkStrokePreview(ctx, stroke, state.index.width, state.index.height);
+      else drawInkStroke(ctx, stroke, state.index.width, state.index.height);
+    }
     const tile = { node, canvas, revision: state.index.revisions.get(cell) ?? 0, pixels: canvas.width * canvas.height,
       used: ++this.sequence, state, cell, density };
     this.sizeTile(tile);
@@ -852,4 +901,14 @@ export class TileRenderer {
 
 function isStaleRenderError(error: unknown): boolean {
   return typeof error === "object" && error !== null && (error as { code?: unknown }).code === "stale-generation";
+}
+
+function samplePreviewStrokes(strokes: readonly InkStroke[]): readonly InkStroke[] {
+  if (strokes.length <= FIRST_FRAME_PREVIEW_STROKE_LIMIT) return strokes;
+  const sampled: InkStroke[] = [];
+  const last = strokes.length - 1;
+  for (let index = 0; index < FIRST_FRAME_PREVIEW_STROKE_LIMIT; index++) {
+    sampled.push(strokes[Math.floor(index * last / (FIRST_FRAME_PREVIEW_STROKE_LIMIT - 1))]);
+  }
+  return sampled;
 }

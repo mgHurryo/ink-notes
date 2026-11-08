@@ -48,7 +48,7 @@ interface ViewInternals {
   duplicateCurrentPage(): void;
   deleteCurrentPage(): void;
   moveCurrentPage(delta: number): void;
-  navigateToPage(pageId: string): void;
+  navigateToPage(pageId: string): Promise<void>;
   undo(): void;
   redo(): void;
   dirtyRevision: number;
@@ -802,7 +802,7 @@ describe("consecutive handwriting input", () => {
     expect(internal.savedRevision).toBe(internal.dirtyRevision);
   });
 
-  it("finalizes and flushes the current page before navigation", async () => {
+  it("finalizes and starts saving before immediately navigating to the requested page", async () => {
     const { internal, store, view } = setup();
     const second = createPage("Second");
     internal.notebook.pages.push(second);
@@ -813,38 +813,50 @@ describe("consecutive handwriting input", () => {
 
     internal.onPointerDown(pointer(10));
     internal.onPointerMove(pointer(20));
-    internal.navigateToPage(second.id);
+    const navigation = internal.navigateToPage(second.id);
     await Promise.resolve();
 
     expect(internal.activePointerId).toBeNull();
     expectStrokeSpan(internal.notebook.pages[0].strokes[0].points, 0.1, 0.2);
     expect(store.save).toHaveBeenCalledOnce();
-    expect(internal.pageIndex).toBe(0);
+    expect(internal.pageIndex).toBe(1);
+    expect(internal.renderPage).toHaveBeenCalledOnce();
+    await navigation;
 
     write.resolve(structuredClone(internal.notebook));
     for (let index = 0; index < 12; index++) await Promise.resolve();
     expect(internal.pageIndex).toBe(1);
-    expect(internal.renderPage).toHaveBeenCalledOnce();
     expect(view.file).toBeDefined();
   });
 
-  it("waits for the Worker operation barrier before a clean page navigation", async () => {
+  it("switches pages immediately without waiting for a Worker barrier", async () => {
     const { internal } = setup();
     const second = createPage("Second");
     internal.notebook.pages.push(second);
     internal.notebook.pageOrder.push(second.id);
-    const barrier = deferred<number>();
-    const worker = { barrier: vi.fn(() => barrier.promise) };
+    const worker = { barrier: vi.fn(async () => 7) };
     Object.assign(internal, { viewReady: true, workerSession: worker, workerRevision: 7 });
 
-    internal.navigateToPage(second.id);
+    await internal.navigateToPage(second.id);
     await Promise.resolve();
-    expect(worker.barrier).toHaveBeenCalledWith(7);
-    expect(internal.pageIndex).toBe(0);
-
-    barrier.resolve(7);
-    for (let index = 0; index < 5; index++) await Promise.resolve();
+    expect(worker.barrier).not.toHaveBeenCalled();
     expect(internal.pageIndex).toBe(1);
+  });
+
+  it("switches after a swipe without waiting for save or a Worker barrier", async () => {
+    const { internal } = setup();
+    const second = createPage("Second");
+    internal.notebook.pages.push(second);
+    internal.notebook.pageOrder.push(second.id);
+    const worker = { barrier: vi.fn(async () => 7) };
+    const save = deferred<void>();
+    Object.assign(internal, { viewReady: true, workerSession: worker, workerRevision: 7, dirtyRevision: 1,
+      savedRevision: 0, activeSave: save.promise });
+
+    await internal.navigateToPage(second.id);
+    expect(worker.barrier).not.toHaveBeenCalled();
+    expect(internal.pageIndex).toBe(1);
+    save.resolve();
   });
 
   it("waits for a full writing idle interval before autosave work", async () => {

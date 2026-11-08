@@ -1,5 +1,6 @@
 import type { InkNotebook, InkPage, InkStroke } from "./model";
 import { cloneSticky } from "./sticky-model";
+import type { StickyNote } from "./sticky-model";
 import { clampPercent, normalizePressureCurve } from "./rendering";
 
 export interface NotebookReconciliation {
@@ -86,8 +87,9 @@ export function reconcileNotebook(target: InkNotebook, incoming: InkNotebook, se
 }
 
 function reconcilePage(target: InkPage, incoming: InkPage, metadataOnlyChanges: NotebookReconciliation["metadataOnlyChanges"]): boolean {
-  const stickyChanged = JSON.stringify(target.stickyNotes ?? []) !== JSON.stringify(incoming.stickyNotes ?? []);
-  if (stickyChanged) target.stickyNotes = incoming.stickyNotes?.map(cloneSticky);
+  const stickyResult = reconcileStickyNotes(target.stickyNotes, incoming.stickyNotes);
+  const stickyChanged = stickyResult.changed;
+  if (stickyChanged) target.stickyNotes = stickyResult.notes;
   target.deletedStickyNotes = { ...incoming.deletedStickyNotes };
   const imagesChanged = JSON.stringify(target.images ?? []) !== JSON.stringify(incoming.images ?? []);
   if (imagesChanged) target.images = incoming.images?.map((image) => ({ ...image }));
@@ -118,6 +120,46 @@ function reconcilePage(target: InkPage, incoming: InkPage, metadataOnlyChanges: 
   target.createdAt = incoming.createdAt;
   target.updatedAt = incoming.updatedAt;
   return inkChanged || imagesChanged || stickyChanged;
+}
+
+function reconcileStickyNotes(previous: StickyNote[] | undefined, incoming: StickyNote[] | undefined): {
+  changed: boolean; notes: StickyNote[] | undefined;
+} {
+  const current = previous ?? [];
+  const next = incoming ?? [];
+  if (current.length === 0 && next.length === 0) return { changed: false, notes: previous };
+  const previousById = new Map(current.map((note) => [note.id, note]));
+  const reconciled = next.map((candidate) => {
+    const existing = previousById.get(candidate.id);
+    return existing && stickyNoteEqual(existing, candidate) ? existing : cloneSticky(candidate);
+  });
+  const changed = current.length !== reconciled.length || current.some((note, index) => note !== reconciled[index]);
+  return { changed, notes: changed ? (incoming ? reconciled : undefined) : previous };
+}
+
+function stickyNoteEqual(left: StickyNote, right: StickyNote): boolean {
+  if (left === right) return true;
+  // Mutations maintain both timestamps; check them before traversing nested
+  // text boxes and handwritten stroke points. Equal timestamps still require
+  // a structural check because concurrent edits can share a millisecond.
+  if (left.updatedAt !== right.updatedAt || left.textUpdatedAt !== right.textUpdatedAt) return false;
+  return jsonValuesEqual(left, right);
+}
+
+function jsonValuesEqual(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left) && Array.isArray(right) && left.length === right.length
+      && left.every((value, index) => jsonValuesEqual(value, right[index]));
+  }
+  if (!left || !right || typeof left !== "object" || typeof right !== "object") return false;
+  const leftRecord = left as Record<string, unknown>;
+  const rightRecord = right as Record<string, unknown>;
+  const leftKeys = Object.keys(leftRecord).filter((key) => leftRecord[key] !== undefined);
+  const rightKeys = Object.keys(rightRecord).filter((key) => rightRecord[key] !== undefined);
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key) => Object.prototype.hasOwnProperty.call(rightRecord, key)
+      && jsonValuesEqual(leftRecord[key], rightRecord[key]));
 }
 
 function strokeAppearanceEqual(left: InkStroke, right: InkStroke): boolean {

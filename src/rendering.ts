@@ -353,6 +353,35 @@ export function drawInkStroke(ctx: CanvasRenderingContext2D, stroke: InkStroke, 
   ctx.restore();
 }
 
+/** Draws a coarse, temporary stroke preview without constructing pen outlines. */
+export function drawInkStrokePreview(ctx: CanvasRenderingContext2D, stroke: InkStroke, width: number, height: number,
+  referenceWidth: number = STROKE_WIDTH_REFERENCE): void {
+  const points = stroke.points;
+  if (points.length === 0) return;
+  ctx.save();
+  applyStrokeStyle(ctx, stroke);
+  if (points.length === 1) {
+    drawSampleDot(ctx, stroke, width, height, referenceWidth);
+  } else {
+    // The preview is replaced by a full tile on the next render pass. A small
+    // evenly spaced sample keeps opening responsive for large pages while
+    // preserving each stroke's overall shape and direction.
+    const step = Math.max(1, Math.ceil((points.length - 1) / 12));
+    const pressure = (points[0].pressure + points[points.length - 1].pressure) / 2;
+    ctx.lineWidth = stroke.width * width / referenceWidth
+      * (stroke.tool === "highlighter" ? 1 : 0.55 + pressure * 0.75);
+    ctx.beginPath();
+    ctx.moveTo(points[0].x * width, points[0].y * height);
+    for (let index = step; index < points.length - 1; index += step) {
+      ctx.lineTo(points[index].x * width, points[index].y * height);
+    }
+    const last = points[points.length - 1];
+    ctx.lineTo(last.x * width, last.y * height);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 /** Samples a settled ring depends on beyond itself: two centerline smoothing
  *  passes (±2) plus the segment/normal neighbor (±1). */
 const TIP_SAMPLE_WINDOW = 3;
