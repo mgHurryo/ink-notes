@@ -9,6 +9,9 @@ export default defineConfig({
     },
   },
   test: {
+    // Keep discovery inside the checked-in suite. The workspace may contain
+    // temporary repositories and generated fixtures with their own tests.
+    include: ["tests/**/*.{test,spec}.?(c|m)[jt]s?(x)"],
     // tests/visual belongs to Playwright (playwright.config.ts): vitest must
     // skip those specs in every invocation, because its runner cannot execute
     // Playwright's test() and fails the whole suite. The npm test script also

@@ -89,31 +89,37 @@ test("plus menus switch cleanly and a separate insertion cancels a pending bound
   await expect(page.locator(".ink-swipe-stage")).toHaveCount(0);
 });
 
-test("insertion remains selected after an older page navigation finishes its Worker barrier", async ({ page }) => {
+test("page insertion stays responsive while the previous navigation save is pending", async ({ page }) => {
   await page.goto("/");
   await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
   await page.evaluate(async () => {
-    const scope = window as unknown as { releaseInsertionBarrier?: () => void; __inkNotesPreview: { view: {
-      notebook: { pages: { id: string }[] }; duplicateCurrentPage(): void; navigateToPage(id: string): Promise<void>;
-      swipeDrag(x: number): void; swipeSettle(delta: number): void; addPage(index: number): void;
-      workerSession: { barrier(revision: number): Promise<unknown> };
-    } } };
+    const scope = window as unknown as { releaseSave?: () => void; saveStarted?: boolean; saveDone?: boolean;
+      __inkNotesPreview: { view: {
+        notebook: { pages: { id: string }[] }; duplicateCurrentPage(): void; navigateToPage(id: string): Promise<void>;
+        swipeDrag(x: number): void; swipeSettle(delta: number): void; addPage(index: number): void;
+        dirtyRevision: number; savedRevision: number; activeSave: Promise<void> | null; save(file?: unknown): Promise<void>;
+      } } };
     const view = scope.__inkNotesPreview.view;
     view.duplicateCurrentPage();
     await view.navigateToPage(view.notebook.pages[0].id);
-    const barrier = view.workerSession.barrier.bind(view.workerSession);
-    view.workerSession.barrier = async (revision) => {
-      await barrier(revision);
-      await new Promise<void>((resolve) => { scope.releaseInsertionBarrier = resolve; });
-    };
+    let release!: () => void;
+    const pendingSave = new Promise<void>((resolve) => { release = resolve; });
+    view.activeSave = pendingSave;
+    scope.releaseSave = release;
+    scope.saveStarted = false;
+    scope.saveDone = false;
+    view.dirtyRevision = Math.max(view.dirtyRevision, view.savedRevision) + 1;
+    view.save = async () => { scope.saveStarted = true; await pendingSave; scope.saveDone = true; };
     view.swipeDrag(-200); view.swipeSettle(1);
     document.getAnimations().forEach((animation) => animation.finish());
   });
-  await expect.poll(() => page.evaluate(() => typeof (window as unknown as { releaseInsertionBarrier?: () => void })
-    .releaseInsertionBarrier)).toBe("function");
+  await expect(page.locator(".ink-page-status")).toHaveText("2 / 2");
+  expect(await page.evaluate(() => ({ started: (window as any).saveStarted, done: (window as any).saveDone })))
+    .toEqual({ started: true, done: false });
   await page.getByRole("button", { name: "Add page", exact: true }).click();
   await page.getByRole("button", { name: "Add page before first", exact: true }).click();
-  await page.evaluate(() => (window as unknown as { releaseInsertionBarrier(): void }).releaseInsertionBarrier());
+  await page.evaluate(() => (window as unknown as { releaseSave(): void }).releaseSave());
+  await expect.poll(() => page.evaluate(() => (window as any).saveDone)).toBe(true);
   await expect(page.locator(".ink-page-status")).toHaveText("1 / 3");
   await expect(page.locator(".ink-swipe-stage")).toHaveCount(0);
 });

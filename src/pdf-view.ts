@@ -139,6 +139,8 @@ export class PdfInkView extends InkWritingView {
   private sidecarFile: TFile | null = null;
   /** Set when fingerprint mismatch or an unreadable sidecar blocks writing. */
   private writeBlockedReason: string | null = null;
+  /** Deduplicates external-sync errors while leaving the current notes usable. */
+  private externalSidecarSyncStatus: string | null = null;
   private pendingMergedSidecar: PdfSidecar | null = null;
 
   private sourcePages: PdfSourcePageGeometry[] = [];
@@ -388,15 +390,43 @@ export class PdfInkView extends InkWritingView {
     if (!this.sidecar || !this.sidecarFile || this.sidecarFile.path !== changedPath) return;
     const file = this.sidecarFile;
     const generation = this.loadGeneration;
-    const raw = await this.store.readRaw(file).catch(() => null);
+    let raw: string;
+    try {
+      raw = await this.store.readRaw(file);
+    } catch (error) {
+      if (generation === this.loadGeneration && this.sidecarFile === file && this.sidecar) {
+        this.setExternalSidecarSyncError(`Could not read external PDF notes: ${messageOf(error)}`);
+      }
+      return;
+    }
     if (generation !== this.loadGeneration || this.sidecarFile !== file || !this.sidecar) return;
-    if (raw === null || raw === this.sidecarRaw) return;
+    if (raw === this.sidecarRaw) {
+      this.clearExternalSidecarSyncError();
+      return;
+    }
     try {
       const sidecar = normalizeSidecar(parseStoredJson(raw));
+      this.clearExternalSidecarSyncError();
       this.receiveMergedSidecar(sidecar);
-    } catch {
-      // Corrupt external state: keep the in-memory sidecar, never write over it.
+    } catch (error) {
+      // Keep the last known good model and let the CAS save path protect the
+      // corrupt file; the user still needs to know that the peer update failed.
+      this.setExternalSidecarSyncError(`External PDF notes could not be applied: ${messageOf(error)}`);
     }
+  }
+
+  private setExternalSidecarSyncError(message: string): void {
+    if (message === this.externalSidecarSyncStatus) return;
+    this.externalSidecarSyncStatus = message;
+    this.setStatus(message, true);
+  }
+
+  private clearExternalSidecarSyncError(): void {
+    const previous = this.externalSidecarSyncStatus;
+    if (!previous) return;
+    this.externalSidecarSyncStatus = null;
+    // Do not clear a newer status message written by another PDF operation.
+    if (!this.statusEl || this.statusEl.textContent === previous) this.setStatus("");
   }
 
   private receiveMergedSidecar(sidecar: PdfSidecar): void {
@@ -2149,6 +2179,7 @@ export class PdfInkView extends InkWritingView {
     this.noteIndex = 0;
     this.zoom = 1;
     this.writeBlockedReason = null;
+    this.externalSidecarSyncStatus = null;
     this.pendingRecoveryCandidates = null;
     this.undoStack = [];
     this.redoStack = [];

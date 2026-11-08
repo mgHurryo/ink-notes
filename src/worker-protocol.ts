@@ -116,6 +116,9 @@ export type InkWorkerRequest =
     priority: "visible" | "prewarm";
     width: number;
     height: number;
+    /** Candidate ids come from the UI's existing spatial index. This avoids
+     * rebuilding a second full-page index on the worker during notebook open. */
+    candidateStrokeIds?: readonly string[];
     // Stroke ids the main thread keeps out of its tile index while their ink
     // is still owned by the preview overlay. The worker mirror already
     // received them via complete-stroke, so tile renders must skip them to

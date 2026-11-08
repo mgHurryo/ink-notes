@@ -73,6 +73,9 @@ const RAIL_TRANSITION_MS = 200;
 const THUMB_ASPECT = 0.73;
 const SWIPE_PREVIEW_IDLE_DELAY_MS = 120;
 const SWIPE_PREVIEW_RETRY_MS = 50;
+const THUMBNAIL_FRAME_BUDGET_MS = 6;
+const THUMBNAIL_SYNC_STROKE_LIMIT = 96;
+const THUMBNAIL_SYNC_POINT_LIMIT = 2_400;
 
 class SaveConflictError extends Error {
   constructor(message: string) {
@@ -110,6 +113,9 @@ export class InkView extends InkWritingView {
   /** Deferred thumbnail redraw while the rail's expand transition runs. */
   private railRevealTimer: number | undefined;
   private thumbnailRefreshFrame: number | null = null;
+  private thumbnailPaintTokens = new WeakMap<HTMLCanvasElement, number>();
+  private thumbnailPaintFrames = new WeakMap<HTMLCanvasElement, number>();
+  private thumbnailPaintCompletions = new WeakMap<HTMLCanvasElement, () => void>();
   private thumbObserver: IntersectionObserver | null = null;
   private pendingThumbs = new WeakMap<HTMLCanvasElement, InkPage>();
   private pageManagement = false;
@@ -118,6 +124,10 @@ export class InkView extends InkWritingView {
   private railFilters: RailTagFilters = { ink: false, tagged: false };
   /** Close for the shared tagging popover while it is open. */
   private tagPopoverClose: (() => void) | null = null;
+  private notebookLoadGeneration = 0;
+  private loadFeedback!: HTMLElement;
+  private loadFeedbackMessage!: HTMLElement;
+  private loadFeedbackRetry!: HTMLButtonElement;
 
   constructor(leaf: WorkspaceLeaf, store: NotebookStore, workers?: InkWorkerService, toolState?: SharedToolState) {
     super(leaf);
@@ -154,6 +164,8 @@ export class InkView extends InkWritingView {
   }
 
   async onClose(): Promise<void> {
+    this.notebookLoadGeneration += 1;
+    this.hideNotebookLoadFeedback();
     this.disposeZoomHud();
     this.closePageOptionsMenu();
     this.closeTagPopover();
@@ -185,6 +197,8 @@ export class InkView extends InkWritingView {
   }
 
   async onLoadFile(file: TFile): Promise<void> {
+    const loadGeneration = ++this.notebookLoadGeneration;
+    this.showNotebookLoadFeedback(file.basename);
     this.pageNavigationGeneration += 1;
     this.destroySwipeStage();
     this.tiles?.setBackend?.(null);
@@ -196,7 +210,11 @@ export class InkView extends InkWritingView {
       // not advance the persisted dirty revision until pointerup.
       const session = this.workers.createSession(() => ({ notebook: this.notebook, revision: this.workerRevision }));
       try {
-        this.notebook = await session.initializeRaw(await this.store.readRaw(file), 0);
+        const raw = await this.store.readRaw(file);
+        if (loadGeneration !== this.notebookLoadGeneration) { session.dispose(); return; }
+        const notebook = await session.initializeRaw(raw, 0);
+        if (loadGeneration !== this.notebookLoadGeneration) { session.dispose(); return; }
+        this.notebook = notebook;
         this.workerSession = session;
         this.workerRevision = 0;
         if (session.canRenderTiles()) this.tiles?.setBackend(session, (error) => {
@@ -204,11 +222,25 @@ export class InkView extends InkWritingView {
         });
       } catch {
         session.dispose();
-        this.notebook = await this.store.read(file);
+        if (loadGeneration !== this.notebookLoadGeneration) return;
+        try {
+          this.notebook = await this.store.read(file);
+        } catch (loadError) {
+          if (loadGeneration === this.notebookLoadGeneration) this.showNotebookLoadError(file.basename, loadError);
+          throw loadError;
+        }
       }
     } else {
-      this.notebook = await this.store.read(file);
+      try {
+        const notebook = await this.store.read(file);
+        if (loadGeneration !== this.notebookLoadGeneration) return;
+        this.notebook = notebook;
+      } catch (error) {
+        if (loadGeneration === this.notebookLoadGeneration) this.showNotebookLoadError(file.basename, error);
+        throw error;
+      }
     }
+    if (loadGeneration !== this.notebookLoadGeneration) return;
     this.pageIndex = 0;
     this.undoStack = [];
     this.redoStack = [];
@@ -217,9 +249,12 @@ export class InkView extends InkWritingView {
     this.savedRevision = 0;
     this.workerRevision = 0;
     this.renderAll();
+    this.hideNotebookLoadFeedback();
   }
 
   async onUnloadFile(file: TFile): Promise<void> {
+    this.notebookLoadGeneration += 1;
+    this.hideNotebookLoadFeedback();
     this.disposeStickyNotes();
     this.pageNavigationGeneration += 1;
     this.destroySwipeStage();
@@ -307,6 +342,15 @@ export class InkView extends InkWritingView {
     const rail = workspace.createDiv({ cls: "ink-page-rail", attr: { "aria-label": "Notebook pages" } });
     applyStoredRailWidth(rail, RAIL_WIDTH_STORAGE_KEY);
     this.pageScroller = workspace.createDiv({ cls: "ink-page-scroller" });
+    this.loadFeedback = workspace.createDiv({ cls: "ink-notebook-load-feedback", attr: { role: "status", "aria-live": "polite", hidden: "" } });
+    const loadCard = this.loadFeedback.createDiv({ cls: "ink-notebook-load-card" });
+    loadCard.createDiv({ cls: "ink-notebook-load-spinner", attr: { "aria-hidden": "true" } });
+    this.loadFeedbackMessage = loadCard.createDiv({ cls: "ink-notebook-load-message" });
+    this.loadFeedbackRetry = loadCard.createEl("button", { text: "Retry", attr: { type: "button" } });
+    this.loadFeedbackRetry.hidden = true;
+    this.loadFeedbackRetry.addEventListener("click", () => {
+      if (this.file) void this.onLoadFile(this.file).catch(() => undefined);
+    });
     this.pageExtent = this.pageScroller.createDiv({ cls: "ink-page-extent" });
     this.pageElement = this.pageExtent.createDiv({ cls: "ink-page" });
     this.eraserCursor = this.pageElement.createDiv({ cls: "ink-eraser-cursor", attr: { "aria-hidden": "true" } });
@@ -351,6 +395,33 @@ export class InkView extends InkWritingView {
     const observer = new ResizeObserver(() => { this.resizeCanvas(); this.revealInlineEditor(); });
     observer.observe(this.pageScroller);
     this.register(() => observer.disconnect());
+  }
+
+  private showNotebookLoadFeedback(title: string): void {
+    this.root?.setAttribute("aria-busy", "true");
+    this.loadFeedback.hidden = false;
+    this.loadFeedback.setAttribute("role", "status");
+    this.loadFeedback.setAttribute("aria-live", "polite");
+    this.loadFeedback.classList.remove("is-error");
+    this.loadFeedbackMessage.setText(`Opening ${title}…`);
+    this.loadFeedbackRetry.hidden = true;
+  }
+
+  private showNotebookLoadError(title: string, error: unknown): void {
+    this.root?.setAttribute("aria-busy", "false");
+    this.loadFeedback.hidden = false;
+    this.loadFeedback.setAttribute("role", "alert");
+    this.loadFeedback.setAttribute("aria-live", "assertive");
+    this.loadFeedback.classList.add("is-error");
+    const reason = error instanceof Error ? error.message : String(error);
+    this.loadFeedbackMessage.setText(`Could not open ${title}: ${reason}`);
+    this.loadFeedbackRetry.hidden = false;
+  }
+
+  private hideNotebookLoadFeedback(): void {
+    if (!this.loadFeedback) return;
+    this.loadFeedback.hidden = true;
+    this.root?.setAttribute("aria-busy", "false");
   }
 
   private renderPageRail(): void {
@@ -583,6 +654,14 @@ export class InkView extends InkWritingView {
     try {
       const width = widthHint ?? canvas.clientWidth;
       if (width <= 0) return;
+      const previousFrame = this.thumbnailPaintFrames.get(canvas);
+      if (previousFrame !== undefined) window.cancelAnimationFrame(previousFrame);
+      this.thumbnailPaintFrames.delete(canvas);
+      const previousCompletion = this.thumbnailPaintCompletions.get(canvas);
+      this.thumbnailPaintCompletions.delete(canvas);
+      previousCompletion?.();
+      const token = (this.thumbnailPaintTokens.get(canvas) ?? 0) + 1;
+      this.thumbnailPaintTokens.set(canvas, token);
       const height = canvas.clientHeight || Math.round(width / THUMB_ASPECT);
       const dpr = window.devicePixelRatio || 1;
       canvas.width = Math.max(1, Math.round(width * dpr));
@@ -599,12 +678,68 @@ export class InkView extends InkWritingView {
       // instead of a sparse re-flow.
       const paper = canvas.closest(".ink-page-thumb")?.querySelector<HTMLElement>(".ink-page-thumb-paper");
       if (paper) paper.style.setProperty("--ink-page-scale", String(scale));
+      const pointCount = page.strokes.reduce((total, stroke) => total + stroke.points.length, 0);
+      const progressive = page.strokes.length > THUMBNAIL_SYNC_STROKE_LIMIT || pointCount > THUMBNAIL_SYNC_POINT_LIMIT;
+      let paintPass = 0;
+      canvas.dataset.previewReady = progressive ? "false" : "true";
       paintPageImages(this.imageLibrary, canvas, page, (context) => context.clearRect(0, 0, canvas.width, canvas.height), (context) => {
-        context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
-        for (const stroke of page.strokes) drawInkStroke(context, scaledStroke(stroke, scale), width, height);
-        context.setTransform(1, 0, 0, 1, 0, 0);
+        const previousFrame = this.thumbnailPaintFrames.get(canvas);
+        if (previousFrame !== undefined) window.cancelAnimationFrame(previousFrame);
+        this.thumbnailPaintFrames.delete(canvas);
+        const previousCompletion = this.thumbnailPaintCompletions.get(canvas);
+        this.thumbnailPaintCompletions.delete(canvas);
+        previousCompletion?.();
+        const activePass = ++paintPass;
+        if (!progressive) {
+          context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
+          for (const stroke of page.strokes) drawInkStroke(context, scaledStroke(stroke, scale), width, height);
+          context.setTransform(1, 0, 0, 1, 0, 0);
+          return;
+        }
+        return new Promise<void>((resolve) => {
+          let strokeIndex = 0;
+          let settled = false;
+          let completion!: () => void;
+          const finish = (complete: boolean) => {
+            if (settled) return;
+            settled = true;
+            if (this.thumbnailPaintCompletions.get(canvas) === completion) this.thumbnailPaintCompletions.delete(canvas);
+            this.thumbnailPaintFrames.delete(canvas);
+            if (complete && this.thumbnailPaintTokens.get(canvas) === token && paintPass === activePass) {
+              canvas.dataset.previewReady = "true";
+            }
+            resolve();
+          };
+          const drawChunk = () => {
+            if (this.thumbnailPaintTokens.get(canvas) !== token || paintPass !== activePass
+              || !canvas.isConnected || canvas.clientWidth <= 0 || !this.viewReady) {
+              finish(false);
+              return;
+            }
+            const startedAt = performance.now();
+            context.save();
+            try {
+              context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
+              while (strokeIndex < page.strokes.length
+                && (strokeIndex === 0 || performance.now() - startedAt < THUMBNAIL_FRAME_BUDGET_MS)) {
+                drawInkStroke(context, scaledStroke(page.strokes[strokeIndex++], scale), width, height);
+              }
+            } catch (error) {
+              console.warn("Ink Notes could not render a page thumbnail", error);
+              finish(true);
+              return;
+            } finally {
+              context.restore();
+            }
+            if (strokeIndex < page.strokes.length) {
+              this.thumbnailPaintFrames.set(canvas, window.requestAnimationFrame(drawChunk));
+            } else finish(true);
+          };
+          completion = () => finish(false);
+          this.thumbnailPaintCompletions.set(canvas, completion);
+          drawChunk();
+        });
       });
-      canvas.dataset.previewReady = "true";
     } catch (error) {
       console.warn("Ink Notes could not render a page thumbnail", error);
     }
@@ -1224,21 +1359,7 @@ export class InkView extends InkWritingView {
     this.clearSaveTimers();
     const navigationGeneration = ++this.pageNavigationGeneration;
     const file = this.file;
-    const session = this.workerSession;
-    const workerRevision = this.workerRevision;
-    return (async () => {
-      if (file && (this.dirtyRevision > this.savedRevision || this.activeSave)) {
-        await this.save(file);
-      } else if (session) {
-        // A page can be selected while non-persistent Worker work is still in
-        // flight. Do not tear down the old page's render context before every
-        // operation through this point has been acknowledged.
-        try {
-          await session.barrier(workerRevision);
-        } catch (error) {
-          if (this.workerSession === session) this.disableWorkerSession(error);
-        }
-      }
+    const showDestination = (): void => {
       if (navigationGeneration !== this.pageNavigationGeneration || !this.viewReady || file !== this.file) return;
       const index = this.notebook.pages.findIndex((page) => page.id === pageId);
       if (index < 0) return;
@@ -1246,9 +1367,23 @@ export class InkView extends InkWritingView {
       this.resetPageView();
       this.renderPageRail();
       this.renderPage();
+      // TileRenderer requests are ordered behind the session's operation tail,
+      // so direct navigation can show the destination while the Worker catches up.
       if (this.flipSettling) this.tiles?.previewInteractiveCells(
         cellKeys(this.viewport, this.canvasLogicalWidth, this.canvasLogicalHeight), this.viewport, (window.devicePixelRatio || 1) * this.zoom);
-    })().catch((error) => { new Notice(`Ink Notes could not switch pages: ${error instanceof Error ? error.message : String(error)}`); });
+    };
+
+    if (file && (this.dirtyRevision > this.savedRevision || this.activeSave)) {
+      // The live model already contains the finalized page. Storage latency
+      // must not hold the page-turn handoff; worker tile requests remain
+      // ordered behind pending operations by the session itself.
+      void this.save(file);
+    }
+    // A page switch reads the authoritative UI model immediately. TileWorker
+    // requests await the operation queue before rendering, so a separate
+    // barrier here only delays the visible handoff.
+    showDestination();
+    return Promise.resolve();
   }
 
   private openPageMenu(event: MouseEvent): void {

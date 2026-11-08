@@ -13,6 +13,24 @@ type WorkerRequestInput = InkWorkerRequest extends infer Request
   : never;
 
 const WORKER_READY_TIMEOUT = 2_000;
+// These are hang guards, not interaction budgets. Large notebook parsing,
+// serialization, and tile rasterization can legitimately take longer than
+// control messages, while no request may be allowed to pin a session forever.
+const WORKER_REQUEST_TIMEOUTS: Partial<Record<InkWorkerRequest["type"], number>> = {
+  "apply-operation": 2_000,
+  barrier: 2_000,
+  "commit-save": 2_000,
+  "abort-save": 2_000,
+  "cancel-render-generation": 2_000,
+  "dispose-session": 2_000,
+  "render-tile": 10_000,
+  "initialize-raw": 15_000,
+  "initialize-notebook": 15_000,
+  "prepare-save": 15_000,
+  "serialize-storage": 15_000,
+  "merge-external": 15_000,
+};
+const DEFAULT_WORKER_REQUEST_TIMEOUT = 10_000;
 
 export class InkWorkerRequestError extends Error {
   constructor(readonly code: string, message: string) {
@@ -32,6 +50,7 @@ interface PendingRequest {
   sessionId: string;
   generation: number;
   notebookRevision: number;
+  timeoutTimer: number;
 }
 
 export class InkWorkerService {
@@ -56,6 +75,11 @@ export class InkWorkerService {
     const session = new InkWorkerSession(this, `view-${this.nextSessionId++}`, snapshot);
     this.sessions.set(session.id, session);
     return session;
+  }
+
+  /** Start the shared worker while the user is not waiting to open a note. */
+  async warm(): Promise<void> {
+    await this.ensureWorker();
   }
 
   async send(message: WorkerRequestInput, retry = true, skipRecovery = false, transfer: Transferable[] = []): Promise<InkWorkerResponse> {
@@ -128,16 +152,27 @@ export class InkWorkerService {
   private dispatch(message: WorkerRequestInput, transfer: Transferable[] = []): Promise<InkWorkerResponse> {
     const requestId = this.nextRequestId++;
     return new Promise((resolve, reject) => {
-      this.pending.set(requestId, {
+      const pending: PendingRequest = {
         resolve,
         reject,
         sessionId: message.sessionId,
         generation: message.generation,
         notebookRevision: message.notebookRevision,
-      });
+        timeoutTimer: globalThis.setTimeout(() => {
+          if (this.pending.get(requestId) !== pending) return;
+          const error = new InkWorkerRequestError("timeout", `Ink background worker did not answer ${message.type}`);
+          // A timeout during recovery means the restarted worker is also
+          // unresponsive. Stop waiting and let callers use the existing
+          // reduced-performance fallback instead of leaving recovery pending.
+          if (this.recoveryPromise) this.disable("Ink Notes background processing stopped responding; reduced-performance mode is active.");
+          else this.onWorkerFailure(error);
+        }, WORKER_REQUEST_TIMEOUTS[message.type] ?? DEFAULT_WORKER_REQUEST_TIMEOUT) as unknown as number,
+      };
+      this.pending.set(requestId, pending);
       try { this.worker!.postMessage({ ...message, requestId }, transfer); }
       catch (error) {
         this.pending.delete(requestId);
+        globalThis.clearTimeout(pending.timeoutTimer);
         reject(error instanceof Error ? error : new Error(String(error)));
       }
     });
@@ -158,6 +193,7 @@ export class InkWorkerService {
     const pending = this.pending.get(response.requestId);
     if (!pending) return;
     this.pending.delete(response.requestId);
+    globalThis.clearTimeout(pending.timeoutTimer);
     if (response.sessionId !== pending.sessionId || response.generation !== pending.generation
       || response.notebookRevision < pending.notebookRevision) {
       pending.reject(new InkWorkerRequestError("stale-response", "Ink background worker returned a stale or mismatched response"));
@@ -199,7 +235,10 @@ export class InkWorkerService {
     this.worker = null;
     if (this.workerUrl) URL.revokeObjectURL(this.workerUrl);
     this.workerUrl = null;
-    for (const request of this.pending.values()) request.reject(error);
+    for (const request of this.pending.values()) {
+      globalThis.clearTimeout(request.timeoutTimer);
+      request.reject(error);
+    }
     this.pending.clear();
   }
 
@@ -299,13 +338,14 @@ export class InkWorkerSession {
 
   async renderTile(pageId: string, cell: string, density: number, revision: number, width: number, height: number,
     renderGeneration = 0, priority: "visible" | "prewarm" = "visible",
-    excludedStrokeIds?: readonly string[]): Promise<RenderTileResult> {
+    excludedStrokeIds?: readonly string[], candidateStrokeIds?: readonly string[]): Promise<RenderTileResult> {
     await this.operationTail;
     const response = await this.service.send({
       type: "render-tile", sessionId: this.id, generation: this.generation,
       notebookRevision: this.mirroredRevision,
       pageId,
       cell, density, revision, renderGeneration, priority, width, height, excludedStrokeIds,
+      candidateStrokeIds,
     });
     if (response.type !== "tile-rendered") throw unexpected(response);
     return response;

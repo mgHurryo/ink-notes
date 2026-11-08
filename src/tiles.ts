@@ -18,7 +18,8 @@ export interface RenderTileResult {
 
 export interface RenderBackend {
   renderTile(pageId: string, cell: string, density: number, revision: number, width: number, height: number,
-    renderGeneration?: number, priority?: "visible" | "prewarm", excludedStrokeIds?: readonly string[]): Promise<RenderTileResult>;
+    renderGeneration?: number, priority?: "visible" | "prewarm", excludedStrokeIds?: readonly string[],
+    candidateStrokeIds?: readonly string[]): Promise<RenderTileResult>;
   cancelGeneration?(renderGeneration: number): void;
   dispose(): void;
 }
@@ -488,11 +489,22 @@ export class TileRenderer {
       const cell = (node as HTMLElement).dataset.cell ?? "";
       if (!this.visible.has(cell) || !this.active.index.hasCell(cell)) node.remove();
     }
+    let immediatePreviewPainted = false;
     for (const cell of this.visible) {
       if (!this.active.index.hasCell(cell)) continue;
       const exact = this.get(this.active, cell, this.density);
       const fallback = exact ?? this.fallback(this.active, cell);
       if (fallback) this.attach(fallback);
+      // A cold page otherwise stays blank until its first Worker bitmap
+      // round-trip. Paint only the first visible cell at low density so the
+      // user's first frame contains ink; the full-density Worker tile replaces
+      // it as soon as it arrives. Limiting this to one cell bounds main-thread
+      // work even when the viewport spans many tiles.
+      if (!exact && !fallback && this.backend && refine && this.density >= 1 && !immediatePreviewPainted) {
+        const preview = this.paint({ state: this.active, cell, density: Math.min(1, this.density), priority: "visible" });
+        this.attach(preview);
+        immediatePreviewPainted = true;
+      }
       // Missing newly exposed tiles get a cheap preview during motion.
       if (!exact && (refine || !fallback)) {
         const job = { state: this.active, cell, density: refine ? this.density : Math.min(1, this.density), priority: "visible" as const };
@@ -586,7 +598,12 @@ export class TileRenderer {
   }
 
   private schedule(): void {
-    if (this.frame !== null || !this.jobs.length || this.disposed || this.inkCommitPaused || this.inkCommit) return;
+    if (!this.jobs.length || this.disposed || this.inkCommitPaused || this.inkCommit) return;
+    if (this.backend && this.frame === null) {
+      const firstVisible = this.jobs.findIndex((job) => job.priority !== "prewarm");
+      if (firstVisible >= 0) this.requestWorkerTile(this.jobs.splice(firstVisible, 1)[0]);
+    }
+    if (this.frame !== null) return;
     this.frame = requestAnimationFrame(() => {
       this.frame = null;
       // The worker owns a priority queue, so feed it the visible batch at once
@@ -622,7 +639,8 @@ export class TileRenderer {
       if (this.backend) {
         const generation = this.renderGeneration;
         this.backend.renderTile(job.state.page.id, job.cell, job.density, job.state.index.revisions.get(job.cell) ?? 0,
-          job.state.index.width, job.state.index.height, generation, job.priority ?? "visible", commit.excluded)
+          job.state.index.width, job.state.index.height, generation, job.priority ?? "visible", commit.excluded,
+          this.candidateStrokeIds(job.state, job.cell))
           .then((result) => {
             // The commit was aborted or replaced: finishing it here would
             // release holds or fire the replacement's callback, so only the
@@ -721,7 +739,7 @@ export class TileRenderer {
     const generation = this.renderGeneration;
     this.pendingTiles.set(key, generation);
     this.backend.renderTile(job.state.page.id, job.cell, job.density, revision, job.state.index.width, job.state.index.height,
-      generation, job.priority ?? "visible", this.workerExclusionSnapshot())
+      generation, job.priority ?? "visible", this.workerExclusionSnapshot(), this.candidateStrokeIds(job.state, job.cell))
       .then((result) => {
         if (this.pendingTiles.get(key) === generation) this.pendingTiles.delete(key);
         if (this.disposed || generation !== this.renderGeneration || result.pageId !== job.state.page.id || result.cell !== job.cell) {
@@ -746,6 +764,13 @@ export class TileRenderer {
         this.backendError?.(error);
         this.schedule();
       });
+  }
+
+  private candidateStrokeIds(state: PageTiles, cell: string): string[] {
+    const [column, row] = cell.split(":").map(Number);
+    const x = column * TILE, y = row * TILE;
+    return state.index.query({ x, y, width: Math.min(TILE, state.index.width - x),
+      height: Math.min(TILE, state.index.height - y) }).map((stroke) => stroke.id);
   }
 
   private tileFromBitmap(job: Job, result: RenderTileResult): Tile {

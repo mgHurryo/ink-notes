@@ -171,17 +171,39 @@ export function placedImage(asset: ImageAsset, pageId: string, pageAspect: numbe
 const paints = new WeakMap<HTMLCanvasElement, number>();
 /** Repaint only after assets are ready, with a token to exclude stale page paints. */
 export function paintPageImages(store: ImageLibraryStore | undefined, canvas: HTMLCanvasElement, page: InkPage,
-  base: (ctx: CanvasRenderingContext2D) => void, ink: (ctx: CanvasRenderingContext2D) => void): void {
+  base: (ctx: CanvasRenderingContext2D) => void, ink: (ctx: CanvasRenderingContext2D) => void | Promise<void>): void {
   const token = (paints.get(canvas) ?? 0) + 1; paints.set(canvas, token);
   const images = (page.images ?? []).map((image) => ({ ...image }));
   const draw = (loaded: (HTMLImageElement | undefined)[]) => {
     if (paints.get(canvas) !== token) return;
     const ctx = canvas.getContext("2d"); if (!ctx) return;
-    ctx.save(); ctx.setTransform(1, 0, 0, 1, 0, 0); base(ctx);
     const layer = (foreground: boolean) => images.forEach((image, index) => {
       if (image.foreground === foreground && loaded[index]) ctx.drawImage(loaded[index]!, image.x * canvas.width, image.y * canvas.height, image.width * canvas.width, image.height * canvas.height);
     });
-    layer(false); ink(ctx); layer(true); paintPageStickies(ctx, page.stickyNotes, canvas.width, canvas.height); ctx.restore();
+    ctx.save();
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    base(ctx);
+    layer(false);
+    ctx.restore();
+
+    const finish = () => {
+      if (paints.get(canvas) !== token) return;
+      ctx.save();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      layer(true);
+      paintPageStickies(ctx, page.stickyNotes, canvas.width, canvas.height);
+      ctx.restore();
+    };
+    let painted: void | Promise<void>;
+    ctx.save();
+    try { painted = ink(ctx); }
+    finally { ctx.restore(); }
+    if (painted && typeof painted.then === "function") {
+      void painted.then(finish, (error) => {
+        console.warn("Ink Notes could not render page ink", error);
+        finish();
+      });
+    } else finish();
   };
   draw([]);
   if (images.length && store) void Promise.allSettled(images.map((image) => store.image(image.assetPath))).then((results) => draw(results.map((result) => {

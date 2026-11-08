@@ -12,13 +12,18 @@ interface SwipeView {
   swipeSettle(delta: number): void;
   destroySwipeStage(): void;
   flipSettling: boolean;
-  workerSession: { barrier(revision: number): Promise<unknown> };
+  dirtyRevision: number;
+  savedRevision: number;
+  activeSave: Promise<void> | null;
+  save(file?: unknown): Promise<void>;
 }
 
 interface RapidSwipeScope {
   __inkNotesPreview: { view: SwipeView };
   swipeTest(delta: number, lift?: boolean): void;
-  releaseSwipeBarrier?: () => void;
+  releaseSave?: () => void;
+  saveStarted?: boolean;
+  saveDone?: boolean;
 }
 
 async function prepareRapidSwipes(page: Page): Promise<void> {
@@ -100,71 +105,58 @@ test("a notebook page switch resets the incoming page to 100%", async ({ page })
   await expect.poll(() => page.locator(".ink-page-scroller").evaluate((element: HTMLElement) => element.scrollLeft)).toBe(0);
 });
 
-test("rapid swipes coalesce across a slow Worker barrier without dropping navigation", async ({ page }) => {
+test("rapid swipes coalesce while a slow save continues in the background", async ({ page }) => {
   await prepareRapidSwipes(page);
   await page.evaluate(() => {
     const scope = window as unknown as RapidSwipeScope;
     const view = scope.__inkNotesPreview.view;
-    const original = view.workerSession.barrier.bind(view.workerSession);
-    let held = false;
-    view.workerSession.barrier = async (revision) => {
-      await original(revision);
-      if (!held) {
-        held = true;
-        await new Promise<void>((resolve) => { scope.releaseSwipeBarrier = resolve; });
-      }
-    };
+    let release!: () => void;
+    const pendingSave = new Promise<void>((resolve) => { release = resolve; });
+    view.activeSave = pendingSave;
+    scope.releaseSave = release;
+    scope.saveStarted = false;
+    scope.saveDone = false;
+    view.dirtyRevision = Math.max(view.dirtyRevision, view.savedRevision) + 1;
+    view.save = async () => { scope.saveStarted = true; await pendingSave; scope.saveDone = true; };
     scope.swipeTest(1);
-    document.getAnimations().forEach((animation) => animation.finish());
-  });
-  await expect.poll(() => page.evaluate(() => typeof (window as unknown as RapidSwipeScope).releaseSwipeBarrier)).toBe("function");
-  await page.evaluate(() => {
-    const scope = window as unknown as RapidSwipeScope;
     for (const delta of [1, 1, -1, 1]) scope.swipeTest(delta);
   });
-  await expect(page.locator(".ink-page-status")).toHaveText("1 / 8");
-  expect(await page.evaluate(() => (window as unknown as RapidSwipeScope).__inkNotesPreview.view.flipSettling)).toBe(true);
-  await page.evaluate(() => (window as unknown as RapidSwipeScope).releaseSwipeBarrier!());
   await expect(page.locator(".ink-page-status")).toHaveText("4 / 8");
   await expect(page.locator(".ink-swipe-stage")).toHaveCount(0);
   await expect(page.locator(".ink-page-extent")).toHaveCSS("visibility", "visible");
+  expect(await page.evaluate(() => ({ started: (window as unknown as RapidSwipeScope).saveStarted,
+    done: (window as unknown as RapidSwipeScope).saveDone }))).toEqual({ started: true, done: false });
+  await page.evaluate(() => (window as unknown as RapidSwipeScope).releaseSave!());
+  await expect.poll(() => page.evaluate(() => (window as unknown as RapidSwipeScope).saveDone)).toBe(true);
 });
 
-test("the next finger drag resumes as soon as the notebook finishes its barrier", async ({ page }) => {
+test("the next finger drag resumes before the save finishes", async ({ page }) => {
   await prepareRapidSwipes(page);
   await page.evaluate(() => {
     const scope = window as unknown as RapidSwipeScope;
     const view = scope.__inkNotesPreview.view;
-    const original = view.workerSession.barrier.bind(view.workerSession);
-    let held = false;
-    view.workerSession.barrier = async (revision) => {
-      await original(revision);
-      if (!held) {
-        held = true;
-        await new Promise<void>((resolve) => { scope.releaseSwipeBarrier = resolve; });
-      }
-    };
+    let release!: () => void;
+    const pendingSave = new Promise<void>((resolve) => { release = resolve; });
+    view.activeSave = pendingSave;
+    scope.releaseSave = release;
+    scope.saveStarted = false;
+    scope.saveDone = false;
+    view.dirtyRevision = Math.max(view.dirtyRevision, view.savedRevision) + 1;
+    view.save = async () => { scope.saveStarted = true; await pendingSave; scope.saveDone = true; };
     scope.swipeTest(1);
     document.getAnimations().forEach((animation) => animation.finish());
   });
-  await expect.poll(() => page.evaluate(() => typeof (window as unknown as RapidSwipeScope).releaseSwipeBarrier)).toBe("function");
+  await expect(page.locator(".ink-page-status")).toHaveText("2 / 8");
+  expect(await page.evaluate(() => ({ started: (window as unknown as RapidSwipeScope).saveStarted,
+    done: (window as unknown as RapidSwipeScope).saveDone }))).toEqual({ started: true, done: false });
   await page.evaluate(() => {
     const scope = window as unknown as RapidSwipeScope;
-    scope.swipeTest(1, false);
-    scope.releaseSwipeBarrier!();
+    scope.swipeTest(1);
   });
-  await expect(page.locator(".ink-page-status")).toHaveText("2 / 8");
-  await expect(page.locator(".ink-swipe-stage")).toHaveAttribute("data-neighbor", "2");
-  const positions = await page.evaluate(() => ({
-    live: document.querySelector<HTMLElement>(".ink-page-extent")!.style.transform,
-    stage: document.querySelector<HTMLElement>(".ink-swipe-stage")!.style.transform,
-  }));
-  expect(positions.live).toBe(positions.stage);
-  expect(positions.live).toMatch(/translateX\(-[\d.]+px\)/);
-  await page.evaluate(() => document.querySelector(".ink-page-scroller")!
-    .dispatchEvent(new TouchEvent("touchend", { touches: [], bubbles: true, cancelable: true })));
   await expect(page.locator(".ink-page-status")).toHaveText("3 / 8");
   await expect(page.locator(".ink-swipe-stage")).toHaveCount(0);
+  await page.evaluate(() => (window as unknown as RapidSwipeScope).releaseSave!());
+  await expect.poll(() => page.evaluate(() => (window as unknown as RapidSwipeScope).saveDone)).toBe(true);
 });
 
 for (const width of [390, 1280]) {
@@ -249,29 +241,31 @@ test("short drags rebound and a closed view cannot commit its animation", async 
   await expect(page.locator(".ink-page-status")).toHaveText("1 / 2");
 });
 
-test("notebook handoff waits for its Worker barrier instead of a fixed timeout", async ({ page }) => {
+test("notebook page handoff completes while its save remains pending", async ({ page }) => {
   await page.goto("/");
   await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
   await page.evaluate(async () => {
-    const scope = window as unknown as { __inkNotesPreview: { view: SwipeView & {
-      workerSession: { barrier(revision: number): Promise<unknown> } } }; releaseSwipeBarrier?: () => void };
+    const scope = window as unknown as RapidSwipeScope;
     const view = scope.__inkNotesPreview.view;
     view.duplicateCurrentPage();
     await view.navigateToPage(view.notebook.pages[0].id);
-    const original = view.workerSession.barrier.bind(view.workerSession);
-    view.workerSession.barrier = async (revision) => {
-      await original(revision);
-      await new Promise<void>((resolve) => { scope.releaseSwipeBarrier = resolve; });
-    };
+    let release!: () => void;
+    const pendingSave = new Promise<void>((resolve) => { release = resolve; });
+    view.activeSave = pendingSave;
+    scope.releaseSave = release;
+    scope.saveStarted = false;
+    scope.saveDone = false;
+    view.dirtyRevision = Math.max(view.dirtyRevision, view.savedRevision) + 1;
+    view.save = async () => { scope.saveStarted = true; await pendingSave; scope.saveDone = true; };
     view.swipeDrag(-180);
     view.swipeSettle(1);
     document.getAnimations().forEach((animation) => animation.finish());
   });
-  await page.waitForTimeout(750);
-  await expect(page.locator(".ink-swipe-stage")).toHaveCount(1);
-  await expect(page.locator(".ink-page-status")).toHaveText("1 / 2");
-  await page.evaluate(() => (window as unknown as { releaseSwipeBarrier(): void }).releaseSwipeBarrier());
   await expect(page.locator(".ink-swipe-stage")).toHaveCount(0);
   await expect(page.locator(".ink-page-status")).toHaveText("2 / 2");
+  expect(await page.evaluate(() => ({ started: (window as unknown as RapidSwipeScope).saveStarted,
+    done: (window as unknown as RapidSwipeScope).saveDone }))).toEqual({ started: true, done: false });
+  await page.evaluate(() => (window as unknown as RapidSwipeScope).releaseSave!());
+  await expect.poll(() => page.evaluate(() => (window as unknown as RapidSwipeScope).saveDone)).toBe(true);
   await expect(page.locator(".ink-page-extent")).toHaveCSS("transform", "none");
 });

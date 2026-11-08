@@ -481,6 +481,45 @@
   background: var(--ink-workspace);
 }
 
+.ink-notebook-load-feedback {
+  position: absolute;
+  z-index: 30;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--ink-workspace) 84%, transparent);
+  cursor: progress;
+}
+.ink-notebook-load-feedback[hidden] { display: none; }
+.ink-notebook-load-card {
+  display: flex;
+  max-width: min(520px, calc(100% - 32px));
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border: 1px solid var(--ink-border);
+  border-radius: var(--ink-radius-sm);
+  color: var(--ink-text);
+  background: var(--ink-panel);
+  box-shadow: 0 4px 16px rgb(0 0 0 / 12%);
+}
+.ink-notebook-load-message { overflow-wrap: anywhere; }
+.ink-notebook-load-spinner {
+  width: 18px;
+  height: 18px;
+  flex: 0 0 18px;
+  border: 2px solid var(--ink-border);
+  border-top-color: var(--ink-accent);
+  border-radius: 50%;
+  animation: ink-load-spin 700ms linear infinite;
+}
+.ink-notebook-load-feedback.is-error .ink-notebook-load-spinner { display: none; }
+.ink-notebook-load-feedback button { min-height: 36px; padding: 4px 10px; }
+@keyframes ink-load-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .ink-notebook-load-spinner { animation: none; border-top-color: var(--ink-accent); }
+}
+
 .ink-page-scroller {
   flex: 1;
   position: relative;

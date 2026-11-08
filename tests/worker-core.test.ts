@@ -309,6 +309,39 @@ describe("InkWorkerCore persistence mirror", () => {
     }
   });
 
+  it("renders only tile candidates supplied by the view without building a worker spatial index", async () => {
+    const stroke = vi.fn(), fill = vi.fn();
+    class FakeOffscreenCanvas {
+      constructor(public width: number, public height: number) {}
+      getContext() {
+        return { setTransform: vi.fn(), save: vi.fn(), restore: vi.fn(), beginPath: vi.fn(), moveTo: vi.fn(),
+          quadraticCurveTo: vi.fn(), lineTo: vi.fn(), stroke, fill, arc: vi.fn(), closePath: vi.fn() };
+      }
+      transferToImageBitmap() { return { close: vi.fn() } as unknown as ImageBitmap; }
+    }
+    vi.stubGlobal("OffscreenCanvas", FakeOffscreenCanvas);
+    try {
+      const core = new InkWorkerCore({ offscreenCanvas: true, imageBitmap: true });
+      const notebook = createNotebook();
+      const page = notebook.pages[0];
+      page.strokes.push(
+        { id: "visible-candidate", pageId: page.id, tool: "pen", color: "#000", width: 3, opacity: 1,
+          points: [{ x: 0.1, y: 0.1, pressure: 0.5, t: 1 }], createdAt: 1, updatedAt: 1 },
+        { id: "off-tile", pageId: page.id, tool: "highlighter", color: "#ff0", width: 3, opacity: 1,
+          points: [{ x: 0.2, y: 0.2, pressure: 0.5, t: 1 }], createdAt: 2, updatedAt: 2 },
+      );
+      await response(core, request({ type: "initialize-notebook", notebook, revision: 0 }));
+      const tile = await response(core, request({ type: "render-tile", pageId: page.id, cell: "0:0", density: 2,
+        revision: 0, renderGeneration: 1, priority: "visible", width: notebook.pageWidth, height: notebook.pageHeight,
+        candidateStrokeIds: ["visible-candidate"] }, 2, 0));
+      expect(tile).toMatchObject({ type: "tile-rendered", cell: "0:0" });
+      expect(fill).toHaveBeenCalledOnce();
+      expect(stroke).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("keeps main-thread-excluded pending strokes out of worker tiles", async () => {
     const stroke = vi.fn(), fill = vi.fn();
     class FakeOffscreenCanvas {
