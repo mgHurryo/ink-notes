@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5-beta.39 - 2026-11-08
+
+- Keep notebook opening responsive under dense ink (#401): opening feedback and a low-density first visible ink tile now appear before background worker initialization, which starts from the same transferred vault bytes after the first UI frame; validated stroke bounds are reused while building spatial indexes. Thumbnail painting runs in bounded idle-time slices and is cancelled when the rail closes or the page changes, so tool clicks and page navigation stay responsive. Rail canvas sizing runs once after its width transition, and adding a page records a targeted undo operation instead of cloning the full notebook. Hosted Chrome CI verifies first tile under 25ms, first visible ink under 50ms, click application under 5ms, and no 50ms opening long task.
+
 ## 0.1.5-beta.38 - 2026-11-07
 
 - Deliver the worker commitSave merged result to the model (#394): saving with the worker no longer drops the peer content the worker merged into the file — saveRevisionWithWorker now returns the session.commitSave result instead of discarding it (restoring the pre-#23 semantics, return await session.commitSave(prepared.token)), so the two save paths agree (the non-worker path already returned store.save's merged result) — because the worker absorbs disk content written by peers while preparing a save and commit-save hands that merged notebook back only on this path (worker-core returns it when reconcile=true); dropping it left the view model desynced from the file until an unrelated external change or reload: peer pages never entered the page rail, peer strokes vanished on local redraw, and sticky search (which reads the local model) missed peer notes. Data was not lost, but visibility was. A regression test asserts a merged notebook containing a peer page reaches the in-memory model, plus a guard that a merged-less commitSave still completes the save (tests/view.test.ts red before, green after).
