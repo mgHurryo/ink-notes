@@ -93,6 +93,8 @@ test("pinch scales paper and ink together without rerasterizing during a pause",
   await page.waitForTimeout(250);
   await page.evaluate(() => (window as unknown as { pinchSend(type: string): void }).pinchSend("touchend"));
   await expect(paper).toHaveCSS("transform", "none");
+  expect(await page.evaluate(() => (window as unknown as { __inkNotesPreview: { view: { zoom: number } } })
+    .__inkNotesPreview.view.zoom)).toBe(1);
   const box = await paper.boundingBox();
   if (!box) throw new Error("Paper disappeared after shrinking");
   const count = await page.evaluate(() => (window as unknown as {

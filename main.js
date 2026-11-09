@@ -29672,7 +29672,12 @@ var InkWritingView = class extends import_obsidian7.FileView {
     }
     if (!event.cancelable) {
       if (this.desktopWheel.pagingTail) return;
-      this.desktopWheel.reset();
+      const canScroll = (motion.axis === "y" || this.zoomLevel() > 1) && this.wheelCanScroll(scroller, motion.axis, motion.movement);
+      const pages2 = this.desktopWheel.pageDelta(motion, canScroll);
+      if (pages2 !== 0) {
+        this.noteWheelPages(Math.abs(pages2), motion.axis, event.timeStamp);
+        this.navigateWheelPages(pages2, motion.axis, motion.discrete, motion.gestureId);
+      }
       return;
     }
     event.preventDefault();
@@ -29689,6 +29694,12 @@ var InkWritingView = class extends import_obsidian7.FileView {
       this.noteWheelPages(Math.abs(pages), motion.axis, event.timeStamp);
       this.navigateWheelPages(pages, motion.axis, motion.discrete, motion.gestureId);
     }
+  }
+  wheelCanScroll(scroller, axis, movement) {
+    const horizontal = axis === "x";
+    const position = horizontal ? scroller.scrollLeft : scroller.scrollTop;
+    const maximum = Math.max(0, horizontal ? scroller.scrollWidth - scroller.clientWidth : scroller.scrollHeight - scroller.clientHeight);
+    return movement > 0 ? position < maximum - 0.5 : movement < 0 && position > 0.5;
   }
   navigateWheelPages(pages, axis, discrete, gestureId) {
     const direction = Math.sign(pages);
@@ -33762,6 +33773,7 @@ var VIEW_TYPE_INK = "ink-notes-view";
 var SAVE_CONFLICT_RETRIES = 3;
 var PROGRESSIVE_NOTEBOOK_OPEN_BYTES = 256 * 1024;
 var OVERLAY_RESIZE_BUDGET = 4e6;
+var MIN_PAGE_ZOOM = 1;
 var SWIPE_PREVIEW_RESIZE_BUDGET = 16e6;
 var RAIL_WIDTH_STORAGE_KEY = "ink-notes-page-rail-width";
 var RAIL_TRANSITION_MS = 200;
@@ -35212,7 +35224,7 @@ var InkView = class extends InkWritingView {
     menu.addItem((item) => item.setTitle("Delete page").setDisabled(this.notebook.pages.length <= 1).onClick(() => this.deleteCurrentPage()));
     menu.addSeparator();
     menu.addItem((item) => item.setTitle("Copy page embed syntax").onClick(() => void this.copyCurrentPageEmbed()));
-    menu.addItem((item) => item.setTitle("Zoom out").setDisabled(this.zoomLocked || this.zoom <= 0.5).onClick(() => this.setZoom(this.zoom - 0.1)));
+    menu.addItem((item) => item.setTitle("Zoom out").setDisabled(this.zoomLocked || this.zoom <= MIN_PAGE_ZOOM).onClick(() => this.setZoom(this.zoom - 0.1)));
     menu.addItem((item) => item.setTitle("Reset zoom").setDisabled(this.zoomLocked || this.zoom === 1).onClick(() => this.setZoom(1)));
     menu.addItem((item) => item.setTitle("Zoom in").setDisabled(this.zoomLocked || this.zoom >= 3).onClick(() => this.setZoom(this.zoom + 0.1)));
     menu.showAtMouseEvent(event);
@@ -35510,13 +35522,23 @@ page: ${this.currentPage().id}
     const displayWidth = width * this.zoom;
     const displayHeight = height * this.zoom;
     const renderZoom = (_a = this.pinchRenderZoom) != null ? _a : this.zoom;
-    this.pageElement.style.left = horizontalGutter + "px";
-    this.pageElement.style.width = width * renderZoom + "px";
-    this.pageElement.style.height = height * renderZoom + "px";
+    const left = horizontalGutter + "px";
+    const pageWidth = width * renderZoom + "px";
+    const pageHeight = height * renderZoom + "px";
+    if (this.pageElement.style.left !== left) this.pageElement.style.left = left;
+    if (this.pageElement.style.width !== pageWidth) this.pageElement.style.width = pageWidth;
+    if (this.pageElement.style.height !== pageHeight) this.pageElement.style.height = pageHeight;
     if (typeof this.pageElement.style.setProperty === "function") {
-      this.pageElement.style.setProperty("--ink-page-scale", String(renderZoom));
+      const pageScale = String(renderZoom);
+      if (typeof this.pageElement.style.getPropertyValue !== "function" || this.pageElement.style.getPropertyValue("--ink-page-scale") !== pageScale) {
+        this.pageElement.style.setProperty("--ink-page-scale", pageScale);
+      }
     }
-    this.pageElement.setCssStyles({ zoom: "" });
+    if (typeof this.pageElement.style.getPropertyValue === "function") {
+      if (this.pageElement.style.getPropertyValue("zoom")) this.pageElement.style.removeProperty("zoom");
+    } else {
+      this.pageElement.setCssStyles({ zoom: "" });
+    }
     this.pageElement.style.transform = this.pinchRenderZoom === void 0 ? "none" : `scale(${this.zoom / renderZoom})`;
     this.pageElement.style.willChange = this.pinchRenderZoom === void 0 ? "" : "transform";
     this.pageExtent.style.width = displayWidth + horizontalGutter * 2 + "px";
@@ -35529,7 +35551,7 @@ page: ${this.currentPage().id}
     if (readout) readout.textContent = Math.round(this.zoom * 100) + "%";
     const zoomOut = (_b = this.root) == null ? void 0 : _b.querySelector("[aria-label='Zoom out']");
     const zoomIn = (_c = this.root) == null ? void 0 : _c.querySelector("[aria-label='Zoom in']");
-    if (zoomOut) zoomOut.disabled = this.zoomLocked || this.zoom <= 0.5;
+    if (zoomOut) zoomOut.disabled = this.zoomLocked || this.zoom <= MIN_PAGE_ZOOM;
     if (zoomIn) zoomIn.disabled = this.zoomLocked || this.zoom >= 3;
   }
   resetPageView() {
@@ -35551,7 +35573,7 @@ page: ${this.currentPage().id}
     target != null ? target : target = { x: viewport.left + this.pageScroller.clientWidth / 2, y: viewport.top + this.pageScroller.clientHeight / 2 };
     const before = this.pageElement.getBoundingClientRect();
     anchor != null ? anchor : anchor = { x: (target.x - before.left) / before.width, y: (target.y - before.top) / before.height };
-    const nextZoom = Math.max(0.5, Math.min(3, value));
+    const nextZoom = Math.max(MIN_PAGE_ZOOM, Math.min(3, value));
     if (nextZoom !== this.zoom) {
       this.zoom = nextZoom;
       this.layoutPage();
