@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.1.5-beta.40 - 2026-11-09
+
+- Clamp notebook zoom-out at 100%, retain horizontal trackpad swipes when Chrome marks wheel events non-cancelable, and skip redundant style writes during zoom bursts. Regression coverage checks the zoom floor, uncancelable swipes, and DOM/layout continuity for grid, page text, sticky text, and ink. Physical trackpad paging and optical flicker remain unverified.
+
 ## 0.1.5-beta.39 - 2026-11-08
 
 - Keep notebook opening responsive under dense ink (#401): opening feedback and a low-density first visible ink tile now appear before background worker initialization, which starts from the same transferred vault bytes after the first UI frame; validated stroke bounds are reused while building spatial indexes. Thumbnail painting runs in bounded idle-time slices and is cancelled when the rail closes or the page changes, so tool clicks and page navigation stay responsive. Rail canvas sizing runs once after its width transition, and adding a page records a targeted undo operation instead of cloning the full notebook. Hosted Chrome CI verifies first tile under 25ms, first visible ink under 50ms, click application under 5ms, and no 50ms opening long task.

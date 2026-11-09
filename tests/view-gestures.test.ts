@@ -86,7 +86,7 @@ describe("page touch navigation", () => {
     expect(zoomReadout.textContent).toBe("300%");
     expect(zoomIn.disabled).toBe(true);
     view.setZoom(0.5);
-    expect(zoomReadout.textContent).toBe("50%");
+    expect(zoomReadout.textContent).toBe("100%");
     expect(zoomOut.disabled).toBe(true);
     expect(zoomIn.disabled).toBe(false);
   });
@@ -118,7 +118,7 @@ describe("page touch navigation", () => {
     expect(view.pageScroller.scrollLeft).toBe(0);
     expect(view.pageScroller.scrollTop).toBe(0);
     expect(zoomReadout.textContent).toBe("100%");
-    expect(zoomOut.disabled).toBe(false);
+    expect(zoomOut.disabled).toBe(true);
     expect(zoomIn.disabled).toBe(false);
     expect(view.renderPage).toHaveBeenCalledOnce();
   });
@@ -441,9 +441,9 @@ describe("page touch navigation", () => {
     expect(view.zoom).toBe(3);
     expect(view.pageScroller.scrollLeft).toBeCloseTo(anchor + 20);
     view.setZoom(0.1);
-    expect(view.zoom).toBe(0.5);
+    expect(view.zoom).toBe(1);
     view.setZoom(Number.NaN);
-    expect(view.zoom).toBe(0.5);
+    expect(view.zoom).toBe(1);
   });
 
   it("rebases coincident fingers without dividing by zero", () => {
