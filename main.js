@@ -35530,11 +35530,15 @@ page: ${this.currentPage().id}
     if (this.pageElement.style.height !== pageHeight) this.pageElement.style.height = pageHeight;
     if (typeof this.pageElement.style.setProperty === "function") {
       const pageScale = String(renderZoom);
-      if (this.pageElement.style.getPropertyValue("--ink-page-scale") !== pageScale) {
+      if (typeof this.pageElement.style.getPropertyValue !== "function" || this.pageElement.style.getPropertyValue("--ink-page-scale") !== pageScale) {
         this.pageElement.style.setProperty("--ink-page-scale", pageScale);
       }
     }
-    if (this.pageElement.style.getPropertyValue("zoom")) this.pageElement.style.removeProperty("zoom");
+    if (typeof this.pageElement.style.getPropertyValue === "function") {
+      if (this.pageElement.style.getPropertyValue("zoom")) this.pageElement.style.removeProperty("zoom");
+    } else {
+      this.pageElement.setCssStyles({ zoom: "" });
+    }
     this.pageElement.style.transform = this.pinchRenderZoom === void 0 ? "none" : `scale(${this.zoom / renderZoom})`;
     this.pageElement.style.willChange = this.pinchRenderZoom === void 0 ? "" : "transform";
     this.pageExtent.style.width = displayWidth + horizontalGutter * 2 + "px";

@@ -1804,11 +1804,16 @@ export class InkView extends InkWritingView {
       // near-constant on screen while the page box grew, so zooming visibly
       // re-flowed the ruling to a different line count.)
       const pageScale = String(renderZoom);
-      if (this.pageElement.style.getPropertyValue("--ink-page-scale") !== pageScale) {
+      if (typeof this.pageElement.style.getPropertyValue !== "function"
+        || this.pageElement.style.getPropertyValue("--ink-page-scale") !== pageScale) {
         this.pageElement.style.setProperty("--ink-page-scale", pageScale);
       }
     }
-    if (this.pageElement.style.getPropertyValue("zoom")) this.pageElement.style.removeProperty("zoom");
+    if (typeof this.pageElement.style.getPropertyValue === "function") {
+      if (this.pageElement.style.getPropertyValue("zoom")) this.pageElement.style.removeProperty("zoom");
+    } else {
+      this.pageElement.setCssStyles({ zoom: "" });
+    }
     // Scale ink and ruling as one image during the gesture. Repainting each
     // fractional line spacing and replacing tile densities causes shimmer.
     this.pageElement.style.transform = this.pinchRenderZoom === undefined ? "none" : `scale(${this.zoom / renderZoom})`;
