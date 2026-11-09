@@ -223,6 +223,36 @@ test("touchpad-like ctrl wheel zooms at the cursor and horizontal wheel flips on
   await expect(page.locator(".ink-page-status")).toHaveText("2 / 2");
 });
 
+test("uncancelable horizontal trackpad events still turn a fit page", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  await page.evaluate(async () => {
+    const view = (window as any).__inkNotesPreview.view;
+    view.duplicateCurrentPage();
+    await view.navigateToPage(view.notebook.pages[0].id);
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    for (const deltaX of [20, 20, 20]) {
+      scroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: false, deltaX }));
+      await new Promise<void>((resolve) => setTimeout(resolve, 12));
+    }
+  });
+  await expect(page.locator(".ink-page-status")).toHaveText("2 / 2");
+});
+
+test("notebook zoom clamps trackpad zoom-out at 100 percent", async ({ page }) => {
+  await page.goto("/");
+  await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+  const result = await page.evaluate(() => {
+    const view = (window as any).__inkNotesPreview.view;
+    const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    scroller.dispatchEvent(new WheelEvent("wheel", { bubbles: true, cancelable: true, ctrlKey: true, deltaY: 8 }));
+    return { zoom: view.zoom, readout: document.querySelector<HTMLElement>(".ink-zoom-hud-value")?.textContent };
+  });
+  expect(result.zoom).toBe(1);
+  expect(result.readout).toBe("100%");
+});
+
 test("horizontal trackpad input passes a vertically scrollable nested target", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");

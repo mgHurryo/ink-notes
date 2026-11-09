@@ -64,6 +64,7 @@ const SAVE_CONFLICT_RETRIES = 3;
 const PROGRESSIVE_NOTEBOOK_OPEN_BYTES = 256 * 1024;
 
 const OVERLAY_RESIZE_BUDGET = 4_000_000;
+const MIN_PAGE_ZOOM = 1;
 /** Swipe previews must match live tile density (dpr x zoom): the 4M overlay
  *  budget downsamples Retina iPad pages (980px x dpr2 = ~5.4M pixels), so the
  *  incoming page reads blurry for the whole flip and only sharpens when the
@@ -1513,7 +1514,7 @@ export class InkView extends InkWritingView {
     menu.addItem((item) => item.setTitle("Delete page").setDisabled(this.notebook.pages.length <= 1).onClick(() => this.deleteCurrentPage()));
     menu.addSeparator();
     menu.addItem((item) => item.setTitle("Copy page embed syntax").onClick(() => void this.copyCurrentPageEmbed()));
-    menu.addItem((item) => item.setTitle("Zoom out").setDisabled(this.zoomLocked || this.zoom <= 0.5).onClick(() => this.setZoom(this.zoom - 0.1)));
+    menu.addItem((item) => item.setTitle("Zoom out").setDisabled(this.zoomLocked || this.zoom <= MIN_PAGE_ZOOM).onClick(() => this.setZoom(this.zoom - 0.1)));
     menu.addItem((item) => item.setTitle("Reset zoom").setDisabled(this.zoomLocked || this.zoom === 1).onClick(() => this.setZoom(1)));
     menu.addItem((item) => item.setTitle("Zoom in").setDisabled(this.zoomLocked || this.zoom >= 3).onClick(() => this.setZoom(this.zoom + 0.1)));
     menu.showAtMouseEvent(event);
@@ -1786,9 +1787,14 @@ export class InkView extends InkWritingView {
     const renderZoom = this.pinchRenderZoom ?? this.zoom;
     // Keep settled writing in explicit layout units for WebKit hit testing;
     // only the navigation gesture uses a temporary whole-page transform.
-    this.pageElement.style.left = horizontalGutter + "px";
-    this.pageElement.style.width = width * renderZoom + "px";
-    this.pageElement.style.height = height * renderZoom + "px";
+    // During a frozen zoom burst, the page's base layout stays fixed; avoid
+    // rewriting identical child-inherited styles on every wheel sample.
+    const left = horizontalGutter + "px";
+    const pageWidth = width * renderZoom + "px";
+    const pageHeight = height * renderZoom + "px";
+    if (this.pageElement.style.left !== left) this.pageElement.style.left = left;
+    if (this.pageElement.style.width !== pageWidth) this.pageElement.style.width = pageWidth;
+    if (this.pageElement.style.height !== pageHeight) this.pageElement.style.height = pageHeight;
     if (typeof this.pageElement.style.setProperty === "function") {
       // The ruling is part of the page, not of the screen: the cell size is
       // exactly 32 page px scaled by zoom, so zooming reads like zooming an
@@ -1797,9 +1803,12 @@ export class InkView extends InkWritingView {
       // device pixels to still the lines while zooming; that kept the cells
       // near-constant on screen while the page box grew, so zooming visibly
       // re-flowed the ruling to a different line count.)
-      this.pageElement.style.setProperty("--ink-page-scale", String(renderZoom));
+      const pageScale = String(renderZoom);
+      if (this.pageElement.style.getPropertyValue("--ink-page-scale") !== pageScale) {
+        this.pageElement.style.setProperty("--ink-page-scale", pageScale);
+      }
     }
-    this.pageElement.setCssStyles({ zoom: "" });
+    if (this.pageElement.style.getPropertyValue("zoom")) this.pageElement.style.removeProperty("zoom");
     // Scale ink and ruling as one image during the gesture. Repainting each
     // fractional line spacing and replacing tile densities causes shimmer.
     this.pageElement.style.transform = this.pinchRenderZoom === undefined ? "none" : `scale(${this.zoom / renderZoom})`;
@@ -1817,7 +1826,7 @@ export class InkView extends InkWritingView {
     if (readout) readout.textContent = Math.round(this.zoom * 100) + "%";
     const zoomOut = this.root?.querySelector<HTMLButtonElement>("[aria-label='Zoom out']");
     const zoomIn = this.root?.querySelector<HTMLButtonElement>("[aria-label='Zoom in']");
-    if (zoomOut) zoomOut.disabled = this.zoomLocked || this.zoom <= 0.5;
+    if (zoomOut) zoomOut.disabled = this.zoomLocked || this.zoom <= MIN_PAGE_ZOOM;
     if (zoomIn) zoomIn.disabled = this.zoomLocked || this.zoom >= 3;
   }
 
@@ -1841,7 +1850,7 @@ export class InkView extends InkWritingView {
     target ??= { x: viewport.left + this.pageScroller.clientWidth / 2, y: viewport.top + this.pageScroller.clientHeight / 2 };
     const before = this.pageElement.getBoundingClientRect();
     anchor ??= { x: (target.x - before.left) / before.width, y: (target.y - before.top) / before.height };
-    const nextZoom = Math.max(0.5, Math.min(3, value));
+    const nextZoom = Math.max(MIN_PAGE_ZOOM, Math.min(3, value));
     if (nextZoom !== this.zoom) {
       this.zoom = nextZoom;
       this.layoutPage();

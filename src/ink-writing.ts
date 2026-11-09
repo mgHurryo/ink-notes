@@ -1808,11 +1808,18 @@ export abstract class InkWritingView extends FileView {
         return;
       }
     }
-    // An uncancelable wheel is still owned by the browser. Applying a second
-    // scroll here would move twice and could also navigate a page underneath it.
+    // Uncancelable events may still scroll natively. Do not move the scroller
+    // ourselves, but keep accumulating when the view cannot consume this axis
+    // so a horizontal trackpad transaction can still turn a fit page.
     if (!event.cancelable) {
       if (this.desktopWheel.pagingTail) return;
-      this.desktopWheel.reset();
+      const canScroll = (motion.axis === "y" || this.zoomLevel() > 1)
+        && this.wheelCanScroll(scroller, motion.axis, motion.movement);
+      const pages = this.desktopWheel.pageDelta(motion, canScroll);
+      if (pages !== 0) {
+        this.noteWheelPages(Math.abs(pages), motion.axis, event.timeStamp);
+        this.navigateWheelPages(pages, motion.axis, motion.discrete, motion.gestureId);
+      }
       return;
     }
     event.preventDefault();
@@ -1830,6 +1837,15 @@ export abstract class InkWritingView extends FileView {
       this.noteWheelPages(Math.abs(pages), motion.axis, event.timeStamp);
       this.navigateWheelPages(pages, motion.axis, motion.discrete, motion.gestureId);
     }
+  }
+
+  private wheelCanScroll(scroller: HTMLElement, axis: "x" | "y", movement: number): boolean {
+    const horizontal = axis === "x";
+    const position = horizontal ? scroller.scrollLeft : scroller.scrollTop;
+    const maximum = Math.max(0, horizontal
+      ? scroller.scrollWidth - scroller.clientWidth
+      : scroller.scrollHeight - scroller.clientHeight);
+    return movement > 0 ? position < maximum - 0.5 : movement < 0 && position > 0.5;
   }
 
   private navigateWheelPages(pages: number, axis: "x" | "y", discrete: boolean, gestureId: number): void {
