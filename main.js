@@ -28952,6 +28952,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
   }
   openPageInsertMenu(event, index, count, insert) {
     if (this.readingMode) return;
+    if (this.openingNotebook()) return;
     const menu = this.beginPageOptionsMenu(event);
     if (!menu) return;
     for (const [title, position] of [
@@ -29499,7 +29500,13 @@ var InkWritingView = class extends import_obsidian7.FileView {
     this.register(reset);
     this.registerDomEvent(scroller, "wheel", (event) => this.onWheel(event), { passive: false });
   }
+  /** True while a load is still swapping the model in (progressive open);
+   *  edits made then are silently discarded by the next model replacement. */
+  openingNotebook() {
+    return false;
+  }
   onDesktopKeyDown(event) {
+    if (this.openingNotebook()) return false;
     if (this.activePointerId !== null || this.desktopPan) return false;
     const key = event.key.toLowerCase();
     if ((event.ctrlKey || event.metaKey) && !event.altKey) {
@@ -33951,6 +33958,7 @@ var InkView = class extends InkWritingView {
     const loadGeneration = ++this.notebookLoadGeneration;
     const previousNotebook = this.notebook;
     const previousPageIndex = this.pageIndex;
+    this.clearSaveTimers();
     this.showNotebookLoadFeedback(file.basename);
     this.pageNavigationGeneration += 1;
     this.destroySwipeStage();
@@ -33962,6 +33970,7 @@ var InkView = class extends InkWritingView {
     let finishWorkerLoad;
     let workerBytes;
     let progressivePreviewInstalled = false;
+    let previewModelSwapped = false;
     if (this.workers) {
       const session = this.workers.createSession(() => ({ notebook: this.notebook, revision: this.workerRevision }));
       this.workerSession = session;
@@ -34043,6 +34052,7 @@ var InkView = class extends InkWritingView {
               if (((_a2 = partial.pages[0]) == null ? void 0 : _a2.strokes.length) === 0) return false;
               this.notebook = partial;
               this.pageIndex = 0;
+              previewModelSwapped = true;
               this.renderPage();
               const layer = (_b2 = this.pageElement) == null ? void 0 : _b2.querySelector(".ink-tile-layer");
               if (!(layer == null ? void 0 : layer.childElementCount)) return false;
@@ -34066,7 +34076,7 @@ var InkView = class extends InkWritingView {
           session.dispose();
           if (this.workerSession === session) this.workerSession = null;
           if (loadGeneration !== this.notebookLoadGeneration) return;
-          if (progressivePreviewInstalled) {
+          if (progressivePreviewInstalled || previewModelSwapped) {
             this.notebook = previousNotebook;
             this.pageIndex = previousPageIndex;
             this.renderAll();
@@ -34239,6 +34249,12 @@ var InkView = class extends InkWritingView {
     });
     observer.observe(this.pageScroller);
     this.register(() => observer.disconnect());
+  }
+  // The open window swaps models (progressive preview or final replace), so
+  // every model-mutating input path is blocked until loading finishes.
+  openingNotebook() {
+    var _a, _b;
+    return (_b = (_a = this.root) == null ? void 0 : _a.hasClass("is-notebook-opening")) != null ? _b : false;
   }
   showNotebookLoadFeedback(title) {
     var _a, _b;

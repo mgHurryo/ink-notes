@@ -1148,6 +1148,10 @@ export abstract class InkWritingView extends FileView {
 
   protected openPageInsertMenu(event: MouseEvent, index: number, count: number, insert: (index: number) => void): void {
     if (this.readingMode) return;
+    // Menu actions add pages to the model; while a load is swapping models
+    // that page would be discarded by the next replacement. Also testable
+    // headlessly, where pointer-events CSS is not enforced.
+    if (this.openingNotebook()) return;
     const menu = this.beginPageOptionsMenu(event);
     if (!menu) return;
     for (const [title, position] of [
@@ -1687,7 +1691,14 @@ export abstract class InkWritingView extends FileView {
     this.registerDomEvent(scroller, "wheel", (event) => this.onWheel(event), { passive: false });
   }
 
+  /** True while a load is still swapping the model in (progressive open);
+   *  edits made then are silently discarded by the next model replacement. */
+  protected openingNotebook(): boolean { return false; }
+
   private onDesktopKeyDown(event: KeyboardEvent): boolean {
+    // Undo/redo, text insertion, tool switching and selection deletion all
+    // mutate the model; during a notebook open that model is transient.
+    if (this.openingNotebook()) return false;
     if (this.activePointerId !== null || this.desktopPan) return false;
     const key = event.key.toLowerCase();
     if ((event.ctrlKey || event.metaKey) && !event.altKey) {
