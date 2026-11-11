@@ -242,6 +242,11 @@ export class TileRenderer {
   private inkFrame: number | null = null;
   private inkCommit: InkCommit | null = null;
   private inkCommitPaused = false;
+  // A gesture that does not pause the commit (eraser/lasso) still races the
+  // worker mirror: compensating a dropped refine mid-gesture would render
+  // tiles from the stale mirror at the freshly bumped revision and cache
+  // them, reviving erased ink. Hold compensation until the gesture ends.
+  private gestureActive = false;
   // beginInput() cancels queued full-density refine jobs so tiles never race
   // the pointer; remember that drop so resumeInkCommit() can rebuild them,
   // otherwise a page zoomed in right before a stroke stays blurry until the
@@ -469,10 +474,12 @@ export class TileRenderer {
     this.frame = null;
     this.jobs = [];
     this.pendingTiles.clear();
+    this.gestureActive = true;
   }
 
   resumeInkCommit(): void {
     this.inkCommitPaused = false;
+    this.gestureActive = false;
     // Consume the flag only when the rebuild can actually run: an eraser
     // gesture that erased nothing never replaces an in-flight interactive
     // commit, and clearing the flag here would swallow the refine work
@@ -769,8 +776,12 @@ export class TileRenderer {
     commit.onComplete(valid);
     // The commit that made resumeInkCommit() defer its dropped-refine rebuild
     // has just settled; compensate now unless a pause already owns the flag
-    // for the gesture's own resume (pen path).
-    if (this.droppedRefine && this.active && !this.disposed && !this.inkCommitPaused) {
+    // for the gesture's own resume (pen path), or a non-pausing gesture
+    // (eraser/lasso) is mid-flight: the worker mirror still trails the locally
+    // bumped cell revisions until patch-strokes lands at gesture end, so a
+    // compensating tile here would cache stale mirror content and revive
+    // erased ink.
+    if (this.droppedRefine && this.active && !this.disposed && !this.inkCommitPaused && !this.gestureActive) {
       this.droppedRefine = false;
       this.update(this.viewport, this.density, true);
     }

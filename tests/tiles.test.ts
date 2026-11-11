@@ -578,6 +578,54 @@ describe("interactive tile commits", () => {
     expect(renderer.inkCommitPaused).toBe(true);
   });
 
+  it("defers the dropped-refine compensation while an eraser/lasso gesture holds the surface", async () => {
+    const proto = TileRenderer.prototype as any;
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => { frames.push(callback); return frames.length; }));
+    const requests: Array<{ resolve: (value: any) => void }> = [];
+    const backend = { renderTile: vi.fn(() => new Promise((resolve) => requests.push({ resolve }))), cancelGeneration: vi.fn() };
+    const state = { id: 1, page: { id: "page" }, index: { width: 128, height: 128,
+      revisions: new Map([["0:0", 1]]), hasCell: () => true, query: () => [] } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    const onComplete = vi.fn();
+    Object.assign(renderer, { backend, disposed: false, inkCommitPaused: false, inkCommit: null, inkFrame: null,
+      frame: null, active: state, renderGeneration: 0, pendingTiles: new Map(), cache: new Map(), jobs: [],
+      heldCells: new Set(), droppedRefine: false, host: { children: [] }, ghost: null,
+      viewport: { x: 0, y: 0, width: 128, height: 128 }, density: 3, visible: new Set(["0:0"]),
+      get: vi.fn(() => undefined), fallback: vi.fn(() => undefined), isHeld: vi.fn(() => false),
+      paint: vi.fn(() => ({})), preview: vi.fn(() => ({})), attach: vi.fn(),
+      schedule: vi.fn(function(this: any) { proto.schedule.call(this); }) });
+    const viewport = { x: 0, y: 0, width: 128, height: 128 };
+    renderer.commitInteractive(viewport, 3, true, onComplete);
+    frames.shift()!(0);
+
+    // The eraser/lasso pointerdown parks the previous batch's commit without
+    // pausing it: the first erase sample has already bumped the cell revision
+    // while the worker mirror still trails behind. A compensation rebuild now
+    // would render the stale mirror content at the new revision and cache it,
+    // so the settle must only drop the commit and keep the flag.
+    const staleBitmap = { close: vi.fn() };
+    renderer.beginInput();
+    requests[0].resolve({ pageId: "page", cell: "0:0", density: 3, revision: 1, renderGeneration: 1,
+      x: 0, y: 0, width: 128, height: 128, canvasWidth: 264, canvasHeight: 264, bitmap: staleBitmap });
+    await Promise.resolve();
+
+    expect(staleBitmap.close).toHaveBeenCalledOnce();
+    expect(onComplete).toHaveBeenCalledWith(false);
+    expect(renderer.droppedRefine).toBe(true);
+    expect(backend.renderTile).toHaveBeenCalledTimes(1);
+    expect(renderer.jobs).toEqual([]);
+
+    // Gesture end: resumeInkCommit() clears the hold and the compensation
+    // runs then — deferred, not dropped. The tile is submitted at the new
+    // request generation, after patch-strokes has been queued for the worker.
+    renderer.resumeInkCommit();
+    expect(renderer.droppedRefine).toBe(false);
+    expect(backend.renderTile).toHaveBeenCalledTimes(2);
+    expect(renderer.pendingTiles.get("1/0:0/3")).toBe(2);
+    vi.unstubAllGlobals();
+  });
+
   it("aborts an ink commit stranded by beginInput when its stale result returns", async () => {
     const proto = TileRenderer.prototype as any;
     const frames: FrameRequestCallback[] = [];
@@ -590,7 +638,8 @@ describe("interactive tile commits", () => {
     const onComplete = vi.fn();
     Object.assign(renderer, { backend, disposed: false, inkCommitPaused: false, inkCommit: null, inkFrame: null,
       frame: null, active: state, renderGeneration: 0, pendingTiles: new Map(), cache: new Map(), jobs: [],
-      heldCells: new Set(), droppedRefine: false, host: { children: [] },
+      heldCells: new Set(), droppedRefine: false, host: { children: [] }, ghost: null,
+      viewport: { x: 0, y: 0, width: 128, height: 128 }, density: 3, visible: new Set(["0:0"]),
       get: vi.fn(() => undefined), fallback: vi.fn(() => undefined), isHeld: vi.fn(() => false),
       paint: vi.fn(() => ({})), preview: vi.fn(() => ({})), attach: vi.fn(),
       schedule: vi.fn(function(this: any) { proto.schedule.call(this); }) });
@@ -599,7 +648,10 @@ describe("interactive tile commits", () => {
     frames.shift()!(0);
 
     // The worker cannot abort an in-flight render, so beginInput() leaves the
-    // result to return later echoing its request-time generation.
+    // result to return later echoing its request-time generation. While the
+    // gesture holds the surface the settle must not rebuild from the stale
+    // worker mirror (see the deferral test below); resumeInkCommit() at
+    // gesture end consumes the flag and submits the visible tile then.
     const staleBitmap = { close: vi.fn() };
     renderer.beginInput();
     requests[0].resolve({ pageId: "page", cell: "0:0", density: 3, revision: 1, renderGeneration: 1,
@@ -610,9 +662,10 @@ describe("interactive tile commits", () => {
     expect(onComplete).toHaveBeenCalledWith(false);
     expect(renderer.inkCommit).toBeNull();
     expect(renderer.heldCells.has("1/0:0")).toBe(false);
-    // Settling the stranded commit also compensates the refine work that
-    // beginInput() dropped while the commit was live. The visible tile is
-    // submitted to the Worker immediately instead of remaining in the queue.
+    expect(backend.renderTile).toHaveBeenCalledTimes(1);
+    expect(renderer.droppedRefine).toBe(true);
+
+    renderer.resumeInkCommit();
     expect(renderer.schedule).toHaveBeenCalled();
     expect(backend.renderTile).toHaveBeenCalledTimes(2);
     expect(renderer.jobs).toEqual([]);
