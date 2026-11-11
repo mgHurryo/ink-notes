@@ -32562,6 +32562,11 @@ var TileRenderer = class {
     this.inkFrame = null;
     this.inkCommit = null;
     this.inkCommitPaused = false;
+    // A gesture that does not pause the commit (eraser/lasso) still races the
+    // worker mirror: compensating a dropped refine mid-gesture would render
+    // tiles from the stale mirror at the freshly bumped revision and cache
+    // them, reviving erased ink. Hold compensation until the gesture ends.
+    this.gestureActive = false;
     // beginInput() cancels queued full-density refine jobs so tiles never race
     // the pointer; remember that drop so resumeInkCommit() can rebuild them,
     // otherwise a page zoomed in right before a stroke stays blurry until the
@@ -32796,9 +32801,11 @@ var TileRenderer = class {
     this.frame = null;
     this.jobs = [];
     this.pendingTiles.clear();
+    this.gestureActive = true;
   }
   resumeInkCommit() {
     this.inkCommitPaused = false;
+    this.gestureActive = false;
     if (this.droppedRefine && this.active && !this.disposed && !this.inkCommit) {
       this.droppedRefine = false;
       this.update(this.viewport, this.density, true);
@@ -33087,7 +33094,7 @@ var TileRenderer = class {
       }
     }
     commit.onComplete(valid);
-    if (this.droppedRefine && this.active && !this.disposed && !this.inkCommitPaused) {
+    if (this.droppedRefine && this.active && !this.disposed && !this.inkCommitPaused && !this.gestureActive) {
       this.droppedRefine = false;
       this.update(this.viewport, this.density, true);
     }
