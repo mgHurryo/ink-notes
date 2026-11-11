@@ -206,6 +206,9 @@ export class InkView extends InkWritingView {
     const loadGeneration = ++this.notebookLoadGeneration;
     const previousNotebook = this.notebook;
     const previousPageIndex = this.pageIndex;
+    // Drop timers left armed by a failed open (Retry) or a prior edit burst:
+    // firing mid-load would save the transient partial model to disk.
+    this.clearSaveTimers();
     this.showNotebookLoadFeedback(file.basename);
     this.pageNavigationGeneration += 1;
     this.destroySwipeStage();
@@ -218,6 +221,10 @@ export class InkView extends InkWritingView {
     let finishWorkerLoad: (() => void) | undefined;
     let workerBytes: ArrayBuffer | undefined;
     let progressivePreviewInstalled = false;
+    // Track every progressive model swap, not just installed previews: tiles
+    // may never paint (parse failure, off-screen page), yet the partial model
+    // still replaced this.notebook and must be rolled back on load failure.
+    let previewModelSwapped = false;
     if (this.workers) {
       const session = this.workers.createSession(() => ({ notebook: this.notebook, revision: this.workerRevision }));
       this.workerSession = session;
@@ -294,6 +301,7 @@ export class InkView extends InkWritingView {
               if (partial.pages[0]?.strokes.length === 0) return false;
               this.notebook = partial;
               this.pageIndex = 0;
+              previewModelSwapped = true;
               // The page rail is disabled during progressive opening and its
               // thumbnails can repaint every page; only render the visible
               // page until the complete model is ready.
@@ -314,7 +322,7 @@ export class InkView extends InkWritingView {
           session.dispose();
           if (this.workerSession === session) this.workerSession = null;
           if (loadGeneration !== this.notebookLoadGeneration) return;
-          if (progressivePreviewInstalled) {
+          if (progressivePreviewInstalled || previewModelSwapped) {
             this.notebook = previousNotebook;
             this.pageIndex = previousPageIndex;
             this.renderAll();
@@ -496,6 +504,12 @@ export class InkView extends InkWritingView {
     });
     observer.observe(this.pageScroller);
     this.register(() => observer.disconnect());
+  }
+
+  // The open window swaps models (progressive preview or final replace), so
+  // every model-mutating input path is blocked until loading finishes.
+  protected openingNotebook(): boolean {
+    return this.root?.hasClass("is-notebook-opening") ?? false;
   }
 
   private showNotebookLoadFeedback(title: string): void {

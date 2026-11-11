@@ -589,8 +589,14 @@ test("large notebook paints visible ink and keeps input live without Worker", as
     probe.feedbackSyncMs = performance.now() - probe.loadCallAt;
 
   });
-  await page.locator('[aria-label="Highlight"]').click();
-  expect(await page.locator('[aria-label="Highlight"]').getAttribute("aria-pressed")).toBe("true");
+  // While the notebook opens the whole toolbar is intentionally inert
+  // (pointer-events: none) so no edit can land on the transient partial
+  // model; the probe's programmatic tool click above still covers handler
+  // liveness, and a real-pointer click is asserted after the open below.
+  await page.waitForFunction(() => {
+    const toolbar = document.querySelector<HTMLElement>(".ink-toolbar");
+    return !!toolbar && getComputedStyle(toolbar).pointerEvents === "none";
+  }, undefined, { timeout: 5_000 });
   await page.evaluate(() => {
     const probe = (window as unknown as { __inkFallbackProbe: { highlighterPressedAfterClick: boolean; readReleasedAt: number } })
       .__inkFallbackProbe;
@@ -635,4 +641,8 @@ test("large notebook paints visible ink and keeps input live without Worker", as
   expect(await page.evaluate(() => (window as unknown as { __inkNotesPreview: { view: { notebook: { pages: { strokes: unknown[] }[] } } } })
     .__inkNotesPreview.view.notebook.pages[0].strokes.length)).toBe(1001);
   await expect(page.locator(".ink-notes-view")).toHaveAttribute("aria-busy", "false");
+  // Input liveness returns once the open completes: real pointer input
+  // reaches the toolbar again and tool switching still works.
+  await page.locator('[aria-label="Highlight"]').click();
+  expect(await page.locator('[aria-label="Highlight"]').getAttribute("aria-pressed")).toBe("true");
 });
