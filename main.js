@@ -32576,6 +32576,11 @@ var TileRenderer = class {
     this.backendError = null;
     this.pendingTiles = /* @__PURE__ */ new Map();
     this.displayScale = 1;
+    // Retired rasters kept on screen across a same-page relayout (see
+    // captureResizeGhost); ghostBaseWidth is the logical width they were
+    // rasterized at, so repeat relayouts rescale the same original nodes.
+    this.ghost = null;
+    this.ghostBaseWidth = 0;
   }
   /** Diagnostics: current backing density vs the dpr x zoom target, so a
    *  stuck-low density (blurry zoomed page) is visible in the dev panel. */
@@ -32603,7 +32608,9 @@ var TileRenderer = class {
     this.droppedRefine = false;
     if (state !== this.active) {
       this.cancelInkCommit();
+      if (this.active && this.active.page !== state.page) this.discardResizeGhost();
       this.host.replaceChildren();
+      if (this.ghost) this.host.appendChild(this.ghost);
       this.active = state;
       this.jobs = [];
     }
@@ -32707,6 +32714,7 @@ var TileRenderer = class {
     this.density = tileDensity(viewport, refine ? density : Math.min(1, density));
     this.visible = new Set(cellKeys(viewport, this.active.index.width, this.active.index.height));
     for (const node of Array.from(this.host.children)) {
+      if (node === this.ghost) continue;
       if (!this.visible.has((_c = node.dataset.cell) != null ? _c : "")) node.remove();
     }
     const jobs = [];
@@ -32811,6 +32819,7 @@ var TileRenderer = class {
     this.viewport = viewport;
     this.density = nextDensity;
     this.visible = visible;
+    if (this.ghost && sameDensity && sameVisible && this.visibleCurrent()) this.discardResizeGhost();
     if (!refine && sameDensity && sameVisible) return;
     if (sameDensity && sameVisible && this.visibleCurrent()) return;
     this.jobs = [];
@@ -32819,6 +32828,7 @@ var TileRenderer = class {
       return (_a2 = node.dataset.cell) != null ? _a2 : "";
     }));
     for (const node of Array.from(this.host.children)) {
+      if (node === this.ghost) continue;
       const cell = (_a = node.dataset.cell) != null ? _a : "";
       if (!this.visible.has(cell) || !this.active.index.hasCell(cell)) node.remove();
     }
@@ -32869,6 +32879,7 @@ var TileRenderer = class {
     (_b = (_a = this.backend) == null ? void 0 : _a.cancelGeneration) == null ? void 0 : _b.call(_a, this.renderGeneration);
     if (this.frame !== null) cancelAnimationFrame(this.frame);
     this.abortInkCommit(false);
+    this.discardResizeGhost();
     for (const [key, tile] of this.cache) this.drop(key, tile);
     this.states.clear();
     this.jobs = [];
@@ -32879,6 +32890,7 @@ var TileRenderer = class {
     let state = this.states.get(page);
     if (!state || state.index.width !== width || state.index.height !== height) {
       if (state) {
+        this.captureResizeGhost(state.index.width, width);
         for (const [key, tile] of this.cache) if (tile.state === state) this.drop(key, tile);
       }
       state = {
@@ -32891,6 +32903,36 @@ var TileRenderer = class {
       this.states.set(page, state);
     }
     return state;
+  }
+  /** Keeps the previous page rasters visible across a same-page relayout.
+   *  Ink geometry scales linearly with the page box (normalized coordinates
+   *  map through the logical width), so the retired rasters scaled by the box
+   *  ratio are pixel-equivalent to the re-rendered ones - they only differ in
+   *  resolution. Without this, setPage() empties the layer on every rail
+   *  toggle and pane resize and the whole page visibly blanks and refills.
+   *  Nodes leave the ghost as their fresh tiles mount (attach), and the ghost
+   *  goes once the visible frame is complete (update). */
+  captureResizeGhost(previousWidth, nextWidth) {
+    if (!this.ghost) {
+      if (previousWidth <= 0) return;
+      const ghost = this.host.ownerDocument.createElement("div");
+      ghost.className = "ink-tile-resize-ghost";
+      for (const node of Array.from(this.host.children)) {
+        if (node.dataset.cell) ghost.appendChild(node);
+      }
+      if (!ghost.childElementCount) return;
+      ghost.style.position = "absolute";
+      ghost.style.transformOrigin = "0 0";
+      this.ghostBaseWidth = previousWidth;
+      this.ghost = ghost;
+      this.host.appendChild(ghost);
+    }
+    this.ghost.style.transform = `scale(${nextWidth / this.ghostBaseWidth})`;
+  }
+  discardResizeGhost() {
+    var _a;
+    (_a = this.ghost) == null ? void 0 : _a.remove();
+    this.ghost = null;
   }
   key(state, cell, density) {
     return state.id + "/" + cell + "/" + density;
@@ -32934,6 +32976,7 @@ var TileRenderer = class {
     (_a = this.host.querySelector('[data-cell="' + tile.cell + '"]')) == null ? void 0 : _a.remove();
     tile.used = ++this.sequence;
     this.host.appendChild(tile.node);
+    if (this.ghost && !this.ghost.childElementCount) this.discardResizeGhost();
   }
   schedule() {
     if (!this.jobs.length || this.disposed || this.inkCommitPaused || this.inkCommit) return;
@@ -33253,6 +33296,11 @@ var TileRenderer = class {
     }
   }
   drop(key, tile) {
+    if (tile.node.parentElement === this.ghost) {
+      this.pixels -= tile.pixels;
+      this.cache.delete(key);
+      return;
+    }
     tile.node.remove();
     tile.canvas.width = tile.canvas.height = 1;
     this.pixels -= tile.pixels;
@@ -36582,6 +36630,7 @@ var SWIPE_PREVIEW_RETRY_MS2 = 50;
 var RAIL_THUMB_WIDTH = 120;
 var RAIL_SWEEP_THROTTLE_MS = 120;
 var RAIL_REVEAL_DELAY_MS = 230;
+var RAIL_TRANSITION_MS2 = 200;
 var PDF_RAIL_WIDTH_STORAGE_KEY = "ink-pdf-page-rail-width";
 var EMPTY_NOTEBOOK = createNotebook();
 var PdfInkView = class extends InkWritingView {
@@ -36694,15 +36743,30 @@ var PdfInkView = class extends InkWritingView {
     const observer = new ResizeObserver(() => {
       var _a;
       (_a = this.brushPopover) == null ? void 0 : _a.position();
-      this.prewarmToken += 1;
-      this.clearNeighbourCache();
-      this.layoutPage();
-      this.revealInlineEditor();
-      if (this.resizeRenderTimer !== void 0) window.clearTimeout(this.resizeRenderTimer);
-      this.resizeRenderTimer = window.setTimeout(() => void this.renderPdfPage(), 100);
+      if (this.railResizeTimer !== void 0) return;
+      this.applyPaneResize();
     });
     observer.observe(scroller);
     this.register(() => observer.disconnect());
+  }
+  /** One relayout + re-render pass for a scroller size change. */
+  applyPaneResize() {
+    this.prewarmToken += 1;
+    this.clearNeighbourCache();
+    this.layoutPage();
+    this.revealInlineEditor();
+    if (this.resizeRenderTimer !== void 0) window.clearTimeout(this.resizeRenderTimer);
+    this.resizeRenderTimer = window.setTimeout(() => void this.renderPdfPage(), 100);
+  }
+  /** Parks the per-frame resize work during the rail toggle's width
+   *  animation and runs it once when the transition has settled. */
+  scheduleRailResizeSettle() {
+    if (this.railResizeTimer !== void 0) window.clearTimeout(this.railResizeTimer);
+    this.railResizeTimer = window.setTimeout(() => {
+      this.railResizeTimer = void 0;
+      if (!this.viewReady) return;
+      this.applyPaneResize();
+    }, RAIL_TRANSITION_MS2 + 30);
   }
   async onClose() {
     var _a, _b, _c;
@@ -36727,6 +36791,10 @@ var PdfInkView = class extends InkWritingView {
     if (this.pdfRenderTimer !== void 0) {
       window.clearTimeout(this.pdfRenderTimer);
       this.pdfRenderTimer = void 0;
+    }
+    if (this.railResizeTimer !== void 0) {
+      window.clearTimeout(this.railResizeTimer);
+      this.railResizeTimer = void 0;
     }
     this.clearNeighbourCache();
     this.clearRailState();
@@ -37201,6 +37269,7 @@ var PdfInkView = class extends InkWritingView {
       (_b2 = this.root) == null ? void 0 : _b2.toggleClass("ink-rail-hidden", hidden);
       this.fastPagingRailBorrowed = false;
       toggle.setAttribute("aria-pressed", String(!hidden));
+      this.scheduleRailResizeSettle();
       if (!hidden) window.setTimeout(() => this.paintVisibleThumbnails(), RAIL_REVEAL_DELAY_MS);
     });
     toggle.setAttribute("aria-pressed", String(!((_a = this.root) == null ? void 0 : _a.hasClass("ink-rail-hidden"))));
@@ -37355,6 +37424,7 @@ var PdfInkView = class extends InkWritingView {
     if (!((_a = this.root) == null ? void 0 : _a.hasClass("ink-rail-hidden"))) return;
     this.fastPagingRailBorrowed = true;
     this.root.removeClass("ink-rail-hidden");
+    this.scheduleRailResizeSettle();
     window.setTimeout(() => this.paintVisibleThumbnails(), RAIL_REVEAL_DELAY_MS);
   }
   onFastPagingRailCollapsed() {
@@ -37362,6 +37432,7 @@ var PdfInkView = class extends InkWritingView {
     if (!this.fastPagingRailBorrowed) return;
     this.fastPagingRailBorrowed = false;
     (_a = this.root) == null ? void 0 : _a.addClass("ink-rail-hidden");
+    this.scheduleRailResizeSettle();
   }
   rebuildRailButtons(count) {
     var _a, _b, _c, _d;
