@@ -242,6 +242,11 @@ export class TileRenderer {
   private inkFrame: number | null = null;
   private inkCommit: InkCommit | null = null;
   private inkCommitPaused = false;
+  // A gesture that does not pause the commit (eraser/lasso) still races the
+  // worker mirror: compensating a dropped refine mid-gesture would render
+  // tiles from the stale mirror at the freshly bumped revision and cache
+  // them, reviving erased ink. Hold compensation until the gesture ends.
+  private gestureActive = false;
   // beginInput() cancels queued full-density refine jobs so tiles never race
   // the pointer; remember that drop so resumeInkCommit() can rebuild them,
   // otherwise a page zoomed in right before a stroke stays blurry until the
@@ -261,6 +266,11 @@ export class TileRenderer {
   // tile renders must skip them too or they composite twice under the
   // retained preview overlay.
   private workerExclude: ReadonlySet<string> | undefined;
+  // Retired rasters kept on screen across a same-page relayout (see
+  // captureResizeGhost); ghostBaseWidth is the logical width they were
+  // rasterized at, so repeat relayouts rescale the same original nodes.
+  private ghost: HTMLElement | null = null;
+  private ghostBaseWidth = 0;
 
   constructor(private host: HTMLElement) {}
 
@@ -283,7 +293,11 @@ export class TileRenderer {
     this.droppedRefine = false;
     if (state !== this.active) {
       this.cancelInkCommit();
+      if (this.active && this.active.page !== state.page) this.discardResizeGhost();
       this.host.replaceChildren();
+      // Same-page relayout: the ghost parked by state() is the page's only
+      // visible content right now and must survive the host clear.
+      if (this.ghost) this.host.appendChild(this.ghost);
       this.active = state;
       this.jobs = [];
     }
@@ -397,6 +411,7 @@ export class TileRenderer {
     this.density = tileDensity(viewport, refine ? density : Math.min(1, density));
     this.visible = new Set(cellKeys(viewport, this.active.index.width, this.active.index.height));
     for (const node of Array.from(this.host.children)) {
+      if (node === this.ghost) continue;
       if (!this.visible.has((node as HTMLElement).dataset.cell ?? "")) node.remove();
     }
     const jobs: Job[] = [];
@@ -459,10 +474,12 @@ export class TileRenderer {
     this.frame = null;
     this.jobs = [];
     this.pendingTiles.clear();
+    this.gestureActive = true;
   }
 
   resumeInkCommit(): void {
     this.inkCommitPaused = false;
+    this.gestureActive = false;
     // Consume the flag only when the rebuild can actually run: an eraser
     // gesture that erased nothing never replaces an in-flight interactive
     // commit, and clearing the flag here would swallow the refine work
@@ -487,6 +504,9 @@ export class TileRenderer {
     // Density is budgeted against the visible region, never the full page.
     this.density = nextDensity;
     this.visible = visible;
+    // Once every visible cell holds its fresh raster the relayout's refill is
+    // done; any ghost nodes left cover cells the viewport no longer shows.
+    if (this.ghost && sameDensity && sameVisible && this.visibleCurrent()) this.discardResizeGhost();
     // Scrolling within the current tile range only changes the viewport crop.
     // Keep both mounted tiles and in-flight tile jobs; rebuilding the queue on
     // every scroll event repeatedly cancels work and remounts the same frame.
@@ -500,6 +520,7 @@ export class TileRenderer {
     this.jobs = [];
     const mountedCells = new Set(Array.from(this.host.children, (node) => (node as HTMLElement).dataset.cell ?? ""));
     for (const node of Array.from(this.host.children)) {
+      if (node === this.ghost) continue;
       const cell = (node as HTMLElement).dataset.cell ?? "";
       if (!this.visible.has(cell) || !this.active.index.hasCell(cell)) node.remove();
     }
@@ -561,6 +582,7 @@ export class TileRenderer {
     this.backend?.cancelGeneration?.(this.renderGeneration);
     if (this.frame !== null) cancelAnimationFrame(this.frame);
     this.abortInkCommit(false);
+    this.discardResizeGhost();
     for (const [key, tile] of this.cache) this.drop(key, tile);
     this.states.clear(); this.jobs = []; this.pendingTiles.clear(); this.host.replaceChildren();
   }
@@ -568,12 +590,50 @@ export class TileRenderer {
   private state(page: InkPage, width: number, height: number): PageTiles {
     let state = this.states.get(page);
     if (!state || state.index.width !== width || state.index.height !== height) {
-      if (state) for (const [key, tile] of this.cache) if (tile.state === state) this.drop(key, tile);
+      if (state) {
+        // Park the old rasters before the cache drop retires their nodes: the
+        // relayout must not blank the page.
+        this.captureResizeGhost(state.index.width, width);
+        for (const [key, tile] of this.cache) if (tile.state === state) this.drop(key, tile);
+      }
       state = { page, index: new StrokeIndex(width, height), id: ++this.sequence,
         syncedStrokes: null, syncedPageRevision: -1 };
       this.states.set(page, state);
     }
     return state;
+  }
+
+  /** Keeps the previous page rasters visible across a same-page relayout.
+   *  Ink geometry scales linearly with the page box (normalized coordinates
+   *  map through the logical width), so the retired rasters scaled by the box
+   *  ratio are pixel-equivalent to the re-rendered ones - they only differ in
+   *  resolution. Without this, setPage() empties the layer on every rail
+   *  toggle and pane resize and the whole page visibly blanks and refills.
+   *  Nodes leave the ghost as their fresh tiles mount (attach), and the ghost
+   *  goes once the visible frame is complete (update). */
+  private captureResizeGhost(previousWidth: number, nextWidth: number): void {
+    if (!this.ghost) {
+      if (previousWidth <= 0) return;
+      const ghost = this.host.ownerDocument.createElement("div");
+      ghost.className = "ink-tile-resize-ghost";
+      for (const node of Array.from(this.host.children)) {
+        if ((node as HTMLElement).dataset.cell) ghost.appendChild(node);
+      }
+      if (!ghost.childElementCount) return;
+      ghost.style.position = "absolute";
+      ghost.style.transformOrigin = "0 0";
+      this.ghostBaseWidth = previousWidth;
+      this.ghost = ghost;
+      this.host.appendChild(ghost);
+    }
+    // Repeat relayouts (the rail's 200ms animation) rescale the original
+    // rasters instead of re-wrapping an already-scaled ghost.
+    this.ghost.style.transform = `scale(${nextWidth / this.ghostBaseWidth})`;
+  }
+
+  private discardResizeGhost(): void {
+    this.ghost?.remove();
+    this.ghost = null;
   }
 
   private key(state: PageTiles, cell: string, density: number): string { return state.id + "/" + cell + "/" + density; }
@@ -611,6 +671,7 @@ export class TileRenderer {
     this.host.querySelector('[data-cell="' + tile.cell + '"]')?.remove();
     tile.used = ++this.sequence;
     this.host.appendChild(tile.node);
+    if (this.ghost && !this.ghost.childElementCount) this.discardResizeGhost();
   }
 
   private schedule(): void {
@@ -715,8 +776,12 @@ export class TileRenderer {
     commit.onComplete(valid);
     // The commit that made resumeInkCommit() defer its dropped-refine rebuild
     // has just settled; compensate now unless a pause already owns the flag
-    // for the gesture's own resume (pen path).
-    if (this.droppedRefine && this.active && !this.disposed && !this.inkCommitPaused) {
+    // for the gesture's own resume (pen path), or a non-pausing gesture
+    // (eraser/lasso) is mid-flight: the worker mirror still trails the locally
+    // bumped cell revisions until patch-strokes lands at gesture end, so a
+    // compensating tile here would cache stale mirror content and revive
+    // erased ink.
+    if (this.droppedRefine && this.active && !this.disposed && !this.inkCommitPaused && !this.gestureActive) {
       this.droppedRefine = false;
       this.update(this.viewport, this.density, true);
     }
@@ -894,6 +959,12 @@ export class TileRenderer {
     }
   }
   private drop(key: string, tile: Tile): void {
+    // Rasters parked in the resize ghost stay on screen: clearing their
+    // canvas or detaching their node would blank the page during a relayout.
+    if (tile.node.parentElement === this.ghost) {
+      this.pixels -= tile.pixels; this.cache.delete(key);
+      return;
+    }
     tile.node.remove(); tile.canvas.width = tile.canvas.height = 1;
     this.pixels -= tile.pixels; this.cache.delete(key);
   }

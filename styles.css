@@ -503,6 +503,10 @@
 .ink-notebook-load-feedback.is-error { pointer-events: auto; }
 .ink-notes-view.is-notebook-opening .ink-page-scroller,
 .ink-notes-view.is-notebook-opening .ink-page-rail { pointer-events: none; }
+/* The toolbar edits the partial model a progressive open swaps in, and that
+ * model is replaced wholesale when parsing finishes; block every toolbar
+ * entry point (Add page, Undo/Redo, page menu) for the whole open window. */
+.ink-notes-view.is-notebook-opening .ink-toolbar { pointer-events: none; }
 .ink-notebook-load-card {
   display: flex;
   max-width: min(520px, calc(100% - 32px));

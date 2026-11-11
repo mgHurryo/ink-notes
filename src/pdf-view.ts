@@ -70,6 +70,8 @@ const RAIL_SWEEP_THROTTLE_MS = 120;
 /** After the rail's expand transition (200ms), repaint the visible range at
  *  full resolution; thumbnails skip painting while collapsed. */
 const RAIL_REVEAL_DELAY_MS = 230;
+/** Matches the notebook editor's rail expand/collapse transition (view.ts). */
+const RAIL_TRANSITION_MS = 200;
 /** Rail width persistence, separate from the notebook editor's key so each
  *  rail remembers the width its own thumbnails need. */
 const PDF_RAIL_WIDTH_STORAGE_KEY = "ink-pdf-page-rail-width";
@@ -133,6 +135,9 @@ export class PdfInkView extends InkWritingView {
   private pdfRenderGeneration = 0;
   private loadGeneration = 0;
   private resizeRenderTimer: number | undefined;
+  /** Set while the rail's width animation is running: the ResizeObserver
+   *  parks its per-frame work until scheduleRailResizeSettle runs once. */
+  private railResizeTimer: number | undefined;
 
   private sidecar: PdfSidecar | null = null;
   private sidecarRaw = "";
@@ -246,15 +251,37 @@ export class PdfInkView extends InkWritingView {
     // and mis-mapped strokes for views opened before the split.
     const observer = new ResizeObserver(() => {
       this.brushPopover?.position();
-      this.prewarmToken += 1;
-      this.clearNeighbourCache();
-      this.layoutPage();
-      this.revealInlineEditor();
-      if (this.resizeRenderTimer !== undefined) window.clearTimeout(this.resizeRenderTimer);
-      this.resizeRenderTimer = window.setTimeout(() => void this.renderPdfPage(), 100);
+      // The rail's width animation resizes the scroller every animation
+      // frame; relayouting per frame re-derives the page box, re-indexes the
+      // strokes and flushes the neighbour caches against each intermediate
+      // size. The toggle parks this work and runs it once at settle, the way
+      // the notebook editor parks its ResizeObserver behind the same timer.
+      if (this.railResizeTimer !== undefined) return;
+      this.applyPaneResize();
     });
     observer.observe(scroller);
     this.register(() => observer.disconnect());
+  }
+
+  /** One relayout + re-render pass for a scroller size change. */
+  private applyPaneResize(): void {
+    this.prewarmToken += 1;
+    this.clearNeighbourCache();
+    this.layoutPage();
+    this.revealInlineEditor();
+    if (this.resizeRenderTimer !== undefined) window.clearTimeout(this.resizeRenderTimer);
+    this.resizeRenderTimer = window.setTimeout(() => void this.renderPdfPage(), 100);
+  }
+
+  /** Parks the per-frame resize work during the rail toggle's width
+   *  animation and runs it once when the transition has settled. */
+  private scheduleRailResizeSettle(): void {
+    if (this.railResizeTimer !== undefined) window.clearTimeout(this.railResizeTimer);
+    this.railResizeTimer = window.setTimeout(() => {
+      this.railResizeTimer = undefined;
+      if (!this.viewReady) return;
+      this.applyPaneResize();
+    }, RAIL_TRANSITION_MS + 30);
   }
 
   async onClose(): Promise<void> {
@@ -277,6 +304,7 @@ export class PdfInkView extends InkWritingView {
     this.pendingNeighbourRenders.clear();
     this.cancelPdfRender();
     if (this.pdfRenderTimer !== undefined) { window.clearTimeout(this.pdfRenderTimer); this.pdfRenderTimer = undefined; }
+    if (this.railResizeTimer !== undefined) { window.clearTimeout(this.railResizeTimer); this.railResizeTimer = undefined; }
     this.clearNeighbourCache();
     this.clearRailState();
     this.destroySwipeStage();
@@ -788,6 +816,9 @@ export class PdfInkView extends InkWritingView {
       // must not hand it back to the state the user just overrode.
       this.fastPagingRailBorrowed = false;
       toggle.setAttribute("aria-pressed", String(!hidden));
+      // The 200ms width animation resizes the scroller every frame; park the
+      // relayout + PDF re-render and run them once at settle.
+      this.scheduleRailResizeSettle();
       // Thumbnails skip painting while the rail is collapsed; repaint the
       // visible range once the expand transition has revealed them.
       if (!hidden) window.setTimeout(() => this.paintVisibleThumbnails(), RAIL_REVEAL_DELAY_MS);
@@ -959,6 +990,7 @@ export class PdfInkView extends InkWritingView {
     if (!this.root?.hasClass("ink-rail-hidden")) return;
     this.fastPagingRailBorrowed = true;
     this.root.removeClass("ink-rail-hidden");
+    this.scheduleRailResizeSettle();
     window.setTimeout(() => this.paintVisibleThumbnails(), RAIL_REVEAL_DELAY_MS);
   }
 
@@ -966,6 +998,7 @@ export class PdfInkView extends InkWritingView {
     if (!this.fastPagingRailBorrowed) return;
     this.fastPagingRailBorrowed = false;
     this.root?.addClass("ink-rail-hidden");
+    this.scheduleRailResizeSettle();
   }
 
   private rebuildRailButtons(count: number): void {

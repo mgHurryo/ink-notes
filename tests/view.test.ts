@@ -25,6 +25,13 @@ interface ViewInternals {
   } | null;
   lastPoint: InkPoint | null;
   selectedStrokeIds: Set<string>;
+  selectedPageIds: Set<string>;
+  pageManagement: boolean;
+  deleteSelectedPages(): void;
+  tiles: {
+    sync: ReturnType<typeof vi.fn>;
+    patchStrokes: ReturnType<typeof vi.fn>;
+  };
   hasInkPreview(): boolean;
   confirmedStrokeOutlines: Map<string, { points: Float32Array; sampleCount: number; mode: "pen" | "highlighter" }>;
   pageIndex: number;
@@ -1270,6 +1277,111 @@ describe("consecutive handwriting input", () => {
     internal.undo();
     expect(internal.notebook.pages).toHaveLength(3);
     expect(internal.notebook.pages.some((page) => page.id === duplicateId)).toBe(false);
+  });
+
+  it("keeps page undo/redo incremental: the notebook and surviving pages keep their object identity", () => {
+    const { internal } = setup();
+    internal.addPage();
+    internal.notebook.pages[1].strokes.push({
+      id: "source", pageId: internal.notebook.pages[1].id, tool: "pen", color: "#000", width: 3, opacity: 1,
+      points: [], createdAt: 1, updatedAt: 1,
+    });
+    internal.duplicateCurrentPage();
+    const duplicate = internal.notebook.pages[2];
+    internal.moveCurrentPage(-1);
+    const moved = internal.notebook.pages[1];
+    const notebook = internal.notebook;
+    internal.undo();
+    // The snapshot history this replaces swapped in a full cloneNotebook() on
+    // every step, which also dropped the TileRenderer's whole page cache.
+    expect(internal.notebook).toBe(notebook);
+    expect(internal.notebook.pages[2]).toBe(duplicate);
+    expect(internal.notebook.pages[2].strokes[0].points).toBe(duplicate.strokes[0].points);
+    internal.redo();
+    expect(internal.notebook).toBe(notebook);
+    expect(internal.notebook.pages[1]).toBe(moved);
+  });
+
+  it("replays page history as incremental page-operation patches, not whole-notebook restores", () => {
+    const { internal } = setup();
+    internal.addPage();
+    const ops: NotebookOperation[] = [];
+    internal.queueWorkerOperation = (operation: NotebookOperation) => { ops.push(operation); };
+    internal.moveCurrentPage(-1);
+    ops.length = 0;
+    internal.undo();
+    expect(ops.length).toBeGreaterThan(0);
+    expect(ops.every((operation) => operation.type === "page-operation")).toBe(true);
+    internal.redo();
+    expect(ops.every((operation) => operation.type === "page-operation")).toBe(true);
+  });
+
+  it("keeps duplicate, move and delete consistent across repeated undo/redo round trips", () => {
+    const { internal } = setup();
+    internal.addPage();
+    internal.notebook.pages[1].strokes.push({
+      id: "source", pageId: internal.notebook.pages[1].id, tool: "pen", color: "#000", width: 3, opacity: 1,
+      points: [], createdAt: 1, updatedAt: 1,
+    });
+    internal.duplicateCurrentPage();
+    const duplicateId = internal.notebook.pages[2].id;
+    internal.moveCurrentPage(-1);
+    internal.deleteCurrentPage();
+    expect(internal.notebook.pages).toHaveLength(2);
+    for (let round = 0; round < 2; round++) {
+      internal.undo();
+      expect(internal.notebook.pages).toHaveLength(3);
+      // A tombstoned page id is never revived: each undo restores the content
+      // under a fresh id, in the moved position, with the source page intact.
+      expect(internal.notebook.pages.some((page) => page.id === duplicateId)).toBe(false);
+      expect(internal.notebook.pages.some((page) => page.id in internal.notebook.deletedPages)).toBe(false);
+      expect(internal.notebook.pages[2].strokes[0].id).toBe("source");
+      expect(internal.notebook.pages[1].strokes[0].id).not.toBe("source");
+      internal.redo();
+      expect(internal.notebook.pages).toHaveLength(2);
+      expect(internal.notebook.pages[1].strokes[0].id).toBe("source");
+    }
+  });
+
+  it("restores multi-page deletion through incremental splices with fresh ids", () => {
+    const { internal } = setup();
+    internal.addPage();
+    internal.addPage();
+    const first = internal.notebook.pages[0].id, second = internal.notebook.pages[1].id;
+    internal.pageManagement = true;
+    internal.selectedPageIds = new Set([first, second]);
+    internal.deleteSelectedPages();
+    expect(internal.notebook.pages).toHaveLength(1);
+    internal.undo();
+    expect(internal.notebook.pages).toHaveLength(3);
+    expect(internal.notebook.pages.some((page) => page.id === first)).toBe(false);
+    expect(internal.notebook.pages.some((page) => page.id === second)).toBe(false);
+    expect(internal.notebook.pages.some((page) => page.id in internal.notebook.deletedPages)).toBe(false);
+    internal.redo();
+    expect(internal.notebook.pages).toHaveLength(1);
+  });
+
+  it("keeps stroke undo on the cell-granular tile patch path instead of a full page resync", () => {
+    const { internal } = setup();
+    const page = internal.notebook.pages[0];
+    page.strokes.push({
+      id: "kept", pageId: page.id, tool: "pen", color: "#000", width: 3, opacity: 1,
+      points: [{ x: 0.7, y: 0.7, pressure: 0.5, t: 1 }], createdAt: 1, updatedAt: 1,
+    });
+    internal.onPointerDown(pointer(10));
+    internal.onPointerUp(pointer(20));
+    expect(page.strokes).toHaveLength(2);
+    internal.tiles.patchStrokes.mockClear();
+    internal.tiles.sync.mockClear();
+    internal.undo();
+    expect(page.strokes).toHaveLength(1);
+    expect(page.strokes[0].id).toBe("kept");
+    const removes = internal.tiles.patchStrokes.mock.calls
+      .filter((call) => (call[1] as string[]).length > 0);
+    expect(removes).toHaveLength(1);
+    expect(removes[0][1]).toHaveLength(1);
+    expect(removes[0][1]).not.toContain("kept");
+    expect(internal.tiles.sync).not.toHaveBeenCalled();
   });
 
   it("protects the last editable page from deletion", () => {
