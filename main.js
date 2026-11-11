@@ -35305,7 +35305,6 @@ var InkView = class extends InkWritingView {
   duplicateCurrentPage() {
     if (this.readingMode) return;
     this.finishPointerInput(false);
-    const before = cloneNotebook(this.notebook);
     const beforePageId = this.currentPage().id;
     const source = clonePage(this.currentPage());
     const insertionIndex = this.pageIndex + 1;
@@ -35322,7 +35321,7 @@ var InkView = class extends InkWritingView {
       pageOrderUpdatedAt: now,
       notebookUpdatedAt: now
     });
-    this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, page.id);
+    this.pushCommand(this.pageAdditionCommand(page, insertionIndex, beforePageId));
     this.renderAll();
     this.scheduleSave();
   }
@@ -35330,7 +35329,6 @@ var InkView = class extends InkWritingView {
     if (this.readingMode) return;
     if (this.notebook.pages.length <= 1) return;
     this.finishPointerInput(false);
-    const before = cloneNotebook(this.notebook);
     const beforePageId = this.currentPage().id;
     const deletedIndex = this.pageIndex;
     const [deleted] = this.notebook.pages.splice(this.pageIndex, 1);
@@ -35347,7 +35345,7 @@ var InkView = class extends InkWritingView {
       pageOrderUpdatedAt: now,
       notebookUpdatedAt: now
     });
-    this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, this.currentPage().id);
+    this.pushCommand(this.pageDeletionCommand([{ page: deleted, index: deletedIndex }], beforePageId, this.currentPage().id));
     this.clearSelection();
     this.renderAll();
     this.scheduleSave();
@@ -35368,22 +35366,34 @@ var InkView = class extends InkWritingView {
     const selected = new Set(this.selectedPageIds);
     if (selected.size === 0 || selected.size >= this.notebook.pages.length) return;
     this.finishPointerInput(false);
-    const before = cloneNotebook(this.notebook);
     const beforePageId = this.currentPage().id;
     const removedBeforeCurrent = this.notebook.pages.slice(0, this.pageIndex).filter((page) => selected.has(page.id)).length;
     const now = Date.now();
-    this.notebook.pages = this.notebook.pages.filter((page) => {
-      if (!selected.has(page.id)) return true;
+    const deleted = [];
+    this.notebook.pages.forEach((page, index) => {
+      if (!selected.has(page.id)) return;
       this.notebook.deletedPages[page.id] = now;
-      return false;
+      deleted.push({ page, index });
     });
+    this.notebook.pages = this.notebook.pages.filter((page) => !selected.has(page.id));
     this.pageIndex = this.notebook.pages.some((page) => page.id === beforePageId) ? this.notebook.pages.findIndex((page) => page.id === beforePageId) : Math.max(0, Math.min(this.pageIndex - removedBeforeCurrent, this.notebook.pages.length - 1));
     this.notebook.pageOrder = this.notebook.pages.map((page) => page.id);
     this.notebook.pageOrderUpdatedAt = now;
     this.notebook.updatedAt = now;
     this.dirtyRevision += 1;
-    this.queueWorkerOperation({ type: "history-restore", notebook: cloneNotebook(this.notebook) });
-    this.pushNotebookCommand(before, cloneNotebook(this.notebook), beforePageId, this.currentPage().id);
+    const afterPageId = this.currentPage().id;
+    for (const { page } of deleted) {
+      this.queueWorkerOperation({
+        type: "page-operation",
+        action: "delete",
+        pageId: page.id,
+        deletedAt: now,
+        pageOrder: [...this.notebook.pageOrder],
+        pageOrderUpdatedAt: now,
+        notebookUpdatedAt: now
+      });
+    }
+    this.pushCommand(this.pageDeletionCommand(deleted, beforePageId, afterPageId));
     this.selectedPageIds.clear();
     this.pageManagement = false;
     this.resetPageView();
@@ -35396,8 +35406,8 @@ var InkView = class extends InkWritingView {
     const target = this.pageIndex + delta;
     if (target < 0 || target >= this.notebook.pages.length) return;
     this.finishPointerInput(false);
-    const before = cloneNotebook(this.notebook);
     const pageId = this.currentPage().id;
+    const source = this.pageIndex;
     const [page] = this.notebook.pages.splice(this.pageIndex, 1);
     this.notebook.pages.splice(target, 0, page);
     this.pageIndex = target;
@@ -35409,7 +35419,7 @@ var InkView = class extends InkWritingView {
       pageOrderUpdatedAt: now,
       notebookUpdatedAt: now
     });
-    this.pushNotebookCommand(before, cloneNotebook(this.notebook), pageId, pageId);
+    this.pushCommand(this.pageMoveCommand(pageId, source, target));
     this.renderAll();
     this.scheduleSave();
   }
@@ -35431,6 +35441,8 @@ var InkView = class extends InkWritingView {
     return {
       undo: () => {
         var _a;
+        this.destroySwipeStage();
+        this.pageNavigationGeneration += 1;
         const index = this.notebook.pages.findIndex((candidate) => candidate.id === currentPage.id);
         if (index < 0 || this.notebook.pages.length <= 1) return;
         const [removed] = this.notebook.pages.splice(index, 1);
@@ -35450,6 +35462,8 @@ var InkView = class extends InkWritingView {
         });
       },
       redo: () => {
+        this.destroySwipeStage();
+        this.pageNavigationGeneration += 1;
         const now = Date.now();
         if (currentPage.id in this.notebook.deletedPages) currentPage = clonePageAsNew(currentPage, currentPage.title, now);
         const index = Math.max(0, Math.min(insertionIndex, this.notebook.pages.length));
@@ -35468,45 +35482,128 @@ var InkView = class extends InkWritingView {
       rebuild: true
     };
   }
-  pushNotebookCommand(before, after, beforePageId, afterPageId) {
-    this.pushCommand({
-      undo: () => this.restoreNotebookState(before, beforePageId),
-      redo: () => this.restoreNotebookState(after, afterPageId),
+  /** Undoable page deletion that splices the removed page objects back into
+   *  their original positions instead of snapshot-restoring the whole
+   *  notebook. Like the notebook restore it replaces, a page whose id was
+   *  tombstoned again in the meantime (complementary deletions, external
+   *  merges) revives under a fresh id, because a tombstoned page id must
+   *  never be revived. */
+  pageDeletionCommand(deleted, beforePageId, afterPageId) {
+    const current = new Map(deleted.map(({ page }) => [page.id, page]));
+    const currentId = (pageId) => {
+      var _a, _b;
+      return (_b = (_a = current.get(pageId)) == null ? void 0 : _a.id) != null ? _b : pageId;
+    };
+    return {
+      undo: () => {
+        this.destroySwipeStage();
+        this.pageNavigationGeneration += 1;
+        const now = Date.now();
+        const previousPageId = this.currentPage().id;
+        for (const { page, index } of deleted) {
+          let restored = current.get(page.id);
+          if (restored.id in this.notebook.deletedPages) {
+            restored = clonePageAsNew(restored, restored.title, now);
+            current.set(page.id, restored);
+          }
+          this.notebook.pages.splice(Math.max(0, Math.min(index, this.notebook.pages.length)), 0, restored);
+        }
+        this.pageIndex = Math.max(0, this.notebook.pages.findIndex((candidate) => candidate.id === currentId(beforePageId)));
+        if (this.currentPage().id !== previousPageId) this.resetPageView();
+        const pageOrder = this.notebook.pages.map((candidate) => candidate.id);
+        this.notebook.pageOrder = pageOrder;
+        this.notebook.pageOrderUpdatedAt = now;
+        this.notebook.updatedAt = now;
+        this.dirtyRevision += 1;
+        for (const { page } of deleted) {
+          this.queueWorkerOperation({
+            type: "page-operation",
+            action: "restore",
+            page: clonePage(current.get(page.id)),
+            pageOrder,
+            pageOrderUpdatedAt: now,
+            notebookUpdatedAt: now
+          });
+        }
+      },
+      redo: () => {
+        var _a;
+        this.destroySwipeStage();
+        this.pageNavigationGeneration += 1;
+        const now = Date.now();
+        const previousPageId = this.currentPage().id;
+        for (const { page } of deleted) {
+          const id = currentId(page.id);
+          this.notebook.pages = this.notebook.pages.filter((candidate) => candidate.id !== id);
+          this.notebook.deletedPages[id] = Math.max((_a = this.notebook.deletedPages[id]) != null ? _a : 0, now);
+        }
+        this.pageIndex = Math.max(0, this.notebook.pages.findIndex((candidate) => candidate.id === currentId(afterPageId)));
+        if (this.currentPage().id !== previousPageId) this.resetPageView();
+        const pageOrder = this.notebook.pages.map((candidate) => candidate.id);
+        this.notebook.pageOrder = pageOrder;
+        this.notebook.pageOrderUpdatedAt = now;
+        this.notebook.updatedAt = now;
+        this.dirtyRevision += 1;
+        for (const { page } of deleted) {
+          this.queueWorkerOperation({
+            type: "page-operation",
+            action: "delete",
+            pageId: currentId(page.id),
+            deletedAt: now,
+            pageOrder,
+            pageOrderUpdatedAt: now,
+            notebookUpdatedAt: now
+          });
+        }
+      },
       rebuild: true
-    });
+    };
   }
-  restoreNotebookState(snapshot, selectedPageId) {
-    var _a, _b;
-    this.destroySwipeStage();
-    this.pageNavigationGeneration += 1;
-    const current = this.notebook;
-    const next = cloneNotebook(snapshot);
-    const now = Date.now();
-    const nextIds = new Set(next.pages.map((page) => page.id));
-    const deletedPages = { ...current.deletedPages };
-    for (const [pageId, deletedAt] of Object.entries(next.deletedPages)) {
-      deletedPages[pageId] = Math.max((_a = deletedPages[pageId]) != null ? _a : 0, deletedAt);
-    }
-    for (const page of current.pages) {
-      if (!nextIds.has(page.id)) deletedPages[page.id] = Math.max((_b = deletedPages[page.id]) != null ? _b : 0, now);
-    }
-    let selectedId = selectedPageId;
-    next.pages = next.pages.map((page) => {
-      if (!(page.id in deletedPages)) return page;
-      const restored = clonePageAsNew(page, page.title, now);
-      if (page.id === selectedPageId) selectedId = restored.id;
-      return restored;
-    });
-    next.deletedPages = deletedPages;
-    next.pageOrder = next.pages.map((page) => page.id);
-    next.updatedAt = now;
-    next.pageOrderUpdatedAt = now;
-    const previousPageId = this.currentPage().id;
-    this.notebook = next;
-    this.pageIndex = Math.max(0, next.pages.findIndex((page) => page.id === selectedId));
-    if (this.currentPage().id !== previousPageId) this.resetPageView();
-    this.dirtyRevision += 1;
-    this.queueWorkerOperation({ type: "history-restore", notebook: cloneNotebook(this.notebook) });
+  /** Undoable page reorder that splices the same page object between its two
+   *  positions; the page keeps its object identity, so the TileRenderer keeps
+   *  its rasters instead of dropping and re-rendering every tile. */
+  pageMoveCommand(pageId, from, to) {
+    return {
+      undo: () => {
+        this.destroySwipeStage();
+        this.pageNavigationGeneration += 1;
+        const index = this.notebook.pages.findIndex((candidate) => candidate.id === pageId);
+        if (index < 0) return;
+        const [page] = this.notebook.pages.splice(index, 1);
+        this.notebook.pages.splice(Math.max(0, Math.min(from, this.notebook.pages.length)), 0, page);
+        const previousPageId = this.currentPage().id;
+        this.pageIndex = Math.max(0, this.notebook.pages.findIndex((candidate) => candidate.id === pageId));
+        if (this.currentPage().id !== previousPageId) this.resetPageView();
+        const now = Date.now();
+        this.finishPageOrderChange(now, {
+          type: "page-operation",
+          action: "reorder",
+          pageOrder: this.notebook.pages.map((candidate) => candidate.id),
+          pageOrderUpdatedAt: now,
+          notebookUpdatedAt: now
+        });
+      },
+      redo: () => {
+        this.destroySwipeStage();
+        this.pageNavigationGeneration += 1;
+        const index = this.notebook.pages.findIndex((candidate) => candidate.id === pageId);
+        if (index < 0) return;
+        const [page] = this.notebook.pages.splice(index, 1);
+        this.notebook.pages.splice(Math.max(0, Math.min(to, this.notebook.pages.length)), 0, page);
+        const previousPageId = this.currentPage().id;
+        this.pageIndex = Math.max(0, this.notebook.pages.findIndex((candidate) => candidate.id === pageId));
+        if (this.currentPage().id !== previousPageId) this.resetPageView();
+        const now = Date.now();
+        this.finishPageOrderChange(now, {
+          type: "page-operation",
+          action: "reorder",
+          pageOrder: this.notebook.pages.map((candidate) => candidate.id),
+          pageOrderUpdatedAt: now,
+          notebookUpdatedAt: now
+        });
+      },
+      rebuild: true
+    };
   }
   setPagePaper(pageId, paper) {
     const page = this.pageById(pageId);

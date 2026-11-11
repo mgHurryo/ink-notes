@@ -121,6 +121,38 @@ describe("tile spatial index", () => {
     for (const cell of expected) expect(index.hasCell(cell)).toBe(true);
     expect(index.revisions.size).toBe(expected.length);
   });
+
+  it("keeps undo/redo invalidation local to the affected strokes' cells", () => {
+    const width = 1600, height = 2200;
+    const index = new StrokeIndex(width, height);
+    const strokes = Array.from({ length: 200 }, (_, i) =>
+      stroke("s" + i, ((i * 37) % width) / width, ((i * 91) % height) / height));
+    index.sync(strokes);
+    const totalCells = index.revisions.size;
+    const revisionsBefore = new Map(index.revisions);
+    const target = strokes[100];
+    const affected = new Set(index.cellsFor([target]));
+    expect(affected.size).toBeGreaterThan(0);
+
+    // Undo of an added stroke removes exactly that stroke: only its own cells
+    // may change revision, so every other cached tile stays a cache hit.
+    const undoCells = index.patch([], [target.id], strokes);
+    expect(undoCells.length).toBeGreaterThan(0);
+    expect(undoCells.length).toBeLessThan(totalCells);
+    expect(undoCells.every((cell) => affected.has(cell))).toBe(true);
+    for (const [cell, revision] of revisionsBefore) {
+      if (!affected.has(cell)) expect(index.revisions.get(cell)).toBe(revision);
+    }
+
+    // Redo re-adds it under a fresh id; invalidation stays inside its cells.
+    const restored = { ...target, id: "restored", createdAt: 9, updatedAt: 9 };
+    const redoCells = index.patch([restored], [], strokes);
+    const restoredCells = new Set(index.cellsFor([restored]));
+    expect(redoCells.every((cell) => restoredCells.has(cell))).toBe(true);
+    for (const [cell, revision] of revisionsBefore) {
+      if (!affected.has(cell)) expect(index.revisions.get(cell)).toBe(revision);
+    }
+  });
 });
 
 describe("interactive tile commits", () => {
