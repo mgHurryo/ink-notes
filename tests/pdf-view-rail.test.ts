@@ -1110,6 +1110,34 @@ describe("pdf page preview rail", () => {
     await view.onClose();
   });
 
+  it("runs one relayout after the rail toggle settles instead of per resize frame", async () => {
+    const { view, internal } = await setup(3);
+    const layoutPage = vi.spyOn(view as unknown as { layoutPage(): void }, "layoutPage");
+    const renderPdfPage = internal.renderPdfPage as unknown as ReturnType<typeof vi.fn>;
+    const root = document.querySelector<HTMLElement>(".ink-pdf-view")!;
+    expect(root.classList.contains("ink-rail-hidden")).toBe(true);
+    layoutPage.mockClear();
+    renderPdfPage.mockClear();
+    vi.useFakeTimers();
+    try {
+      document.querySelector<HTMLButtonElement>('button[aria-label="Pages"]')!.click();
+      expect(root.classList.contains("ink-rail-hidden")).toBe(false);
+      // The rail's width animation must not relayout or re-render per frame.
+      vi.advanceTimersByTime(100);
+      expect(layoutPage).not.toHaveBeenCalled();
+      expect(renderPdfPage).not.toHaveBeenCalled();
+      // At the transition settle the parked resize work runs exactly once.
+      vi.advanceTimersByTime(140);
+      expect(layoutPage).toHaveBeenCalledTimes(1);
+      vi.advanceTimersByTime(120);
+      expect(renderPdfPage).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+      layoutPage.mockRestore();
+    }
+    await view.onClose();
+  });
+
   it("mounts a drag-resizable rail that clamps and persists the width under the PDF key", async () => {
     window.localStorage.removeItem("ink-pdf-page-rail-width");
     const { view, internal } = await setup(3);

@@ -1113,6 +1113,73 @@ describe("page rail thumbnails and resizing", () => {
     expect(window.localStorage.getItem("ink-notes-page-rail-width")).toBe("150");
   });
 
+  it("expands the page preview rail without blanking or rebuilding the page", () => {
+    const internal = view as unknown as {
+      notebook: ReturnType<typeof createNotebook>;
+      pageScroller: HTMLElement;
+      resizeCanvas(): void;
+      tiles: { update(viewport: { x: number; y: number; width: number; height: number }, density: number, refine: boolean): void };
+    };
+    // jsdom has no layout: pin the scroller box the layout measures. The rail
+    // squeeze (800 -> 624) stands in for the 200ms width animation's effect.
+    let scrollerWidth = 800;
+    const scroller = internal.pageScroller;
+    Object.defineProperty(scroller, "clientWidth", { configurable: true, get: () => scrollerWidth });
+    Object.defineProperty(scroller, "clientHeight", { configurable: true, value: 600 });
+    let scrollTop = 96;
+    Object.defineProperty(scroller, "scrollTop", { configurable: true, get: () => scrollTop, set: (value: number) => { scrollTop = value; } });
+    scroller.scrollTop = 96;
+    const inkStroke = (id: string, from: number, to: number): InkStroke => ({
+      id, pageId: internal.notebook.pages[0].id, tool: "pen", color: "#123456", width: 3, opacity: 1,
+      points: [{ x: from, y: from, pressure: 0.5, t: 0 }, { x: to, y: to, pressure: 0.5, t: 40 }],
+      createdAt: 1, updatedAt: 1,
+    });
+    // Spread strokes over the page so the relayout has several tiles to keep.
+    for (const [id, from, to] of [["s1", 0.04, 0.08], ["s2", 0.45, 0.55], ["s3", 0.85, 0.95]] as const) {
+      internal.notebook.pages[0].strokes.push(inkStroke(id, from, to));
+    }
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => { frames.push(callback); return frames.length; }));
+    internal.resizeCanvas();
+    internal.tiles.update({ x: 0, y: 0, width: 800, height: 1143 }, 1, true);
+    for (let drained = 0; drained < 12 && frames.length; drained++) frames.shift()!(0);
+    const layer = document.querySelector<HTMLElement>(".ink-tile-layer")!;
+    const painted = Array.from(layer.querySelectorAll("canvas"));
+    expect(painted.length).toBeGreaterThan(2);
+    const canvas = document.querySelector("canvas.ink-selection-canvas");
+
+    vi.useFakeTimers();
+    try {
+      button("Pages").click(); // 预览全部: the preview rail expands over the settle timer
+      scrollerWidth = 624;     // the rail's width squeezes the page column
+      vi.advanceTimersByTime(240);
+      console.log("DEBUG", {
+        cells: Array.from(layer.children).map((n) => (n as HTMLElement).dataset.cell ?? n.className),
+        logical: [(view as unknown as { canvasLogicalWidth: number }).canvasLogicalWidth,
+          (view as unknown as { canvasLogicalHeight: number }).canvasLogicalHeight],
+        base: [(view as unknown as { pageBaseWidth: number }).pageBaseWidth],
+        ghostNow: !!(internal.tiles as unknown as { ghost: unknown }).ghost,
+        states: Array.from((internal.tiles as unknown as { states: Map<unknown, { index: { width: number } }> }).states,
+          ([, s]) => s.index.width),
+      });
+      // The retired rasters stay on screen, scaled by the box ratio, until
+      // their fresh tiles replace them: the page never blanks and refills.
+      const ghost = layer.querySelector<HTMLElement>(".ink-tile-resize-ghost");
+      expect(ghost).not.toBeNull();
+      expect(ghost!.style.transform).toBe("scale(0.78)");
+      expect(painted.some((node) => ghost!.contains(node))).toBe(true);
+      // Editor identity is untouched: same selection canvas, same scroll.
+      expect(document.querySelector("canvas.ink-selection-canvas")).toBe(canvas);
+      expect(scrollTop).toBe(96);
+      // The preview itself is shown.
+      expect(document.querySelector(".ink-notes-view")!.classList.contains("ink-rail-hidden")).toBe(false);
+      expect(document.querySelectorAll(".ink-page-thumb").length).toBe(internal.notebook.pages.length);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("centers the active thumb through rail rebuilds while a fast paging burst holds the rail open", () => {
     const internal = view as unknown as { addPage(): void; renderPageRail(): void; fastPagingRail: boolean };
     internal.addPage();
