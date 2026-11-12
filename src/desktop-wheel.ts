@@ -13,7 +13,20 @@ const RENEWED_FLICK_JUMP_RATIO = 2.2;
  *  phase holds nearly constant, and only a stall merge's tail decays away.
  *  The floor sits just under the oscillating re-flick shape (60/90px steps
  *  hold 0.67x) and safely above the shallowest merged-continuation fall (a
- *  70ms-stamped tropical merge decays to 0.56x). */
+ *  70ms-stamped tropical merge decays to 0.56x).
+ *  Known residual: a sustained main-thread stall flushes SEVERAL stamped
+ *  merges back to back, and each merge sums fresh tail pixels, so adjacent
+ *  beats hold 0.9-1.0x of each other - the exact single-beat shape of a
+ *  real re-sweep's fast phase, and the decay premise above fails. One false
+ *  confirm re-opens the page budget (beginRenewedGesture) and restores the
+ *  frozen travel, so one burst flips ONE ghost page on its confirmation
+ *  beat (pinned at the 2-page ceiling for 3- and 5-merge bursts in
+ *  tests/desktop-wheel.test.ts). The bound holds because every later merge
+ *  of the burst is a relative fall against the confirming envelope - it
+ *  never re-freezes, and it rides under the renewalBlocked window, the flip
+ *  suppression and the per-gesture page budget. The ratio cannot be
+ *  tightened to close the band: the real re-sweep shapes pinned by
+ *  TRIPLE_FLICK and the mid-speed hot-tail re-flick contracts fill it. */
 const RENEWED_FLICK_HOLD_RATIO = 0.6;
 /** The quiet-gap reset's mirror arm demands a real RISE, not the hold the
  *  rearm arm accepts. A plateau inertia tail keeps the min-chain envelope
