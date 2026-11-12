@@ -1694,6 +1694,11 @@ export class PdfInkView extends InkWritingView {
     if (this.desktopRenderDensity === undefined) return;
     this.desktopRenderDensity = undefined;
     if (refine) this.updateViewport(true);
+    // The burst's start edge latched the tiles with beginInput(), but unlike a
+    // pen gesture nothing resumes them here, so the latch would hold until the
+    // next pen-up and pace every undo/redo or deferred ink commit one tile per
+    // frame. Every caller of this method ends a zoom burst, refine or not.
+    this.tiles?.resumeInkCommit();
   }
   protected desktopResetZoom(): void { this.resetZoom(); }
 
