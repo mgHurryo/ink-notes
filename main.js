@@ -26204,6 +26204,10 @@ var StickyNoteLayer = class {
     var _a;
     const edit = this.editing;
     if (!edit) return;
+    if (this.context.busy() || !this.context.editable()) {
+      new import_obsidian5.Notice("Your draft is kept in the editor; try committing again in a moment.");
+      return;
+    }
     this.editing = void 0;
     const current = (_a = this.context.page().stickyNotes) == null ? void 0 : _a.find((n) => n.id === edit.id);
     const currentBox = current && stickyTextBoxes(current).find((box) => box.id === edit.boxId);
@@ -26336,7 +26340,7 @@ var StickyNoteLayer = class {
     const format = this.formatting;
     if (format && (!editable || format.page !== page.id || !((_b = page.stickyNotes) == null ? void 0 : _b.some((note) => note.id === format.note && !note.collapsed && stickyTextBoxes(note).some((box) => box.id === format.box))))) this.closeFormat();
     if (!editable) {
-      this.editing = void 0;
+      if (this.editing) this.commitText();
       this.selectBox();
     }
     if (this.editing && this.editing.base.pageId !== page.id) this.editing = void 0;

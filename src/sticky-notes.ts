@@ -416,7 +416,12 @@ export class StickyNoteLayer {
     if (current) this.context.change(current, { ...current, ...patch });
   }
   private commitText(): void {
-    const edit = this.editing; if (!edit) return; this.editing = undefined;
+    const edit = this.editing; if (!edit) return;
+    // update() silently drops the patch while busy or read-only, and the
+    // cleanup below destroys the input holding the only draft copy. Keep the
+    // editor mounted so the user can commit once the guard clears.
+    if (this.context.busy() || !this.context.editable()) { new Notice("Your draft is kept in the editor; try committing again in a moment."); return; }
+    this.editing = undefined;
     const current = this.context.page().stickyNotes?.find((n) => n.id === edit.id);
     const currentBox = current && stickyTextBoxes(current).find((box) => box.id === edit.boxId);
     const baseBox = stickyTextBoxes(edit.base).find((box) => box.id === edit.boxId);
@@ -510,7 +515,10 @@ export class StickyNoteLayer {
     if (this.panningNote && (!editable || !this.context.pointer() || !page.stickyNotes?.some((note) => note.id === this.panningNote && !note.collapsed))) this.panningNote = undefined;
     const format = this.formatting;
     if (format && (!editable || format.page !== page.id || !page.stickyNotes?.some((note) => note.id === format.note && !note.collapsed && stickyTextBoxes(note).some((box) => box.id === format.box)))) this.closeFormat();
-    if (!editable) { this.editing = undefined; this.selectBox(); }
+    // A read-only page previously destroyed the draft together with the
+    // editor; commitText's guard keeps both, so defer the rebuild until the
+    // draft commits.
+    if (!editable) { if (this.editing) this.commitText(); this.selectBox(); }
     // Invalidating the render cache (for example after a text commit) is not
     // a page change, and must not cancel the contact that committed the text.
     if (this.editing && this.editing.base.pageId !== page.id) this.editing = undefined;
