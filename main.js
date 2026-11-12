@@ -23582,6 +23582,7 @@ function drawInkStroke(ctx, stroke, width, height, referenceWidth = STROKE_WIDTH
   ctx.restore();
 }
 function drawInkStrokePreview(ctx, stroke, width, height, referenceWidth = STROKE_WIDTH_REFERENCE) {
+  var _a, _b;
   const points = stroke.points;
   if (points.length === 0) return;
   ctx.save();
@@ -23591,7 +23592,10 @@ function drawInkStrokePreview(ctx, stroke, width, height, referenceWidth = STROK
   } else {
     const step = Math.max(1, Math.ceil((points.length - 1) / 12));
     const pressure = (points[0].pressure + points[points.length - 1].pressure) / 2;
-    ctx.lineWidth = stroke.width * width / referenceWidth * (stroke.tool === "highlighter" ? 1 : 0.55 + pressure * 0.75);
+    const gain = clampPercent((_a = stroke.dynamics) == null ? void 0 : _a.pressure, 100) / 100;
+    const mapped = samplePressureCurve(Math.max(0, Math.min(1, pressure)), normalizePressureCurve((_b = stroke.dynamics) == null ? void 0 : _b.pressureCurve));
+    const effectivePressure = 0.5 + (mapped - 0.5) * gain;
+    ctx.lineWidth = stroke.width * width / referenceWidth * (stroke.tool === "highlighter" ? 1 : 0.55 + effectivePressure * 0.75);
     ctx.beginPath();
     ctx.moveTo(points[0].x * width, points[0].y * height);
     for (let index = step; index < points.length - 1; index += step) {

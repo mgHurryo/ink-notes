@@ -368,8 +368,15 @@ export function drawInkStrokePreview(ctx: CanvasRenderingContext2D, stroke: InkS
     // preserving each stroke's overall shape and direction.
     const step = Math.max(1, Math.ceil((points.length - 1) / 12));
     const pressure = (points[0].pressure + points[points.length - 1].pressure) / 2;
+    // The preview line stands in for the committed outline, so its averaged
+    // pressure must pass through the same curve mapping as drawSampleDot —
+    // otherwise the first-frame tile width visibly differs from the tile
+    // that replaces it.
+    const gain = clampPercent(stroke.dynamics?.pressure, 100) / 100;
+    const mapped = samplePressureCurve(Math.max(0, Math.min(1, pressure)), normalizePressureCurve(stroke.dynamics?.pressureCurve));
+    const effectivePressure = 0.5 + (mapped - 0.5) * gain;
     ctx.lineWidth = stroke.width * width / referenceWidth
-      * (stroke.tool === "highlighter" ? 1 : 0.55 + pressure * 0.75);
+      * (stroke.tool === "highlighter" ? 1 : 0.55 + effectivePressure * 0.75);
     ctx.beginPath();
     ctx.moveTo(points[0].x * width, points[0].y * height);
     for (let index = step; index < points.length - 1; index += step) {
