@@ -319,6 +319,11 @@ export class InkView extends InkWritingView {
               () => loadGeneration !== this.notebookLoadGeneration);
           } else notebook = normalizeNotebook(parseStoredJson(raw), { reuseCanonicalPoints: true });
         } catch (loadError) {
+          // A connected preview may already have mounted the worker backend;
+          // once workerSession is cleared below, the onError guard can never
+          // route failures to disableWorkerSession, so drop the backend here
+          // like every other teardown path.
+          this.tiles?.setBackend?.(null);
           session.dispose();
           if (this.workerSession === session) this.workerSession = null;
           if (loadGeneration !== this.notebookLoadGeneration) return;
