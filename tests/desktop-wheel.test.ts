@@ -618,6 +618,51 @@ describe("DesktopWheelGesture plateau-tail stall merge", () => {
   });
 });
 
+describe("DesktopWheelGesture consecutive stamped merges on a hot tail", () => {
+  // A sustained main-thread stall flushes SEVERAL stamped merges back to
+  // back, and each merge sums fresh tail pixels: adjacent beats hold ~0.97x
+  // of each other, the exact single-beat shape of a real re-sweep's fast
+  // phase, so the hold-ratio confirm cannot tell them apart ("only a stall
+  // merge's tail decays away" fails). The false confirm re-opens the page
+  // budget and restores the frozen travel, and the burst flips ONE ghost
+  // page on the confirmation beat. This pins the current consequence
+  // ceiling - one ghost page per stall burst, NOT one per merge: every
+  // later merge is a relative fall against the confirming envelope, so it
+  // never re-freezes and rides under the renewalBlocked window, the flip
+  // suppression and the per-gesture page budget. A refactor that lets the
+  // ghost pages grow with the burst length (notably the renewalBlocked
+  // branch or beginRenewedGesture) turns these red.
+  function pagesAcrossStampedMergeBurst(mergeCount: number): number {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 100;
+    const feed = (magnitudes: number[], stepMs: number) => {
+      for (const magnitude of magnitudes) {
+        pages += gesture.pageDelta(gesture.begin({ x: 0, y: magnitude, mode: 0 }, false, at), false);
+        at += stepMs;
+      }
+    };
+    const windowPx = 30 * (1 - Math.exp(-10 / 300));
+    feed([140, 90, 60, 35, 20, 14], 10); // fast phase: the contact's one page; the tail is still hot at 14px/10ms
+    // Each stamped merge carries the 10 tail samples the stall merged (10
+    // windows of the tau=300ms tail at the delivery beat's speed) but is
+    // stamped at the 10ms delivery cadence, so every merge is jump-shaped
+    // against the hot envelope while adjacent merges hold ~0.97x >= 0.6.
+    const mergedPx = (beat: number) => 10 * 14 * Math.exp(-beat * 10 / 300) * windowPx;
+    feed(Array.from({ length: mergeCount }, (_, i) => mergedPx(i + 1)), 10);
+    feed(Array.from({ length: 20 }, (_, i) => 14 * Math.exp(-(mergeCount + i + 1) * 10 / 300) * windowPx), 10); // honest tail: no further intent, no further flips
+    return pages;
+  }
+
+  it("caps a 3-merge stamped burst at the two-page ceiling (one ghost page)", () => {
+    expect(pagesAcrossStampedMergeBurst(3)).toBe(2);
+  });
+
+  it("keeps a 5-merge stamped burst at the same two-page ceiling", () => {
+    expect(pagesAcrossStampedMergeBurst(5)).toBe(2);
+  });
+});
+
 describe("DesktopWheelGesture idle-boundary re-arm guard", () => {
   // Locks the freeze implementation of the >=180ms boundary: the boundary
   // first sample must go onto stall probation, never through to the ramp
