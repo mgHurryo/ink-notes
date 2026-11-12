@@ -34023,7 +34023,7 @@ var InkView = class extends InkWritingView {
     this.viewReady = false;
   }
   async onLoadFile(file) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d, _e;
     const loadGeneration = ++this.notebookLoadGeneration;
     const previousNotebook = this.notebook;
     const previousPageIndex = this.pageIndex;
@@ -34142,6 +34142,7 @@ var InkView = class extends InkWritingView {
             );
           } else notebook = normalizeNotebook(parseStoredJson(raw), { reuseCanonicalPoints: true });
         } catch (loadError) {
+          (_e = (_d = this.tiles) == null ? void 0 : _d.setBackend) == null ? void 0 : _e.call(_d, null);
           session.dispose();
           if (this.workerSession === session) this.workerSession = null;
           if (loadGeneration !== this.notebookLoadGeneration) return;

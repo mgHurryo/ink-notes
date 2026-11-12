@@ -182,6 +182,61 @@ describe("progressive notebook open window", () => {
     expect(document.querySelector(".ink-notebook-load-feedback")?.getAttribute("role")).toBe("alert");
   });
 
+  it("clears the leaked tile backend when progressive parsing fails after the preview installed", async () => {
+    // The shared beforeEach session always reports canRenderTiles false, so no
+    // existing case ever reaches the connectWorker install branch; this case
+    // needs a session the tiles backend can actually mount (view.ts:261).
+    let disposed = false;
+    const session = {
+      canRenderTiles: () => true,
+      initializeRaw: vi.fn(async () => undefined),
+      barrier: vi.fn(async () => undefined),
+      prepareSave: vi.fn(async () => undefined),
+      cancelGeneration: vi.fn(),
+      // While the session is live, renders just stay pending (jsdom has no
+      // bitmaps to return); after dispose it fails like worker-core does for a
+      // removed session, so post-failure requests report missing-session.
+      renderTile: vi.fn(async () => {
+        if (disposed) missingSession();
+        return new Promise<never>(() => undefined);
+      }),
+      dispose: vi.fn(() => { disposed = true; }),
+    };
+    (view as unknown as { workers: unknown }).workers = { createSession: vi.fn(() => session), isDisabled: () => false };
+    // jsdom has no Worker; without the stub, finishWorkerLoad disposes the
+    // session instead of ever installing the backend (view.ts:271).
+    vi.stubGlobal("Worker", class {});
+    // Seed the previous notebook with ink so the rollback must repaint it.
+    const previous = host().notebook;
+    previous.pages[0].strokes.push({ id: "previous-ink", pageId: previous.pages[0].id, tool: "pen", color: "#000000",
+      width: 3, opacity: 1, createdAt: 1, updatedAt: 1, points: [{ x: 0.001, y: 0.001, pressure: 0.5, t: 1 }] });
+
+    // Cut inside page 2's stroke array: the first preview installs ~8 page-0
+    // strokes in and the worker connects a rAF later, so page 0 must be large
+    // enough that the parser keeps chewing well past that frame before the
+    // garbage surfaces the failure.
+    const raw = notebookRaw(12000, 0.001, 0.001, PAGE_1_STROKES);
+    const cut = raw.indexOf('"id":"disk-s-disk-page-2-100"');
+    const truncated = raw.slice(0, cut) + 'x":@CORRUPT@}]}]';
+    expect(truncated.length).toBeGreaterThanOrEqual(256 * 1024);
+    mockDisk(truncated);
+
+    const opening = view.onLoadFile(openFile);
+    const internals = view as unknown as { tiles: { backend: unknown; update(viewport: unknown, zoom: number, force: boolean): void }; workerSession: unknown; viewport: unknown; zoom: number };
+    await waitFor(() => internals.tiles.backend === session);
+    await expect(opening).rejects.toThrow();
+    // Regression: the catch disposed the session and nulled workerSession but
+    // left tiles.backend mounted. Every tile request then failed with
+    // worker-core's missing-session, while the onError guard
+    // (this.workerSession === session) was already false, so the designed
+    // disableWorkerSession fallback could never run and ink never mounted.
+    expect(internals.tiles.backend).toBeNull();
+    expect(internals.workerSession).toBeNull();
+    // The rolled-back notebook must paint on the main thread again.
+    internals.tiles.update(internals.viewport, (window.devicePixelRatio || 1) * internals.zoom, true);
+    await waitFor(() => (document.querySelector(".ink-tile-layer")?.childElementCount ?? 0) > 0);
+  });
+
   it("drops save timers left armed by a failed open when a retry re-enters onLoadFile", async () => {
     vi.useFakeTimers();
     const store = (view as unknown as { store: Record<string, unknown> }).store;
