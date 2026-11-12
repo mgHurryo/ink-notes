@@ -34892,11 +34892,13 @@ var InkView = class extends InkWritingView {
     super.onTouchStart(event);
   }
   finishPinchRender() {
+    var _a, _b;
     if (this.desktopZoomTimer !== void 0) globalThis.clearTimeout(this.desktopZoomTimer);
     this.desktopZoomTimer = void 0;
     if (this.pinchRenderZoom === void 0) return;
     this.pinchRenderZoom = void 0;
     this.resizeCanvas();
+    (_b = (_a = this.tiles) == null ? void 0 : _a.resumeInkCommit) == null ? void 0 : _b.call(_a);
   }
   applyGestureZoom(value, focus, anchor) {
     var _a, _b;
@@ -38232,11 +38234,13 @@ var PdfInkView = class extends InkWritingView {
     this.desktopZoomTimer = window.setTimeout(() => this.finishDesktopZoom(), 180);
   }
   finishDesktopZoom(refine = true) {
+    var _a;
     if (this.desktopZoomTimer !== void 0) window.clearTimeout(this.desktopZoomTimer);
     this.desktopZoomTimer = void 0;
     if (this.desktopRenderDensity === void 0) return;
     this.desktopRenderDensity = void 0;
     if (refine) this.updateViewport(true);
+    (_a = this.tiles) == null ? void 0 : _a.resumeInkCommit();
   }
   desktopResetZoom() {
     this.resetZoom();

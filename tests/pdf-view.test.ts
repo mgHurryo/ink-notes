@@ -9,6 +9,7 @@ import { createSidecar, disambiguatedSidecarPathFor, insertBlankNotePage, sideca
 import type { PdfSidecar, PdfSourcePageGeometry } from "../src/pdf-sidecar";
 import { PdfInkView, VIEW_TYPE_PDF_INK } from "../src/pdf-view";
 import { PdfTabTakeover } from "../src/pdf-takeover";
+import { TileRenderer } from "../src/tiles";
 
 const FINGERPRINT = { sha256: "a".repeat(64), byteLength: 100 };
 const SOURCE_PAGES = [{ width: 595.28, height: 841.89, rotation: 0 }];
@@ -1150,5 +1151,53 @@ describe("pdf setPage relays the ink exclusion", () => {
     view.hideLassoPreview();
     expect(view.tiles.setWorkerExclusion).toHaveBeenCalled();
     expect([...(view.tiles.setWorkerExclusion.mock.calls.at(-1)![0] as Set<string>)].sort()).toEqual(["s1"]);
+  });
+});
+
+describe("zoom burst tile gesture latch", () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.stubGlobal("window", globalThis); });
+  afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+  it("resumes gesture-free tile commits when a desktop zoom burst finishes", () => {
+    const { internal } = setup();
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => { frames.push(callback); return frames.length; }));
+    // A real TileRenderer prototype with a recording backend so the batched
+    // vs paced commit paths stay observable through the view's own plumbing.
+    const backend = { renderTile: vi.fn(() => new Promise(() => {})), cancelGeneration: vi.fn() };
+    const page = internal.sidecar.notebook.pages[0];
+    const tiles = Object.create(TileRenderer.prototype) as unknown as Record<string, any>;
+    Object.assign(tiles, {
+      backend, disposed: false, inkCommitPaused: false, inkCommit: null, inkFrame: null, frame: null,
+      active: { id: 1, page, index: { width: 384, height: 128,
+        revisions: new Map([["0:0", 1], ["1:0", 1], ["2:0", 1]]), hasCell: () => true, query: () => [],
+        patch: () => [], cellsFor: () => [], remove: () => undefined } },
+      renderGeneration: 4, pendingTiles: new Map(), cache: new Map(), heldCells: new Set(),
+      droppedRefine: false, jobs: [], host: { children: [] }, visible: new Set(), density: 1, ghost: null,
+    });
+    Object.assign(internal, {
+      tiles, ctx: { clearRect: vi.fn() }, viewport: { x: 0, y: 0, width: 300, height: 128 },
+    });
+
+    // A stroke drawn just before the burst leaves a deferred pen-up tile
+    // commit idle timer running; the burst latches the renderer mid-window.
+    internal.onPointerDown(pointer(10, 60));
+    internal.onPointerUp(pointer(40, 90));
+    expect(page.strokes).toHaveLength(1);
+
+    (internal as unknown as { desktopZoom(factor: number): void }).desktopZoom(1.1);
+    expect(tiles.gestureActive).toBe(true);
+    vi.advanceTimersByTime(180);
+
+    // The burst's end transition must resume the commit loop, releasing the
+    // gestureActive latch beginInput() set at the burst's start edge.
+    expect(tiles.gestureActive).toBe(false);
+
+    // So the next undo walks the gesture-free batch path: the first frame
+    // dispatches every affected cell at once instead of pacing one tile per
+    // frame behind the latch (the regression the zoom latch reintroduced).
+    internal.undo();
+    frames.shift()!(0);
+    expect(backend.renderTile).toHaveBeenCalledTimes(3);
   });
 });
