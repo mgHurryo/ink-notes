@@ -26326,7 +26326,7 @@ var StickyNoteLayer = class {
     menu.showAtMouseEvent(new MouseEvent("contextmenu", { clientX: x, clientY: y }));
   }
   sync() {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j, _k, _l, _m, _n;
     const page = this.context.page(), editable = this.context.editable(), width = this.host.clientWidth;
     if (this.panningNote && (!editable || !this.context.pointer() || !((_a = page.stickyNotes) == null ? void 0 : _a.some((note) => note.id === this.panningNote && !note.collapsed)))) this.panningNote = void 0;
     const format = this.formatting;
@@ -26350,9 +26350,14 @@ var StickyNoteLayer = class {
       const { strokes, deletedStrokeIds, updatedAt, textUpdatedAt, ...frame } = note;
       return JSON.stringify(frame);
     };
-    if (((_e = this.last) == null ? void 0 : _e.page) === page.id && this.last.editable === editable && this.last.width === width && ((_f = this.last.notes) == null ? void 0 : _f.length) === ((_g = page.stickyNotes) == null ? void 0 : _g.length) && ((_h = page.stickyNotes) == null ? void 0 : _h.every((note, i) => frameKey(note) === frameKey(this.last.notes[i])))) {
+    if (((_e = this.last) == null ? void 0 : _e.page) === page.id && this.last.editable === editable && ((_f = this.last.notes) == null ? void 0 : _f.length) === ((_g = page.stickyNotes) == null ? void 0 : _g.length) && ((_h = page.stickyNotes) == null ? void 0 : _h.every((note, i) => frameKey(note) === frameKey(this.last.notes[i])))) {
+      for (const note of (_i = page.stickyNotes) != null ? _i : []) {
+        const card = this.card(note.id);
+        if (card) this.position(card, note);
+      }
       this.preview(page.stickyNotes);
       this.last.notes = page.stickyNotes;
+      this.last.width = width;
       return;
     }
     this.last = { page: page.id, notes: page.stickyNotes, editable, width };
@@ -26362,7 +26367,7 @@ var StickyNoteLayer = class {
     this.markdown = new import_obsidian5.Component();
     this.markdown.load();
     this.layer.empty();
-    for (const stored of (_i = page.stickyNotes) != null ? _i : []) {
+    for (const stored of (_j = page.stickyNotes) != null ? _j : []) {
       const note = !editable && this.readFrames.has(stored.id) ? { ...stored, collapsed: this.readFrames.get(stored.id) } : stored;
       const card = this.layer.createDiv({ cls: `ink-sticky-note${note.kind === "text" ? " ink-page-text" : ""}${note.collapsed ? " is-collapsed" : ""}`, attr: { "data-sticky-id": note.id, tabindex: "-1", "aria-label": note.title || "Sticky note" } });
       this.position(card, note);
@@ -26517,7 +26522,7 @@ var StickyNoteLayer = class {
         if (note.kind !== "text") {
           const canvas = board.createEl("canvas");
           const scale = width / note.boardPageWidth;
-          const w = card.clientWidth, h = Math.max(1, card.clientHeight - ((_k = (_j = card.querySelector(".ink-sticky-header")) == null ? void 0 : _j.offsetHeight) != null ? _k : 0));
+          const w = card.clientWidth, h = Math.max(1, card.clientHeight - ((_l = (_k = card.querySelector(".ink-sticky-header")) == null ? void 0 : _k.offsetHeight) != null ? _l : 0));
           const ratio = Math.min(2, window.devicePixelRatio || 1, 2048 / Math.max(w, h));
           canvas.width = Math.max(1, Math.ceil(w * ratio));
           canvas.height = Math.max(1, Math.ceil(h * ratio));
@@ -26528,7 +26533,7 @@ var StickyNoteLayer = class {
           if (!box.text && box.id === PRIMARY_TEXT_BOX && note.kind !== "text") continue;
           const frame = board.createDiv({ cls: "ink-sticky-text-box", attr: { "data-text-box-id": box.id, tabindex: editable ? "0" : "-1", "aria-label": "Text box" } });
           this.positionBox(frame, note, box);
-          frame.classList.toggle("is-selected", ((_l = this.selectedBox) == null ? void 0 : _l.note) === note.id && this.selectedBox.box === box.id);
+          frame.classList.toggle("is-selected", ((_m = this.selectedBox) == null ? void 0 : _m.note) === note.id && this.selectedBox.box === box.id);
           const text = frame.createDiv({ cls: "ink-sticky-markdown markdown-rendered" });
           text.setCssStyles({
             font: stickyFont(box, true),
@@ -26677,7 +26682,7 @@ var StickyNoteLayer = class {
         }, { signal: this.cards.signal, passive: false });
       }
       if (editable && !note.collapsed && note.kind !== "text") bindDrag(button2(card, "Resize note", "move-diagonal-2", () => void 0), true);
-      (_m = card.lastElementChild) == null ? void 0 : _m.classList.toggle("ink-sticky-resize", editable && !note.collapsed && note.kind !== "text");
+      (_n = card.lastElementChild) == null ? void 0 : _n.classList.toggle("ink-sticky-resize", editable && !note.collapsed && note.kind !== "text");
       if (editable && this.context.pointer() && this.panningNote === note.id) {
         const done = button2(card, "Finish scrolling sticky content", "check", () => {
           this.panningNote = void 0;

@@ -13,6 +13,7 @@ import { createNotebook } from "../src/model";
 import type { InkPage, InkStroke } from "../src/model";
 import { defaultToolState } from "../src/tool-state";
 import type { NotebookStore } from "../src/storage";
+import type { StickyNote } from "../src/sticky-model";
 import type { TFile, WorkspaceLeaf } from "obsidian";
 import { Menu } from "obsidian";
 import { gestureContract } from "./gesture-contract";
@@ -1174,6 +1175,66 @@ describe("page rail thumbnails and resizing", () => {
       // The preview itself is shown.
       expect(document.querySelector(".ink-notes-view")!.classList.contains("ink-rail-hidden")).toBe(false);
       expect(document.querySelectorAll(".ink-page-thumb").length).toBe(internal.notebook.pages.length);
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps sticky cards mounted across the preview rail toggle instead of rebuilding them", () => {
+    const internal = view as unknown as {
+      notebook: ReturnType<typeof createNotebook>;
+      pageScroller: HTMLElement;
+      pageElement: HTMLElement;
+      syncStickyNotes(): void;
+    };
+    // jsdom has no layout: pin the boxes the layout and the sticky layer measure.
+    let scrollerWidth = 800;
+    Object.defineProperty(internal.pageScroller, "clientWidth", { configurable: true, get: () => scrollerWidth });
+    Object.defineProperty(internal.pageScroller, "clientHeight", { configurable: true, value: 600 });
+    let hostWidth = 800;
+    Object.defineProperty(internal.pageElement, "clientWidth", { configurable: true, get: () => hostWidth });
+    Object.defineProperty(internal.pageElement, "clientHeight", { configurable: true, value: 600 });
+    const page = internal.notebook.pages[0];
+    page.stickyNotes = [
+      { id: "rail-sticky", pageId: page.id, x: .2, y: .2, width: .5, height: .3, title: "Rail sticky", keywords: "", text: "Sticky body",
+        textUpdatedAt: 1, color: "#fff1a8", collapsed: false, preview: true, scrollX: 0, scrollY: 0, boardPageWidth: 600,
+        strokes: [{ id: "sticky-ink", pageId: "rail-sticky", tool: "pen", color: "#123456", width: 3, opacity: 1,
+          points: [{ x: 10, y: 10, pressure: .5, t: 0 }, { x: 40, y: 30, pressure: .5, t: 40 }], createdAt: 1, updatedAt: 1 }],
+        deletedStrokeIds: [], createdAt: 1, updatedAt: 1 },
+      { id: "rail-text", pageId: page.id, kind: "text", x: .1, y: .6, width: .4, height: .15, title: "Text box", keywords: "", text: "Hello rail",
+        textUpdatedAt: 1, textX: 0, textY: 0, textWidth: 240, textHeight: 120, color: "#ffffff", collapsed: false, preview: true,
+        scrollX: 0, scrollY: 0, boardPageWidth: 600, strokes: [], deletedStrokeIds: [], createdAt: 1, updatedAt: 1 } as StickyNote,
+    ];
+    internal.syncStickyNotes();
+    const cards = document.querySelectorAll<HTMLElement>(".ink-sticky-note");
+    expect(cards.length).toBe(2);
+    const card = cards[0], textCard = cards[1];
+    expect(card.style.width).toBe("400px"); // .5 * 800
+    const markdown = card.querySelector<HTMLElement>(".ink-sticky-markdown")!;
+    expect(markdown.textContent).toBe("Sticky body");
+    const boardCanvas = card.querySelector("canvas");
+
+    vi.stubGlobal("requestAnimationFrame", vi.fn());
+    vi.useFakeTimers();
+    try {
+      button("Pages").click(); // 预览全部: the settle relayout squeezes the page column
+      scrollerWidth = 624;     // the rail's width squeezes the page column
+      hostWidth = 624;
+      vi.advanceTimersByTime(240);
+      // The toggle repositions the mounted cards; it must not rebuild them:
+      // a rebuild aborts every card's listeners, unloads the Markdown
+      // component and re-runs MarkdownRenderer per text box, which on iPad
+      // reads as the whole interface re-rendering.
+      expect(document.querySelectorAll(".ink-sticky-note").length).toBe(2);
+      expect(document.querySelectorAll(".ink-sticky-note")[0]).toBe(card);
+      expect(document.querySelectorAll(".ink-sticky-note")[1]).toBe(textCard);
+      expect(card.querySelector(".ink-sticky-markdown")).toBe(markdown);
+      expect(card.querySelector("canvas")).toBe(boardCanvas);
+      expect(textCard.querySelector<HTMLElement>(".ink-sticky-text-box")!.style.transform).toBe("scale(1.04)"); // 624 / 600
+      // The reposition reflects the new width, so a fix that merely skips the
+      // sync (leaving stale pixel frames) fails this too.
+      expect(card.style.width).toBe("312px"); // .5 * 624
     } finally {
       vi.useRealTimers();
       vi.unstubAllGlobals();
