@@ -1,12 +1,14 @@
 // @vitest-environment jsdom
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("obsidian", async () => import("../dev/obsidian"));
-import { createNotebook, mergeNotebooks, normalizeNotebook } from "../src/model";
+import { App } from "obsidian";
+import { createNotebook, mergeNotebooks, normalizeNotebook, type InkPage } from "../src/model";
 import { cloneSticky, normalizeSticky, StickyNote, stickyLink, stickyPosition, stickyTextBoxes, stickyText, patchStickyTextBox, mergeSticky, stickyFont, resizeStickyTextBox } from "../src/sticky-model";
 import { applyNotebookOperation } from "../src/worker-core";
 import { clonePageValue } from "../src/worker-protocol";
 import { collectStickyEntries, filterStickyEntries, StickySearchModal } from "../src/sticky-index";
 import { paintStickyBoard } from "../src/sticky-rendering";
+import { StickyNoteLayer } from "../src/sticky-notes";
 import { imageVaultApp } from "../dev/image-vault";
 import { createSidecar, PDF_INK_FOLDER } from "../src/pdf-sidecar";
 import { notebookHasInk } from "../src/pdf-export";
@@ -257,5 +259,107 @@ describe("sticky note persistence and search", () => {
     const modal = new StickySearchModal(app, vi.fn(async () => undefined), () => ({ files: ["Course.ink"], entries: [] })); modal.open();
     await vi.waitFor(() => expect(modal.contentEl.querySelector('[role="status"]')?.textContent).toBe("0 sticky notes"));
     expect(modal.contentEl.querySelector("button")).toBeNull(); modal.close();
+  });
+});
+
+describe("sticky draft commit guards", () => {
+  // update() refuses patches while busy or read-only; commitText used to clear
+  // this.editing and remove the input first, so a refused commit destroyed the
+  // only copy of the draft without telling the caller (or the user).
+  type LayerContext = ConstructorParameters<typeof StickyNoteLayer>[2];
+  const DRAFT = "Draft that must survive a refused commit";
+  const DRAFT_KEPT = "Your draft is kept in the editor; try committing again in a moment.";
+  let host: HTMLElement, page: InkPage, layer: StickyNoteLayer, flags: { editable: boolean; busy: boolean },
+    change: ReturnType<typeof vi.fn<(before: StickyNote | undefined, after: StickyNote | undefined) => void>>;
+
+  const editing = () => (layer as unknown as { editing?: unknown }).editing;
+  /** Builds the real card with sync(), then opens the inline editor.
+   *  The note carries no strokes: the real ink renderer needs Path2D, which
+   *  jsdom lacks, and stroke painting is irrelevant to commit guarding. */
+  const mount = (): HTMLTextAreaElement => {
+    page.stickyNotes = [{ ...note(page.id), strokes: [] }];
+    layer.sync();
+    layer.editText(page.stickyNotes![0].id);
+    return document.querySelector<HTMLTextAreaElement>(".ink-sticky-inline-input")!;
+  };
+  /** Contact outside the input while the editor is open (commitOutside, sticky-notes.ts:93). */
+  const contactOutside = (): void => {
+    document.body.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
+  };
+
+  beforeEach(() => {
+    document.body.innerHTML = "";
+    host = document.body.createDiv();
+    page = { id: "p", title: "Page", paper: "blank", strokes: [], deletedStrokeIds: [], stickyNotes: [], createdAt: 1, updatedAt: 1 };
+    flags = { editable: true, busy: false };
+    change = vi.fn();
+    layer = new StickyNoteLayer(host, new App(), {
+      page: () => page, editable: () => flags.editable, busy: () => flags.busy,
+      pointer: () => false, lasso: () => false, fingerAsPen: () => false,
+      change, link: () => "obsidian://vault/file#page", source: () => "file",
+    } as unknown as LayerContext);
+    // Card rebuilds paint ink boards; keep them deterministic in jsdom.
+    vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(new Proxy({}, { get: () => vi.fn(), set: () => true }) as unknown as CanvasRenderingContext2D);
+  });
+  afterEach(() => { layer.dispose(); vi.restoreAllMocks(); });
+
+  it("keeps the draft and warns when a busy contact refuses the commit outside the input", () => {
+    const warn = vi.spyOn(console, "warn");
+    const input = mount(); input.value = DRAFT;
+    flags.busy = true; contactOutside();
+    expect(input.isConnected).toBe(true);
+    expect(editing()).toBeDefined();
+    expect(change).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(DRAFT_KEPT);
+    flags.busy = false;
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, cancelable: true, bubbles: true }));
+    expect(change).toHaveBeenCalledTimes(1);
+    expect(change.mock.calls[0]?.[1]?.text).toBe(DRAFT);
+    expect(input.isConnected).toBe(false);
+  });
+
+  it("keeps the draft when the page turns read-only at commit time", () => {
+    const warn = vi.spyOn(console, "warn");
+    const input = mount(); input.value = DRAFT;
+    flags.editable = false; contactOutside();
+    expect(input.isConnected).toBe(true);
+    expect(editing()).toBeDefined();
+    expect(change).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(DRAFT_KEPT);
+    flags.editable = true;
+    input.dispatchEvent(new FocusEvent("blur"));
+    expect(change).toHaveBeenCalledTimes(1);
+    expect(change.mock.calls[0]?.[1]?.text).toBe(DRAFT);
+  });
+
+  it("keeps the live editor and draft when sync runs while the page is read-only", () => {
+    const warn = vi.spyOn(console, "warn");
+    const input = mount(); input.value = DRAFT;
+    flags.editable = false; layer.sync();
+    expect(input.isConnected).toBe(true);
+    expect(editing()).toBeDefined();
+    expect(change).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(DRAFT_KEPT);
+    flags.editable = true;
+    input.dispatchEvent(new FocusEvent("blur"));
+    expect(change).toHaveBeenCalledTimes(1);
+    expect(change.mock.calls[0]?.[1]?.text).toBe(DRAFT);
+  });
+
+  it("still reports another-pane changes and lets Escape discard the draft", () => {
+    const warn = vi.spyOn(console, "warn");
+    const input = mount(); input.value = DRAFT;
+    page.stickyNotes![0].text = "changed elsewhere";
+    contactOutside();
+    expect(input.isConnected).toBe(true);
+    expect(editing()).toBeDefined();
+    expect(change).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith("This text changed in another pane. Copy your draft before reopening it.");
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", cancelable: true, bubbles: true }));
+    // Escape discards the draft itself: the editor no longer commits, and the
+    // (deferred) layer rebuild will take the dead input down.
+    expect(editing()).toBeUndefined();
+    input.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", ctrlKey: true, cancelable: true, bubbles: true }));
+    expect(change).not.toHaveBeenCalled();
   });
 });
