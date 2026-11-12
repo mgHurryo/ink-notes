@@ -522,12 +522,18 @@ export class StickyNoteLayer {
       const { strokes, deletedStrokeIds, updatedAt, textUpdatedAt, ...frame } = note;
       return JSON.stringify(frame);
     };
-    if (this.last?.page === page.id && this.last.editable === editable && this.last.width === width
+    if (this.last?.page === page.id && this.last.editable === editable
       && this.last.notes?.length === page.stickyNotes?.length
       && page.stickyNotes?.every((note, i) => frameKey(note) === frameKey(this.last!.notes![i]))) {
       // Handwriting changes do not replace focused controls or re-run the
-      // Markdown renderer on every Pencil lift.
-      this.preview(page.stickyNotes); this.last.notes = page.stickyNotes; return;
+      // Markdown renderer on every Pencil lift. A width-only change lands
+      // here too: the Pages preview-rail toggle squeezes the page column at
+      // its settle timer, so every sync carries a new host width. Rebuilding
+      // for it unmounted every card and re-ran MarkdownRenderer per text box,
+      // which read as the whole interface re-rendering on iPad. Reposition
+      // the mounted cards and let preview() rescale boards and text boxes.
+      for (const note of page.stickyNotes ?? []) { const card = this.card(note.id); if (card) this.position(card, note); }
+      this.preview(page.stickyNotes); this.last.notes = page.stickyNotes; this.last.width = width; return;
     }
     this.last = { page: page.id, notes: page.stickyNotes, editable, width }; this.cards.abort(); this.cards = new AbortController();
     this.markdown.unload(); this.markdown = new Component(); this.markdown.load(); this.layer.empty();
