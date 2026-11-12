@@ -32756,6 +32756,7 @@ var TileRenderer = class {
       onComplete,
       invalid: false,
       generation: this.renderGeneration,
+      inFlight: 0,
       excluded: this.workerExclusionSnapshot()
     };
     this.scheduleInkCommit();
@@ -32788,6 +32789,7 @@ var TileRenderer = class {
       onComplete,
       invalid: false,
       generation: this.renderGeneration,
+      inFlight: 0,
       excluded: this.workerExclusionSnapshot()
     };
     if (jobs.length === 0) this.finishInkCommit(true);
@@ -33022,10 +33024,55 @@ var TileRenderer = class {
   scheduleInkCommit() {
     if (this.inkFrame !== null || !this.inkCommit || this.inkCommitPaused || this.disposed) return;
     this.inkFrame = requestAnimationFrame(() => {
-      var _a, _b;
+      var _a, _b, _c, _d;
       this.inkFrame = null;
       const commit = this.inkCommit;
       if (!commit) return;
+      if (commit.inFlight > 0) return;
+      if (this.backend && !this.gestureActive && commit.jobs.length > 0) {
+        commit.inFlight = commit.jobs.length;
+        const jobs = commit.jobs.splice(0);
+        for (const job2 of jobs) {
+          const generation = this.renderGeneration;
+          this.backend.renderTile(
+            job2.state.page.id,
+            job2.cell,
+            job2.density,
+            (_a = job2.state.index.revisions.get(job2.cell)) != null ? _a : 0,
+            job2.state.index.width,
+            job2.state.index.height,
+            generation,
+            (_b = job2.priority) != null ? _b : "visible",
+            commit.excluded,
+            this.candidateStrokeIds(job2.state, job2.cell)
+          ).then((result) => {
+            var _a2;
+            if (this.inkCommit !== commit) {
+              result.bitmap.close();
+              return;
+            }
+            if (commit.generation !== this.renderGeneration || result.renderGeneration !== generation || result.pageId !== job2.state.page.id || result.cell !== job2.cell || this.disposed) {
+              result.bitmap.close();
+              this.finishInkCommit(false);
+              return;
+            }
+            if (result.revision === ((_a2 = job2.state.index.revisions.get(job2.cell)) != null ? _a2 : 0)) commit.tiles.push(this.tileFromBitmap(job2, result));
+            else commit.invalid = true;
+            commit.inFlight -= 1;
+            if (commit.inFlight === 0) this.finishInkCommit(true);
+          }).catch((error) => {
+            var _a2;
+            if (this.inkCommit !== commit) return;
+            if (isStaleRenderError(error)) {
+              this.finishInkCommit(false);
+              return;
+            }
+            (_a2 = this.backendError) == null ? void 0 : _a2.call(this, error);
+            this.finishInkCommit(false);
+          });
+        }
+        return;
+      }
       const job = commit.jobs.shift();
       if (!job) {
         this.finishInkCommit(true);
@@ -33037,11 +33084,11 @@ var TileRenderer = class {
           job.state.page.id,
           job.cell,
           job.density,
-          (_a = job.state.index.revisions.get(job.cell)) != null ? _a : 0,
+          (_c = job.state.index.revisions.get(job.cell)) != null ? _c : 0,
           job.state.index.width,
           job.state.index.height,
           generation,
-          (_b = job.priority) != null ? _b : "visible",
+          (_d = job.priority) != null ? _d : "visible",
           commit.excluded,
           this.candidateStrokeIds(job.state, job.cell)
         ).then((result) => {

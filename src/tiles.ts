@@ -211,6 +211,10 @@ interface InkCommit {
   onComplete: (committed: boolean) => void;
   invalid: boolean;
   generation: number;
+  // Worker renders dispatched by the batch below that have not settled yet;
+  // a re-entrant scheduleInkCommit (resumeInkCommit) must not re-dispatch or
+  // finish while they are outstanding.
+  inFlight: number;
   // Snapshot of workerExclude at commit start: worker-rendered commit tiles
   // must skip still-pending strokes (the overlay draws them), while strokes
   // patched into the index for this commit have already left the set.
@@ -429,7 +433,7 @@ export class TileRenderer {
     for (const cell of cells) this.heldCells.add(this.holdKey(this.active, cell));
     this.jobs = this.jobs.filter(job => !this.isHeld(job));
     this.inkCommit = { state: this.active, strokes: [], cells, clearCells, jobs, tiles: [], onComplete,
-      invalid: false, generation: this.renderGeneration, excluded: this.workerExclusionSnapshot() };
+      invalid: false, generation: this.renderGeneration, inFlight: 0, excluded: this.workerExclusionSnapshot() };
     this.scheduleInkCommit();
   }
 
@@ -449,7 +453,7 @@ export class TileRenderer {
     }
     this.jobs = this.jobs.filter(job => !this.isHeld(job));
     this.inkCommit = { state: this.active, strokes, cells, clearCells: [], jobs, tiles, onComplete, invalid: false,
-      generation: this.renderGeneration, excluded: this.workerExclusionSnapshot() };
+      generation: this.renderGeneration, inFlight: 0, excluded: this.workerExclusionSnapshot() };
     if (jobs.length === 0) this.finishInkCommit(true);
     else this.scheduleInkCommit();
   }
@@ -711,6 +715,57 @@ export class TileRenderer {
       this.inkFrame = null;
       const commit = this.inkCommit;
       if (!commit) return;
+      // A batch dispatched below is still rendering: re-entrant schedules
+      // (resumeInkCommit) must not re-dispatch the drained queue or finish
+      // the commit while its renders are outstanding.
+      if (commit.inFlight > 0) return;
+      if (this.backend && !this.gestureActive && commit.jobs.length > 0) {
+        // Gesture-free commits (undo/redo history steps, deferred pen-up ink)
+        // hold the previous frame until the whole batch lands, so pacing the
+        // renders one per animation frame made every history step wait one
+        // frame per affected cell before anything repainted - the reported
+        // iPad undo/redo lag. The worker owns the same priority queue
+        // schedule() already feeds its visible batch, so hand it the entire
+        // commit at once and let the atomic swap attach when all settle.
+        // A gesture keeps the paced path below: Pencil mirror operations must
+        // never queue behind a burst of tile renders.
+        commit.inFlight = commit.jobs.length;
+        const jobs = commit.jobs.splice(0);
+        for (const job of jobs) {
+          const generation = this.renderGeneration;
+          this.backend.renderTile(job.state.page.id, job.cell, job.density, job.state.index.revisions.get(job.cell) ?? 0,
+            job.state.index.width, job.state.index.height, generation, job.priority ?? "visible", commit.excluded,
+            this.candidateStrokeIds(job.state, job.cell))
+            .then((result) => {
+              // The commit was aborted or replaced: finishing it here would
+              // release holds or fire the replacement's callback, so only the
+              // stale bitmap may be closed.
+              if (this.inkCommit !== commit) { result.bitmap.close(); return; }
+              // Still the live commit, but beginInput()/setPage()/dispose()
+              // advanced the generation while the request was in flight (the
+              // worker cannot abort it). Settle as an invalid commit so
+              // onComplete(false) fires, holds release, and schedule() unblocks
+              // instead of stranding the commit loop until the next gesture.
+              if (commit.generation !== this.renderGeneration || result.renderGeneration !== generation
+                || result.pageId !== job.state.page.id || result.cell !== job.cell || this.disposed) {
+                result.bitmap.close();
+                this.finishInkCommit(false);
+                return;
+              }
+              if (result.revision === (job.state.index.revisions.get(job.cell) ?? 0)) commit.tiles.push(this.tileFromBitmap(job, result));
+              else commit.invalid = true;
+              commit.inFlight -= 1;
+              if (commit.inFlight === 0) this.finishInkCommit(true);
+            })
+            .catch((error) => {
+              if (this.inkCommit !== commit) return;
+              if (isStaleRenderError(error)) { this.finishInkCommit(false); return; }
+              this.backendError?.(error);
+              this.finishInkCommit(false);
+            });
+        }
+        return;
+      }
       const job = commit.jobs.shift();
       if (!job) { this.finishInkCommit(true); return; }
       if (this.backend) {
@@ -719,15 +774,7 @@ export class TileRenderer {
           job.state.index.width, job.state.index.height, generation, job.priority ?? "visible", commit.excluded,
           this.candidateStrokeIds(job.state, job.cell))
           .then((result) => {
-            // The commit was aborted or replaced: finishing it here would
-            // release holds or fire the replacement's callback, so only the
-            // stale bitmap may be closed.
             if (this.inkCommit !== commit) { result.bitmap.close(); return; }
-            // Still the live commit, but beginInput()/setPage()/dispose()
-            // advanced the generation while the request was in flight (the
-            // worker cannot abort it). Settle as an invalid commit so
-            // onComplete(false) fires, holds release, and schedule() unblocks
-            // instead of stranding the commit loop until the next gesture.
             if (commit.generation !== this.renderGeneration || result.renderGeneration !== generation
               || result.pageId !== job.state.page.id || result.cell !== job.cell || this.disposed) {
               result.bitmap.close();
