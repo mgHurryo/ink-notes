@@ -219,6 +219,14 @@ interface InkCommit {
   // must skip still-pending strokes (the overlay draws them), while strokes
   // patched into the index for this commit have already left the set.
   excluded: readonly string[] | undefined;
+  // History commits (undo/redo) keep no live preview layer, so each tile may
+  // mount the moment its render settles. Holding them for the atomic swap
+  // serializes the whole batch in front of one visible refresh, and the
+  // worker renders cells one request at a time — a wide batch then reads as
+  // a multi-second frozen frame on iPad instead of a cell-by-cell refresh.
+  // Gesture commits (eraser/lasso) keep the swap: their preview layers must
+  // not expose half-committed frames.
+  progressive: boolean;
 }
 
 export function tileDensity(viewport: Rect, density: number): number {
@@ -403,7 +411,8 @@ export class TileRenderer {
     this.evict();
   }
 
-  commitInteractive(viewport: Rect, density: number, refine = true, onComplete: (committed: boolean) => void = () => undefined): void {
+  commitInteractive(viewport: Rect, density: number, refine = true, onComplete: (committed: boolean) => void = () => undefined,
+    progressive = false): void {
     this.cancelInkCommit();
     if (!this.active || this.disposed) { onComplete(false); return; }
     // Keep the previous complete frame mounted while every changed visible
@@ -433,7 +442,8 @@ export class TileRenderer {
     for (const cell of cells) this.heldCells.add(this.holdKey(this.active, cell));
     this.jobs = this.jobs.filter(job => !this.isHeld(job));
     this.inkCommit = { state: this.active, strokes: [], cells, clearCells, jobs, tiles: [], onComplete,
-      invalid: false, generation: this.renderGeneration, inFlight: 0, excluded: this.workerExclusionSnapshot() };
+      invalid: false, generation: this.renderGeneration, inFlight: 0, excluded: this.workerExclusionSnapshot(),
+      progressive };
     this.scheduleInkCommit();
   }
 
@@ -453,7 +463,7 @@ export class TileRenderer {
     }
     this.jobs = this.jobs.filter(job => !this.isHeld(job));
     this.inkCommit = { state: this.active, strokes, cells, clearCells: [], jobs, tiles, onComplete, invalid: false,
-      generation: this.renderGeneration, inFlight: 0, excluded: this.workerExclusionSnapshot() };
+      generation: this.renderGeneration, inFlight: 0, excluded: this.workerExclusionSnapshot(), progressive: false };
     if (jobs.length === 0) this.finishInkCommit(true);
     else this.scheduleInkCommit();
   }
@@ -752,8 +762,19 @@ export class TileRenderer {
                 this.finishInkCommit(false);
                 return;
               }
-              if (result.revision === (job.state.index.revisions.get(job.cell) ?? 0)) commit.tiles.push(this.tileFromBitmap(job, result));
-              else commit.invalid = true;
+              if (result.revision === (job.state.index.revisions.get(job.cell) ?? 0)) {
+                const tile = this.tileFromBitmap(job, result);
+                commit.tiles.push(tile);
+                // Progressive history commits mount the moment their tile
+                // settles (see InkCommit.progressive). finishInkCommit repeats
+                // the cache/attach pair idempotently, and its invalid path
+                // keeps individually settled tiles because cacheTile already
+                // holds them.
+                if (commit.progressive) {
+                  this.cacheTile(tile);
+                  if (this.visible.has(tile.cell)) this.attach(tile);
+                }
+              } else commit.invalid = true;
               commit.inFlight -= 1;
               if (commit.inFlight === 0) this.finishInkCommit(true);
             })
@@ -795,7 +816,12 @@ export class TileRenderer {
           });
         return;
       }
-      commit.tiles.push(this.createInkTile(job, commit.strokes));
+      const painted = this.createInkTile(job, commit.strokes);
+      commit.tiles.push(painted);
+      if (commit.progressive) {
+        this.cacheTile(painted);
+        if (this.visible.has(painted.cell)) this.attach(painted);
+      }
       if (commit.jobs.length > 0) this.scheduleInkCommit();
       else this.finishInkCommit(true);
     });

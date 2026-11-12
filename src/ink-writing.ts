@@ -3529,9 +3529,9 @@ export abstract class InkWritingView extends FileView {
     this.drawPreview();
   }
 
-  protected drawInteractiveStrokes(strokes: InkStroke[], refine = false): void {
+  protected drawInteractiveStrokes(strokes: InkStroke[], refine = false, progressive = false): void {
     if (!this.ctx) return;
-    this.tiles?.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine);
+    this.tiles?.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine, undefined, progressive);
     this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
     this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
@@ -3978,7 +3978,12 @@ export abstract class InkWritingView extends FileView {
     this.clearSelection();
     this.updateHistoryButtons();
     if (command.rebuild) this.renderAll();
-    else this.drawInteractiveStrokes(this.currentPage().strokes, true);
+    // History steps mount their replacement tiles as each render settles: the
+    // worker renders a batch cell by cell, so the atomic swap would hold the
+    // previous frame until the widest batch finished (the reported iPad
+    // undo/redo freeze). No preview layer is live here, so per-cell refresh
+    // exposes nothing transient — see InkCommit.progressive.
+    else this.drawInteractiveStrokes(this.currentPage().strokes, true, true);
     this.scheduleSave();
   }
 

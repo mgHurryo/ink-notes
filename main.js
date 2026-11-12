@@ -31293,10 +31293,10 @@ var InkWritingView = class extends import_obsidian7.FileView {
     this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
     this.drawPreview();
   }
-  drawInteractiveStrokes(strokes, refine = false) {
+  drawInteractiveStrokes(strokes, refine = false, progressive = false) {
     var _a;
     if (!this.ctx) return;
-    (_a = this.tiles) == null ? void 0 : _a.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine);
+    (_a = this.tiles) == null ? void 0 : _a.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine, void 0, progressive);
     this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
     this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
@@ -31761,7 +31761,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     this.clearSelection();
     this.updateHistoryButtons();
     if (command.rebuild) this.renderAll();
-    else this.drawInteractiveStrokes(this.currentPage().strokes, true);
+    else this.drawInteractiveStrokes(this.currentPage().strokes, true, true);
     this.scheduleSave();
   }
   updateHistoryButtons() {
@@ -32718,7 +32718,7 @@ var TileRenderer = class {
     }
     this.evict();
   }
-  commitInteractive(viewport, density, refine = true, onComplete = () => void 0) {
+  commitInteractive(viewport, density, refine = true, onComplete = () => void 0, progressive = false) {
     var _a, _b, _c, _d;
     this.cancelInkCommit();
     if (!this.active || this.disposed) {
@@ -32762,7 +32762,8 @@ var TileRenderer = class {
       invalid: false,
       generation: this.renderGeneration,
       inFlight: 0,
-      excluded: this.workerExclusionSnapshot()
+      excluded: this.workerExclusionSnapshot(),
+      progressive
     };
     this.scheduleInkCommit();
   }
@@ -32795,7 +32796,8 @@ var TileRenderer = class {
       invalid: false,
       generation: this.renderGeneration,
       inFlight: 0,
-      excluded: this.workerExclusionSnapshot()
+      excluded: this.workerExclusionSnapshot(),
+      progressive: false
     };
     if (jobs.length === 0) this.finishInkCommit(true);
     else this.scheduleInkCommit();
@@ -33061,8 +33063,14 @@ var TileRenderer = class {
               this.finishInkCommit(false);
               return;
             }
-            if (result.revision === ((_a2 = job2.state.index.revisions.get(job2.cell)) != null ? _a2 : 0)) commit.tiles.push(this.tileFromBitmap(job2, result));
-            else commit.invalid = true;
+            if (result.revision === ((_a2 = job2.state.index.revisions.get(job2.cell)) != null ? _a2 : 0)) {
+              const tile = this.tileFromBitmap(job2, result);
+              commit.tiles.push(tile);
+              if (commit.progressive) {
+                this.cacheTile(tile);
+                if (this.visible.has(tile.cell)) this.attach(tile);
+              }
+            } else commit.invalid = true;
             commit.inFlight -= 1;
             if (commit.inFlight === 0) this.finishInkCommit(true);
           }).catch((error) => {
@@ -33124,7 +33132,12 @@ var TileRenderer = class {
         });
         return;
       }
-      commit.tiles.push(this.createInkTile(job, commit.strokes));
+      const painted = this.createInkTile(job, commit.strokes);
+      commit.tiles.push(painted);
+      if (commit.progressive) {
+        this.cacheTile(painted);
+        if (this.visible.has(painted.cell)) this.attach(painted);
+      }
       if (commit.jobs.length > 0) this.scheduleInkCommit();
       else this.finishInkCommit(true);
     });
