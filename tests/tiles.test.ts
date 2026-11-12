@@ -178,6 +178,104 @@ describe("interactive tile commits", () => {
     vi.unstubAllGlobals();
   });
 
+  it("dispatches a gesture-free interactive commit batch to the worker in one animation frame", async () => {
+    // Undo/redo refills run through commitInteractive while holding the old
+    // frame until the whole batch lands. Pacing the renders one per frame made
+    // every history step wait one frame per affected cell before repainting
+    // (the reported iPad undo lag); the batch must instead go out at once,
+    // exactly like schedule()'s visible batch above.
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => { frames.push(callback); return frames.length; }));
+    const requests: Array<(value: any) => void> = [];
+    const backend = { renderTile: vi.fn(() => new Promise((resolve) => requests.push(resolve))), cancelGeneration: vi.fn() };
+    const state = { id: 1, page: { id: "page" }, index: { width: 384, height: 128,
+      revisions: new Map([["0:0", 1], ["1:0", 1], ["2:0", 1]]), hasCell: () => true, query: () => [] } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    const onComplete = vi.fn();
+    Object.assign(renderer, { backend, disposed: false, inkCommitPaused: false, inkCommit: null, inkFrame: null,
+      frame: null, active: state, renderGeneration: 4, pendingTiles: new Map(), cache: new Map(),
+      heldCells: new Set(), droppedRefine: false, jobs: [], host: { children: [] }, ghost: null,
+      visible: new Set(["0:0", "1:0", "2:0"]), get: vi.fn(() => undefined), isHeld: vi.fn(() => false),
+      tileFromBitmap: vi.fn((job: any) => ({ ...job, revision: 1 })), cacheTile: vi.fn(), attach: vi.fn(),
+      evict: vi.fn(), schedule: vi.fn(), key: (jobState: any, cell: string, density: number) =>
+        `${jobState.id}/${cell}/${density}` });
+
+    renderer.commitInteractive({ x: 0, y: 0, width: 384, height: 128 }, 3, true, onComplete);
+    // commitInteractive advanced the render generation to 5 before parking
+    // the batch; every dispatched render carries that generation.
+    frames.shift()!(0);
+
+    expect(backend.renderTile).toHaveBeenCalledTimes(3);
+    expect(renderer.inkCommit.jobs).toEqual([]);
+    expect(renderer.inkCommit.inFlight).toBe(3);
+    expect(frames).toHaveLength(0);
+
+    // A re-entrant schedule (resumeInkCommit) while the batch is outstanding
+    // must neither re-dispatch nor finish the commit early.
+    renderer.resumeInkCommit();
+    expect(backend.renderTile).toHaveBeenCalledTimes(3);
+    expect(onComplete).not.toHaveBeenCalled();
+
+    requests[0]({ pageId: "page", cell: "0:0", density: 3, revision: 1, renderGeneration: 5,
+      x: 0, y: 0, width: 128, height: 128, canvasWidth: 264, canvasHeight: 264, bitmap: { close: vi.fn() } });
+    await Promise.resolve();
+    expect(onComplete).not.toHaveBeenCalled();
+
+    requests[1]({ pageId: "page", cell: "1:0", density: 3, revision: 1, renderGeneration: 5,
+      x: 128, y: 0, width: 128, height: 128, canvasWidth: 264, canvasHeight: 264, bitmap: { close: vi.fn() } });
+    await Promise.resolve();
+    expect(onComplete).not.toHaveBeenCalled();
+
+    requests[2]({ pageId: "page", cell: "2:0", density: 3, revision: 1, renderGeneration: 5,
+      x: 256, y: 0, width: 128, height: 128, canvasWidth: 264, canvasHeight: 264, bitmap: { close: vi.fn() } });
+    await Promise.resolve();
+    // The atomic swap fires once, after the last render of the batch settles.
+    expect(onComplete).toHaveBeenCalledExactlyOnceWith(true);
+    expect(renderer.cacheTile).toHaveBeenCalledTimes(3);
+    expect(renderer.attach).toHaveBeenCalledTimes(3);
+    expect(renderer.heldCells.size).toBe(0);
+    vi.unstubAllGlobals();
+  });
+
+  it("keeps the gesture-time commit paced to one worker render per animation frame", async () => {
+    // commitInteractive still runs inside finishPointerInput, while the
+    // gesture holds the surface (resumeInkCommit clears it afterwards). The
+    // paced path stays: Pencil mirror operations must not queue behind a
+    // burst of tile renders.
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => { frames.push(callback); return frames.length; }));
+    const requests: Array<(value: any) => void> = [];
+    const backend = { renderTile: vi.fn(() => new Promise((resolve) => requests.push(resolve))), cancelGeneration: vi.fn() };
+    const state = { id: 1, page: { id: "page" }, index: { width: 384, height: 128,
+      revisions: new Map([["0:0", 1], ["1:0", 1], ["2:0", 1]]), hasCell: () => true, query: () => [] } };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    const onComplete = vi.fn();
+    Object.assign(renderer, { backend, disposed: false, inkCommitPaused: false, inkCommit: null, inkFrame: null,
+      frame: null, active: state, renderGeneration: 4, pendingTiles: new Map(), cache: new Map(),
+      heldCells: new Set(), droppedRefine: false, jobs: [], host: { children: [] }, ghost: null,
+      gestureActive: true, visible: new Set(["0:0", "1:0", "2:0"]), get: vi.fn(() => undefined), isHeld: vi.fn(() => false),
+      tileFromBitmap: vi.fn((job: any) => ({ ...job, revision: 1 })), cacheTile: vi.fn(), attach: vi.fn(),
+      evict: vi.fn(), schedule: vi.fn(), key: (jobState: any, cell: string, density: number) =>
+        `${jobState.id}/${cell}/${density}` });
+
+    renderer.commitInteractive({ x: 0, y: 0, width: 384, height: 128 }, 3, true, onComplete);
+    frames.shift()!(0);
+
+    expect(backend.renderTile).toHaveBeenCalledTimes(1);
+    expect(renderer.inkCommit.inFlight).toBe(0);
+    expect(frames).toHaveLength(0);
+
+    requests[0]({ pageId: "page", cell: "0:0", density: 3, revision: 1, renderGeneration: 5,
+      x: 0, y: 0, width: 128, height: 128, canvasWidth: 264, canvasHeight: 264, bitmap: { close: vi.fn() } });
+    await Promise.resolve();
+    // The paced path re-arms itself for the next cell only after its result.
+    expect(frames).toHaveLength(1);
+    frames[0]!(0);
+    expect(backend.renderTile).toHaveBeenCalledTimes(2);
+    expect(onComplete).not.toHaveBeenCalled();
+    vi.unstubAllGlobals();
+  });
+
   it("keeps main-thread tile painting limited to one tile per animation frame", () => {
     const frames: FrameRequestCallback[] = [];
     vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => { frames.push(callback); return frames.length; }));

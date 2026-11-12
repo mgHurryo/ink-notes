@@ -1101,6 +1101,12 @@ export class InkView extends InkWritingView {
     if (this.pinchRenderZoom === undefined) return;
     this.pinchRenderZoom = undefined;
     this.resizeCanvas();
+    // The burst's start edge latched the tiles with beginInput(), but unlike a
+    // pen gesture nothing resumes them here, so the latch would hold until the
+    // next pen-up and pace every undo/redo or deferred ink commit one tile per
+    // frame. Resume after the resize so dropped-refine work rebuilds against
+    // the final density and viewport.
+    this.tiles?.resumeInkCommit?.();
   }
 
   protected applyGestureZoom(value: number, focus: { x: number; y: number }, anchor: { x: number; y: number }): void {
