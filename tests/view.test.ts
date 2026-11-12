@@ -364,7 +364,9 @@ describe("consecutive handwriting input", () => {
     internal.onPointerUp(pointer(50, { clientY: 50 }));
     const tiles = (internal as unknown as { tiles: { commitInteractive: ReturnType<typeof vi.fn> } }).tiles;
     expect(page.strokes).toHaveLength(0);
-    expect(tiles.commitInteractive).toHaveBeenCalledWith(expect.any(Object), 1, true);
+    // Eraser commits stay atomic: the progressive flag rides only on the
+    // undo/redo history path (afterCommand).
+    expect(tiles.commitInteractive).toHaveBeenCalledWith(expect.any(Object), 1, true, undefined, false);
   });
 
   it("splits a stroke around a circular local eraser", () => {
