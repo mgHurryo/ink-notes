@@ -256,6 +256,14 @@ export function normalizeSidecar(value: unknown, options: { reuseCanonicalPoints
       }
     }
   }
+  // The embedded notebook has no per-field fallback here on purpose: a missing
+  // or malformed one would silently become a blank model (normalizeNotebook's
+  // empty-value fallback), and the next save would then wipe the PDF's ink for
+  // good. Fail loudly instead — same stop-writing contract as the wrapper
+  // checks above. Arrays pass a naive typeof "object" check, so exclude them.
+  if (!raw.notebook || typeof raw.notebook !== "object" || Array.isArray(raw.notebook)) {
+    throw new PdfSidecarFormatError("Sidecar is missing its embedded notebook");
+  }
   const notebook = normalizeNotebook(raw.notebook, options);
   const notebookPages = new Map(notebook.pages.map((page) => [page.id, page]));
   // Recreate notebook pages for sequence ids missing one, drop notebook pages
