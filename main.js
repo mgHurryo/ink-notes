@@ -36255,6 +36255,9 @@ function normalizeSidecar(value, options = {}) {
       }
     }
   }
+  if (!raw.notebook || typeof raw.notebook !== "object" || Array.isArray(raw.notebook)) {
+    throw new PdfSidecarFormatError("Sidecar is missing its embedded notebook");
+  }
   const notebook = normalizeNotebook(raw.notebook, options);
   const notebookPages = new Map(notebook.pages.map((page) => [page.id, page]));
   const pages = notePages.map((notePage) => {

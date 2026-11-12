@@ -140,6 +140,36 @@ describe("create + normalize", () => {
     expect(() => normalizeSidecar(raw)).toThrow(PdfSidecarFormatError);
   });
 
+  it("rejects a missing or malformed embedded notebook instead of blanking it", () => {
+    // A sidecar carrying real ink: if normalizeSidecar silently fell back to a
+    // blank notebook, the next save would wipe the PDF's strokes for good.
+    const sidecar = makeSidecar();
+    sidecar.notebook.pages[0].strokes.push(stroke(sourcePageId(0), "stroke-a"));
+    const roundTripped = (): any => JSON.parse(JSON.stringify(sidecar));
+    const missing = roundTripped();
+    delete missing.notebook;
+    const nulled = roundTripped();
+    nulled.notebook = null;
+    const doubleEncoded = roundTripped();
+    doubleEncoded.notebook = JSON.stringify(sidecar.notebook);
+    // Arrays pass a naive typeof "object" check, so they need their own guard.
+    const arrayNotebook = roundTripped();
+    arrayNotebook.notebook = [];
+    expect(() => normalizeSidecar(missing)).toThrow(PdfSidecarFormatError);
+    expect(() => normalizeSidecar(nulled)).toThrow(PdfSidecarFormatError);
+    expect(() => normalizeSidecar(doubleEncoded)).toThrow(PdfSidecarFormatError);
+    expect(() => normalizeSidecar(arrayNotebook)).toThrow(PdfSidecarFormatError);
+  });
+
+  it("keeps a healthy embedded notebook aligned with the note sequence", () => {
+    const sidecar = makeSidecar();
+    sidecar.notebook.pages[0].strokes.push(stroke(sourcePageId(0), "stroke-a"));
+    const parsed = normalizeSidecar(JSON.parse(JSON.stringify(sidecar)));
+    expect(parsed.notebook.pages[0].strokes.map((entry) => entry.id)).toEqual(["stroke-a"]);
+    expect(parsed.notebook.pages.map((page) => page.id)).toEqual(parsed.notePages.map((page) => page.id));
+    expect(parsed.notebook.pageOrder).toEqual(parsed.notePages.map((page) => page.id));
+  });
+
   it("rebuilds a lost note sequence from source pages", () => {
     const raw = JSON.parse(JSON.stringify(makeSidecar()));
     raw.notePages = [];
