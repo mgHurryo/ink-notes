@@ -1536,8 +1536,7 @@ describe("pdf page preview rail", () => {
     // itself — a disabled entry swallows left and right clicks silently.
     (view as unknown as { sourcePdfModified(): void }).sourcePdfModified();
     internal.refreshPageRail();
-    const entry = document.querySelector<HTMLButtonElement>('[aria-label="Tag page 1"]')!;
-    expect(entry.disabled).toBe(false);
+    const entry = document.querySelector<HTMLElement>('[aria-label="Tag page 1"]')!;
     expect(entry.getAttribute("aria-disabled")).toBe("true");
     entry.click();
     expect(document.querySelector(".ink-tag-popover")).not.toBeNull();
