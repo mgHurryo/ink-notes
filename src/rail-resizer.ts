@@ -1,26 +1,36 @@
 /** Page-rail width behavior shared by the notebook editor and the PDF view:
- *  a right-edge drag handle plus localStorage persistence. Each view passes
- *  its own storage key so the two rails remember independent widths. */
+ *  a right-edge drag handle plus localStorage persistence. One width serves
+ *  BOTH rails (a width set on either editor applies everywhere); the legacy
+ *  per-view keys migrate into the shared slot on first read. */
 
 export const RAIL_MIN_WIDTH = 150;
 export const RAIL_MAX_WIDTH = 420;
+export const RAIL_WIDTH_STORAGE_KEY = "ink-page-rail-width";
+/** Pre-unification keys; the shared key wins, the first valid legacy value
+ *  seeds it, and a completed drag finally clears them. */
+const LEGACY_RAIL_WIDTH_KEYS = ["ink-notes-page-rail-width", "ink-pdf-page-rail-width"];
 
-/** Applies the persisted rail width as a CSS variable so the stylesheet
- *  keeps owning width/flex-basis (the container-query narrow width still
- *  wins where it applies). */
-export function applyStoredRailWidth(rail: HTMLElement, storageKey: string): void {
+function storedRailWidth(): number | null {
   try {
-    const width = Number(window.localStorage.getItem(storageKey));
-    if (Number.isFinite(width) && width >= RAIL_MIN_WIDTH && width <= RAIL_MAX_WIDTH) {
-      rail.style.setProperty("--ink-rail-width", `${Math.round(width)}px`);
+    for (const key of [RAIL_WIDTH_STORAGE_KEY, ...LEGACY_RAIL_WIDTH_KEYS]) {
+      const width = Number(window.localStorage.getItem(key));
+      if (Number.isFinite(width) && width >= RAIL_MIN_WIDTH && width <= RAIL_MAX_WIDTH) return width;
     }
   } catch {
     // localStorage can be unavailable (privacy modes); the CSS default holds.
   }
+  return null;
+}
+
+/** Applies the persisted rail width as a CSS variable so the stylesheet
+ *  keeps owning width/flex-basis (the container-query narrow width still
+ *  wins where it applies). */
+export function applyStoredRailWidth(rail: HTMLElement): void {
+  const width = storedRailWidth();
+  if (width !== null) rail.style.setProperty("--ink-rail-width", `${Math.round(width)}px`);
 }
 
 export interface RailResizerOptions {
-  storageKey: string;
   /** Runs once per drag end so the view can repaint thumbnails at the
    *  final width (they raster at the old size during the drag). */
   onDragEnd?: () => void;
@@ -57,7 +67,8 @@ export function mountRailResizer(rail: HTMLElement, options: RailResizerOptions)
     const width = parseFloat(rail.style.getPropertyValue("--ink-rail-width"));
     if (Number.isFinite(width)) {
       try {
-        window.localStorage.setItem(options.storageKey, String(width));
+        window.localStorage.setItem(RAIL_WIDTH_STORAGE_KEY, String(width));
+        for (const key of LEGACY_RAIL_WIDTH_KEYS) window.localStorage.removeItem(key);
       } catch {
         // Persistence is best-effort; the drag result still applies live.
       }

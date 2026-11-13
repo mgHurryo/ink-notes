@@ -1188,7 +1188,8 @@ describe("pdf page preview rail", () => {
     await view.onClose();
   });
 
-  it("mounts a drag-resizable rail that clamps and persists the width under the PDF key", async () => {
+  it("mounts a drag-resizable rail that clamps and persists the shared width", async () => {
+    window.localStorage.removeItem("ink-page-rail-width");
     window.localStorage.removeItem("ink-pdf-page-rail-width");
     const { view, internal } = await setup(3);
     const rail = document.querySelector<HTMLElement>(".ink-pdf-view .ink-page-rail")!;
@@ -1216,7 +1217,10 @@ describe("pdf page preview rail", () => {
     handle.dispatchEvent(pointer("pointermove", 228));
     expect(rail.style.getPropertyValue("--ink-rail-width")).toBe("228px");
     handle.dispatchEvent(pointer("pointerup", 228));
-    expect(window.localStorage.getItem("ink-pdf-page-rail-width")).toBe("228");
+    // The width lands in the ONE shared slot both rails read, and a finished
+    // drag retires the legacy per-view key.
+    expect(window.localStorage.getItem("ink-page-rail-width")).toBe("228");
+    expect(window.localStorage.getItem("ink-pdf-page-rail-width")).toBeNull();
     expect(captured.has(7)).toBe(false);
     expect(repaint).toHaveBeenCalledOnce();
     // Widths clamp into the usable range before display or persistence.
@@ -1229,12 +1233,13 @@ describe("pdf page preview rail", () => {
     handle.dispatchEvent(pointer("pointermove", 500, 3));
     expect(rail.style.getPropertyValue("--ink-rail-width")).toBe("150px");
     handle.dispatchEvent(pointer("pointercancel", 228 - 900, 9));
-    expect(window.localStorage.getItem("ink-pdf-page-rail-width")).toBe("150");
+    expect(window.localStorage.getItem("ink-page-rail-width")).toBe("150");
     await view.onClose();
   });
 
-  it("applies a stored PDF rail width on open and ignores out-of-range values", async () => {
+  it("applies a stored rail width on open and ignores out-of-range values", async () => {
     window.localStorage.setItem("ink-pdf-page-rail-width", "300");
+    window.localStorage.removeItem("ink-page-rail-width");
     const { view } = await setup(2);
     const rail = document.querySelector<HTMLElement>(".ink-pdf-view .ink-page-rail")!;
     expect(rail.style.getPropertyValue("--ink-rail-width")).toBe("300px");
@@ -1517,8 +1522,29 @@ describe("pdf page preview rail", () => {
     expect(live().tags).toEqual([]);
     // The tag removal redone above predates the flag clear: still green here.
     expect(live().flag).toBe("green");
-    document.querySelector<HTMLButtonElement>('[aria-label="Redo"]')!.click();
+    document.querySelector<HTMLButtonElement>('button[aria-label="Redo"]')!.click();
     expect(live().flag).toBeUndefined();
+    await view.onClose();
+  });
+
+  it("opens the tag popover read-only with its reason when the source PDF changed", async () => {
+    const { view, internal, sidecar } = await setupExpanded(3);
+    sidecar.notebook.pages[0].tags = ["exam"];
+    internal.renderAll();
+    // An external edit flips the view read-only mid-session; the rail
+    // refresh grays the entry. The entry must stay clickable and explain
+    // itself — a disabled entry swallows left and right clicks silently.
+    (view as unknown as { sourcePdfModified(): void }).sourcePdfModified();
+    internal.refreshPageRail();
+    const entry = document.querySelector<HTMLButtonElement>('[aria-label="Tag page 1"]')!;
+    expect(entry.disabled).toBe(false);
+    expect(entry.getAttribute("aria-disabled")).toBe("true");
+    entry.click();
+    expect(document.querySelector(".ink-tag-popover")).not.toBeNull();
+    expect(document.querySelector(".ink-tag-lock-reason")?.textContent).toContain("source PDF changed");
+    expect(document.querySelector<HTMLButtonElement>('button[aria-label="Red flag"]')!.disabled).toBe(true);
+    // The stored tag stays readable while locked.
+    expect(document.querySelector(".ink-tag-chip-name")?.textContent).toBe("exam");
     await view.onClose();
   });
 

@@ -1106,7 +1106,7 @@ describe("page rail thumbnails and resizing", () => {
     handle.dispatchEvent(pointer("pointermove", 300));
     expect(rail.style.getPropertyValue("--ink-rail-width")).toBe("300px");
     handle.dispatchEvent(pointer("pointerup", 300));
-    expect(window.localStorage.getItem("ink-notes-page-rail-width")).toBe("300");
+    expect(window.localStorage.getItem("ink-page-rail-width")).toBe("300");
     expect(captured.has(7)).toBe(false);
     // Widths clamp into the usable range before display or persistence.
     handle.dispatchEvent(pointer("pointerdown", 176, 9));
@@ -1118,7 +1118,7 @@ describe("page rail thumbnails and resizing", () => {
     handle.dispatchEvent(pointer("pointermove", 500, 3));
     expect(rail.style.getPropertyValue("--ink-rail-width")).toBe("150px");
     handle.dispatchEvent(pointer("pointercancel", 176 - 900, 9));
-    expect(window.localStorage.getItem("ink-notes-page-rail-width")).toBe("150");
+    expect(window.localStorage.getItem("ink-page-rail-width")).toBe("150");
   });
 
   it("expands the page preview rail without blanking or rebuilding the page", () => {
@@ -1359,7 +1359,12 @@ describe("page rail thumbnails and resizing", () => {
       internal.noteWheelPages(1, "y", 400);
       internal.noteWheelPages(1, "y", 600);
       expect(internal.fastPagingRail).toBe(true);
-      vi.advanceTimersByTime(1300);
+      // A 1-2s trackpad finger lift mid-session must NOT hand the rail
+      // back: only input that has been quiet for the full window (3s) does.
+      vi.advanceTimersByTime(1500);
+      expect(internal.fastPagingRail).toBe(true);
+      expect(collapsed).toHaveBeenCalledTimes(0);
+      vi.advanceTimersByTime(1500);
       expect(internal.fastPagingRail).toBe(false);
       expect(collapsed).toHaveBeenCalledTimes(1);
       // A burst whose queued swipes outlive the quiet window (slow page
@@ -1371,17 +1376,18 @@ describe("page rail thumbnails and resizing", () => {
       internal.noteWheelPages(1, "y", 4400);
       expect(internal.fastPagingRail).toBe(true);
       internal.pageSwipeRequest = { target: 4, activeTarget: 3, count: 6, scrollEdge: "top", wheelGestureId: null, wheelQueued: true };
-      vi.advanceTimersByTime(1300);
+      vi.advanceTimersByTime(3000);
       expect(internal.fastPagingRail).toBe(true);
       expect(collapsed).toHaveBeenCalledTimes(1);
       internal.pageSwipeRequest = null;
-      vi.advanceTimersByTime(1300);
+      vi.advanceTimersByTime(3000);
       expect(internal.fastPagingRail).toBe(false);
       expect(collapsed).toHaveBeenCalledTimes(2);
     } finally { vi.useRealTimers(); }
   });
 
   it("applies a stored rail width on open and ignores out-of-range values", async () => {
+    // Legacy per-view keys migrate into the shared slot the drag writes.
     window.localStorage.setItem("ink-notes-page-rail-width", "300");
     document.body.innerHTML = '<div id="host"><div></div><main></main></div>';
     const second = new InkView({} as WorkspaceLeaf, { read: async () => createNotebook("Stored width") } as unknown as NotebookStore);
@@ -1480,16 +1486,24 @@ describe("page rail tagging and filters", () => {
     expect(button("Pages with ink only").getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("disables the tag entry in reading mode but keeps the filters usable", () => {
+  it("keeps the tag entry clickable in reading mode and opens it read-only with a reason", () => {
     const host = view as unknown as { notebook: ReturnType<typeof createNotebook> };
     host.notebook.pages[0].tags = ["exam"];
     button("Pages").click();
     button("Reading mode").click();
-    // Reading mode blocks page mutations (same rule as manage/rename), so
-    // neither tagging entry opens the popover.
-    expect(button("Tag page 1").disabled).toBe(true);
+    // Reading mode blocks page mutations but must not dead-end the entry: a
+    // disabled button swallows both clicks with no feedback. The entry stays
+    // clickable, marked aria-disabled, and the popover opens read-only.
+    expect(button("Tag page 1").disabled).toBe(false);
+    expect(button("Tag page 1").getAttribute("aria-disabled")).toBe("true");
     button("Tag page 1").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
-    expect(document.querySelector(".ink-tag-popover")).toBeNull();
+    const popover = document.querySelector(".ink-tag-popover");
+    expect(popover).not.toBeNull();
+    expect(document.querySelector(".ink-tag-lock-reason")?.textContent).toContain("Reading mode");
+    expect(document.querySelector<HTMLButtonElement>('button[aria-label="Red flag"]')!.disabled).toBe(true);
+    expect(document.querySelector<HTMLInputElement>('input[aria-label="Add tag"]')!.disabled).toBe(true);
+    // The stored tag stays readable while locked.
+    expect(document.querySelector(".ink-tag-chip-name")?.textContent).toBe("exam");
     button("Tagged pages only").click();
     expect(visibleThumbs()).toHaveLength(1);
     // Stacking "with ink" hides the un-inked tagged page: an empty result

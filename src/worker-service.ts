@@ -12,7 +12,13 @@ type WorkerRequestInput = InkWorkerRequest extends infer Request
   ? Request extends InkWorkerRequest ? Omit<Request, "requestId"> : never
   : never;
 
-const WORKER_READY_TIMEOUT = 2_000;
+const WORKER_READY_TIMEOUT = 5_000;
+/** Queue-wait guard: the worker answers requests from a SERIAL queue, so a
+ *  request can legitimately sit behind multi-second tile renders (10s work
+ *  budget each) with nothing wrong. Hang guards for actual work start at the
+ *  worker's "processing" receipt ack, not at dispatch; this guard only fires
+ *  when the worker never picked the request up at all (dead or wedged). */
+const WORKER_QUEUE_WAIT_TIMEOUT = 20_000;
 // These are hang guards, not interaction budgets. Large notebook parsing,
 // serialization, and tile rasterization can legitimately take longer than
 // control messages, while no request may be allowed to pin a session forever.
@@ -51,6 +57,9 @@ interface PendingRequest {
   generation: number;
   notebookRevision: number;
   timeoutTimer: number;
+  /** Arms the work-phase hang guard; called when the worker's receipt ack
+   *  says the request left the serial queue. */
+  acknowledged?: () => void;
 }
 
 export class InkWorkerService {
@@ -158,7 +167,16 @@ export class InkWorkerService {
         sessionId: message.sessionId,
         generation: message.generation,
         notebookRevision: message.notebookRevision,
-        timeoutTimer: globalThis.setTimeout(() => {
+        timeoutTimer: 0,
+      };
+      // The guard starts as a generous queue-wait: the worker answers from a
+      // serial queue, so a request can legitimately wait behind multi-second
+      // tile renders. Its "processing" receipt ack (onMessage below) clears
+      // this timer and arms the per-type WORK guard, so a hung request still
+      // fails fast once it is actually being processed.
+      const armTimeout = (ms: number) => {
+        if (pending.timeoutTimer) globalThis.clearTimeout(pending.timeoutTimer);
+        pending.timeoutTimer = globalThis.setTimeout(() => {
           if (this.pending.get(requestId) !== pending) return;
           const error = new InkWorkerRequestError("timeout", `Ink background worker did not answer ${message.type}`);
           // A timeout during recovery means the restarted worker is also
@@ -166,8 +184,10 @@ export class InkWorkerService {
           // reduced-performance fallback instead of leaving recovery pending.
           if (this.recoveryPromise) this.disable("Ink Notes background processing stopped responding; reduced-performance mode is active.");
           else this.onWorkerFailure(error);
-        }, WORKER_REQUEST_TIMEOUTS[message.type] ?? DEFAULT_WORKER_REQUEST_TIMEOUT) as unknown as number,
+        }, ms) as unknown as number;
       };
+      armTimeout(WORKER_QUEUE_WAIT_TIMEOUT);
+      pending.acknowledged = () => armTimeout(WORKER_REQUEST_TIMEOUTS[message.type] ?? DEFAULT_WORKER_REQUEST_TIMEOUT);
       this.pending.set(requestId, pending);
       try { this.worker!.postMessage({ ...message, requestId }, transfer); }
       catch (error) {
@@ -192,6 +212,12 @@ export class InkWorkerService {
     }
     const pending = this.pending.get(response.requestId);
     if (!pending) return;
+    if (response.type === "processing") {
+      // Receipt ack: the request just left the worker's queue. Swap the
+      // queue-wait guard for the per-type work guard.
+      pending.acknowledged?.();
+      return;
+    }
     this.pending.delete(response.requestId);
     globalThis.clearTimeout(pending.timeoutTimer);
     if (response.sessionId !== pending.sessionId || response.generation !== pending.generation

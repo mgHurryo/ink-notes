@@ -77,10 +77,6 @@ const RAIL_SWEEP_THROTTLE_MS = 120;
 const RAIL_REVEAL_DELAY_MS = 310;
 /** Matches the notebook editor's rail expand/collapse transition (view.ts). */
 const RAIL_TRANSITION_MS = 280;
-/** Rail width persistence, separate from the notebook editor's key so each
- *  rail remembers the width its own thumbnails need. */
-const PDF_RAIL_WIDTH_STORAGE_KEY = "ink-pdf-page-rail-width";
-
 export type SaveOutcome = { status: "saved" } | { status: "conflict"; message: string } | { status: "failed"; message: string };
 
 interface PdfJsViewport { width: number; height: number }
@@ -240,6 +236,7 @@ export class PdfInkView extends InkWritingView {
     const scroller = body.createDiv({ cls: "ink-pdf-scroller" });
     this.scroller = scroller;
     this.buildZoomHud(body);
+    this.buildPageHud(body);
     this.pageWrap = scroller.createDiv({ cls: "ink-pdf-page-wrap" });
     this.pdfCanvas = this.pageWrap.createEl("canvas", { cls: "ink-pdf-canvas" });
     this.buildInkHost();
@@ -884,6 +881,13 @@ export class PdfInkView extends InkWritingView {
     return "ink-pdf-brush-popover";
   }
 
+  protected override fastPagingPageLabel(): string | null {
+    const count = this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 0;
+    if (count <= 0) return null;
+    const index = this.fastPagingDestinationIndex() ?? this.noteIndex;
+    return `${Math.min(index + 1, count)} / ${count}`;
+  }
+
   private updatePageIndicator(): void {
     const indicator = this.toolbarButtons.get("indicator");
     if (!indicator) return;
@@ -906,7 +910,7 @@ export class PdfInkView extends InkWritingView {
     rail.addEventListener("click", (event) => this.claimFastPagingRailFromSelection(event), true);
     rail.addEventListener("keydown", (event) => this.claimFastPagingRailFromSelection(event), true);
     this.pageRail = rail;
-    applyStoredRailWidth(rail, PDF_RAIL_WIDTH_STORAGE_KEY);
+    applyStoredRailWidth(rail);
     const header = rail.createDiv({ cls: "ink-rail-header" });
     header.createDiv({ cls: "ink-rail-heading", text: "Pages" });
     this.railCount = header.createSpan({ cls: "ink-rail-count" });
@@ -925,7 +929,7 @@ export class PdfInkView extends InkWritingView {
     // Parity with the notebook editor's rail: the right edge is draggable and
     // the final width persists under the PDF-specific key. Thumbnails raster
     // during the drag at stale widths; repaint the visible range at the end.
-    mountRailResizer(rail, { storageKey: PDF_RAIL_WIDTH_STORAGE_KEY, onDragEnd: () => this.paintVisibleThumbnails() });
+    mountRailResizer(rail, { onDragEnd: () => this.paintVisibleThumbnails() });
   }
 
   /** Re-syncs the rail with the model: rebuilds the buttons when the page
@@ -979,7 +983,8 @@ export class PdfInkView extends InkWritingView {
       const notebookPage = this.sidecar?.notebook.pages[index];
       if (notebookPage) {
         paintThumbBadges(button, notebookPage);
-        button.querySelector<HTMLButtonElement>(":scope > .ink-thumb-tag-button")!.disabled = this.editingLocked();
+        button.querySelector<HTMLButtonElement>(":scope > .ink-thumb-tag-button")!
+          .setAttribute("aria-disabled", String(this.editingLocked()));
       }
       const matches = notebookPage ? pageMatchesRailFilters(notebookPage, this.railFilters) : true;
       button.toggleClass("is-filtered-out", !matches);
@@ -1056,11 +1061,14 @@ export class PdfInkView extends InkWritingView {
       if (notebookPage) {
         paintThumbBadges(button, notebookPage);
         // Hover/corner entry to the shared tagging popover (right-click too).
+        // Read-only state never disables the entry: a disabled button
+        // swallows left AND right clicks with no feedback, which reads as
+        // broken. The popover opens read-only and explains itself.
         const tagButton = button.createEl("button", {
           cls: "ink-thumb-tag-button",
           attr: { type: "button", "aria-label": `Tag page ${index + 1}`, title: "Tag" },
         });
-        tagButton.disabled = this.editingLocked();
+        tagButton.setAttribute("aria-disabled", String(this.editingLocked()));
         tagButton.addEventListener("click", (event) => {
           event.stopPropagation();
           if (pageId) this.openThumbTagPopover(button);
@@ -1069,7 +1077,7 @@ export class PdfInkView extends InkWritingView {
       button.addEventListener("contextmenu", (event) => {
         if (!pageId) return;
         event.preventDefault();
-        if (!this.editingLocked()) this.openThumbTagPopover(button);
+        this.openThumbTagPopover(button);
       });
       button.addEventListener("click", () => {
         if (this.pageManagement) {
@@ -1095,6 +1103,9 @@ export class PdfInkView extends InkWritingView {
     this.tagPopoverClose = openTagPopover(this.root, button, {
       getPage: () => this.sidecar?.notebook.pages.find((page) => page.id === pageId) ?? null,
       isLocked: () => this.editingLocked(),
+      lockReason: () => this.editingLocked()
+        ? this.writeBlockedReason ?? "Reading mode is on"
+        : null,
       onTagsChange: (page, tags) => this.applyRailTags(page, tags),
       onFlagChange: (page, flag) => this.applyRailFlag(page, flag),
     });

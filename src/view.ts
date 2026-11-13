@@ -72,7 +72,6 @@ const SWIPE_PREVIEW_RESIZE_BUDGET = 16_000_000;
 
 /** Rail width persistence. localStorage (not the plugin data file) is enough
  *  here: the width is per-device window chrome, not notebook content. */
-const RAIL_WIDTH_STORAGE_KEY = "ink-notes-page-rail-width";
 /** Keep in sync with the 280ms expand/collapse transition on .ink-page-rail. */
 const RAIL_TRANSITION_MS = 280;
 /** Fallback for the CSS aspect-ratio(.73) thumb box when clientHeight is 0. */
@@ -161,6 +160,7 @@ export class InkView extends InkWritingView {
     this.renderCanvas();
     this.registerDesktopInput();
     this.buildZoomHud(this.root.querySelector<HTMLElement>(".ink-workspace")!);
+    this.buildPageHud(this.root.querySelector<HTMLElement>(".ink-workspace")!);
     this.register(() => this.closeEraserPopover());
     this.viewReady = true;
     this.renderAll();
@@ -447,7 +447,7 @@ export class InkView extends InkWritingView {
     const rail = workspace.createDiv({ cls: "ink-page-rail", attr: { "aria-label": "Notebook pages" } });
     rail.addEventListener("click", (event) => this.claimFastPagingRailFromSelection(event), true);
     rail.addEventListener("keydown", (event) => this.claimFastPagingRailFromSelection(event), true);
-    applyStoredRailWidth(rail, RAIL_WIDTH_STORAGE_KEY);
+    applyStoredRailWidth(rail);
     this.pageScroller = workspace.createDiv({ cls: "ink-page-scroller" });
     this.loadFeedback = workspace.createDiv({ cls: "ink-notebook-load-feedback", attr: { role: "status", "aria-live": "polite", hidden: "" } });
     const loadCard = this.loadFeedback.createDiv({ cls: "ink-notebook-load-card" });
@@ -602,20 +602,22 @@ export class InkView extends InkWritingView {
         cls: "ink-thumb-tag-button",
         attr: { type: "button", "aria-label": `Tag page ${index + 1}`, title: "Tag", "aria-disabled": String(this.readingMode) },
       });
-      tagButton.disabled = this.readingMode;
+      // Read-only state stays visible via aria-disabled but never disables
+      // the entry: a disabled button swallows left AND right clicks with no
+      // feedback, which reads as broken. The popover opens read-only instead.
       tagButton.addEventListener("click", (event) => {
         event.stopPropagation();
         this.openThumbTagPopover(button);
       });
       button.addEventListener("contextmenu", (event) => {
         event.preventDefault();
-        if (!this.readingMode) this.openThumbTagPopover(button);
+        this.openThumbTagPopover(button);
       });
       button.addEventListener("click", () => this.pageManagement
         ? this.togglePageSelection(page.id) : this.explicitNavigateToPage(page.id));
       this.scheduleThumbnail(canvas, page);
     });
-    mountRailResizer(rail, { storageKey: RAIL_WIDTH_STORAGE_KEY, onDragEnd: () => this.redrawPageThumbnails() });
+    mountRailResizer(rail, { onDragEnd: () => this.redrawPageThumbnails() });
     this.scheduleSwipePreviewPaint();
     // Fast paging keeps the current page under the user's eye: center the
     // active thumb instead of the usual nearest-visibility nudge.
@@ -647,6 +649,13 @@ export class InkView extends InkWritingView {
     return match;
   }
 
+  protected override fastPagingPageLabel(): string | null {
+    const count = this.notebook?.pages.length ?? 0;
+    if (count <= 0) return null;
+    const index = this.fastPagingDestinationIndex() ?? this.pageIndex;
+    return `${Math.min(index + 1, count)} / ${count}`;
+  }
+
   private openThumbTagPopover(thumb: HTMLElement): void {
     this.closeTagPopover();
     const pageId = thumb.dataset.pageId;
@@ -654,6 +663,7 @@ export class InkView extends InkWritingView {
     this.tagPopoverClose = openTagPopover(this.root, thumb, {
       getPage: () => this.pageById(pageId) ?? null,
       isLocked: () => this.readingMode,
+      lockReason: () => this.readingMode ? "Reading mode is on" : null,
       onTagsChange: (page, tags) => this.applyRailTags(page, tags),
       onFlagChange: (page, flag) => this.applyRailFlag(page, flag),
     });

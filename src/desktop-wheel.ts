@@ -88,6 +88,25 @@ const REF_DT_MS = 10;
  *  flipped samples first - only a rise that persists past the flip, or lands
  *  after a re-arm's blocked window, may open a fresh page budget. */
 const RENEW_MIN_FLIPPED = 3;
+/** The sustained-swipe exit's window and decay floor. A deliberate re-swipe
+ *  can land at 0.6-2.2x of a still-hot tail envelope with NO rise at all
+ *  (the hand drops onto the surface already at speed): every rise-gated exit
+ *  above swallows it forever - the reported "swipe once, stuck until you
+ *  reverse" defect (a reversal hard-resets, a same-direction moderate swipe
+ *  does not). The discriminator is time: an inertia tail only decays, so its
+ *  min-chain envelope strictly falls, while a held swipe keeps it flat. If
+ *  the envelope retains this fraction of its window-start value for this
+ *  many CONTINUOUS >=12px samples (no probation freeze, no >=55ms gap, no
+ *  reversal), the stream cannot be a tail: an e-folding of tau=1250ms decays
+ *  to 0.79x at 300ms, just under the floor, and real trackpad tails peak far
+ *  below that tau. Stall merges never accumulate: they arrive across their
+ *  real gaps (>= the quiet threshold) which restarts the window, and the
+ *  honest tail behind a merge burst falls under the floor inside the window.
+ *  The exit re-arms through the same beginRenewedGesture hand-off the
+ *  confirmed deferrals use, so the page budget and the flip suppression stay
+ *  bounded exactly as before. */
+const SUSTAINED_SWIPE_MS = 300;
+const SUSTAINED_SWIPE_RETENTION = 0.78;
 const PAGE_TRAVEL_PX = 100;
 const HORIZONTAL_PAGE_TRAVEL_PX = 48;
 const MAX_TRACKPAD_PAGES_PER_GESTURE = 2;
@@ -194,6 +213,16 @@ export class DesktopWheelGesture {
    *  inside a flipped continuous gesture (see SLOW_SCROLL_EXIT_MS). */
   private slowScrollMs = 0;
   private slowScrollTravel = 0;
+  /** Sustained-swipe window (see SUSTAINED_SWIPE_MS): how long the envelope
+   *  has held at/above SUSTAINED_SWIPE_RETENTION of the window's frozen
+   *  start value across continuous >=12px samples, plus their signed travel
+   *  for the page hand-off. Zeroed by every gesture-boundary path. */
+  private sustainMs = 0;
+  private sustainEnvelope = 0;
+  private sustainedTravel = 0;
+  /** True once a >=55ms gap marked a resumption while the gesture was
+   *  flipped; the window may run (and fire once) until the next boundary. */
+  private sustainArmed = false;
 
   private beginRenewedGesture(reopenSettledHorizontalPage = false): void {
     this.gestureId += 1;
@@ -204,6 +233,12 @@ export class DesktopWheelGesture {
     if (reopenSettledHorizontalPage) this.contactXPages = 0;
     this.flippedRun = 0;
     this.slowScrollMs = this.slowScrollTravel = 0;
+    // A renewal CONFIRMS a resumption (a lift happened), so the arming
+    // survives it - only the window's counting restarts inside the renewed
+    // gesture. Clearing the arming here disarmed the window exactly at the
+    // moment the stuck stream needed it (the renewal hands back an
+    // unsuppressed stream against a spent horizontal budget).
+    this.sustainMs = this.sustainEnvelope = this.sustainedTravel = 0;
   }
 
   /** Whether a flipped continuous gesture's tail is still mid-flight. Sample
@@ -234,6 +269,8 @@ export class DesktopWheelGesture {
     this.contactXPages = 0;
     this.flippedRun = 0;
     this.slowScrollMs = this.slowScrollTravel = 0;
+    this.sustainMs = this.sustainEnvelope = this.sustainedTravel = 0;
+    this.sustainArmed = false;
     this.flipped = this.discrete = false;
     this.mode = 0;
   }
@@ -327,6 +364,8 @@ export class DesktopWheelGesture {
       // The latch counts one direction's dwell; the re-targeted stream is
       // different motion and starts its count over.
       this.slowScrollMs = this.slowScrollTravel = 0;
+      this.sustainMs = this.sustainEnvelope = this.sustainedTravel = 0;
+      this.sustainArmed = false;
       if (normalized > 0) {
         // The surviving min-chain envelope still describes the OLD axis, so
         // the jump/settledRise comparisons below score the new axis's samples
@@ -676,6 +715,58 @@ export class DesktopWheelGesture {
       }
     } else {
       this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+    }
+    // The sustained-swipe window (SUSTAINED_SWIPE_MS) runs on the common
+    // path, flipped or not: the same-direction stuck defect TERMINATES with
+    // the stream already renewed (deferral confirm) and unsuppressed - its
+    // travel then accumulates against a spent horizontal budget that
+    // pageDelta zeroes at every threshold crossing, forever. The window
+    // reopens that budget once a resumed stream has proven it is held
+    // input, not a tail.
+    if (this.discrete || this.stallProbation || gap >= RENEWED_FLICK_GAP_MS
+      || normalized < RENEWED_FLICK_JUMP_PX / 2
+      || (movement !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta))) {
+      // A discrete notch, a frozen probation sample, a sub-12px sample (the
+      // slow-scroll latch owns that band) or a reversal restarts the window.
+      // A real delivery gap restarts it AND arms it - the gap is the only
+      // portable evidence of a lift, so only a stream that resumed after one
+      // may ever fire (one long continuous drag pages exactly once). Arming
+      // survives later restarts: the resumption happened.
+      this.sustainMs = this.sustainEnvelope = this.sustainedTravel = 0;
+      if (gap >= RENEWED_FLICK_GAP_MS) this.sustainArmed = true;
+    } else if (movement !== 0 && axis === "x" && this.sustainArmed) {
+      // Horizontal-only: the reported same-direction stuck defect; the
+      // vertical axis keeps its #391 swallow trade untouched. The window
+      // references the RESUMED STREAM's own speed, not the pre-gap tail
+      // envelope: the resumed sample's clamped normalization crushes that
+      // envelope (a 15px/10ms sample over a 120ms real gap writes 1.25), and
+      // the hold-vs-decay judgment only has meaning within the resumed
+      // stream anyway.
+      if (this.sustainMs === 0) {
+        this.sustainEnvelope = normalized;
+        this.sustainedTravel = 0;
+      }
+      this.sustainMs += gap;
+      this.sustainedTravel += movement;
+      if (normalized < this.sustainEnvelope * SUSTAINED_SWIPE_RETENTION) {
+        // The stream's own speed decayed below the floor: physically a tail,
+        // and the window restarts for whatever comes next (still armed).
+        this.sustainMs = this.sustainEnvelope = this.sustainedTravel = 0;
+      } else if (this.sustainMs >= SUSTAINED_SWIPE_MS) {
+        // A held swipe, not a tail: reopen ONE horizontal contact for it
+        // and hand the window's travel over. trackpadPages, the flip
+        // suppression and every other renewal state stay untouched - the
+        // vertical budget the gesture already holds is not re-minted, and
+        // the single reopen per arming keeps the horizontal contract at one
+        // page per contact plus one per confirmed resumption. While the
+        // stream is still suppressed pageDelta ignores renewedTravel; the
+        // reopened budget then serves whichever renewal exit lifts the
+        // suppression next.
+        renewedTravel = this.sustainedTravel;
+        this.contactXPages = 0;
+        this.sustainMs = this.sustainEnvelope = this.sustainedTravel = 0;
+        this.sustainArmed = false;
+      }
     }
     this.flippedRun = this.flipped ? priorFlippedRun + 1 : 0;
     this.flippedPreviously = this.flipped;

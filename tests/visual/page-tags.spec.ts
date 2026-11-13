@@ -3,12 +3,22 @@ import { expect, test, type Page } from "@playwright/test";
 /** Drives the notebook editor's page rail: tag page 1 (flag + text tag). */
 async function tagNotebookPage(page: Page, thumb: string, flag: string, tag: string): Promise<void> {
   await page.getByRole("button", { name: thumb, exact: true }).click();
-  await expect(page.locator(".ink-tag-popover")).toBeVisible();
+  const popover = page.locator(".ink-tag-popover");
+  await expect(popover).toBeVisible();
+  // The popover must sit BESIDE its thumbnail, not below it: rail thumbs
+  // stack vertically, so anything opening under the thumb lands on the next
+  // page's thumbnail and reads as tagging the wrong page.
+  const anchor = page.locator(".ink-page-thumb").first();
+  const anchorBox = (await anchor.boundingBox())!;
+  const popBox = (await popover.boundingBox())!;
+  expect(popBox.x).toBeGreaterThanOrEqual(anchorBox.x + anchorBox.width - 1);
+  expect(Math.min(popBox.y + popBox.height, anchorBox.y + anchorBox.height)
+    - Math.max(popBox.y, anchorBox.y)).toBeGreaterThan(0);
   await page.getByRole("button", { name: flag, exact: true }).click();
   await page.getByLabel("Add tag").fill(tag);
   await page.getByLabel("Add tag").press("Enter");
   await page.keyboard.press("Escape");
-  await expect(page.locator(".ink-tag-popover")).toHaveCount(0);
+  await expect(popover).toHaveCount(0);
 }
 
 test("notebook pages: tag from the rail, badges, stacked filters and undo", async ({ page }) => {

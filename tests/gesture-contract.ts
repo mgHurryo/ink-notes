@@ -485,8 +485,11 @@ export function gestureContract(create: () => Promise<any>): void {
         // the destination visible beyond the former one-second cutoff.
         vi.advanceTimersByTime(1000);
         expect(railHidden()).toBe(false);
-        // The rail then hands back after the full quiet pause.
-        vi.advanceTimersByTime(300);
+        // A 1-2s trackpad finger lift keeps the rail borrowed; only a full
+        // 3s of quiet hands it back.
+        vi.advanceTimersByTime(1500);
+        expect(railHidden()).toBe(false);
+        vi.advanceTimersByTime(500);
         expect(railHidden()).toBe(true);
         // A sideways burst never drives the rail: horizontal flips are one
         // page per contact and do not count toward the vertical page rate.
@@ -518,9 +521,9 @@ export function gestureContract(create: () => Promise<any>): void {
         vi.advanceTimersByTime(800);
         expect(railHidden()).toBe(false);
         // With no further wheel events, the normal quiet interval hands back
-        // a rail that the fast vertical burst borrowed from the user (the
-        // 1.3s window #428 settled on: 800 + 501 crosses it).
-        vi.advanceTimersByTime(501);
+        // a rail that the fast vertical burst borrowed from the user (the 3s
+        // window: 800 + 2200 crosses it; shorter lifts stay borrowed).
+        vi.advanceTimersByTime(2200);
         expect(railHidden()).toBe(true);
       } finally { vi.useRealTimers(); }
     });
