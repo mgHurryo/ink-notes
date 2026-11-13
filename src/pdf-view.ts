@@ -989,7 +989,10 @@ export class PdfInkView extends InkWritingView {
     // Fast paging keeps the current page under the user's eye: center the
     // active thumb instead of the usual nearest-visibility nudge.
     if (this.isFastPagingRailOpen()) this.followWheelPageThumb();
-    else this.thumbButtons.get(this.noteIndex)?.scrollIntoView?.({ block: "nearest" });
+    else {
+      const active = this.thumbButtons.get(this.noteIndex);
+      if (this.pageRail && active) this.scrollRailThumb(this.pageRail, active);
+    }
     this.evictDistantThumbnails();
     this.paintVisibleThumbnails();
     this.scheduleSwipeThumbnailPaint();

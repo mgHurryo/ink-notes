@@ -1949,19 +1949,29 @@ export abstract class InkWritingView extends FileView {
     this.wheelPacer.end();
   }
 
+  /** Scrolls only the page rail so thumbnail updates cannot move the editor. */
+  protected scrollRailThumb(rail: HTMLElement, thumb: HTMLElement, center = false): void {
+    const box = rail.getBoundingClientRect();
+    const rect = thumb.getBoundingClientRect();
+    if (rail.clientHeight <= 0 || rect.height <= 0) return;
+    const top = box.top + rail.clientTop;
+    const bottom = top + rail.clientHeight;
+    if (center) {
+      rail.scrollTop += (rect.top + rect.height / 2) - (top + rail.clientHeight / 2);
+    } else if (rect.top < top) {
+      rail.scrollTop += rect.top - top;
+    } else if (rect.bottom > bottom) {
+      rail.scrollTop += rect.bottom - bottom;
+    }
+  }
+
   /** Keeps the active thumbnail vertically centered in the rail while fast
-   *  paging. The relative-rect delta moves only the rail's own scroll box
-   *  (unlike scrollIntoView, which may drag outer containers along), and
-   *  scrollTop clamps at both ends, so first and last pages settle at their
-   *  natural edge instead of forcing a center that does not exist. */
+   *  paging. scrollTop clamps at both ends, so first and last pages settle at
+   *  their natural edge instead of forcing a center that does not exist. */
   protected followWheelPageThumb(): void {
     const rail = this.containerEl?.querySelector?.<HTMLElement>(".ink-page-rail");
     const thumb = rail?.querySelector<HTMLElement>(".ink-page-thumb.is-active");
-    if (!rail || !thumb) return;
-    const box = rail.getBoundingClientRect();
-    const rect = thumb.getBoundingClientRect();
-    if (box.height <= 0 || rect.height <= 0) return;
-    rail.scrollTop += (rect.top + rect.height / 2) - (box.top + box.height / 2);
+    if (rail && thumb) this.scrollRailThumb(rail, thumb, true);
   }
 
   protected onPointerDown(event: InkPointerSample, source: InteractionContext["source"] = "pointer"): void {
