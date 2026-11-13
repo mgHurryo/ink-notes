@@ -1715,8 +1715,13 @@ export abstract class InkWritingView extends FileView {
     // Undo/redo, text insertion, tool switching and selection deletion all
     // mutate the model; during a notebook open that model is transient.
     if (this.openingNotebook()) return false;
-    if (this.activePointerId !== null || this.desktopPan) return false;
     const key = event.key.toLowerCase();
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && (key === "z" || key === "y")) {
+      if (this.desktopPan || this.flipSettling || this.inputLocked()) return false;
+      if (key === "z") { if (event.shiftKey) this.redo(); else this.undo(); return true; }
+      if (!event.shiftKey) { this.redo(); return true; }
+    }
+    if (this.activePointerId !== null || this.desktopPan) return false;
     if ((event.ctrlKey || event.metaKey) && !event.altKey) {
       if (this.flipSettling) return false;
       if (key === "+" || key === "=") { this.desktopZoom(1.1); return true; }
@@ -1728,8 +1733,6 @@ export abstract class InkWritingView extends FileView {
         if (key === "x" && this.selectedStrokes().length > 0) { this.copySelection(true); return true; }
         if (key === "v" && this.availableClipboard()) { this.pasteSelection(); return true; }
       }
-      if (key === "z") { if (event.shiftKey) this.redo(); else this.undo(); return true; }
-      if (key === "y" && !event.shiftKey) { this.redo(); return true; }
       return false;
     }
     if (event.altKey) {
@@ -3980,6 +3983,7 @@ export abstract class InkWritingView extends FileView {
 
   protected undo(): void {
     if (this.readingMode) return;
+    this.finishPointerInput(false);
     const command = this.undoStack.pop();
     if (!command) return;
     command.undo();
@@ -3989,6 +3993,7 @@ export abstract class InkWritingView extends FileView {
 
   protected redo(): void {
     if (this.readingMode) return;
+    this.finishPointerInput(false);
     const command = this.redoStack.pop();
     if (!command) return;
     command.redo();

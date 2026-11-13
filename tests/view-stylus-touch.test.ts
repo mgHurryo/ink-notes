@@ -466,6 +466,31 @@ describe("stylus touch input ownership", () => {
     expect(drawing.interaction).toBeNull();
   });
 
+  it.each(["toolbar", "shortcut"])("undoes an active eraser before consuming history via %s", (trigger) => {
+    (view as any).state.pen.smooth = 0;
+    for (const [start, end] of [[300, 380], [500, 580]]) {
+      dispatchPointer("pointerdown", { clientX: start, clientY: 350 });
+      dispatchPointer("pointermove", { clientX: end, clientY: 350 });
+      dispatchPointer("pointerup", { clientX: end + 20, clientY: 350 });
+    }
+    const originalPoints = drawing.currentPage().strokes.map((stroke) => stroke.points.map((point) => ({ ...point })));
+    expect(originalPoints).toHaveLength(2);
+    clickButton("Erase");
+    dispatchPointer("pointerdown", { clientX: 500, clientY: 350 });
+    expect(drawing.currentPage().strokes).toHaveLength(1);
+
+    if (trigger === "toolbar") clickButton("Undo");
+    else {
+      const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "z", ctrlKey: true });
+      paper.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+    }
+
+    expect(drawing.activePointerId).toBeNull();
+    expect(drawing.currentPage().strokes.map((stroke) => stroke.points)).toEqual(originalPoints);
+    dispatchPointer("pointerup", { clientX: 500, clientY: 350 });
+  });
+
   it("selects completed ink with a stylus Touch lasso without adding ink", () => {
     dispatchTouch("touchstart", [touch()]);
     dispatchTouch("touchend", [touch(7, { clientX: 420 })], []);
