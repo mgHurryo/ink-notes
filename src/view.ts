@@ -447,6 +447,8 @@ export class InkView extends InkWritingView {
   private renderCanvas(): void {
     const workspace = this.root.createDiv({ cls: "ink-workspace" });
     const rail = workspace.createDiv({ cls: "ink-page-rail", attr: { "aria-label": "Notebook pages" } });
+    rail.addEventListener("click", (event) => this.claimFastPagingRailFromSelection(event), true);
+    rail.addEventListener("keydown", (event) => this.claimFastPagingRailFromSelection(event), true);
     applyStoredRailWidth(rail, RAIL_WIDTH_STORAGE_KEY);
     this.pageScroller = workspace.createDiv({ cls: "ink-page-scroller" });
     this.loadFeedback = workspace.createDiv({ cls: "ink-notebook-load-feedback", attr: { role: "status", "aria-live": "polite", hidden: "" } });

@@ -29316,6 +29316,17 @@ var InkWritingView = class extends import_obsidian7.FileView {
   /** Called at the very end of finishPointerInput. */
   afterInputFullySettled() {
   }
+  /** A user action in the rail turns a temporary fast-paging reveal into an
+   *  explicit open state, so the quiet timer cannot hide it unexpectedly. */
+  claimFastPagingRail() {
+    this.fastPagingRailBorrowed = false;
+  }
+  /** Keep a fast-paging reveal open only when the user activates a page thumb. */
+  claimFastPagingRailFromSelection(event) {
+    var _a;
+    const target = event.target;
+    if ((_a = target == null ? void 0 : target.closest) == null ? void 0 : _a.call(target, ".ink-page-thumb")) this.claimFastPagingRail();
+  }
   /** Snapshot the trigger press before the host dismisses its menu on pointerdown. */
   beginPageOptionsMenu(event) {
     var _a;
@@ -34324,6 +34335,8 @@ var InkView = class extends InkWritingView {
   renderCanvas() {
     const workspace = this.root.createDiv({ cls: "ink-workspace" });
     const rail = workspace.createDiv({ cls: "ink-page-rail", attr: { "aria-label": "Notebook pages" } });
+    rail.addEventListener("click", (event) => this.claimFastPagingRailFromSelection(event), true);
+    rail.addEventListener("keydown", (event) => this.claimFastPagingRailFromSelection(event), true);
     applyStoredRailWidth(rail, RAIL_WIDTH_STORAGE_KEY);
     this.pageScroller = workspace.createDiv({ cls: "ink-page-scroller" });
     this.loadFeedback = workspace.createDiv({ cls: "ink-notebook-load-feedback", attr: { role: "status", "aria-live": "polite", hidden: "" } });
@@ -37598,6 +37611,8 @@ var PdfInkView = class extends InkWritingView {
    */
   buildPageRail(body) {
     const rail = body.createDiv({ cls: "ink-page-rail", attr: { "aria-label": "PDF pages" } });
+    rail.addEventListener("click", (event) => this.claimFastPagingRailFromSelection(event), true);
+    rail.addEventListener("keydown", (event) => this.claimFastPagingRailFromSelection(event), true);
     this.pageRail = rail;
     applyStoredRailWidth(rail, PDF_RAIL_WIDTH_STORAGE_KEY);
     const header = rail.createDiv({ cls: "ink-rail-header" });
