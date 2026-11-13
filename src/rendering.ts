@@ -145,21 +145,6 @@ function penStampGeometry(stroke: InkStroke, width: number, height: number, refe
     // every canvas instead of fattening hairlines more on smaller panes.
     return Math.max(0.3 * widthScale, (fullDiameter / 2) * envelope * modulation * speedFactor);
   };
-  // Per-point normals from the neighbor chord (endpoints clamp to their own
-  // segment), matching the band direction the quads use.
-  const normals: Array<[number, number]> = new Array(count);
-  for (let index = 0; index < count; index++) {
-    const point = centerline[index];
-    const previous = centerline[Math.max(0, index - 1)];
-    const following = centerline[Math.min(count - 1, index + 1)];
-    let dx = following[0] - previous[0];
-    let dy = following[1] - previous[1];
-    if (index === 0 && count > 1) { dx = centerline[1][0] - point[0]; dy = centerline[1][1] - point[1]; }
-    else if (index === count - 1 && count > 1) { dx = point[0] - centerline[index - 1][0]; dy = point[1] - centerline[index - 1][1]; }
-    let length = Math.hypot(dx, dy);
-    if (length < 1e-6) { dx = 1; dy = 0; length = 1; }
-    normals[index] = [-dy / length, dx / length];
-  }
   const discSegments = 12;
   const ringsFor = (from: number, to: number, linkAcrossEnd: boolean): number[][][] => {
     const rings: number[][][] = [];
@@ -176,12 +161,11 @@ function penStampGeometry(stroke: InkStroke, width: number, height: number, refe
       }
       rings.push(area < 0 ? ring.slice().reverse() : ring);
     };
-    // A lone sample is a lone disc; the trapezoid normals need a neighbor.
+    // A lone sample is a lone disc; segments add the connecting bands.
     const lastLink = linkAcrossEnd ? to : to - 1;
     for (let index = from; index < to; index++) {
       const point = centerline[index];
       const radius = halfWidthAt(index);
-      const [nx, ny] = normals[index];
       const ring: number[][] = [];
       for (let sample = 0; sample < discSegments; sample++) {
         const angle = (sample / discSegments) * Math.PI * 2;
@@ -191,11 +175,17 @@ function penStampGeometry(stroke: InkStroke, width: number, height: number, refe
       if (index >= lastLink) continue;
       const following = centerline[index + 1];
       const followingRadius = halfWidthAt(index + 1);
-      const [fnx, fny] = normals[index + 1];
+      // Keep each segment's band perpendicular to that segment. Averaging
+      // vertex normals across a hard corner makes a rectangle's long sides
+      // taper toward the corners even though every sample has the same nib.
+      const dx = following[0] - point[0], dy = following[1] - point[1];
+      const length = Math.hypot(dx, dy);
+      if (length < 1e-6) continue;
+      const nx = -dy / length, ny = dx / length;
       emitRing([
         [point[0] + nx * radius, point[1] + ny * radius],
-        [following[0] + fnx * followingRadius, following[1] + fny * followingRadius],
-        [following[0] - fnx * followingRadius, following[1] - fny * followingRadius],
+        [following[0] + nx * followingRadius, following[1] + ny * followingRadius],
+        [following[0] - nx * followingRadius, following[1] - ny * followingRadius],
         [point[0] - nx * radius, point[1] - ny * radius],
       ]);
     }

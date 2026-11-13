@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { PDFDocument, PDFRawStream, PDFArray, decodePDFRawStream } from "pdf-lib";
 import { createNotebook, InkStroke } from "../src/model";
 import { drawInkStroke, penOutlineRings } from "../src/rendering";
+import { shapePoints } from "../src/shapes";
 import { exportNotebookPdf, inkToSvgOutlinePath } from "../src/pdf-export";
 import { stickyStrokeFromPage } from "../src/sticky-ink";
 import { STICKY_UNIT, StickyNote } from "../src/sticky-model";
@@ -92,6 +93,29 @@ function exactColumnFillWidth(rings: number[][][], xc: number): number {
   for (const boundary of boundaries.slice(1)) {
     const midY = (previous + boundary) / 2;
     if (nonzeroAtX(rings, xc, midY)) width += boundary - previous;
+    previous = boundary;
+  }
+  return width;
+}
+
+function exactRowFillWidth(rings: number[][][], yc: number): number {
+  const boundaries: number[] = [];
+  for (const ring of rings) {
+    for (let index = 0; index < ring.length; index++) {
+      const a = ring[index], b = ring[(index + 1) % ring.length];
+      const crosses = (a[1] <= yc && b[1] > yc) || (b[1] <= yc && a[1] > yc);
+      if (!crosses) continue;
+      const t = (yc - a[1]) / (b[1] - a[1]);
+      boundaries.push(a[0] + t * (b[0] - a[0]));
+    }
+  }
+  if (boundaries.length === 0) return 0;
+  boundaries.sort((left, right) => left - right);
+  let width = 0;
+  let previous = boundaries[0];
+  for (const boundary of boundaries.slice(1)) {
+    const midX = (previous + boundary) / 2;
+    if (nonzeroAtX(rings, midX, yc)) width += boundary - previous;
     previous = boundary;
   }
   return width;
@@ -359,6 +383,25 @@ describe("cross-renderer stroke width fidelity", () => {
     // pressure; the reference cell must keep reproducing it (0.5 px slack
     // absorbs the rasterizer's quantization).
     expect(fraction * WIDTH_REFERENCE).toBeCloseTo(stroke.width * 0.925, 0);
+  });
+
+  it("keeps rectangle sides at a consistent pen width", () => {
+    const start = { x: .2, y: .2, pressure: .5, t: 1 };
+    const end = { x: .8, y: .8, pressure: .5, t: 2 };
+    const stroke: InkStroke = {
+      ...lineStroke(8, "pen"),
+      dynamics: { pressure: 0, speed: 0, taper: 0 },
+      points: shapePoints("rectangle", start, end, WIDTH_REFERENCE, PAGE_HEIGHT),
+    };
+    const rings = penOutlineRings(stroke, WIDTH_REFERENCE, PAGE_HEIGHT);
+    const xSamples = [0.32, 0.4, 0.5, 0.6, 0.68].map((ratio) => ratio * WIDTH_REFERENCE);
+    const ySamples = [0.32, 0.4, 0.5, 0.6, 0.68].map((ratio) => ratio * PAGE_HEIGHT);
+    const widths = [
+      ...xSamples.map((x) => exactColumnFillWidth(rings, x)),
+      ...ySamples.map((y) => exactRowFillWidth(rings, y)),
+    ];
+    expect(Math.min(...widths)).toBeGreaterThan(0);
+    expect(Math.max(...widths) - Math.min(...widths), JSON.stringify(widths)).toBeLessThan(0.2);
   });
 
   it("scales highlighter widths identically on screen and in the exported PDF", async () => {
