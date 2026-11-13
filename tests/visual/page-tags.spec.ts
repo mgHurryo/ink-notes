@@ -16,6 +16,13 @@ test("notebook pages: tag from the rail, badges, stacked filters and undo", asyn
   await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
   await page.getByRole("button", { name: "Pages", exact: true }).click();
   await expect(page.locator(".ink-page-thumb")).toHaveCount(1);
+  const firstThumb = page.locator(".ink-page-thumb").first();
+  const pageNumber = await firstThumb.locator(".ink-page-thumb-number").boundingBox();
+  const tagButton = await firstThumb.locator(".ink-thumb-tag-button").boundingBox();
+  expect(pageNumber).not.toBeNull();
+  expect(tagButton).not.toBeNull();
+  expect(pageNumber!.x >= tagButton!.x + tagButton!.width || tagButton!.x >= pageNumber!.x + pageNumber!.width)
+    .toBe(true);
   // A second page (blank, untagged) gives the filters something to hide.
   // Added BEFORE tagging so the tag session sits on top of the undo stack.
   await page.evaluate(() => (window as unknown as {
