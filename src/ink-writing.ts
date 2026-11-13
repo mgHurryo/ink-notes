@@ -138,6 +138,7 @@ export interface PenCapture {
 }
 
 const STROKE_ERASER_HIT_RADIUS = 10;
+const MAX_ERASER_SWEEP_STEPS = 1024;
 const OVERLAY_PIXEL_BUDGET = 12_000_000;
 const SAVE_IDLE_DELAY = 1_500;
 const SAVE_MAX_DELAY = 10_000;
@@ -941,6 +942,7 @@ export abstract class InkWritingView extends FileView {
   /** Reused dedup map for eraseAt(): cleared per call instead of rebuilt, so
    *  a grazing eraser does not allocate a spread chain per input sample. */
   private eraserCandidateScratch = new Map<string, InkStroke>();
+  private lastEraserPoint: InkPoint | null = null;
 
   // --- lasso / selection
   protected lassoPath: InkPoint[] = [];
@@ -2034,6 +2036,7 @@ export abstract class InkWritingView extends FileView {
     this.eraserPreviewCells.clear();
     if (tool === "eraser") {
       this.updateEraserHover(point, true);
+      this.lastEraserPoint = point;
       if (this.eraseAt(point, page)) this.requestRender();
       return;
     }
@@ -2292,7 +2295,19 @@ export abstract class InkWritingView extends FileView {
         const sample = feed[index];
         const point = this.toPoint(sample, rect);
         if (interaction.tool === "eraser") {
-          changed = this.eraseAt(point, page, interaction.eraserMode, interaction.eraserSize) || changed;
+          const previous = this.lastEraserPoint ?? point;
+          const distance = Math.hypot((point.x - previous.x) * this.canvasLogicalWidth,
+            (point.y - previous.y) * this.canvasLogicalHeight);
+          const radius = (interaction.eraserMode ?? this.state.eraserMode) === "stroke"
+            ? STROKE_ERASER_HIT_RADIUS
+            : (interaction.eraserSize ?? this.state.eraserSize) / 2;
+          const spacing = Math.max(1, radius / 2);
+          const steps = Math.max(1, Math.min(MAX_ERASER_SWEEP_STEPS, Math.ceil(distance / spacing)));
+          for (let step = 1; step <= steps; step++) {
+            changed = this.eraseAt(interpolateInkPoint(previous, point, step / steps), page,
+              interaction.eraserMode, interaction.eraserSize) || changed;
+          }
+          this.lastEraserPoint = point;
         } else if (this.activeStroke && this.lastPoint) {
           clampLiftPressure(point, phase === "up" && index === feed.length - 1 ? this.lastPoint : null);
           // Raw capture: every sample is stored exactly as delivered. Repeated
@@ -3800,6 +3815,7 @@ export abstract class InkWritingView extends FileView {
     this.scribbleGesturePoints = [];
     this.workerStrokePointIndex = 0;
     this.lastPoint = null;
+    this.lastEraserPoint = null;
     this.pendingLassoPoint = null;
     this.lassoPath = [];
     this.lassoDrag = null;

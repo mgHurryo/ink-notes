@@ -351,6 +351,23 @@ describe("consecutive handwriting input", () => {
     expect(run(160)).toBe(true);
   });
 
+  it("sweeps the eraser across sparse pointer samples", () => {
+    const { internal } = setup();
+    const page = internal.notebook.pages[0];
+    page.strokes.push({
+      id: "crossed-between-events", pageId: page.id, tool: "pen", color: "#000", width: 3, opacity: 1,
+      points: [{ x: 0.5, y: 0.2, pressure: 0.5, t: 1 }], createdAt: 1, updatedAt: 1,
+    });
+    internal.state.tool = "eraser";
+    internal.state.eraserMode = "stroke";
+
+    internal.onPointerDown(pointer(0, { clientY: 20 }));
+    internal.onPointerUp(pointer(100, { clientY: 20 }));
+
+    expect(page.strokes).toEqual([]);
+    expect(page.deletedStrokeIds).toContain("crossed-between-events");
+  });
+
   it("commits a cross-tile stroke erasure as one coherent visible update", () => {
     const { internal } = setup();
     const page = internal.notebook.pages[0];
