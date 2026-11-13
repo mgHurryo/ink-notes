@@ -105,8 +105,8 @@ describe("DesktopWheelGesture moderate re-swipe over a settled tail", () => {
     return pages;
   }
 
-  it("keeps the horizontal re-swipe to the one page its contact already flipped", () => {
-    expect(pagesAcrossModerateReswipe(0, "x")).toBe(1);
+  it("rearms a moderate horizontal re-swipe rising off the settled tail", () => {
+    expect(pagesAcrossModerateReswipe(0, "x")).toBe(2);
   });
 
   it("rearms a moderate vertical re-swipe rising straight off the settled tail", () => {
@@ -146,8 +146,8 @@ describe("DesktopWheelGesture moderate re-swipe over a settled tail", () => {
     expect(pagesAcrossRampReswipe(0)).toBe(2);
   });
 
-  it("keeps the ramped horizontal re-swipe to the one page its contact already flipped", () => {
-    expect(pagesAcrossRampReswipe(0, "x")).toBe(1);
+  it("rearms a ramped horizontal re-swipe rising through the settled band", () => {
+    expect(pagesAcrossRampReswipe(0, "x")).toBe(2);
   });
 
   it("rearms the same ramp after a 200ms silence delivered in integral deltas", () => {
@@ -388,8 +388,9 @@ describe("DesktopWheelGesture settled-tail stall continuation", () => {
   // the settled envelope on "real-gap" speed alone and resets through the
   // quiet-gap exit. Both mint a fresh contact the resumed tail pages on. The
   // mid-band stamp stays blocked by the 12px settledRise floor (pinned), and
-  // the horizontal contact keeps its single page across every stamp because
-  // contactXPages survives a re-arm (its asymmetry with the y axis pinned).
+  // the horizontal cap remains spent for these merged tails because their
+  // confirmation does not rise above the candidate speed (or the envelope
+  // remains hot), so they do not qualify as a new horizontal contact.
   it("keeps a settled-tail stall merge stamped at delivery cadence to one page (0ms)", () => {
     expect(pagesAcrossSettledTailStall("y", 100, 0)).toBe(1);
   });

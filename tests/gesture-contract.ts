@@ -368,9 +368,8 @@ export function gestureContract(create: () => Promise<any>): void {
       // A Windows precision trackpad bridges a human re-flick with an inertia
       // tail whose gaps all stay under the quiet-gap threshold, and a moderate
       // re-swipe rises 4-6x off the settled (<=4px) tail while every sample
-      // stays under the 24px jump floor. The jump still re-arms the gesture
-      // (the vertical mirror below flips its renewed page), but the horizontal
-      // contact has spent its single page, so nothing flips here.
+      // stays under the 24px jump floor. Once its rise is confirmed, the new
+      // horizontal swipe receives its own page budget just like vertical.
       wheel(140, 0, { timeStamp: 100 });
       for (const [delta, timeStamp] of [[90, 110], [60, 120], [30, 130], [20, 140], [14, 150],
         [10, 160], [8, 170], [6, 180], [4, 190], [3, 200], [3, 210], [2, 220]]) {
@@ -378,7 +377,7 @@ export function gestureContract(create: () => Promise<any>): void {
       }
       expect(settle).toHaveBeenCalledTimes(1);
       for (let i = 0; i < 30; i++) wheel(13 + (i % 5) * 2, 0, { timeStamp: 230 + i * 10 });
-      expect(settle).toHaveBeenCalledTimes(1);
+      expect(settle).toHaveBeenCalledTimes(2);
     });
 
     it("rearms a moderate vertical re-swipe over a settled tail without a quiet gap", async () => {
@@ -647,15 +646,13 @@ export function gestureContract(create: () => Promise<any>): void {
 
     it("rearms a same-direction touchpad flick that ramps up from small deltas", async () => {
       const { wheel, settle } = await desktopSetup();
-      // The ramp still re-arms the gesture (the vertical accelerating swipe
-      // below flips its renewed page), but the horizontal contact has spent
-      // its strict single page, so nothing flips here.
+      // The confirmed ramped re-swipe opens a new horizontal page budget.
       wheel(140, 0, { timeStamp: 100 });
       for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [10, 140], [4, 150]]) wheel(delta, 0, { timeStamp: time });
       expect(settle).toHaveBeenCalledOnce();
 
       for (const [delta, time] of [[8, 210], [20, 220], [35, 230], [70, 240]]) wheel(delta, 0, { timeStamp: time });
-      expect(settle).toHaveBeenCalledOnce();
+      expect(settle).toHaveBeenCalledTimes(2);
     });
 
     it("turns a page on a short intentional horizontal touchpad swipe", async () => {
@@ -694,18 +691,16 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(1);
     });
 
-    it("keeps repeated horizontal swipes that start below the prior inertia to one page per contact", async () => {
+    it("rearms repeated horizontal swipes that start below prior inertia", async () => {
       const { wheel, settle } = await desktopSetup();
-      // Each new stream starts below the prior inertia delta, so none of them
-      // resets into a fresh contact - and the strict one-page-per-contact
-      // contract lets only the first flip (the vertical mirror below keeps
-      // the re-arm-every-stream renewal contract).
+      // Each new stream starts below the prior inertia delta, then rises far
+      // enough to be confirmed as a new same-direction swipe.
       for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [30, 130], [10, 140],
         [20, 200], [30, 210], [45, 220], [20, 280], [30, 290], [45, 300]]) {
         wheel(delta, 0, { timeStamp: time });
       }
 
-      expect(settle).toHaveBeenCalledTimes(1);
+      expect(settle).toHaveBeenCalledTimes(2);
     });
 
     it("rearms every vertical stream that starts below the prior inertia delta", async () => {
@@ -733,6 +728,27 @@ export function gestureContract(create: () => Promise<any>): void {
         [140, 210], [90, 220], [60, 230], [30, 240], [10, 250], [4, 260], [140, 320],
       ]) wheel(delta, 0, { timeStamp });
       expect(settle).toHaveBeenCalledTimes(3);
+    });
+
+    it("continues same-direction paging after a full-idle and reversal sequence", async () => {
+      const { wheel, settle } = await desktopSetup();
+      let start = 100;
+      const swipe = (direction: number) => {
+        for (const [magnitude, offset] of [[140, 0], [90, 10], [60, 20], [30, 30], [10, 40], [4, 50]]) {
+          wheel(direction * magnitude, 0, { timeStamp: start + offset });
+        }
+        // The next input begins 250ms after this swipe's settled tail, beyond
+        // the idle boundary seen when users lift and place their fingers again.
+        start += 300;
+      };
+
+      swipe(1);  // move forward
+      swipe(1);  // same direction after the previous input sequence is idle
+      swipe(-1); // return to the previous page
+      swipe(1);  // forward to the page that used to become stuck
+      swipe(1);  // continue forward instead of getting stuck there again
+
+      expect(settle.mock.calls.map(([direction]) => direction)).toEqual([1, 1, -1, 1, 1]);
     });
 
     it("bounds trackpad pages queued during one slow page handoff", async () => {
@@ -911,23 +927,23 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(3);
     });
 
-    it("keeps a single horizontal contact to exactly one page however its tail re-arms", async () => {
+    it("rearms confirmed horizontal re-swipes and pages a fresh idle swipe", async () => {
       const { wheel, settle } = await desktopSetup();
       wheel(140, 0, { timeStamp: 100 });
       for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [10, 140], [4, 150]]) {
         wheel(delta, 0, { timeStamp: time });
       }
       expect(settle).toHaveBeenCalledTimes(1);
-      // The mid-tail flick re-arms the gesture (suppression lifts) but the
-      // strict one-page-per-contact contract refuses the second page the old
-      // per-gesture budget granted.
+      // A confirmed rising re-swipe gets another page even while the previous
+      // inertia stream is still settling.
       for (const [delta, time] of [[50, 160], [55, 170], [60, 180], [30, 190], [20, 200], [12, 210], [25, 220]]) {
         wheel(delta, 0, { timeStamp: time });
       }
-      expect(settle).toHaveBeenCalledTimes(1);
-      // Only a new contact after an idle gap produces the next page.
-      wheel(140, 0, { timeStamp: 500 });
       expect(settle).toHaveBeenCalledTimes(2);
+      // A fresh same-direction swipe after idle gets its own page as well.
+      wheel(140, 0, { timeStamp: 500 });
+      wheel(140, 0, { timeStamp: 510 });
+      expect(settle).toHaveBeenCalledTimes(3);
     });
 
     it("keeps one stalled merged sample from posing as a renewed flick", async () => {
