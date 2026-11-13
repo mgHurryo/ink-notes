@@ -29783,20 +29783,29 @@ var InkWritingView = class extends import_obsidian7.FileView {
     this.fastPagingRailBorrowed = false;
     this.wheelPacer.end();
   }
+  /** Scrolls only the page rail so thumbnail updates cannot move the editor. */
+  scrollRailThumb(rail, thumb, center = false) {
+    const box = rail.getBoundingClientRect();
+    const rect = thumb.getBoundingClientRect();
+    if (rail.clientHeight <= 0 || rect.height <= 0) return;
+    const top = box.top + rail.clientTop;
+    const bottom = top + rail.clientHeight;
+    if (center) {
+      rail.scrollTop += rect.top + rect.height / 2 - (top + rail.clientHeight / 2);
+    } else if (rect.top < top) {
+      rail.scrollTop += rect.top - top;
+    } else if (rect.bottom > bottom) {
+      rail.scrollTop += rect.bottom - bottom;
+    }
+  }
   /** Keeps the active thumbnail vertically centered in the rail while fast
-   *  paging. The relative-rect delta moves only the rail's own scroll box
-   *  (unlike scrollIntoView, which may drag outer containers along), and
-   *  scrollTop clamps at both ends, so first and last pages settle at their
-   *  natural edge instead of forcing a center that does not exist. */
+   *  paging. scrollTop clamps at both ends, so first and last pages settle at
+   *  their natural edge instead of forcing a center that does not exist. */
   followWheelPageThumb() {
     var _a, _b;
     const rail = (_b = (_a = this.containerEl) == null ? void 0 : _a.querySelector) == null ? void 0 : _b.call(_a, ".ink-page-rail");
     const thumb = rail == null ? void 0 : rail.querySelector(".ink-page-thumb.is-active");
-    if (!rail || !thumb) return;
-    const box = rail.getBoundingClientRect();
-    const rect = thumb.getBoundingClientRect();
-    if (box.height <= 0 || rect.height <= 0) return;
-    rail.scrollTop += rect.top + rect.height / 2 - (box.top + box.height / 2);
+    if (rail && thumb) this.scrollRailThumb(rail, thumb, true);
   }
   onPointerDown(event, source = "pointer") {
     var _a, _b, _c, _d, _e, _f, _g, _h, _i;
@@ -34401,7 +34410,6 @@ var InkView = class extends InkWritingView {
     (_b = this.root) == null ? void 0 : _b.setAttribute("aria-busy", "false");
   }
   renderPageRail() {
-    var _a, _b;
     let rail = this.root.querySelector(".ink-page-rail");
     if (!rail) return;
     const pageIds = new Set(this.notebook.pages.map((page) => page.id));
@@ -34470,7 +34478,10 @@ var InkView = class extends InkWritingView {
     mountRailResizer(rail, { storageKey: RAIL_WIDTH_STORAGE_KEY, onDragEnd: () => this.redrawPageThumbnails() });
     this.scheduleSwipePreviewPaint();
     if (this.isFastPagingRailOpen()) this.followWheelPageThumb();
-    else (_b = (_a = rail.querySelector(".ink-page-thumb.is-active")) == null ? void 0 : _a.scrollIntoView) == null ? void 0 : _b.call(_a, { block: "nearest" });
+    else {
+      const active = rail.querySelector(".ink-page-thumb.is-active");
+      if (active) this.scrollRailThumb(rail, active);
+    }
   }
   /** Notebook pages surviving the active rail filters, in notebook order. */
   visibleRailPages() {
@@ -37603,7 +37614,7 @@ var PdfInkView = class extends InkWritingView {
   /** Re-syncs the rail with the model: rebuilds the buttons when the page
    *  sequence changed, moves the highlight, and repaints what is on screen. */
   refreshPageRail() {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a, _b, _c, _d, _e, _f, _g;
     const thumbs = this.railThumbs;
     if (!thumbs) return;
     const pages = (_a = this.sidecar) == null ? void 0 : _a.notePages;
@@ -37654,7 +37665,10 @@ var PdfInkView = class extends InkWritingView {
     });
     if (this.railCount) this.railCount.textContent = this.pageManagement ? `${this.selectedPageIds.size} selected` : railFiltersActive(this.railFilters) ? `${visibleCount} of ${count}` : `${this.noteIndex + 1} / ${count}`;
     if (this.isFastPagingRailOpen()) this.followWheelPageThumb();
-    else (_i = (_h = this.thumbButtons.get(this.noteIndex)) == null ? void 0 : _h.scrollIntoView) == null ? void 0 : _i.call(_h, { block: "nearest" });
+    else {
+      const active = this.thumbButtons.get(this.noteIndex);
+      if (this.pageRail && active) this.scrollRailThumb(this.pageRail, active);
+    }
     this.evictDistantThumbnails();
     this.paintVisibleThumbnails();
     this.scheduleSwipeThumbnailPaint();

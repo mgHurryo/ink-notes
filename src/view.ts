@@ -620,7 +620,10 @@ export class InkView extends InkWritingView {
     // Fast paging keeps the current page under the user's eye: center the
     // active thumb instead of the usual nearest-visibility nudge.
     if (this.isFastPagingRailOpen()) this.followWheelPageThumb();
-    else rail.querySelector<HTMLElement>(".ink-page-thumb.is-active")?.scrollIntoView?.({ block: "nearest" });
+    else {
+      const active = rail.querySelector<HTMLElement>(".ink-page-thumb.is-active");
+      if (active) this.scrollRailThumb(rail, active);
+    }
   }
 
   /** Notebook pages surviving the active rail filters, in notebook order. */
