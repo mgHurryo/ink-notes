@@ -77,10 +77,6 @@ const RAIL_SWEEP_THROTTLE_MS = 120;
 const RAIL_REVEAL_DELAY_MS = 310;
 /** Matches the notebook editor's rail expand/collapse transition (view.ts). */
 const RAIL_TRANSITION_MS = 280;
-/** Rail width persistence, separate from the notebook editor's key so each
- *  rail remembers the width its own thumbnails need. */
-const PDF_RAIL_WIDTH_STORAGE_KEY = "ink-pdf-page-rail-width";
-
 export type SaveOutcome = { status: "saved" } | { status: "conflict"; message: string } | { status: "failed"; message: string };
 
 interface PdfJsViewport { width: number; height: number }
@@ -906,7 +902,7 @@ export class PdfInkView extends InkWritingView {
     rail.addEventListener("click", (event) => this.claimFastPagingRailFromSelection(event), true);
     rail.addEventListener("keydown", (event) => this.claimFastPagingRailFromSelection(event), true);
     this.pageRail = rail;
-    applyStoredRailWidth(rail, PDF_RAIL_WIDTH_STORAGE_KEY);
+    applyStoredRailWidth(rail);
     const header = rail.createDiv({ cls: "ink-rail-header" });
     header.createDiv({ cls: "ink-rail-heading", text: "Pages" });
     this.railCount = header.createSpan({ cls: "ink-rail-count" });
@@ -925,7 +921,7 @@ export class PdfInkView extends InkWritingView {
     // Parity with the notebook editor's rail: the right edge is draggable and
     // the final width persists under the PDF-specific key. Thumbnails raster
     // during the drag at stale widths; repaint the visible range at the end.
-    mountRailResizer(rail, { storageKey: PDF_RAIL_WIDTH_STORAGE_KEY, onDragEnd: () => this.paintVisibleThumbnails() });
+    mountRailResizer(rail, { onDragEnd: () => this.paintVisibleThumbnails() });
   }
 
   /** Re-syncs the rail with the model: rebuilds the buttons when the page

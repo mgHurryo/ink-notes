@@ -32315,14 +32315,21 @@ var InkWritingView = class extends import_obsidian7.FileView {
 // src/rail-resizer.ts
 var RAIL_MIN_WIDTH = 150;
 var RAIL_MAX_WIDTH = 420;
-function applyStoredRailWidth(rail, storageKey) {
+var RAIL_WIDTH_STORAGE_KEY = "ink-page-rail-width";
+var LEGACY_RAIL_WIDTH_KEYS = ["ink-notes-page-rail-width", "ink-pdf-page-rail-width"];
+function storedRailWidth() {
   try {
-    const width = Number(window.localStorage.getItem(storageKey));
-    if (Number.isFinite(width) && width >= RAIL_MIN_WIDTH && width <= RAIL_MAX_WIDTH) {
-      rail.style.setProperty("--ink-rail-width", `${Math.round(width)}px`);
+    for (const key of [RAIL_WIDTH_STORAGE_KEY, ...LEGACY_RAIL_WIDTH_KEYS]) {
+      const width = Number(window.localStorage.getItem(key));
+      if (Number.isFinite(width) && width >= RAIL_MIN_WIDTH && width <= RAIL_MAX_WIDTH) return width;
     }
   } catch (e) {
   }
+  return null;
+}
+function applyStoredRailWidth(rail) {
+  const width = storedRailWidth();
+  if (width !== null) rail.style.setProperty("--ink-rail-width", `${Math.round(width)}px`);
 }
 function mountRailResizer(rail, options) {
   const handle = rail.createDiv({ cls: "ink-rail-resizer", attr: { "aria-hidden": "true" } });
@@ -32349,7 +32356,8 @@ function mountRailResizer(rail, options) {
     const width = parseFloat(rail.style.getPropertyValue("--ink-rail-width"));
     if (Number.isFinite(width)) {
       try {
-        window.localStorage.setItem(options.storageKey, String(width));
+        window.localStorage.setItem(RAIL_WIDTH_STORAGE_KEY, String(width));
+        for (const key of LEGACY_RAIL_WIDTH_KEYS) window.localStorage.removeItem(key);
       } catch (e) {
       }
     }
@@ -34051,7 +34059,6 @@ var PROGRESSIVE_NOTEBOOK_OPEN_BYTES = 256 * 1024;
 var OVERLAY_RESIZE_BUDGET = 4e6;
 var MIN_PAGE_ZOOM = 1;
 var SWIPE_PREVIEW_RESIZE_BUDGET = 16e6;
-var RAIL_WIDTH_STORAGE_KEY = "ink-notes-page-rail-width";
 var RAIL_TRANSITION_MS = 280;
 var THUMB_ASPECT = 0.73;
 var SWIPE_PREVIEW_IDLE_DELAY_MS = 120;
@@ -34410,7 +34417,7 @@ var InkView = class extends InkWritingView {
     const rail = workspace.createDiv({ cls: "ink-page-rail", attr: { "aria-label": "Notebook pages" } });
     rail.addEventListener("click", (event) => this.claimFastPagingRailFromSelection(event), true);
     rail.addEventListener("keydown", (event) => this.claimFastPagingRailFromSelection(event), true);
-    applyStoredRailWidth(rail, RAIL_WIDTH_STORAGE_KEY);
+    applyStoredRailWidth(rail);
     this.pageScroller = workspace.createDiv({ cls: "ink-page-scroller" });
     this.loadFeedback = workspace.createDiv({ cls: "ink-notebook-load-feedback", attr: { role: "status", "aria-live": "polite", hidden: "" } });
     const loadCard = this.loadFeedback.createDiv({ cls: "ink-notebook-load-card" });
@@ -34571,7 +34578,7 @@ var InkView = class extends InkWritingView {
       button3.addEventListener("click", () => this.pageManagement ? this.togglePageSelection(page.id) : this.explicitNavigateToPage(page.id));
       this.scheduleThumbnail(canvas, page);
     });
-    mountRailResizer(rail, { storageKey: RAIL_WIDTH_STORAGE_KEY, onDragEnd: () => this.redrawPageThumbnails() });
+    mountRailResizer(rail, { onDragEnd: () => this.redrawPageThumbnails() });
     this.scheduleSwipePreviewPaint();
     if (this.isFastPagingRailOpen()) this.followWheelPageThumb();
     else {
@@ -37001,7 +37008,6 @@ var PDF_THUMB_CACHE_LIMIT = 12;
 var RAIL_SWEEP_THROTTLE_MS = 120;
 var RAIL_REVEAL_DELAY_MS = 310;
 var RAIL_TRANSITION_MS2 = 280;
-var PDF_RAIL_WIDTH_STORAGE_KEY = "ink-pdf-page-rail-width";
 var EMPTY_NOTEBOOK = createNotebook();
 var PdfInkView = class extends InkWritingView {
   constructor(leaf) {
@@ -37711,7 +37717,7 @@ var PdfInkView = class extends InkWritingView {
     rail.addEventListener("click", (event) => this.claimFastPagingRailFromSelection(event), true);
     rail.addEventListener("keydown", (event) => this.claimFastPagingRailFromSelection(event), true);
     this.pageRail = rail;
-    applyStoredRailWidth(rail, PDF_RAIL_WIDTH_STORAGE_KEY);
+    applyStoredRailWidth(rail);
     const header = rail.createDiv({ cls: "ink-rail-header" });
     header.createDiv({ cls: "ink-rail-heading", text: "Pages" });
     this.railCount = header.createSpan({ cls: "ink-rail-count" });
@@ -37732,7 +37738,7 @@ var PdfInkView = class extends InkWritingView {
     this.renderPageRailActions();
     this.railThumbs = rail.createDiv({ cls: "ink-rail-thumbs" });
     this.registerDomEvent(this.railThumbs, "scroll", () => this.scheduleRailSweep(), { passive: true });
-    mountRailResizer(rail, { storageKey: PDF_RAIL_WIDTH_STORAGE_KEY, onDragEnd: () => this.paintVisibleThumbnails() });
+    mountRailResizer(rail, { onDragEnd: () => this.paintVisibleThumbnails() });
   }
   /** Re-syncs the rail with the model: rebuilds the buttons when the page
    *  sequence changed, moves the highlight, and repaints what is on screen. */
