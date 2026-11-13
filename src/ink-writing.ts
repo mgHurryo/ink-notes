@@ -1871,8 +1871,21 @@ export abstract class InkWritingView extends FileView {
       }
       return;
     }
+    if (motion.suppressed) {
+      event.preventDefault();
+      return;
+    }
+    // Keep ordinary vertical panning on the browser's native scroll path.
+    // Cancelling every touchpad sample and synchronously writing scrollTop
+    // forced high-rate scrolling through the main-thread wheel handler. At a
+    // page edge (or while a page flip is settling) custom handling below still
+    // owns the gesture so navigation and queued flips remain deterministic.
+    if (!this.flipSettling && motion.axis === "y"
+      && this.wheelCanScroll(scroller, motion.axis, motion.movement)) {
+      this.desktopWheel.pageDelta(motion, true);
+      return;
+    }
     event.preventDefault();
-    if (motion.suppressed) return;
     let scrolled = false;
     if (!this.flipSettling && (motion.axis === "y" || this.zoomLevel() > 1)) {
       const property = motion.axis === "x" ? "scrollLeft" : "scrollTop";

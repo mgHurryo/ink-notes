@@ -29715,8 +29715,15 @@ var InkWritingView = class extends import_obsidian7.FileView {
       }
       return;
     }
+    if (motion.suppressed) {
+      event.preventDefault();
+      return;
+    }
+    if (!this.flipSettling && motion.axis === "y" && this.wheelCanScroll(scroller, motion.axis, motion.movement)) {
+      this.desktopWheel.pageDelta(motion, true);
+      return;
+    }
     event.preventDefault();
-    if (motion.suppressed) return;
     let scrolled = false;
     if (!this.flipSettling && (motion.axis === "y" || this.zoomLevel() > 1)) {
       const property = motion.axis === "x" ? "scrollLeft" : "scrollTop";
