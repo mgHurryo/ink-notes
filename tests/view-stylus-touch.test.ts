@@ -312,6 +312,33 @@ describe("stylus touch input ownership", () => {
     expect(drawing.activePointerId).toBeNull();
   });
 
+  it.each(["pointer-first", "touch-first"])("does not let a %s Pointer Pencil's paired direct Touch pan in Pointer mode", (order) => {
+    clickButton("Pointer");
+    const pairedTouch = touch(8, { touchType: "direct" });
+    if (order === "pointer-first") dispatchPointer("pointerdown", { pointerId: 8, pointerType: "pen" });
+    dispatchTouch("touchstart", [pairedTouch]);
+    if (order === "touch-first") dispatchPointer("pointerdown", { pointerId: 8, pointerType: "pen" });
+    dispatchPointer("pointermove", { pointerId: 8, pointerType: "pen", clientX: 420 });
+    dispatchTouch("touchmove", [touch(8, { touchType: "direct", clientY: 290 })]);
+    expect(scroller.scrollTop).toBe(0);
+    dispatchPointer("pointerup", { pointerId: 8, pointerType: "pen", clientX: 420 });
+    dispatchTouch("touchend", [pairedTouch], []);
+    const finger = touch(91, { touchType: "direct" });
+    dispatchTouch("touchstart", [finger]);
+    dispatchTouch("touchmove", [touch(91, { touchType: "direct", clientY: 290 })]);
+    expect(scroller.scrollTop).toBeGreaterThan(0);
+    dispatchTouch("touchend", [finger], []);
+  });
+
+  it("keeps direct finger page panning available in Pointer mode without a stylus contact", () => {
+    clickButton("Pointer");
+    const finger = touch(91, { touchType: "direct" });
+    dispatchTouch("touchstart", [finger]);
+    dispatchTouch("touchmove", [touch(91, { touchType: "direct", clientY: 290 })]);
+    expect(scroller.scrollTop).toBeGreaterThan(0);
+    dispatchTouch("touchend", [finger], []);
+  });
+
   it.each(["pointer-first", "touch-first"])("deduplicates overlapping %s streams per contact", (order) => {
     if (order === "pointer-first") dispatchPointer("pointerdown");
     dispatchTouch("touchstart", [touch(20)]);

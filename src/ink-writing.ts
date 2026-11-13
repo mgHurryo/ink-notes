@@ -867,6 +867,9 @@ export abstract class InkWritingView extends FileView {
   protected interaction: InteractionContext | null = null;
   protected interactionGeneration = 0;
   protected activePointerId: number | null = null;
+  /** Pointer mode handles pen contacts outside the generic ink interaction;
+   *  retain their ownership so a paired Touch stream cannot pan the page. */
+  private pointerToolPenId: number | null = null;
   protected activeStroke: InkStroke | null = null;
   /** Raw, session-only pen path for gesture recognition; rendered stroke
    *  points are smoothed and may no longer retain small rapid reversals. */
@@ -1644,6 +1647,18 @@ export abstract class InkWritingView extends FileView {
     this.registerDomEvent(scroller, "scroll", () => { this.cancelPasteHold(); this.hideSelectionActions(); this.pasteTarget = null; }, { passive: true });
     this.register(() => { this.cancelPasteHold(); this.hideSelectionActions(); this.closeLassoSettings(); });
     scroller.tabIndex = 0;
+    this.registerDomEvent(scroller, "pointerdown", (event: PointerEvent) => {
+      if (event.pointerType !== "pen" || this.state.tool !== "pointer"
+        || !this.inputHost()?.contains(event.target as Node)) return;
+      this.pointerToolPenId = event.pointerId;
+      if (this.touchGesture?.axis === "x") this.cancelPageFlip();
+      this.touchGesture = null;
+    }, true);
+    for (const type of ["pointerup", "pointercancel"] as const) {
+      this.registerDomEvent(doc, type, (event: PointerEvent) => {
+        if (this.pointerToolPenId === event.pointerId) this.pointerToolPenId = null;
+      }, true);
+    }
     this.registerDomEvent(scroller, "pointerdown", (event) => {
       if (event.pointerType !== "mouse" || this.nativeMenuOpen()) return;
       if ((event.target as HTMLElement)?.closest?.(".ink-sticky-note") && !this.desktopSpaceDown && event.button !== 1) return;
@@ -1682,6 +1697,7 @@ export abstract class InkWritingView extends FileView {
       this.cancelPasteHold(); this.hideSelectionActions(); this.pasteTarget = null;
       this.finishFingerInput(); this.touchGesture = null;
       this.desktopSpaceDown = false;
+      this.pointerToolPenId = null;
       scroller.classList.remove("ink-pan-ready");
       this.endDesktopPan();
       this.desktopWheel.reset();
@@ -2693,6 +2709,15 @@ export abstract class InkWritingView extends FileView {
 
   protected onTouchStart(event: TouchEvent): void {
     this.cancelPasteHold();
+    if (this.state.tool === "pointer" && this.pointerToolPenId !== null) {
+      // Pointer mode does not create a generic interaction for the pen. The
+      // parallel Touch stream must still stay with that pen, rather than
+      // being mistaken for a finger page-pan gesture.
+      this.touchGesture = null;
+      event.stopPropagation?.();
+      if (event.cancelable && event.touches.length < 2) event.preventDefault();
+      return;
+    }
     if (event.type === "touchstart") {
       this.hideSelectionActions(); this.pasteTarget = null;
       if (this.state.tool !== "lasso" && this.activePointerId === null && this.selectedStrokeIds.size
@@ -2805,6 +2830,12 @@ export abstract class InkWritingView extends FileView {
 
   protected onTouchMove(event: TouchEvent): void {
     if (this.nativeMenuOpen()) { this.touchGesture = null; return; }
+    if (this.state.tool === "pointer" && this.pointerToolPenId !== null) {
+      this.touchGesture = null;
+      event.stopPropagation?.();
+      if (event.cancelable) event.preventDefault();
+      return;
+    }
     event.stopPropagation?.();
     if (this.onStylusTouch(event)) return;
     if (this.interaction?.source === "finger-touch") {
