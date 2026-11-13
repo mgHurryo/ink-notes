@@ -3,7 +3,7 @@ import { scribbleLoops, scribbleWaves } from "../scribble-fixtures";
 import type { InkStroke } from "../../src/model";
 
 for (const mode of ["ink", "pdf"]) for (const layer of ["page", "sticky"]) {
-  test(`${mode} ${layer}: native stylus scribbles erase locally and undo restores both tails`, async ({ page }) => {
+  test(`${mode} ${layer}: native stylus scribbles remove whole strokes in range and undo restores them`, async ({ page }) => {
     await page.setViewportSize({ width: 820, height: 1100 }); await page.goto("/");
     await expect(page.locator("html")).toHaveAttribute("data-ink-ready", "true");
     if (mode === "pdf") await page.evaluate(() => (window as any).__inkNotesPreview.openPdf());
@@ -37,15 +37,12 @@ for (const mode of ["ink", "pdf"]) for (const layer of ["page", "sticky"]) {
     const original = await state(); expect(original.strokes).toHaveLength(1);
     for (const fixture of [scribbleLoops(), scribbleWaves()]) {
       await draw(fixture.map((p) => ({ x: cx + p.x - 50, y: cy + p.y - 50 })));
-      const clipped = await state(); expect(clipped.active).toBeNull(); expect(clipped.history).toBe(original.history + 1);
-      expect(clipped.strokes).toHaveLength(2);
-      const xs = clipped.strokes.flatMap((s) => s.points.map((p) => p.x));
-      expect(Math.min(...xs)).toBeCloseTo(original.strokes[0].points[0].x);
-      expect(Math.max(...xs)).toBeCloseTo(original.strokes[0].points.at(-1)!.x);
+      const erased = await state(); expect(erased.active).toBeNull(); expect(erased.history).toBe(original.history + 1);
+      expect(erased.strokes).toHaveLength(0);
       await page.getByRole("button", { name: "Undo", exact: true }).click();
       expect((await state()).strokes.map((s) => s.points)).toEqual(original.strokes.map((s) => s.points));
       await page.getByRole("button", { name: "Redo", exact: true }).click();
-      expect((await state()).strokes.map((s) => s.points)).toEqual(clipped.strokes.map((s) => s.points));
+      expect((await state()).strokes).toHaveLength(0);
       await page.getByRole("button", { name: "Undo", exact: true }).click();
     }
   });

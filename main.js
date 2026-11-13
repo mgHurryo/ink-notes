@@ -27950,6 +27950,8 @@ function pasteClipboardStrokes(content, pageId, width, height, target) {
 var PASTE_HOLD_DELAY_MS = 600;
 var PASTE_HOLD_SLOP_PX = 10;
 var MAX_SCRIBBLE_GESTURE_POINTS = 2048;
+var MAX_SCRIBBLE_RANGE_SAMPLES = MAX_SCRIBBLE_GESTURE_POINTS * 2;
+var SCRIBBLE_RANGE_SAMPLE_SPACING_DIVISOR = 2;
 var SCRIBBLE_REFERENCE_SIZE = 24;
 var QUEUED_PAGE_SWIPE_DURATION_MS = 64;
 var FAST_PAGING_RAIL_IDLE_MS = 1e3;
@@ -28107,12 +28109,6 @@ function isScribbleEraseGesture(points, eraserSize, width, height, sensitivity) 
     countTraversals(diagonal, -diagonal)
   ) >= minimumTurns + 2;
 }
-function eraseStrokeSegmentsByScribble(stroke, path, radius, width, height, canErasePoint = () => true) {
-  const bounds = boundsForPointSets([path]);
-  if (!bounds) return null;
-  const result = splitErasedStrokeSamples(sampleStrokeForEraser(stroke.points, radius, width, height), (point) => point.x >= bounds.minX - radius / width && point.x <= bounds.maxX + radius / width && point.y >= bounds.minY - radius / height && point.y <= bounds.maxY + radius / height && canErasePoint(point));
-  return result.erased ? result.segments : null;
-}
 function eraseStrokeSegments(stroke, center, radius, mode, width, height) {
   return splitErasedStrokeSamples(
     sampleStrokeForEraser(stroke.points, radius, width, height),
@@ -28168,14 +28164,15 @@ function segmentIntersectsBox(ax, ay, bx, by, radius) {
   }
   return true;
 }
-function sampleStrokeForEraser(points, radius, width, height) {
+function sampleStrokeForEraser(points, radius, width, height, maxSamples = Number.POSITIVE_INFINITY, spacingDivisor = 3) {
   if (points.length < 2) return points.map((point) => ({ ...point }));
   const sampled = [{ ...points[0] }];
-  const step = Math.max(1, radius / 3);
+  const step = Math.max(1, radius / spacingDivisor);
   for (let index = 1; index < points.length; index++) {
     const start = points[index - 1], end = points[index];
     const pixels = Math.hypot((end.x - start.x) * width, (end.y - start.y) * height);
     const count = Math.max(1, Math.ceil(pixels / step));
+    if (sampled.length + count > maxSamples) return [];
     for (let sample = 1; sample <= count; sample++) sampled.push(interpolateInkPoint(start, end, sample / count));
   }
   return sampled;
@@ -31668,9 +31665,9 @@ var InkWritingView = class extends import_obsidian7.FileView {
     this.afterInputFullySettled();
   }
   finishScribbleErase(page, gesture, path) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     if (!isScribbleEraseGesture(path, SCRIBBLE_REFERENCE_SIZE, this.canvasLogicalWidth, this.canvasLogicalHeight, this.state.scribbleSensitivity)) return false;
-    const radius = Math.max(2, Math.min(4, gesture.width / 2));
+    const radius = this.state.eraserSize / 2;
     let minX = Number.POSITIVE_INFINITY, minY = Number.POSITIVE_INFINITY;
     let maxX = Number.NEGATIVE_INFINITY, maxY = Number.NEGATIVE_INFINITY;
     for (const point of path) {
@@ -31695,29 +31692,30 @@ var InkWritingView = class extends import_obsidian7.FileView {
       ...this.pendingInkStrokes,
       ...(_d = this.committingInkStrokes) != null ? _d : []
     ].map((stroke) => [stroke.id, stroke])).values()].filter((stroke) => stroke.id !== gesture.id);
+    const sweep = sampleStrokeForEraser(
+      path,
+      radius,
+      this.canvasLogicalWidth,
+      this.canvasLogicalHeight,
+      MAX_SCRIBBLE_RANGE_SAMPLES,
+      SCRIBBLE_RANGE_SAMPLE_SPACING_DIVISOR
+    );
+    if (sweep.length === 0) return false;
     const notes = [...(_f = (_e = this.stickyInput) == null ? void 0 : _e.notes) != null ? _f : []].reverse().filter((note) => !note.collapsed).map((note) => ({ id: note.id, bounds: stickyBounds(note, this.stickyGeometry()) }));
-    const removed = [], replacements = [];
-    const now = Date.now();
+    const removed = [];
     for (const stroke of candidates) {
       const owner = (_g = this.stickyInput) == null ? void 0 : _g.owners.get(stroke.id);
-      const segments = eraseStrokeSegmentsByScribble(stroke, path, radius, this.canvasLogicalWidth, this.canvasLogicalHeight, (point) => {
-        const top2 = notes.find(({ bounds: r }) => point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom);
-        return (top2 == null ? void 0 : top2.id) === (owner == null ? void 0 : owner.id);
+      const hit = sweep.some((center) => {
+        const top2 = notes.find(({ bounds }) => center.x >= bounds.left && center.x <= bounds.right && center.y >= bounds.top && center.y <= bounds.bottom);
+        if (owner ? (top2 == null ? void 0 : top2.id) !== owner.id : Boolean(top2)) return false;
+        return strokeIntersectsEraser(stroke, center, radius, "circle", this.canvasLogicalWidth, this.canvasLogicalHeight);
       });
-      if (segments === null) continue;
-      removed.push(stroke);
-      for (const points of segments) {
-        const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, updatedAt: now };
-        replacements.push(replacement);
-        if (owner) (_h = this.stickyInput) == null ? void 0 : _h.owners.set(replacement.id, owner);
-      }
+      if (hit) removed.push(stroke);
     }
     if (removed.length === 0) return false;
     this.materializePendingInkPreview(page);
     const removedIds = [gesture.id, ...removed.map((stroke) => stroke.id)];
     this.deleteStrokes(page, removedIds);
-    page.strokes.push(...replacements);
-    page.strokes.sort((left2, right2) => left2.createdAt - right2.createdAt);
     this.markChanged(page);
     this.queueWorkerOperation({
       type: "complete-stroke",
@@ -31729,24 +31727,21 @@ var InkWritingView = class extends import_obsidian7.FileView {
     this.queueWorkerOperation({
       type: "patch-strokes",
       pageId: page.id,
-      upsert: replacements.map(cloneStroke),
+      upsert: [],
       remove: removedIds,
       deletedStrokeIds: [...page.deletedStrokeIds],
       pageUpdatedAt: page.updatedAt,
       notebookUpdatedAt: this.currentNotebook().updatedAt
     });
-    (_i = this.tiles) == null ? void 0 : _i.patchStrokes(
-      replacements.filter((stroke) => {
-        var _a2;
-        return !((_a2 = this.stickyInput) == null ? void 0 : _a2.owners.has(stroke.id));
-      }),
+    (_h = this.tiles) == null ? void 0 : _h.patchStrokes(
+      [],
       removedIds,
       page.strokes.filter((stroke) => {
         var _a2;
         return !((_a2 = this.stickyInput) == null ? void 0 : _a2.owners.has(stroke.id));
       })
     );
-    this.pushCommand(this.erasedStrokesCommand(page.id, removed.map(cloneStroke), replacements));
+    this.pushCommand(this.erasedStrokesCommand(page.id, removed.map(cloneStroke), []));
     this.activeStroke = null;
     this.drawInteractiveStrokes(page.strokes, true);
     return true;
@@ -31960,7 +31955,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
       });
     }
     const sizeRow = pop.createDiv({ cls: "ink-eraser-size-row" });
-    sizeRow.createDiv({ cls: "ink-settings-label", text: "Size" });
+    const sizeLabel = sizeRow.createDiv({ cls: "ink-settings-label", text: "Size" });
     const range = sizeRow.createEl("input", { attr: { type: "range", "aria-label": "Eraser size" } });
     range.min = "8";
     range.max = "160";
@@ -31979,6 +31974,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     scribbleToggle.addEventListener("change", () => {
       this.state.scribbleErase = scribbleToggle.checked;
       sensitivity.disabled = !scribbleToggle.checked;
+      syncSizeVisibility();
       this.scheduleToolStateSave();
     });
     const sensitivityLabel = scribbleRow.createEl("label", { cls: "ink-eraser-size-row" });
@@ -31995,9 +31991,12 @@ var InkWritingView = class extends import_obsidian7.FileView {
       updateSensitivityLabel();
       this.scheduleToolStateSave();
     });
-    scribbleRow.createDiv({ cls: "ink-settings-label", text: "Scrub, loop or wave repeatedly over ink with the pen. Low: fewer accidental erases. High: fewer repetitions needed." });
+    scribbleRow.createDiv({ cls: "ink-settings-label", text: "Scrub, loop or wave over ink with the pen. Strokes touched by its circular range are removed whole. Sensitivity controls how many repetitions are needed." });
     const syncSizeVisibility = () => {
-      sizeRow.style.display = this.state.eraserMode === "stroke" ? "none" : "";
+      const scribbleRange = this.state.eraserMode === "stroke" && this.state.scribbleErase;
+      sizeLabel.setText(scribbleRange ? "Scribble range" : "Size");
+      range.setAttribute("aria-label", scribbleRange ? "Scribble erase range" : "Eraser size");
+      sizeRow.style.display = this.state.eraserMode === "stroke" && !this.state.scribbleErase ? "none" : "";
     };
     syncSizeVisibility();
     this.eraserPopover = pop;

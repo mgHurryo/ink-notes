@@ -1274,19 +1274,16 @@ export function gestureContract(create: () => Promise<any>): void {
       const last = path[path.length - 1]; editor.onPointerUp(sample(last.x, last.y));
       expect(page.deletedStrokeIds).toContain(original.id);
       expect(page.strokes).toContainEqual(adjacent);
-      const remaining = page.strokes.filter((s) => s.id !== adjacent.id);
-      expect(remaining.length).toBeGreaterThanOrEqual(2);
-      expect(Math.min(...remaining.flatMap((s) => s.points.map((p) => p.x)))).toBeCloseTo(original.points[0].x);
-      expect(Math.max(...remaining.flatMap((s) => s.points.map((p) => p.x)))).toBeCloseTo(original.points.at(-1)!.x);
+      expect(page.strokes.map((s) => s.id)).toEqual([adjacent.id]);
       expect(editor.undoStack).toHaveLength(history + 1);
       expect(editor.pendingInkStrokes).toHaveLength(0);
       expect(editor.committingInkStrokes).toBeNull();
       editor.undo(); expect(page.strokes).toHaveLength(2);
       expect(page.strokes.find((s) => s.id !== adjacent.id)!.points).toEqual(original.points);
-      editor.redo(); expect(page.strokes.filter((s) => s.id !== adjacent.id).map((s) => s.points)).toEqual(remaining.map((s) => s.points));
+      editor.redo(); expect(page.strokes.map((s) => s.id)).toEqual([adjacent.id]);
     });
 
-    it("clips scribbling to visible sticky ink and leaves the page and covered notes untouched", async () => {
+    it("removes whole visible sticky strokes and leaves page and covered notes untouched", async () => {
       const { editor, page } = await setup();
       editor.capturePointer = vi.fn(); editor.releasePointer = vi.fn(); editor.state.tool = "pen"; editor.state.pen.smooth = 0;
       let time = 1000;
@@ -1306,12 +1303,11 @@ export function gestureContract(create: () => Promise<any>): void {
       for (const p of path.slice(1, -1)) editor.onPointerMove(sample(p.x, p.y));
       editor.onPointerUp(sample(path.at(-1)!.x, path.at(-1)!.y));
       expect(page.strokes).toEqual(underlying); expect(page.stickyNotes![0].strokes).toEqual(covered);
-      expect(page.stickyNotes![1].strokes).toHaveLength(2);
+      expect(page.stickyNotes![1].strokes).toHaveLength(0);
       expect(page.stickyNotes![1].deletedStrokeIds).toContain(original[0].id);
       expect(editor.undoStack).toHaveLength(history + 1);
-      const clipped = page.stickyNotes![1].strokes.map((s) => s.points);
       editor.undo(); expect(page.stickyNotes![1].strokes.map((s) => s.points)).toEqual(original.map((s) => s.points));
-      editor.redo(); expect(page.stickyNotes![1].strokes.map((s) => s.points)).toEqual(clipped);
+      editor.redo(); expect(page.stickyNotes![1].strokes).toHaveLength(0);
       expect(page.strokes).toEqual(underlying); expect(page.stickyNotes![0].strokes).toEqual(covered);
     });
 
