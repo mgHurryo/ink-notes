@@ -32508,6 +32508,7 @@ var BLEED = 4;
 var FIRST_FRAME_PREVIEW_STROKE_LIMIT = 64;
 var MAX_PIXELS = 16e6;
 var MAX_TILE_DENSITY = 9;
+var MAX_PENDING_PREWARM_TILES = 4;
 function isStrokeSet(exclusion) {
   return exclusion instanceof Set;
 }
@@ -32678,6 +32679,7 @@ var TileRenderer = class {
     this.backend = null;
     this.backendError = null;
     this.pendingTiles = /* @__PURE__ */ new Map();
+    this.pendingPrewarmTiles = /* @__PURE__ */ new Set();
     this.displayScale = 1;
     // Retired rasters kept on screen across a same-page relayout (see
     // captureResizeGhost); ghostBaseWidth is the logical width they were
@@ -32694,20 +32696,22 @@ var TileRenderer = class {
     return this.displayScale;
   }
   setBackend(backend, onError) {
-    var _a, _b;
+    var _a, _b, _c;
     this.renderGeneration += 1;
     (_b = (_a = this.backend) == null ? void 0 : _a.cancelGeneration) == null ? void 0 : _b.call(_a, this.renderGeneration);
     this.backend = backend;
     this.backendError = onError != null ? onError : null;
     this.jobs = [];
     this.pendingTiles.clear();
+    (_c = this.pendingPrewarmTiles) == null ? void 0 : _c.clear();
   }
   setPage(page, width, height, exclude) {
-    var _a, _b;
+    var _a, _b, _c;
     this.renderGeneration += 1;
     (_b = (_a = this.backend) == null ? void 0 : _a.cancelGeneration) == null ? void 0 : _b.call(_a, this.renderGeneration);
     const state = this.state(page, width, height);
     this.pendingTiles.clear();
+    (_c = this.pendingPrewarmTiles) == null ? void 0 : _c.clear();
     this.droppedRefine = false;
     if (state !== this.active) {
       this.cancelInkCommit();
@@ -32895,7 +32899,7 @@ var TileRenderer = class {
     if (this.inkCommit) this.abortInkCommit(true);
   }
   beginInput() {
-    var _a, _b;
+    var _a, _b, _c;
     this.droppedRefine || (this.droppedRefine = this.jobs.length > 0 || this.pendingTiles.size > 0 || !!this.inkCommit);
     this.renderGeneration += 1;
     (_b = (_a = this.backend) == null ? void 0 : _a.cancelGeneration) == null ? void 0 : _b.call(_a, this.renderGeneration);
@@ -32903,6 +32907,7 @@ var TileRenderer = class {
     this.frame = null;
     this.jobs = [];
     this.pendingTiles.clear();
+    (_c = this.pendingPrewarmTiles) == null ? void 0 : _c.clear();
     this.gestureActive = true;
   }
   resumeInkCommit() {
@@ -32991,27 +32996,36 @@ var TileRenderer = class {
     }
     this.schedule();
   }
+  /** True only when the page snapshot has every occupied tile at exact density. */
+  hasCachedPreview(request) {
+    return this.cachedPreviewTiles(request) !== null;
+  }
   /** Copy exact-density cached tiles into a page preview without re-running stroke geometry on input. */
   drawCachedPreview(request, context) {
-    const { page, width, height, viewport } = request;
-    const state = this.states.get(page);
-    if (!state || state.index.width !== width || state.index.height !== height || state.syncedStrokes !== page.strokes || state.syncedPageRevision !== page.updatedAt) return false;
-    const density = tileDensity(viewport, request.density);
-    const cells = cellKeys(viewport, width, height).filter((cell) => state.index.hasCell(cell));
-    const tiles = cells.map((cell) => this.get(state, cell, density));
-    if (tiles.some((tile) => tile === void 0)) return false;
+    const tiles = this.cachedPreviewTiles(request);
+    if (!tiles) return false;
+    const { width } = request;
     for (const tile of tiles) {
       const [column, row] = tile.cell.split(":").map(Number);
       const x = column * TILE, y = row * TILE;
-      const cellWidth = Math.min(TILE, width - x), cellHeight = Math.min(TILE, height - y);
+      const cellWidth = Math.min(TILE, width - x), cellHeight = Math.min(TILE, request.height - y);
       const bleed = Math.ceil(BLEED * tile.density);
       const sourceWidth = Math.ceil(cellWidth * tile.density), sourceHeight = Math.ceil(cellHeight * tile.density);
       context.drawImage(tile.canvas, bleed, bleed, sourceWidth, sourceHeight, x, y, cellWidth, cellHeight);
     }
     return true;
   }
+  cachedPreviewTiles(request) {
+    const { page, width, height, viewport } = request;
+    const state = this.states.get(page);
+    if (!state || state.index.width !== width || state.index.height !== height || state.syncedStrokes !== page.strokes || state.syncedPageRevision !== page.updatedAt) return null;
+    const density = tileDensity(viewport, request.density);
+    const cells = cellKeys(viewport, width, height).filter((cell) => state.index.hasCell(cell));
+    const tiles = cells.map((cell) => this.get(state, cell, density));
+    return tiles.some((tile) => tile === void 0) ? null : tiles;
+  }
   dispose() {
-    var _a, _b;
+    var _a, _b, _c;
     this.disposed = true;
     this.renderGeneration += 1;
     (_b = (_a = this.backend) == null ? void 0 : _a.cancelGeneration) == null ? void 0 : _b.call(_a, this.renderGeneration);
@@ -33022,6 +33036,7 @@ var TileRenderer = class {
     this.states.clear();
     this.jobs = [];
     this.pendingTiles.clear();
+    (_c = this.pendingPrewarmTiles) == null ? void 0 : _c.clear();
     this.host.replaceChildren();
   }
   state(page, width, height) {
@@ -33117,7 +33132,11 @@ var TileRenderer = class {
     if (this.ghost && !this.ghost.childElementCount) this.discardResizeGhost();
   }
   schedule() {
+    var _a;
     if (!this.jobs.length || this.disposed || this.inkCommitPaused || this.inkCommit) return;
+    const pendingPrewarmTiles = (_a = this.pendingPrewarmTiles) != null ? _a : this.pendingPrewarmTiles = /* @__PURE__ */ new Set();
+    const hasVisibleJobs = () => this.jobs.some((job) => job.priority !== "prewarm");
+    if (this.backend && !hasVisibleJobs() && pendingPrewarmTiles.size >= MAX_PENDING_PREWARM_TILES) return;
     if (this.backend && this.frame === null) {
       const firstVisible = this.jobs.findIndex((job) => job.priority !== "prewarm");
       if (firstVisible >= 0) this.requestWorkerTile(this.jobs.splice(firstVisible, 1)[0]);
@@ -33125,9 +33144,12 @@ var TileRenderer = class {
     if (this.frame !== null) return;
     this.frame = requestAnimationFrame(() => {
       this.frame = null;
-      const limit = this.backend ? this.jobs.length : 1;
+      const visibleCount = this.backend ? this.jobs.filter((job) => job.priority !== "prewarm").length : 0;
+      const limit = this.backend ? visibleCount || Math.min(this.jobs.length, MAX_PENDING_PREWARM_TILES - pendingPrewarmTiles.size) : 1;
       for (let count = 0; count < limit; count++) {
-        const job = this.jobs.shift();
+        const jobIndex = this.backend && hasVisibleJobs() ? this.jobs.findIndex((job2) => job2.priority !== "prewarm") : 0;
+        if (jobIndex < 0) break;
+        const [job] = this.jobs.splice(jobIndex, 1);
         if (!job || this.isHeld(job)) continue;
         const tile = this.get(job.state, job.cell, job.density);
         if (tile) {
@@ -33320,13 +33342,14 @@ var TileRenderer = class {
     return this.createTileFrom(job, void 0, [], true);
   }
   requestWorkerTile(job) {
-    var _a, _b;
+    var _a, _b, _c;
     if (!this.backend || this.disposed) return;
     const key = this.key(job.state, job.cell, job.density);
     if (this.pendingTiles.get(key) === this.renderGeneration) return;
     const revision = (_a = job.state.index.revisions.get(job.cell)) != null ? _a : 0;
     const generation = this.renderGeneration;
     this.pendingTiles.set(key, generation);
+    if (job.priority === "prewarm") ((_b = this.pendingPrewarmTiles) != null ? _b : this.pendingPrewarmTiles = /* @__PURE__ */ new Set()).add(key);
     this.backend.renderTile(
       job.state.page.id,
       job.cell,
@@ -33335,17 +33358,20 @@ var TileRenderer = class {
       job.state.index.width,
       job.state.index.height,
       generation,
-      (_b = job.priority) != null ? _b : "visible",
+      (_c = job.priority) != null ? _c : "visible",
       this.workerExclusionSnapshot(),
       this.candidateStrokeIds(job.state, job.cell)
     ).then((result) => {
-      var _a2, _b2, _c;
-      if (this.pendingTiles.get(key) === generation) this.pendingTiles.delete(key);
+      var _a2, _b2, _c2, _d;
+      if (this.pendingTiles.get(key) === generation) {
+        this.pendingTiles.delete(key);
+        (_a2 = this.pendingPrewarmTiles) == null ? void 0 : _a2.delete(key);
+      }
       if (this.disposed || generation !== this.renderGeneration || result.pageId !== job.state.page.id || result.cell !== job.cell) {
         result.bitmap.close();
         return;
       }
-      const currentRevision = (_a2 = job.state.index.revisions.get(job.cell)) != null ? _a2 : 0;
+      const currentRevision = (_b2 = job.state.index.revisions.get(job.cell)) != null ? _b2 : 0;
       if (result.revision !== currentRevision || result.density !== job.density || result.renderGeneration !== generation) {
         result.bitmap.close();
         this.schedule();
@@ -33354,18 +33380,21 @@ var TileRenderer = class {
       const tile = this.tileFromBitmap(job, result);
       this.cacheTile(tile);
       if (job.state === this.active && this.visible.has(job.cell)) {
-        this.attach((_c = (_b2 = this.get(job.state, job.cell, this.density)) != null ? _b2 : this.fallback(job.state, job.cell)) != null ? _c : tile);
+        this.attach((_d = (_c2 = this.get(job.state, job.cell, this.density)) != null ? _c2 : this.fallback(job.state, job.cell)) != null ? _d : tile);
       }
       this.evict();
       this.schedule();
     }).catch((error) => {
-      var _a2;
-      if (this.pendingTiles.get(key) === generation) this.pendingTiles.delete(key);
+      var _a2, _b2;
+      if (this.pendingTiles.get(key) === generation) {
+        this.pendingTiles.delete(key);
+        (_a2 = this.pendingPrewarmTiles) == null ? void 0 : _a2.delete(key);
+      }
       if (isStaleRenderError(error)) {
         this.schedule();
         return;
       }
-      (_a2 = this.backendError) == null ? void 0 : _a2.call(this, error);
+      (_b2 = this.backendError) == null ? void 0 : _b2.call(this, error);
       this.schedule();
     });
   }
@@ -35067,7 +35096,7 @@ var InkView = class extends InkWritingView {
   /** Slides a cheap vector snapshot of the neighbouring page in beside the
    *  current one while dragging (tiles stay on the live page). */
   ensureSwipeStage(offset) {
-    var _a;
+    var _a, _b;
     const extent = this.pageExtent;
     if (!extent) return;
     const side = offset > 0 ? -1 : 1;
@@ -35117,19 +35146,35 @@ var InkView = class extends InkWritingView {
     if (ctx) {
       ctx.setTransform(canvas.width / this.canvasLogicalWidth, 0, 0, canvas.height / this.canvasLogicalHeight, 0, 0);
       const width = this.canvasLogicalWidth, height = this.canvasLogicalHeight;
-      paintPageImages(this.imageLibrary, canvas, neighbor, (context) => context.clearRect(0, 0, canvas.width, canvas.height), (context) => {
-        var _a2, _b;
-        context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
-        const previewReady = (_b = (_a2 = this.tiles) == null ? void 0 : _a2.drawCachedPreview({
-          page: neighbor,
-          width,
-          height,
-          viewport: this.viewport,
-          density: (window.devicePixelRatio || 1) * previewZoom
-        }, context)) != null ? _b : false;
-        if (!previewReady) for (const stroke of neighbor.strokes) drawInkStroke(context, stroke, width, height);
-        context.setTransform(1, 0, 0, 1, 0, 0);
-      });
+      const preview = {
+        page: neighbor,
+        width,
+        height,
+        viewport: this.viewport,
+        density: (window.devicePixelRatio || 1) * previewZoom
+      };
+      const paint = (drawInk) => paintPageImages(
+        this.imageLibrary,
+        canvas,
+        neighbor,
+        (context) => context.clearRect(0, 0, canvas.width, canvas.height),
+        (context) => {
+          var _a2;
+          context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
+          if (drawInk) (_a2 = this.tiles) == null ? void 0 : _a2.drawCachedPreview(preview, context);
+          context.setTransform(1, 0, 0, 1, 0, 0);
+        }
+      );
+      if ((_b = this.tiles) == null ? void 0 : _b.hasCachedPreview(preview)) paint(true);
+      else {
+        paint(false);
+        const paintWhenReady = () => {
+          if (!stage.isConnected || !this.tiles) return;
+          if (this.tiles.hasCachedPreview(preview)) paint(true);
+          else requestAnimationFrame(paintWhenReady);
+        };
+        requestAnimationFrame(paintWhenReady);
+      }
     }
     this.swipeStage = stage;
   }
@@ -38585,7 +38630,7 @@ var PdfInkView = class extends InkWritingView {
   }
   /** Slides the neighbouring page in beside the current one while dragging. */
   ensureSwipeStage(offset) {
-    var _a, _b, _c, _d, _e, _f, _g, _h, _i;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _i, _j;
     const wrap = this.pageWrap;
     const scroller = this.scroller;
     if (!wrap || !scroller) return;
@@ -38649,19 +38694,37 @@ var PdfInkView = class extends InkWritingView {
     if (ctx) {
       ctx.setTransform(ink.width / logicalWidth, 0, 0, ink.height / logicalHeight, 0, 0);
       const page = (_i = this.sidecar) == null ? void 0 : _i.notebook.pages[neighborIndex];
-      if (page) paintPageImages(this.imageLibrary, ink, page, (context) => context.clearRect(0, 0, ink.width, ink.height), (context) => {
-        var _a2, _b2;
-        context.setTransform(ink.width / logicalWidth, 0, 0, ink.height / logicalHeight, 0, 0);
-        const previewReady = (_b2 = (_a2 = this.tiles) == null ? void 0 : _a2.drawCachedPreview({
+      if (page) {
+        const preview2 = {
           page,
           width: logicalWidth,
           height: logicalHeight,
           viewport: { x: 0, y: 0, width: logicalWidth, height: logicalHeight },
           density: (window.devicePixelRatio || 1) * zoom
-        }, context)) != null ? _b2 : false;
-        if (!previewReady) for (const stroke of page.strokes) drawInkStroke(context, stroke, logicalWidth, logicalHeight);
-        context.setTransform(1, 0, 0, 1, 0, 0);
-      });
+        };
+        const paint = (drawInk) => paintPageImages(
+          this.imageLibrary,
+          ink,
+          page,
+          (context) => context.clearRect(0, 0, ink.width, ink.height),
+          (context) => {
+            var _a2;
+            context.setTransform(ink.width / logicalWidth, 0, 0, ink.height / logicalHeight, 0, 0);
+            if (drawInk) (_a2 = this.tiles) == null ? void 0 : _a2.drawCachedPreview(preview2, context);
+            context.setTransform(1, 0, 0, 1, 0, 0);
+          }
+        );
+        if ((_j = this.tiles) == null ? void 0 : _j.hasCachedPreview(preview2)) paint(true);
+        else {
+          paint(false);
+          const paintWhenReady = () => {
+            if (!stage.isConnected || !this.tiles) return;
+            if (this.tiles.hasCachedPreview(preview2)) paint(true);
+            else requestAnimationFrame(paintWhenReady);
+          };
+          requestAnimationFrame(paintWhenReady);
+        }
+      }
     }
   }
   async renderSwipeStagePage(stage, index) {

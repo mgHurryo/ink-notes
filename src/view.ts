@@ -1189,13 +1189,26 @@ export class InkView extends InkWritingView {
     if (ctx) {
       ctx.setTransform(canvas.width / this.canvasLogicalWidth, 0, 0, canvas.height / this.canvasLogicalHeight, 0, 0);
       const width = this.canvasLogicalWidth, height = this.canvasLogicalHeight;
-      paintPageImages(this.imageLibrary, canvas, neighbor!, (context) => context.clearRect(0, 0, canvas.width, canvas.height), (context) => {
-        context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
-        const previewReady = this.tiles?.drawCachedPreview({ page: neighbor!, width, height,
-          viewport: this.viewport, density: (window.devicePixelRatio || 1) * previewZoom }, context) ?? false;
-        if (!previewReady) for (const stroke of neighbor!.strokes) drawInkStroke(context, stroke, width, height);
-        context.setTransform(1, 0, 0, 1, 0, 0);
-      });
+      const preview = { page: neighbor!, width, height, viewport: this.viewport,
+        density: (window.devicePixelRatio || 1) * previewZoom };
+      const paint = (drawInk: boolean) => paintPageImages(this.imageLibrary, canvas,
+        neighbor!, (context) => context.clearRect(0, 0, canvas.width, canvas.height), (context) => {
+          context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
+          if (drawInk) this.tiles?.drawCachedPreview(preview, context);
+          context.setTransform(1, 0, 0, 1, 0, 0);
+        });
+      if (this.tiles?.hasCachedPreview(preview)) paint(true);
+      else {
+        // Keep images and stickies visible while tiles finish off-thread; a
+        // cold neighbor must never rasterize every stroke inside the gesture.
+        paint(false);
+        const paintWhenReady = () => {
+          if (!stage.isConnected || !this.tiles) return;
+          if (this.tiles.hasCachedPreview(preview)) paint(true);
+          else requestAnimationFrame(paintWhenReady);
+        };
+        requestAnimationFrame(paintWhenReady);
+      }
     }
     this.swipeStage = stage;
   }

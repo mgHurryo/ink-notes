@@ -406,7 +406,7 @@ describe("reference-style editor", () => {
     expect(host.notebook.pages[0].paper).toBe("blank");
   });
 
-  it("uses page-resolution ink for a page flip when the hidden-rail thumbnail is prewarmed", async () => {
+  it("keeps a cold page flip at display resolution without synchronous vector fallback", async () => {
     const host = view as any;
     const neighbor = structuredClone(host.currentPage());
     neighbor.id = "swipe-preview-neighbor";
@@ -421,9 +421,8 @@ describe("reference-style editor", () => {
 
     host.canvasLogicalWidth = 1000;
     host.canvasLogicalHeight = 1400;
-    // A Retina iPad page (1000x1400 @2 = 5.6M pixels) must render the swipe
-    // preview at full tile density: the old 4M overlay budget downscaled it
-    // ~15% and the incoming page stayed blurry until the tiles replaced it.
+    // A Retina iPad page (1000x1400 @2 = 5.6M pixels) keeps the swipe
+    // preview at display density while cold tiles finish asynchronously.
     const originalDpr = window.devicePixelRatio;
     Object.defineProperty(window, "devicePixelRatio", { value: 2, configurable: true, writable: true });
     try {
@@ -434,7 +433,8 @@ describe("reference-style editor", () => {
       expect(stage.width).toBe(2000);
       expect(stage.height).toBe(2800);
       expect(stage.width).toBeGreaterThan(preview.width);
-      expect(drawInkStroke).toHaveBeenCalled();
+      expect(drawInkStroke).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: "preview-ink" }),
+        1000, 1400);
     } finally {
       Object.defineProperty(window, "devicePixelRatio", { value: originalDpr, configurable: true, writable: true });
     }

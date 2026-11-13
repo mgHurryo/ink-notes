@@ -1961,14 +1961,29 @@ export class PdfInkView extends InkWritingView {
     if (ctx) {
       ctx.setTransform(ink.width / logicalWidth, 0, 0, ink.height / logicalHeight, 0, 0);
       const page = this.sidecar?.notebook.pages[neighborIndex];
-      if (page) paintPageImages(this.imageLibrary, ink, page, (context) => context.clearRect(0, 0, ink.width, ink.height), (context) => {
-        context.setTransform(ink.width / logicalWidth, 0, 0, ink.height / logicalHeight, 0, 0);
-        const previewReady = this.tiles?.drawCachedPreview({ page, width: logicalWidth, height: logicalHeight,
+      if (page) {
+        const preview = { page, width: logicalWidth, height: logicalHeight,
           viewport: { x: 0, y: 0, width: logicalWidth, height: logicalHeight },
-          density: (window.devicePixelRatio || 1) * zoom }, context) ?? false;
-        if (!previewReady) for (const stroke of page.strokes) drawInkStroke(context, stroke, logicalWidth, logicalHeight);
-        context.setTransform(1, 0, 0, 1, 0, 0);
-      });
+          density: (window.devicePixelRatio || 1) * zoom };
+        const paint = (drawInk: boolean) => paintPageImages(this.imageLibrary, ink, page,
+          (context) => context.clearRect(0, 0, ink.width, ink.height), (context) => {
+            context.setTransform(ink.width / logicalWidth, 0, 0, ink.height / logicalHeight, 0, 0);
+            if (drawInk) this.tiles?.drawCachedPreview(preview, context);
+            context.setTransform(1, 0, 0, 1, 0, 0);
+          });
+        if (this.tiles?.hasCachedPreview(preview)) paint(true);
+        else {
+          // PDF.js paints the page independently; show note images now and
+          // add exact-density ink when its neighbor tiles are ready.
+          paint(false);
+          const paintWhenReady = () => {
+            if (!stage.isConnected || !this.tiles) return;
+            if (this.tiles.hasCachedPreview(preview)) paint(true);
+            else requestAnimationFrame(paintWhenReady);
+          };
+          requestAnimationFrame(paintWhenReady);
+        }
+      }
     }
   }
 
