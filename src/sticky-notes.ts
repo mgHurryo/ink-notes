@@ -218,6 +218,14 @@ export class StickyNoteLayer {
       height: `${stickyFrameHeight(note, this.host.clientWidth, this.host.clientHeight)}px`,
       backgroundColor: note.kind === "text" ? "transparent" : note.color,
     });
+    // The build path bakes the header height as an inline style, so a
+    // width-only reposition must refresh it too: the board element sits below
+    // the header, and a stale height drops the board's visual top below the
+    // STICKY_HEADER offset stickyBounds assumes at zoom != 1. Board ink then
+    // projects past the note's frame edge and finishStickyInput leaves the
+    // outside part behind as stray page ink.
+    if (!note.collapsed && note.kind !== "text")
+      el.querySelector<HTMLElement>(".ink-sticky-header")?.setCssStyles({ height: `${STICKY_HEADER * scale}px` });
     el.setCssProps({ "--sticky-header-height": `${STICKY_HEADER * scale}px` });
   }
   private card(id: string): HTMLElement | undefined {

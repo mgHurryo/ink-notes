@@ -1241,6 +1241,36 @@ describe("page rail thumbnails and resizing", () => {
     }
   });
 
+  it("refreshes the sticky header height when a width-only sync repositions the card", () => {
+    const internal = view as unknown as {
+      notebook: ReturnType<typeof createNotebook>;
+      pageElement: HTMLElement;
+      syncStickyNotes(): void;
+    };
+    // jsdom has no layout: pin the box the sticky layer measures. The build
+    // path bakes the header height as an inline style from the width of the
+    // moment, so the width-only reposition path must refresh it — a stale
+    // header drops the board's visual top off stickyBounds' STICKY_HEADER
+    // offset at zoom != 1 and splits fresh board ink across the frame edge.
+    let hostWidth = 800;
+    Object.defineProperty(internal.pageElement, "clientWidth", { configurable: true, get: () => hostWidth });
+    Object.defineProperty(internal.pageElement, "clientHeight", { configurable: true, value: 600 });
+    const page = internal.notebook.pages[0];
+    page.stickyNotes = [
+      { id: "header-sticky", pageId: page.id, x: .2, y: .2, width: .5, height: .3, title: "Header sticky", keywords: "", text: "",
+        textUpdatedAt: 1, color: "#fff1a8", collapsed: false, preview: true, scrollX: 0, scrollY: 0, boardPageWidth: 800,
+        strokes: [], deletedStrokeIds: [], createdAt: 1, updatedAt: 1 },
+    ];
+    internal.syncStickyNotes();
+    const card = document.querySelector<HTMLElement>(".ink-sticky-note")!;
+    const header = card.querySelector<HTMLElement>(".ink-sticky-header")!;
+    expect(header.style.height).toBe("64px"); // STICKY_HEADER * 800 / 800
+    hostWidth = 624;
+    internal.syncStickyNotes();
+    expect(card.style.width).toBe("312px"); // the reposition path ran
+    expect(header.style.height).toBe("49.92px"); // STICKY_HEADER * 624 / 800
+  });
+
   it("centers the active thumb through rail rebuilds while a fast paging burst holds the rail open", () => {
     const internal = view as unknown as { addPage(): void; renderPageRail(): void; fastPagingRail: boolean };
     internal.addPage();
