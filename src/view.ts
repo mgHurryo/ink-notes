@@ -1191,7 +1191,9 @@ export class InkView extends InkWritingView {
       const width = this.canvasLogicalWidth, height = this.canvasLogicalHeight;
       paintPageImages(this.imageLibrary, canvas, neighbor!, (context) => context.clearRect(0, 0, canvas.width, canvas.height), (context) => {
         context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
-        for (const stroke of neighbor!.strokes) drawInkStroke(context, stroke, width, height);
+        const previewReady = this.tiles?.drawCachedPreview({ page: neighbor!, width, height,
+          viewport: this.viewport, density: (window.devicePixelRatio || 1) * previewZoom }, context) ?? false;
+        if (!previewReady) for (const stroke of neighbor!.strokes) drawInkStroke(context, stroke, width, height);
         context.setTransform(1, 0, 0, 1, 0, 0);
       });
     }

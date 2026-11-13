@@ -6,7 +6,7 @@ import { InkWritingView, QUEUED_PAGE_SWIPE_DURATION_MS } from "./ink-writing";
 import { reconcileNotebook } from "./notebook-reconciliation";
 import { clonePageValue } from "./worker-protocol";
 import type { SharedToolState } from "./tool-state";
-import { TileRenderer, cellKeys } from "./tiles";
+import { TileRenderer, cellKeys, type TilePrewarmPage } from "./tiles";
 import { InkWorkerService } from "./worker-service";
 import {
   PdfSidecar,
@@ -1692,12 +1692,35 @@ export class PdfInkView extends InkWritingView {
     };
     this.tiles?.update(this.viewport, this.desktopRenderDensity ?? (window.devicePixelRatio || 1) * this.zoom,
       refine && this.desktopRenderDensity === undefined);
+    if (refine && this.desktopRenderDensity === undefined) this.prewarmInkNeighbours();
     if (refine || this.hasInkPreview() || this.selectedStrokeIds.size > 0 || this.lassoPath.length > 0) {
       this.resizeSelectionCanvas();
       this.resizePreview();
       this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
       if (this.activeStroke) this.drawPreview();
     }
+  }
+
+  /** Keep full-density ink tiles for adjacent PDF note pages ready before input. */
+  private prewarmInkNeighbours(): void {
+    const sidecar = this.sidecar;
+    const scroller = this.scroller;
+    if (!sidecar || !scroller || !this.tiles) return;
+    const pages: TilePrewarmPage[] = [];
+    for (const delta of [-1, 1]) {
+      const index = this.noteIndex + delta;
+      const notePage = sidecar.notePages[index];
+      const page = sidecar.notebook.pages[index];
+      if (!notePage || !page) continue;
+      const size = this.swipePageSize(notePage);
+      const display = this.rotatedSize(notePage);
+      const width = Math.max(1, Math.round(size.baseWidth * 64) / 64);
+      const height = Math.max(1, Math.round(size.baseWidth * display.height / display.width * 64) / 64);
+      pages.push({ page, width, height,
+        viewport: { x: 0, y: 0, width, height },
+        density: (window.devicePixelRatio || 1) * size.zoom });
+    }
+    this.tiles.prewarmPages(pages);
   }
 
   private onViewportMotion(): void {
@@ -1930,16 +1953,20 @@ export class PdfInkView extends InkWritingView {
     }
     void this.renderSwipeStagePage(stage, neighborIndex);
     const ink = stage.createEl("canvas", { cls: "ink-swipe-canvas" });
-    const logicalHeight = baseWidth * display.height / display.width;
-    const resolution = canvasResolution(baseWidth, logicalHeight, window.devicePixelRatio || 1, zoom, SWIPE_PREVIEW_BUDGET);
+    const logicalWidth = Math.max(1, Math.round(baseWidth * 64) / 64);
+    const logicalHeight = Math.max(1, Math.round(baseWidth * display.height / display.width * 64) / 64);
+    const resolution = canvasResolution(logicalWidth, logicalHeight, window.devicePixelRatio || 1, zoom, SWIPE_PREVIEW_BUDGET);
     ink.width = resolution.width; ink.height = resolution.height;
     const ctx = ink.getContext("2d");
     if (ctx) {
-      ctx.setTransform(ink.width / baseWidth, 0, 0, ink.height / logicalHeight, 0, 0);
+      ctx.setTransform(ink.width / logicalWidth, 0, 0, ink.height / logicalHeight, 0, 0);
       const page = this.sidecar?.notebook.pages[neighborIndex];
       if (page) paintPageImages(this.imageLibrary, ink, page, (context) => context.clearRect(0, 0, ink.width, ink.height), (context) => {
-        context.setTransform(ink.width / baseWidth, 0, 0, ink.height / logicalHeight, 0, 0);
-        for (const stroke of page.strokes) drawInkStroke(context, stroke, baseWidth, logicalHeight);
+        context.setTransform(ink.width / logicalWidth, 0, 0, ink.height / logicalHeight, 0, 0);
+        const previewReady = this.tiles?.drawCachedPreview({ page, width: logicalWidth, height: logicalHeight,
+          viewport: { x: 0, y: 0, width: logicalWidth, height: logicalHeight },
+          density: (window.devicePixelRatio || 1) * zoom }, context) ?? false;
+        if (!previewReady) for (const stroke of page.strokes) drawInkStroke(context, stroke, logicalWidth, logicalHeight);
         context.setTransform(1, 0, 0, 1, 0, 0);
       });
     }

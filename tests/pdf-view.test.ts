@@ -1103,7 +1103,8 @@ describe("pdf setPage relays the ink exclusion", () => {
   function exclusionHarness(pendingIds: string[]) {
     const view = layoutHarness(1318, 928, { width: 960, height: 540 }) as unknown as {
       tiles: { setPage: ReturnType<typeof vi.fn>; setDisplayScale: ReturnType<typeof vi.fn>;
-        update: ReturnType<typeof vi.fn>; setWorkerExclusion: ReturnType<typeof vi.fn> };
+        update: ReturnType<typeof vi.fn>; setWorkerExclusion: ReturnType<typeof vi.fn>;
+        prewarmPages: ReturnType<typeof vi.fn> };
       pendingInkStrokes: InkStroke[];
       activeStroke: InkStroke | null;
       committingInkStrokes: InkStroke[] | null;
@@ -1127,6 +1128,7 @@ describe("pdf setPage relays the ink exclusion", () => {
     };
     view.tiles = {
       setPage: vi.fn(), setDisplayScale: vi.fn(), update: vi.fn(), setWorkerExclusion: vi.fn(),
+      prewarmPages: vi.fn(),
     };
     // Only the id is read by tileExclusion(); the rest keeps the shape honest.
     view.pendingInkStrokes = pendingIds.map((id) => ({ id, points: [], tool: "pen" })) as unknown as InkStroke[];

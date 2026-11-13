@@ -26,6 +26,13 @@ export interface RenderBackend {
 }
 
 export interface Rect { x: number; y: number; width: number; height: number }
+export interface TilePrewarmPage {
+  page: InkPage;
+  width: number;
+  height: number;
+  viewport: Rect;
+  density: number;
+}
 const TILE = 128;
 // Bleed is measured in logical page pixels. Keeping it independent from
 // backing density prevents high-DPR tiles from exposing seams at boundaries.
@@ -565,29 +572,60 @@ export class TileRenderer {
 
   prewarm(pages: InkPage[]): void {
     if (!this.active) return;
-    const keep = new Set([this.active.page, ...pages]);
+    const { width, height } = this.active.index;
+    this.prewarmPages(pages.map((page) => ({ page, width, height, viewport: this.viewport, density: this.density })));
+  }
+
+  /** Schedule neighbor tiles before a page-turn input needs to paint them. */
+  prewarmPages(pages: TilePrewarmPage[]): void {
+    if (!this.active) return;
+    const keep = new Set([this.active.page, ...pages.map(({ page }) => page)]);
     for (const [page, state] of this.states) if (!keep.has(page)) {
       this.states.delete(page);
       for (const [key, tile] of this.cache) if (tile.state === state) this.drop(key, tile);
     }
     this.jobs = this.jobs.filter(job => keep.has(job.state.page));
-    for (const page of pages) {
-      const state = this.state(page, this.active.index.width, this.active.index.height);
-      state.index.sync(page.strokes);
+    for (const request of pages) {
+      const { page, width, height, viewport } = request;
+      const density = tileDensity(viewport, request.density);
+      const state = this.state(page, width, height);
+      if (state.syncedStrokes !== page.strokes || state.syncedPageRevision !== page.updatedAt) {
+        state.index.sync(page.strokes);
+      }
       state.syncedStrokes = page.strokes;
       state.syncedPageRevision = page.updatedAt;
-      // Preload only the same visible region, not entire neighboring pages.
-      for (const cell of cellKeys(this.viewport, state.index.width, state.index.height)) {
+      for (const cell of cellKeys(viewport, state.index.width, state.index.height)) {
         if (!state.index.hasCell(cell)) continue;
-        if (this.get(state, cell, this.density)) continue;
+        if (this.get(state, cell, density)) continue;
         // Repeated prewarm passes must not queue a cell twice: the schedule
         // loop drains one job per frame, so duplicates would linger behind
         // and re-render work that an earlier pass already has in flight.
-        if (this.jobs.some(job => job.state === state && job.cell === cell && job.density === this.density)) continue;
-        this.jobs.push({ state, cell, density: this.density, priority: "prewarm" });
+        if (this.jobs.some(job => job.state === state && job.cell === cell && job.density === density)) continue;
+        this.jobs.push({ state, cell, density, priority: "prewarm" });
       }
     }
     this.schedule();
+  }
+
+  /** Copy exact-density cached tiles into a page preview without re-running stroke geometry on input. */
+  drawCachedPreview(request: TilePrewarmPage, context: CanvasRenderingContext2D): boolean {
+    const { page, width, height, viewport } = request;
+    const state = this.states.get(page);
+    if (!state || state.index.width !== width || state.index.height !== height
+      || state.syncedStrokes !== page.strokes || state.syncedPageRevision !== page.updatedAt) return false;
+    const density = tileDensity(viewport, request.density);
+    const cells = cellKeys(viewport, width, height).filter((cell) => state.index.hasCell(cell));
+    const tiles = cells.map((cell) => this.get(state, cell, density));
+    if (tiles.some((tile) => tile === undefined)) return false;
+    for (const tile of tiles as Tile[]) {
+      const [column, row] = tile.cell.split(":").map(Number);
+      const x = column * TILE, y = row * TILE;
+      const cellWidth = Math.min(TILE, width - x), cellHeight = Math.min(TILE, height - y);
+      const bleed = Math.ceil(BLEED * tile.density);
+      const sourceWidth = Math.ceil(cellWidth * tile.density), sourceHeight = Math.ceil(cellHeight * tile.density);
+      context.drawImage(tile.canvas, bleed, bleed, sourceWidth, sourceHeight, x, y, cellWidth, cellHeight);
+    }
+    return true;
   }
 
   dispose(): void {
