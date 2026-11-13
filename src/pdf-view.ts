@@ -52,6 +52,9 @@ const SELECTION_OVERLAY_BUDGET = 4_000_000;
  *  side. iOS keeps the default - its WebKit canvas allocation past 16M is
  *  unverified, and zoom 1 there never hits 16M anyway. */
 const PDF_PAGE_RASTER_BUDGET = 64_000_000;
+/** Keep page-tree metadata reads concurrent without retaining a burst of
+ *  page proxies for large documents. */
+const SOURCE_PAGE_GEOMETRY_CONCURRENCY = 4;
 /** Swipe rasters must match live page density (dpr): a 4M per-page budget
  *  downsamples Retina pages, so the dragged-in page reads blurry for the
  *  whole flip and only sharpens at settle. 16M is the WebKit-safe ceiling
@@ -584,27 +587,39 @@ export class PdfInkView extends InkWritingView {
   // --------------------------------------------------------------- sidecar
 
   private async readSourcePages(doc: PdfJsDocument, generation: number): Promise<PdfSourcePageGeometry[]> {
-    const pages: PdfSourcePageGeometry[] = [];
-    for (let index = 1; index <= doc.numPages; index++) {
-      let page: PdfJsPage | null = null;
-      try {
-        page = await doc.getPage(index);
-        if (generation !== this.loadGeneration) return [];
-        const raw = page as unknown as { view?: number[]; rotate?: number };
-        pages.push({
-          width: Math.round((raw.view?.[2] ?? page.getViewport({ scale: 1 }).width) * 100) / 100,
-          height: Math.round((raw.view?.[3] ?? page.getViewport({ scale: 1 }).height) * 100) / 100,
-          rotation: (raw.rotate ?? 0) as PdfSourcePageGeometry["rotation"],
-        });
-      } catch (error) {
-        // A replaced PDF can destroy its document while page metadata is loading.
-        if (generation !== this.loadGeneration) return [];
-        throw error;
-      } finally {
-        page?.cleanup?.();
+    const pages = new Array<PdfSourcePageGeometry>(doc.numPages);
+    let nextPage = 1;
+    let failed = false;
+    let failure: unknown;
+    const readNextPage = async (): Promise<void> => {
+      while (generation === this.loadGeneration && !failed) {
+        const index = nextPage++;
+        if (index > doc.numPages) return;
+        let page: PdfJsPage | null = null;
+        try {
+          page = await doc.getPage(index);
+          if (generation !== this.loadGeneration) return;
+          const raw = page as unknown as { view?: number[]; rotate?: number };
+          pages[index - 1] = {
+            width: Math.round((raw.view?.[2] ?? page.getViewport({ scale: 1 }).width) * 100) / 100,
+            height: Math.round((raw.view?.[3] ?? page.getViewport({ scale: 1 }).height) * 100) / 100,
+            rotation: (raw.rotate ?? 0) as PdfSourcePageGeometry["rotation"],
+          };
+        } catch (error) {
+          // A replaced PDF can destroy its document while page metadata is loading.
+          if (generation !== this.loadGeneration) return;
+          failed = true;
+          failure = error;
+          return;
+        } finally {
+          page?.cleanup?.();
+        }
       }
-    }
-    return pages;
+    };
+    const workers = Math.min(SOURCE_PAGE_GEOMETRY_CONCURRENCY, doc.numPages);
+    await Promise.all(Array.from({ length: workers }, () => readNextPage()));
+    if (failed) throw failure;
+    return generation === this.loadGeneration ? pages : [];
   }
 
   /**

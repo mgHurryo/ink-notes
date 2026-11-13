@@ -36859,6 +36859,7 @@ var PDF_ZOOM_STEP = 1.2;
 var PDF_PAGE_PADDING = 24;
 var SELECTION_OVERLAY_BUDGET = 4e6;
 var PDF_PAGE_RASTER_BUDGET = 64e6;
+var SOURCE_PAGE_GEOMETRY_CONCURRENCY = 4;
 var SWIPE_PREVIEW_BUDGET = 16e6;
 var PDF_NEIGHBOUR_CACHE_BUDGET = SWIPE_PREVIEW_BUDGET * 2;
 var SWIPE_PREVIEW_IDLE_DELAY_MS2 = 120;
@@ -37283,27 +37284,39 @@ var PdfInkView = class extends InkWritingView {
   }
   // --------------------------------------------------------------- sidecar
   async readSourcePages(doc, generation) {
-    var _a, _b, _c, _d, _e, _f;
-    const pages = [];
-    for (let index = 1; index <= doc.numPages; index++) {
-      let page = null;
-      try {
-        page = await doc.getPage(index);
-        if (generation !== this.loadGeneration) return [];
-        const raw = page;
-        pages.push({
-          width: Math.round(((_b = (_a = raw.view) == null ? void 0 : _a[2]) != null ? _b : page.getViewport({ scale: 1 }).width) * 100) / 100,
-          height: Math.round(((_d = (_c = raw.view) == null ? void 0 : _c[3]) != null ? _d : page.getViewport({ scale: 1 }).height) * 100) / 100,
-          rotation: (_e = raw.rotate) != null ? _e : 0
-        });
-      } catch (error) {
-        if (generation !== this.loadGeneration) return [];
-        throw error;
-      } finally {
-        (_f = page == null ? void 0 : page.cleanup) == null ? void 0 : _f.call(page);
+    const pages = new Array(doc.numPages);
+    let nextPage = 1;
+    let failed = false;
+    let failure;
+    const readNextPage = async () => {
+      var _a, _b, _c, _d, _e, _f;
+      while (generation === this.loadGeneration && !failed) {
+        const index = nextPage++;
+        if (index > doc.numPages) return;
+        let page = null;
+        try {
+          page = await doc.getPage(index);
+          if (generation !== this.loadGeneration) return;
+          const raw = page;
+          pages[index - 1] = {
+            width: Math.round(((_b = (_a = raw.view) == null ? void 0 : _a[2]) != null ? _b : page.getViewport({ scale: 1 }).width) * 100) / 100,
+            height: Math.round(((_d = (_c = raw.view) == null ? void 0 : _c[3]) != null ? _d : page.getViewport({ scale: 1 }).height) * 100) / 100,
+            rotation: (_e = raw.rotate) != null ? _e : 0
+          };
+        } catch (error) {
+          if (generation !== this.loadGeneration) return;
+          failed = true;
+          failure = error;
+          return;
+        } finally {
+          (_f = page == null ? void 0 : page.cleanup) == null ? void 0 : _f.call(page);
+        }
       }
-    }
-    return pages;
+    };
+    const workers = Math.min(SOURCE_PAGE_GEOMETRY_CONCURRENCY, doc.numPages);
+    await Promise.all(Array.from({ length: workers }, () => readNextPage()));
+    if (failed) throw failure;
+    return generation === this.loadGeneration ? pages : [];
   }
   /**
    * Resolve the sidecar for this PDF: reuse, recover after a move while the

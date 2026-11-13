@@ -36,6 +36,8 @@ interface RailInternals {
   thumbButtons: Map<number, HTMLElement>;
   renderPdfPage(): Promise<void>;
   renderAll(): void;
+  readSourcePages(doc: { numPages: number; getPage(n: number): Promise<unknown> }, generation: number): Promise<Array<{ width: number; height: number; rotation: number }>>;
+  loadGeneration: number;
   cacheNeighbour(index: number, canvas: HTMLCanvasElement): void;
   clearNeighbourCache(): void;
   refreshPageRail(): void;
@@ -133,6 +135,51 @@ it("keeps mounted PDF tiles, preview buttons and background caches through ink-o
   // Source rasters prepared before this merge may finish asynchronously;
   // ink-only changes must not request new source thumbnail decoding.
   expect(fakeDoc.getPage).not.toHaveBeenCalled();
+});
+
+it("reads source page geometry concurrently with a bounded worker pool and preserves page order", async () => {
+  const { view, internal } = await setup(9);
+  let active = 0, maximumActive = 0;
+  const doc = {
+    numPages: 9,
+    getPage: async (pageNumber: number) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setTimeout(resolve, pageNumber % 2 ? 4 : 1));
+      active -= 1;
+      return {
+        view: [0, 0, 500 + pageNumber, 700 + pageNumber],
+        rotate: pageNumber % 2 ? 0 : 90,
+        getViewport: () => ({ width: 500 + pageNumber, height: 700 + pageNumber }),
+      };
+    },
+  };
+  const pages = await internal.readSourcePages(doc, internal.loadGeneration);
+  expect(maximumActive).toBeGreaterThan(1);
+  expect(maximumActive).toBeLessThanOrEqual(4);
+  expect(pages.map(({ width, height, rotation }) => [width, height, rotation])).toEqual(
+    Array.from({ length: 9 }, (_, index) => [501 + index, 701 + index, (index + 1) % 2 ? 0 : 90]));
+  await view.onClose();
+});
+
+it("stops scheduling page geometry reads after a PDF page fails", async () => {
+  const { view, internal } = await setup(9);
+  const requested: number[] = [];
+  const doc = {
+    numPages: 9,
+    getPage: async (pageNumber: number) => {
+      requested.push(pageNumber);
+      if (pageNumber === 2) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        throw new Error("page metadata failed");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return { view: [0, 0, 500, 700], rotate: 0, getViewport: () => ({ width: 500, height: 700 }) };
+    },
+  };
+  await expect(internal.readSourcePages(doc, internal.loadGeneration)).rejects.toThrow("page metadata failed");
+  expect(requested).toEqual([1, 2, 3, 4]);
+  await view.onClose();
 });
 
 it("updates a remote PDF page's preview without touching the selected canvas or zoom", async () => {
