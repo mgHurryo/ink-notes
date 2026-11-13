@@ -90,8 +90,10 @@ const MAX_SCRIBBLE_RANGE_SAMPLES = MAX_SCRIBBLE_GESTURE_POINTS * 2;
 const SCRIBBLE_RANGE_SAMPLE_SPACING_DIVISOR = 2;
 const SCRIBBLE_REFERENCE_SIZE = 24;
 export const QUEUED_PAGE_SWIPE_DURATION_MS = 64;
-/** Leave the rail visible long enough to inspect the destination after a burst. */
-const FAST_PAGING_RAIL_IDLE_MS = 1300;
+/** Leave the rail visible across brief trackpad finger lifts (reported
+ *  1-2s pauses mid-burst) and long enough to inspect the destination after
+ *  a burst; the rail only hands back once the input has truly gone quiet. */
+const FAST_PAGING_RAIL_IDLE_MS = 3000;
 
 export interface ToolState {
   tool: InkTool;

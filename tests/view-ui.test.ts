@@ -1359,7 +1359,12 @@ describe("page rail thumbnails and resizing", () => {
       internal.noteWheelPages(1, "y", 400);
       internal.noteWheelPages(1, "y", 600);
       expect(internal.fastPagingRail).toBe(true);
-      vi.advanceTimersByTime(1300);
+      // A 1-2s trackpad finger lift mid-session must NOT hand the rail
+      // back: only input that has been quiet for the full window (3s) does.
+      vi.advanceTimersByTime(1500);
+      expect(internal.fastPagingRail).toBe(true);
+      expect(collapsed).toHaveBeenCalledTimes(0);
+      vi.advanceTimersByTime(1500);
       expect(internal.fastPagingRail).toBe(false);
       expect(collapsed).toHaveBeenCalledTimes(1);
       // A burst whose queued swipes outlive the quiet window (slow page
@@ -1371,11 +1376,11 @@ describe("page rail thumbnails and resizing", () => {
       internal.noteWheelPages(1, "y", 4400);
       expect(internal.fastPagingRail).toBe(true);
       internal.pageSwipeRequest = { target: 4, activeTarget: 3, count: 6, scrollEdge: "top", wheelGestureId: null, wheelQueued: true };
-      vi.advanceTimersByTime(1300);
+      vi.advanceTimersByTime(3000);
       expect(internal.fastPagingRail).toBe(true);
       expect(collapsed).toHaveBeenCalledTimes(1);
       internal.pageSwipeRequest = null;
-      vi.advanceTimersByTime(1300);
+      vi.advanceTimersByTime(3000);
       expect(internal.fastPagingRail).toBe(false);
       expect(collapsed).toHaveBeenCalledTimes(2);
     } finally { vi.useRealTimers(); }
