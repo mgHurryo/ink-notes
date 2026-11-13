@@ -32961,25 +32961,54 @@ var TileRenderer = class {
   }
   prewarm(pages) {
     if (!this.active) return;
-    const keep = /* @__PURE__ */ new Set([this.active.page, ...pages]);
+    const { width, height } = this.active.index;
+    this.prewarmPages(pages.map((page) => ({ page, width, height, viewport: this.viewport, density: this.density })));
+  }
+  /** Schedule neighbor tiles before a page-turn input needs to paint them. */
+  prewarmPages(pages) {
+    if (!this.active) return;
+    const keep = /* @__PURE__ */ new Set([this.active.page, ...pages.map(({ page }) => page)]);
     for (const [page, state] of this.states) if (!keep.has(page)) {
       this.states.delete(page);
       for (const [key, tile] of this.cache) if (tile.state === state) this.drop(key, tile);
     }
     this.jobs = this.jobs.filter((job) => keep.has(job.state.page));
-    for (const page of pages) {
-      const state = this.state(page, this.active.index.width, this.active.index.height);
-      state.index.sync(page.strokes);
+    for (const request of pages) {
+      const { page, width, height, viewport } = request;
+      const density = tileDensity(viewport, request.density);
+      const state = this.state(page, width, height);
+      if (state.syncedStrokes !== page.strokes || state.syncedPageRevision !== page.updatedAt) {
+        state.index.sync(page.strokes);
+      }
       state.syncedStrokes = page.strokes;
       state.syncedPageRevision = page.updatedAt;
-      for (const cell of cellKeys(this.viewport, state.index.width, state.index.height)) {
+      for (const cell of cellKeys(viewport, state.index.width, state.index.height)) {
         if (!state.index.hasCell(cell)) continue;
-        if (this.get(state, cell, this.density)) continue;
-        if (this.jobs.some((job) => job.state === state && job.cell === cell && job.density === this.density)) continue;
-        this.jobs.push({ state, cell, density: this.density, priority: "prewarm" });
+        if (this.get(state, cell, density)) continue;
+        if (this.jobs.some((job) => job.state === state && job.cell === cell && job.density === density)) continue;
+        this.jobs.push({ state, cell, density, priority: "prewarm" });
       }
     }
     this.schedule();
+  }
+  /** Copy exact-density cached tiles into a page preview without re-running stroke geometry on input. */
+  drawCachedPreview(request, context) {
+    const { page, width, height, viewport } = request;
+    const state = this.states.get(page);
+    if (!state || state.index.width !== width || state.index.height !== height || state.syncedStrokes !== page.strokes || state.syncedPageRevision !== page.updatedAt) return false;
+    const density = tileDensity(viewport, request.density);
+    const cells = cellKeys(viewport, width, height).filter((cell) => state.index.hasCell(cell));
+    const tiles = cells.map((cell) => this.get(state, cell, density));
+    if (tiles.some((tile) => tile === void 0)) return false;
+    for (const tile of tiles) {
+      const [column, row] = tile.cell.split(":").map(Number);
+      const x = column * TILE, y = row * TILE;
+      const cellWidth = Math.min(TILE, width - x), cellHeight = Math.min(TILE, height - y);
+      const bleed = Math.ceil(BLEED * tile.density);
+      const sourceWidth = Math.ceil(cellWidth * tile.density), sourceHeight = Math.ceil(cellHeight * tile.density);
+      context.drawImage(tile.canvas, bleed, bleed, sourceWidth, sourceHeight, x, y, cellWidth, cellHeight);
+    }
+    return true;
   }
   dispose() {
     var _a, _b;
@@ -35089,8 +35118,16 @@ var InkView = class extends InkWritingView {
       ctx.setTransform(canvas.width / this.canvasLogicalWidth, 0, 0, canvas.height / this.canvasLogicalHeight, 0, 0);
       const width = this.canvasLogicalWidth, height = this.canvasLogicalHeight;
       paintPageImages(this.imageLibrary, canvas, neighbor, (context) => context.clearRect(0, 0, canvas.width, canvas.height), (context) => {
+        var _a2, _b;
         context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
-        for (const stroke of neighbor.strokes) drawInkStroke(context, stroke, width, height);
+        const previewReady = (_b = (_a2 = this.tiles) == null ? void 0 : _a2.drawCachedPreview({
+          page: neighbor,
+          width,
+          height,
+          viewport: this.viewport,
+          density: (window.devicePixelRatio || 1) * previewZoom
+        }, context)) != null ? _b : false;
+        if (!previewReady) for (const stroke of neighbor.strokes) drawInkStroke(context, stroke, width, height);
         context.setTransform(1, 0, 0, 1, 0, 0);
       });
     }
@@ -38350,12 +38387,38 @@ var PdfInkView = class extends InkWritingView {
       (_a = this.desktopRenderDensity) != null ? _a : (window.devicePixelRatio || 1) * this.zoom,
       refine && this.desktopRenderDensity === void 0
     );
+    if (refine && this.desktopRenderDensity === void 0) this.prewarmInkNeighbours();
     if (refine || this.hasInkPreview() || this.selectedStrokeIds.size > 0 || this.lassoPath.length > 0) {
       this.resizeSelectionCanvas();
       this.resizePreview();
       this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
       if (this.activeStroke) this.drawPreview();
     }
+  }
+  /** Keep full-density ink tiles for adjacent PDF note pages ready before input. */
+  prewarmInkNeighbours() {
+    const sidecar = this.sidecar;
+    const scroller = this.scroller;
+    if (!sidecar || !scroller || !this.tiles) return;
+    const pages = [];
+    for (const delta of [-1, 1]) {
+      const index = this.noteIndex + delta;
+      const notePage = sidecar.notePages[index];
+      const page = sidecar.notebook.pages[index];
+      if (!notePage || !page) continue;
+      const size = this.swipePageSize(notePage);
+      const display = this.rotatedSize(notePage);
+      const width = Math.max(1, Math.round(size.baseWidth * 64) / 64);
+      const height = Math.max(1, Math.round(size.baseWidth * display.height / display.width * 64) / 64);
+      pages.push({
+        page,
+        width,
+        height,
+        viewport: { x: 0, y: 0, width, height },
+        density: (window.devicePixelRatio || 1) * size.zoom
+      });
+    }
+    this.tiles.prewarmPages(pages);
   }
   onViewportMotion() {
     this.updateViewport(false);
@@ -38577,17 +38640,26 @@ var PdfInkView = class extends InkWritingView {
     }
     void this.renderSwipeStagePage(stage, neighborIndex);
     const ink = stage.createEl("canvas", { cls: "ink-swipe-canvas" });
-    const logicalHeight = baseWidth * display.height / display.width;
-    const resolution = canvasResolution(baseWidth, logicalHeight, window.devicePixelRatio || 1, zoom, SWIPE_PREVIEW_BUDGET);
+    const logicalWidth = Math.max(1, Math.round(baseWidth * 64) / 64);
+    const logicalHeight = Math.max(1, Math.round(baseWidth * display.height / display.width * 64) / 64);
+    const resolution = canvasResolution(logicalWidth, logicalHeight, window.devicePixelRatio || 1, zoom, SWIPE_PREVIEW_BUDGET);
     ink.width = resolution.width;
     ink.height = resolution.height;
     const ctx = ink.getContext("2d");
     if (ctx) {
-      ctx.setTransform(ink.width / baseWidth, 0, 0, ink.height / logicalHeight, 0, 0);
+      ctx.setTransform(ink.width / logicalWidth, 0, 0, ink.height / logicalHeight, 0, 0);
       const page = (_i = this.sidecar) == null ? void 0 : _i.notebook.pages[neighborIndex];
       if (page) paintPageImages(this.imageLibrary, ink, page, (context) => context.clearRect(0, 0, ink.width, ink.height), (context) => {
-        context.setTransform(ink.width / baseWidth, 0, 0, ink.height / logicalHeight, 0, 0);
-        for (const stroke of page.strokes) drawInkStroke(context, stroke, baseWidth, logicalHeight);
+        var _a2, _b2;
+        context.setTransform(ink.width / logicalWidth, 0, 0, ink.height / logicalHeight, 0, 0);
+        const previewReady = (_b2 = (_a2 = this.tiles) == null ? void 0 : _a2.drawCachedPreview({
+          page,
+          width: logicalWidth,
+          height: logicalHeight,
+          viewport: { x: 0, y: 0, width: logicalWidth, height: logicalHeight },
+          density: (window.devicePixelRatio || 1) * zoom
+        }, context)) != null ? _b2 : false;
+        if (!previewReady) for (const stroke of page.strokes) drawInkStroke(context, stroke, logicalWidth, logicalHeight);
         context.setTransform(1, 0, 0, 1, 0, 0);
       });
     }
