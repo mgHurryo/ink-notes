@@ -28320,6 +28320,9 @@ var InkWritingView = class extends import_obsidian7.FileView {
     this.interaction = null;
     this.interactionGeneration = 0;
     this.activePointerId = null;
+    /** Pointer mode handles pen contacts outside the generic ink interaction;
+     *  retain their ownership so a paired Touch stream cannot pan the page. */
+    this.pointerToolPenId = null;
     this.activeStroke = null;
     /** Raw, session-only pen path for gesture recognition; rendered stroke
      *  points are smoothed and may no longer retain small rapid reversals. */
@@ -29440,6 +29443,18 @@ var InkWritingView = class extends import_obsidian7.FileView {
     scroller.tabIndex = 0;
     this.registerDomEvent(scroller, "pointerdown", (event) => {
       var _a2, _b;
+      if (event.pointerType !== "pen" || this.state.tool !== "pointer" || !((_a2 = this.inputHost()) == null ? void 0 : _a2.contains(event.target))) return;
+      this.pointerToolPenId = event.pointerId;
+      if (((_b = this.touchGesture) == null ? void 0 : _b.axis) === "x") this.cancelPageFlip();
+      this.touchGesture = null;
+    }, true);
+    for (const type of ["pointerup", "pointercancel"]) {
+      this.registerDomEvent(doc, type, (event) => {
+        if (this.pointerToolPenId === event.pointerId) this.pointerToolPenId = null;
+      }, true);
+    }
+    this.registerDomEvent(scroller, "pointerdown", (event) => {
+      var _a2, _b;
       if (event.pointerType !== "mouse" || this.nativeMenuOpen()) return;
       if (((_b = (_a2 = event.target) == null ? void 0 : _a2.closest) == null ? void 0 : _b.call(_a2, ".ink-sticky-note")) && !this.desktopSpaceDown && event.button !== 1) return;
       scroller.focus({ preventScroll: true });
@@ -29488,6 +29503,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
       this.finishFingerInput();
       this.touchGesture = null;
       this.desktopSpaceDown = false;
+      this.pointerToolPenId = null;
       scroller.classList.remove("ink-pan-ready");
       this.endDesktopPan();
       this.desktopWheel.reset();
@@ -30467,25 +30483,31 @@ var InkWritingView = class extends import_obsidian7.FileView {
   }
   // ---------------------------------------------------------------- touch
   onTouchStart(event) {
-    var _a, _b, _c, _d, _e, _f, _g;
+    var _a, _b, _c, _d, _e, _f, _g, _h;
     this.cancelPasteHold();
+    if (this.state.tool === "pointer" && this.pointerToolPenId !== null) {
+      this.touchGesture = null;
+      (_a = event.stopPropagation) == null ? void 0 : _a.call(event);
+      if (event.cancelable && event.touches.length < 2) event.preventDefault();
+      return;
+    }
     if (event.type === "touchstart") {
       this.hideSelectionActions();
       this.pasteTarget = null;
-      if (this.state.tool !== "lasso" && this.activePointerId === null && this.selectedStrokeIds.size && !Array.from((_a = event.changedTouches) != null ? _a : []).some((touch) => touch.touchType === "stylus")) {
+      if (this.state.tool !== "lasso" && this.activePointerId === null && this.selectedStrokeIds.size && !Array.from((_b = event.changedTouches) != null ? _b : []).some((touch) => touch.touchType === "stylus")) {
         this.clearSelection();
         this.drawStrokes(this.currentPage().strokes);
       }
     }
-    if (((_b = this.touchGesture) == null ? void 0 : _b.ids.length) === 2) this.scheduleZoomHudHide();
+    if (((_c = this.touchGesture) == null ? void 0 : _c.ids.length) === 2) this.scheduleZoomHudHide();
     if (this.nativeMenuOpen()) {
       this.touchGesture = null;
       return;
     }
-    (_c = event.stopPropagation) == null ? void 0 : _c.call(event);
+    (_d = event.stopPropagation) == null ? void 0 : _d.call(event);
     if (this.onStylusTouch(event)) return;
     if (event.cancelable && event.touches.length < 2) event.preventDefault();
-    if (((_d = this.touchGesture) == null ? void 0 : _d.axis) === "x" && event.touches.length > 1) {
+    if (((_e = this.touchGesture) == null ? void 0 : _e.axis) === "x" && event.touches.length > 1) {
       this.cancelPageFlip();
       this.touchGesture = null;
       return;
@@ -30496,7 +30518,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
       var _a2;
       return touch.touchType !== "stylus" && !((_a2 = this.zoomHud) == null ? void 0 : _a2.contains(touch.target));
     });
-    if (((_e = this.interaction) == null ? void 0 : _e.source) === "finger-touch") {
+    if (((_f = this.interaction) == null ? void 0 : _f.source) === "finger-touch") {
       const touch = Array.from(event.changedTouches).find((t) => t.identifier === this.interaction.pointerId);
       if (event.type === "touchend" && touch) this.onPointerUp(fingerTouchSample(touch, event.timeStamp), "finger-touch");
       else if (touches.length !== 1) this.finishFingerInput(true);
@@ -30528,10 +30550,10 @@ var InkWritingView = class extends import_obsidian7.FileView {
       pageY: (y - rect.top) / rect.height
     };
     if (b) this.showZoomHud();
-    else if (event.type === "touchstart" && !this.inputLocked() && this.state.fingerAsPen && this.state.tool !== "pointer" && this.state.tool !== "lasso" && ((_f = this.inputHost()) == null ? void 0 : _f.contains(a.target)) && pointInsideRect(a, rect)) {
+    else if (event.type === "touchstart" && !this.inputLocked() && this.state.fingerAsPen && this.state.tool !== "pointer" && this.state.tool !== "lasso" && ((_g = this.inputHost()) == null ? void 0 : _g.contains(a.target)) && pointInsideRect(a, rect)) {
       this.onPointerDown(fingerTouchSample(a, event.timeStamp), "finger-touch");
     }
-    if (!b && event.type === "touchstart" && !this.inputLocked() && (this.availableClipboard() || this.selectedStrokeIds.size) && ((_g = this.inputHost()) == null ? void 0 : _g.contains(a.target)) && pointInsideRect(a, rect)) {
+    if (!b && event.type === "touchstart" && !this.inputLocked() && (this.availableClipboard() || this.selectedStrokeIds.size) && ((_h = this.inputHost()) == null ? void 0 : _h.contains(a.target)) && pointInsideRect(a, rect)) {
       const page = this.currentPage(), gesture = this.touchGesture;
       const point = { x: gesture.pageX, y: gesture.pageY };
       this.pasteHold = { x, y, timer: window.setTimeout(() => {
@@ -30573,14 +30595,20 @@ var InkWritingView = class extends import_obsidian7.FileView {
     if (Date.now() - this.lastPointerActivityAt > 2500) this.finishPointerInput(false);
   }
   onTouchMove(event) {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
     if (this.nativeMenuOpen()) {
       this.touchGesture = null;
       return;
     }
-    (_a = event.stopPropagation) == null ? void 0 : _a.call(event);
+    if (this.state.tool === "pointer" && this.pointerToolPenId !== null) {
+      this.touchGesture = null;
+      (_a = event.stopPropagation) == null ? void 0 : _a.call(event);
+      if (event.cancelable) event.preventDefault();
+      return;
+    }
+    (_b = event.stopPropagation) == null ? void 0 : _b.call(event);
     if (this.onStylusTouch(event)) return;
-    if (((_b = this.interaction) == null ? void 0 : _b.source) === "finger-touch") {
+    if (((_c = this.interaction) == null ? void 0 : _c.source) === "finger-touch") {
       const touch = Array.from(event.touches).find((t) => t.identifier === this.interaction.pointerId);
       if (touch && event.touches.length === 1) {
         if (this.pasteHold && Math.hypot(touch.clientX - this.pasteHold.x, touch.clientY - this.pasteHold.y) > PASTE_HOLD_SLOP_PX) this.cancelPasteHold();
@@ -30616,7 +30644,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
         return;
       }
     }
-    if (((_c = this.selectionActions) == null ? void 0 : _c.dataset.pasteOnly) && Math.hypot(a.clientX - gesture.startX, a.clientY - gesture.startY) > PASTE_HOLD_SLOP_PX) this.hideSelectionActions();
+    if (((_d = this.selectionActions) == null ? void 0 : _d.dataset.pasteOnly) && Math.hypot(a.clientX - gesture.startX, a.clientY - gesture.startY) > PASTE_HOLD_SLOP_PX) this.hideSelectionActions();
     event.preventDefault();
     if (!b) {
       const scroller = this.inputScroller();
