@@ -1830,6 +1830,7 @@ export abstract class InkWritingView extends FileView {
       this.showZoomHud(); this.scheduleZoomHudHide();
       return;
     }
+    this.refreshFastPagingRailQuietTimer();
     const motion = this.desktopWheel.begin(delta, event.shiftKey, event.timeStamp);
     // Nested surfaces own only their scrollable axis, even at their edge.
     const ownerWindow = scroller.ownerDocument.defaultView!;
@@ -1919,6 +1920,14 @@ export abstract class InkWritingView extends FileView {
       this.fastPagingRail = true;
       this.onFastPagingRailExpanded();
     }
+    this.refreshFastPagingRailQuietTimer();
+  }
+
+  /** Wheel events are the only portable signal that a trackpad gesture is
+   *  still active. Keep a borrowed preview rail visible while valid scroll
+   *  input continues, even when the input does not produce another page flip. */
+  private refreshFastPagingRailQuietTimer(): void {
+    if (!this.fastPagingRail) return;
     if (this.fastPagingRailTimer !== undefined) window.clearTimeout(this.fastPagingRailTimer);
     this.fastPagingRailTimer = window.setTimeout(() => this.quietFastPagingRail(), FAST_PAGING_RAIL_IDLE_MS);
   }

@@ -29681,6 +29681,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
       this.scheduleZoomHudHide();
       return;
     }
+    this.refreshFastPagingRailQuietTimer();
     const motion = this.desktopWheel.begin(delta, event.shiftKey, event.timeStamp);
     const ownerWindow = scroller.ownerDocument.defaultView;
     for (let element = target; element && element !== scroller; element = element.parentElement) {
@@ -29756,6 +29757,13 @@ var InkWritingView = class extends import_obsidian7.FileView {
       this.fastPagingRail = true;
       this.onFastPagingRailExpanded();
     }
+    this.refreshFastPagingRailQuietTimer();
+  }
+  /** Wheel events are the only portable signal that a trackpad gesture is
+   *  still active. Keep a borrowed preview rail visible while valid scroll
+   *  input continues, even when the input does not produce another page flip. */
+  refreshFastPagingRailQuietTimer() {
+    if (!this.fastPagingRail) return;
     if (this.fastPagingRailTimer !== void 0) window.clearTimeout(this.fastPagingRailTimer);
     this.fastPagingRailTimer = window.setTimeout(() => this.quietFastPagingRail(), FAST_PAGING_RAIL_IDLE_MS);
   }
