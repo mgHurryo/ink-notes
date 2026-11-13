@@ -738,6 +738,9 @@
 
 .ink-page-rail {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   /* Width lives in one variable so the drag handle only has to update a
      custom property; stylesheet rules (container queries, collapse) keep
      precedence over it. */
@@ -745,16 +748,16 @@
   flex: 0 0 var(--ink-rail-width, 176px);
   min-width: 0;
   padding: 14px 12px 24px;
-  overflow-y: auto;
+  overflow: hidden;
   overflow-x: hidden;
   border-right: 1px solid var(--ink-border);
   background: var(--ink-panel);
   scrollbar-width: thin;
   /* Expand/collapse animates the width away instead of display:none so the
-     page column grows fluidly (~200ms). visibility is animated too: it flips
+     page column grows fluidly (~280ms). visibility is animated too: it flips
      at the END of the collapse (removing the buttons from tab order only
      once hidden) and immediately on expand. */
-  transition: flex-basis 200ms ease, width 200ms ease, padding 200ms ease, border-width 200ms ease, visibility 200ms ease, opacity 200ms ease;
+  transition: flex-basis 280ms ease, width 280ms ease, padding 280ms ease, border-width 280ms ease, visibility 280ms ease, opacity 280ms ease;
 }
 
 /* Collapsed: the same box at zero size. !important-free overrides win on
@@ -771,7 +774,7 @@
   opacity: 0;
 }
 
-/* The drag gesture must track the pointer; the 200ms transition would smear it. */
+/* The drag gesture must track the pointer; the transition would smear it. */
 .ink-page-rail.is-resizing { transition: none; }
 
 /* Right-edge drag handle. Sits inside the rail (overflow-x:hidden would clip
@@ -811,9 +814,16 @@
    the room the title label needs below each thumb. */
 .ink-rail-thumbs {
   display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
   grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  align-content: start;
   column-gap: 10px;
   row-gap: 30px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .ink-rail-header {
@@ -894,7 +904,7 @@
    hover/focus; a real button so touch and Playwright can always reach it. */
 .ink-thumb-tag-button {
   position: absolute;
-  right: 5px;
+  left: 5px;
   bottom: 5px;
   display: grid;
   width: 20px;
@@ -916,7 +926,7 @@
 
 /* Filtered-out thumbnails leave the rail (display, not visibility: hidden
    thumbs would still occupy their grid row). */
-.ink-page-thumb.is-filtered-out { display: none; }
+:is(.ink-notes-view, .ink-pdf-view) .ink-page-thumb.is-filtered-out { display: none; }
 
 /* Shared tagging popover (notebook + PDF rails). */
 .ink-tag-popover {
@@ -1034,8 +1044,11 @@
   display: grid;
   width: 20px;
   height: 20px;
+  min-width: 20px;
+  aspect-ratio: 1;
+  box-sizing: border-box;
   place-items: center;
-  border-radius: 50%;
+  border-radius: 2px;
   color: var(--ink-panel);
   background: var(--ink-danger);
   font-size: 13px;
@@ -1051,7 +1064,7 @@
   border-radius: 2px;
   pointer-events: none;
 }
-.ink-page-thumb-number { position: absolute; right: 7px; bottom: 5px; color: #555; font-size: 11px; font-variant-numeric: tabular-nums; }
+.ink-page-thumb-number { position: absolute; z-index: 2; right: 7px; bottom: 5px; color: #555; font-size: 11px; font-variant-numeric: tabular-nums; }
 .ink-page-thumb-title { position: absolute; top: calc(100% + 10px); left: 0; width: 100%; overflow: hidden; color: var(--ink-muted); font-size: 11px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 
 .ink-page-status {

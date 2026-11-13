@@ -13,6 +13,7 @@ import { createNotebook } from "../src/model";
 import type { InkPage, InkStroke } from "../src/model";
 import { defaultToolState } from "../src/tool-state";
 import type { NotebookStore } from "../src/storage";
+import type { StickyNote } from "../src/sticky-model";
 import type { TFile, WorkspaceLeaf } from "obsidian";
 import { Menu } from "obsidian";
 import { gestureContract } from "./gesture-contract";
@@ -405,7 +406,7 @@ describe("reference-style editor", () => {
     expect(host.notebook.pages[0].paper).toBe("blank");
   });
 
-  it("uses page-resolution ink for a page flip when the hidden-rail thumbnail is prewarmed", async () => {
+  it("keeps a cold page flip at display resolution without synchronous vector fallback", async () => {
     const host = view as any;
     const neighbor = structuredClone(host.currentPage());
     neighbor.id = "swipe-preview-neighbor";
@@ -420,9 +421,8 @@ describe("reference-style editor", () => {
 
     host.canvasLogicalWidth = 1000;
     host.canvasLogicalHeight = 1400;
-    // A Retina iPad page (1000x1400 @2 = 5.6M pixels) must render the swipe
-    // preview at full tile density: the old 4M overlay budget downscaled it
-    // ~15% and the incoming page stayed blurry until the tiles replaced it.
+    // A Retina iPad page (1000x1400 @2 = 5.6M pixels) keeps the swipe
+    // preview at display density while cold tiles finish asynchronously.
     const originalDpr = window.devicePixelRatio;
     Object.defineProperty(window, "devicePixelRatio", { value: 2, configurable: true, writable: true });
     try {
@@ -433,7 +433,8 @@ describe("reference-style editor", () => {
       expect(stage.width).toBe(2000);
       expect(stage.height).toBe(2800);
       expect(stage.width).toBeGreaterThan(preview.width);
-      expect(drawInkStroke).toHaveBeenCalled();
+      expect(drawInkStroke).not.toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ id: "preview-ink" }),
+        1000, 1400);
     } finally {
       Object.defineProperty(window, "devicePixelRatio", { value: originalDpr, configurable: true, writable: true });
     }
@@ -813,16 +814,19 @@ describe("reference-style editor", () => {
     button("Erase").click();
     button("Erase").click();
     const popover = document.querySelector<HTMLElement>(".ink-eraser-popover")!;
-    const size = document.querySelector<HTMLInputElement>('input[aria-label="Eraser size"]')!;
+    const size = document.querySelector<HTMLInputElement>('input[aria-label="Scribble erase range"]')!;
     const strokeMode = popover.querySelector<HTMLElement>('[data-eraser-mode="stroke"]')!;
     expect(strokeMode.getAttribute("aria-checked")).toBe("true");
     expect(document.querySelector(".ink-eraser-reference-point")).not.toBeNull();
-    // The stroke eraser ignores the size - the slider hides for it.
+    // Stroke mode keeps its fixed eraser radius; the slider controls the
+    // circular range used by pen scribble erasing.
     const sizeRow = document.querySelector<HTMLElement>(".ink-eraser-size-row")!;
-    expect(sizeRow.style.display).toBe("none");
+    expect(sizeRow.style.display).toBe("");
+    expect(sizeRow.textContent).toContain("Scribble range");
     button("Circle eraser").click();
     expect(strokeMode.getAttribute("aria-checked")).toBe("false");
     expect(sizeRow.style.display).toBe("");
+    expect(document.querySelector<HTMLInputElement>('input[aria-label="Eraser size"]')).not.toBeNull();
     size.value = "48";
     size.dispatchEvent(new Event("input"));
     const cursor = document.querySelector<HTMLElement>(".ink-eraser-cursor")!;
@@ -851,9 +855,11 @@ describe("reference-style editor", () => {
     expect(scheduleSave).toHaveBeenCalled();
     expect((view as any).state.scribbleErase).toBe(false);
     expect(sensitivity.disabled).toBe(true);
+    expect(document.querySelector<HTMLElement>(".ink-eraser-size-row")!.style.display).toBe("none");
     toggle.checked = true;
     toggle.dispatchEvent(new Event("change", { bubbles: true }));
     expect(sensitivity.disabled).toBe(false);
+    expect(document.querySelector<HTMLElement>(".ink-eraser-size-row")!.style.display).toBe("");
   });
   it("toggles the eraser mini popover on re-tap without the reopen race", async () => {
     button("Erase").click();   // select the eraser
@@ -989,7 +995,9 @@ describe("page rail thumbnails and resizing", () => {
       expect(canvases).toHaveLength(2);
       // jsdom reports no boxes; give both thumbs the 176px rail's box.
       canvases.forEach((canvas) => withBox(canvas, 152, 208));
-      vi.advanceTimersByTime(240);
+      // The rail settles after its 280ms transition plus the 30ms resize
+      // buffer; run the delayed repaint after that callback completes.
+      vi.advanceTimersByTime(320);
       const dpr = window.devicePixelRatio || 1;
       expect(canvases[0].width).toBe(Math.round(152 * dpr));
       expect(canvases[1].height).toBe(Math.round(208 * dpr));
@@ -1152,7 +1160,7 @@ describe("page rail thumbnails and resizing", () => {
     try {
       button("Pages").click(); // 预览全部: the preview rail expands over the settle timer
       scrollerWidth = 624;     // the rail's width squeezes the page column
-      vi.advanceTimersByTime(240);
+      vi.advanceTimersByTime(320);
       console.log("DEBUG", {
         cells: Array.from(layer.children).map((n) => (n as HTMLElement).dataset.cell ?? n.className),
         logical: [(view as unknown as { canvasLogicalWidth: number }).canvasLogicalWidth,
@@ -1180,38 +1188,139 @@ describe("page rail thumbnails and resizing", () => {
     }
   });
 
-  it("centers the active thumb through rail rebuilds while a fast paging burst holds the rail open", () => {
+  it("keeps sticky cards mounted across the preview rail toggle instead of rebuilding them", () => {
+    const internal = view as unknown as {
+      notebook: ReturnType<typeof createNotebook>;
+      pageScroller: HTMLElement;
+      pageElement: HTMLElement;
+      syncStickyNotes(): void;
+    };
+    // jsdom has no layout: pin the boxes the layout and the sticky layer measure.
+    let scrollerWidth = 800;
+    Object.defineProperty(internal.pageScroller, "clientWidth", { configurable: true, get: () => scrollerWidth });
+    Object.defineProperty(internal.pageScroller, "clientHeight", { configurable: true, value: 600 });
+    let hostWidth = 800;
+    Object.defineProperty(internal.pageElement, "clientWidth", { configurable: true, get: () => hostWidth });
+    Object.defineProperty(internal.pageElement, "clientHeight", { configurable: true, value: 600 });
+    const page = internal.notebook.pages[0];
+    page.stickyNotes = [
+      { id: "rail-sticky", pageId: page.id, x: .2, y: .2, width: .5, height: .3, title: "Rail sticky", keywords: "", text: "Sticky body",
+        textUpdatedAt: 1, color: "#fff1a8", collapsed: false, preview: true, scrollX: 0, scrollY: 0, boardPageWidth: 600,
+        strokes: [{ id: "sticky-ink", pageId: "rail-sticky", tool: "pen", color: "#123456", width: 3, opacity: 1,
+          points: [{ x: 10, y: 10, pressure: .5, t: 0 }, { x: 40, y: 30, pressure: .5, t: 40 }], createdAt: 1, updatedAt: 1 }],
+        deletedStrokeIds: [], createdAt: 1, updatedAt: 1 },
+      { id: "rail-text", pageId: page.id, kind: "text", x: .1, y: .6, width: .4, height: .15, title: "Text box", keywords: "", text: "Hello rail",
+        textUpdatedAt: 1, textX: 0, textY: 0, textWidth: 240, textHeight: 120, color: "#ffffff", collapsed: false, preview: true,
+        scrollX: 0, scrollY: 0, boardPageWidth: 600, strokes: [], deletedStrokeIds: [], createdAt: 1, updatedAt: 1 } as StickyNote,
+    ];
+    internal.syncStickyNotes();
+    const cards = document.querySelectorAll<HTMLElement>(".ink-sticky-note");
+    expect(cards.length).toBe(2);
+    const card = cards[0], textCard = cards[1];
+    expect(card.style.width).toBe("400px"); // .5 * 800
+    const markdown = card.querySelector<HTMLElement>(".ink-sticky-markdown")!;
+    expect(markdown.textContent).toBe("Sticky body");
+    const boardCanvas = card.querySelector("canvas");
+
+    vi.stubGlobal("requestAnimationFrame", vi.fn());
+    vi.useFakeTimers();
+    try {
+      button("Pages").click(); // 预览全部: the settle relayout squeezes the page column
+      scrollerWidth = 624;     // the rail's width squeezes the page column
+      hostWidth = 624;
+      vi.advanceTimersByTime(320);
+      // The toggle repositions the mounted cards; it must not rebuild them:
+      // a rebuild aborts every card's listeners, unloads the Markdown
+      // component and re-runs MarkdownRenderer per text box, which on iPad
+      // reads as the whole interface re-rendering.
+      expect(document.querySelectorAll(".ink-sticky-note").length).toBe(2);
+      expect(document.querySelectorAll(".ink-sticky-note")[0]).toBe(card);
+      expect(document.querySelectorAll(".ink-sticky-note")[1]).toBe(textCard);
+      expect(card.querySelector(".ink-sticky-markdown")).toBe(markdown);
+      expect(card.querySelector("canvas")).toBe(boardCanvas);
+      expect(textCard.querySelector<HTMLElement>(".ink-sticky-text-box")!.style.transform).toBe("scale(1.04)"); // 624 / 600
+      // The reposition reflects the new width, so a fix that merely skips the
+      // sync (leaving stale pixel frames) fails this too.
+      expect(card.style.width).toBe("312px"); // .5 * 624
+    } finally {
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("refreshes the sticky header height when a width-only sync repositions the card", () => {
+    const internal = view as unknown as {
+      notebook: ReturnType<typeof createNotebook>;
+      pageElement: HTMLElement;
+      syncStickyNotes(): void;
+    };
+    // jsdom has no layout: pin the box the sticky layer measures. The build
+    // path bakes the header height as an inline style from the width of the
+    // moment, so the width-only reposition path must refresh it — a stale
+    // header drops the board's visual top off stickyBounds' STICKY_HEADER
+    // offset at zoom != 1 and splits fresh board ink across the frame edge.
+    let hostWidth = 800;
+    Object.defineProperty(internal.pageElement, "clientWidth", { configurable: true, get: () => hostWidth });
+    Object.defineProperty(internal.pageElement, "clientHeight", { configurable: true, value: 600 });
+    const page = internal.notebook.pages[0];
+    page.stickyNotes = [
+      { id: "header-sticky", pageId: page.id, x: .2, y: .2, width: .5, height: .3, title: "Header sticky", keywords: "", text: "",
+        textUpdatedAt: 1, color: "#fff1a8", collapsed: false, preview: true, scrollX: 0, scrollY: 0, boardPageWidth: 800,
+        strokes: [], deletedStrokeIds: [], createdAt: 1, updatedAt: 1 },
+    ];
+    internal.syncStickyNotes();
+    const card = document.querySelector<HTMLElement>(".ink-sticky-note")!;
+    const header = card.querySelector<HTMLElement>(".ink-sticky-header")!;
+    expect(header.style.height).toBe("64px"); // STICKY_HEADER * 800 / 800
+    hostWidth = 624;
+    internal.syncStickyNotes();
+    expect(card.style.width).toBe("312px"); // the reposition path ran
+    expect(header.style.height).toBe("49.92px"); // STICKY_HEADER * 624 / 800
+  });
+
+  it("scrolls the thumbnail list while keeping rail controls and editor fixed", () => {
     const internal = view as unknown as { addPage(): void; renderPageRail(): void; fastPagingRail: boolean };
     internal.addPage();
     button("Pages").click();   // expand so the thumbs exist in a visible rail
     const rail = document.querySelector<HTMLElement>(".ink-page-rail")!;
-    let railTop = 0;
-    Object.defineProperties(rail, {
+    const pageScroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
+    pageScroller.scrollTop = 96;
+    let listTop = 0;
+    let scrollIntoViewCalls = 0;
+    const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
+    HTMLElement.prototype.scrollIntoView = function () { scrollIntoViewCalls++; };
+    internal.renderPageRail();
+    const list = rail.querySelector<HTMLElement>(".ink-rail-thumbs")!;
+    const active = rail.querySelector<HTMLElement>(".ink-page-thumb.is-active")!;
+    Object.defineProperties(list, {
       clientHeight: { configurable: true, value: 600 },
       scrollHeight: { configurable: true, value: 3000 },
-      scrollTop: { configurable: true, get: () => railTop, set: (value: number) => { railTop = value; } },
+      scrollTop: { configurable: true, get: () => listTop, set: (value: number) => { listTop = value; } },
     });
-    // renderPageRail rebuilds the thumbs every time, so the active thumb's
-    // box is pinned at the prototype level; the rail's own rect stays direct.
+    list.getBoundingClientRect = () => new DOMRect(0, 0, 160, 600);
+    active.getBoundingClientRect = () => new DOMRect(0, 2400 - listTop, 150, 120);
+    const helper = view as unknown as {
+      scrollRailThumb(rail: HTMLElement, thumb: HTMLElement, center?: boolean): void;
+      followWheelPageThumb(): void;
+    };
     const originalRect = HTMLElement.prototype.getBoundingClientRect;
     HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
       if (this === rail) return new DOMRect(0, 0, 176, 600);
-      if (this.classList.contains("ink-page-thumb") && this.classList.contains("is-active")) return new DOMRect(0, 2400, 150, 120);
       return originalRect.call(this);
     };
     try {
-      // Without the burst the rebuild keeps the usual nearest-visibility
-      // nudge (jsdom has no scrollIntoView: no scroll movement at all).
-      internal.renderPageRail();
-      expect(railTop).toBe(0);
-      // While the burst holds the rail open the rebuild centers the page the
-      // user is flipping through.
-      internal.fastPagingRail = true;
-      internal.renderPageRail();
-      expect(railTop).toBe(2160);
-      internal.fastPagingRail = false;
+      helper.scrollRailThumb(rail, active);
+      expect(listTop).toBe(1920);
+      expect(rail.scrollTop).toBe(0);
+      expect(pageScroller.scrollTop).toBe(96);
+      helper.followWheelPageThumb();
+      expect(listTop).toBe(2160);
+      expect(rail.scrollTop).toBe(0);
+      expect(pageScroller.scrollTop).toBe(96);
+      expect(scrollIntoViewCalls).toBe(0);
     } finally {
       HTMLElement.prototype.getBoundingClientRect = originalRect;
+      HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
     }
   });
 
@@ -1250,23 +1359,23 @@ describe("page rail thumbnails and resizing", () => {
       internal.noteWheelPages(1, "y", 400);
       internal.noteWheelPages(1, "y", 600);
       expect(internal.fastPagingRail).toBe(true);
-      vi.advanceTimersByTime(1000);
+      vi.advanceTimersByTime(1300);
       expect(internal.fastPagingRail).toBe(false);
       expect(collapsed).toHaveBeenCalledTimes(1);
       // A burst whose queued swipes outlive the quiet window (slow page
       // renders, loaded machine) must not collapse mid-drain: the remaining
       // flips would lose the centered follow. The hand-back waits for the
-      // drain, then takes its own quiet second.
+      // drain, then takes its own quiet interval.
       internal.noteWheelPages(1, "y", 4000);
       internal.noteWheelPages(1, "y", 4200);
       internal.noteWheelPages(1, "y", 4400);
       expect(internal.fastPagingRail).toBe(true);
       internal.pageSwipeRequest = { target: 4, activeTarget: 3, count: 6, scrollEdge: "top", wheelGestureId: null, wheelQueued: true };
-      vi.advanceTimersByTime(1000);
+      vi.advanceTimersByTime(1300);
       expect(internal.fastPagingRail).toBe(true);
       expect(collapsed).toHaveBeenCalledTimes(1);
       internal.pageSwipeRequest = null;
-      vi.advanceTimersByTime(1000);
+      vi.advanceTimersByTime(1300);
       expect(internal.fastPagingRail).toBe(false);
       expect(collapsed).toHaveBeenCalledTimes(2);
     } finally { vi.useRealTimers(); }

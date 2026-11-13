@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { canvasResolution, drawInkStroke, drawInkStrokePreview, drawInkStrokeTail, normalizePressureCurve, penOutline, smoothOutlineCenterline, smoothPenPressures } from "../src/rendering";
-import { translatePoints } from "../src/ink-writing";
+import { translatePoints } from "../src/ink-geometry";
 import type { InkStroke } from "../src/model";
 
 function stroke(pressure = 0.5): InkStroke {
@@ -375,6 +375,21 @@ describe("continuous pen rendering", () => {
     expect(ctx.moveTo).toHaveBeenCalledOnce();
     expect(vi.mocked(ctx.lineTo).mock.calls.length).toBeLessThanOrEqual(13);
     expect(ctx.globalAlpha).toBe(0.5);
+  });
+  it("maps the multi-point preview line through the pressure curve", () => {
+    // The first-frame preview tile must width-match the committed tile that
+    // replaces it, so the averaged endpoint pressure flows through the same
+    // curve mapping as drawSampleDot.
+    const ctx = context();
+    // Pinned reference keeps the canonical 980 conversion out of the way.
+    drawInkStrokePreview(ctx, { ...stroke(0.3), dynamics: { pressureCurve: [[0, 0.85], [1, 1]] } }, 800, 1000, 1000);
+    // The curve maps 0.3 -> 0.895; the limiter defaults to 100%.
+    expect(ctx.lineWidth).toBeCloseTo(3 * (800 / 1000) * (0.55 + 0.75 * 0.895), 6);
+  });
+  it("keeps the preview line's identity-mapping width unchanged", () => {
+    const ctx = context();
+    drawInkStrokePreview(ctx, stroke(), 800, 1000, 1000);
+    expect(ctx.lineWidth).toBeCloseTo(3 * (800 / 1000) * (0.55 + 0.75 * 0.5), 6);
   });
   it("renders the outline as a faithful polygon without cutting sparse corners", () => {
     const ctx = context();

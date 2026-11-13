@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { eraseStrokeSegmentsByScribble, isScribbleEraseGesture } from "../src/ink-writing";
+import { eraseStrokeSegmentsByScribble, isScribbleEraseGesture } from "../src/ink-geometry";
 import type { InkStroke } from "../src/model";
 import { rotateScribble, scribbleLoops, scribbleWaves, type ScribblePosition } from "./scribble-fixtures";
 

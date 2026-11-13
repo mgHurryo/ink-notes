@@ -175,7 +175,7 @@ test("page rail and brush popover are keyboard dismissible", async ({ page }) =>
   });
   expect(layout.railRight).toBeLessThanOrEqual(layout.scrollerLeft + 1);
   expect(layout.paperLeft).toBeGreaterThanOrEqual(layout.scrollerLeft);
-  // The rail expands over a 200ms transition while the paper's resize-driven
+  // The rail expands over its width transition while the paper's resize-driven
   // re-layout trails it by a frame, so one mid-transition snapshot can measure
   // an overflowing paper; poll for the settled layout the contract describes.
   await expect.poll(async () => page.locator(".ink-workspace").evaluate((workspace) => {

@@ -2,7 +2,7 @@
  * Shared writing layer for both ink editors (notebook and PDF).
  *
  * Everything from pointer capture through stroke modeling, preview commits,
- * eraser/lasso behavior, history stack mechanics and save scheduling lives
+ * eraser/lasso interaction, history stack mechanics and save scheduling lives
  * here exactly once; the notebook and PDF views only supply their seams:
  * geometry (which page, which rect), model access, render targets and the
  * storage path. Every fix landed here applies to both editors — the previous
@@ -17,7 +17,7 @@
 import { FileView, Menu, Notice, Platform, setIcon, type ViewStateResult } from "obsidian";
 import { defaultReadingMode } from "./device-mode";
 import { DesktopWheelGesture, WheelPagePacer, normalizeWheel } from "./desktop-wheel";
-import { canStraighten, shapePoints, SHAPES, type ShapeKind } from "./shapes";
+import { canStraighten, shapePoints, SHAPES, STRAIGHT_LINE_MIN_LENGTH_PX, type ShapeKind } from "./shapes";
 import { ImageLibraryModal, ImageLibraryStore, placedImage } from "./image-library";
 import { PageImageLayer } from "./page-images";
 import { StickyNoteLayer, markdownStickyLink } from "./sticky-notes";
@@ -48,14 +48,50 @@ import { InkWorkerService, InkWorkerSession } from "./worker-service";
 import { canvasResolution, clampPercent, drawInkStroke, drawInkStrokeTail, normalizePressureCurve, samplePressureCurve, STROKE_WIDTH_REFERENCE } from "./rendering";
 import { defaultToolState, type SharedToolState } from "./tool-state";
 import { InkClipboard, pasteClipboardStrokes } from "./lasso-clipboard";
+import {
+  boundsForPointSets,
+  clonePoints,
+  cloneStroke,
+  constrainDelta,
+  distance,
+  interpolateInkPoint,
+  eraseStrokeSegments,
+  eraseStrokeSegmentsByScribble,
+  isScribbleEraseGesture,
+  pointInPolygon,
+  pointInsideRect,
+  sampleStrokeForEraser,
+  selectionBounds,
+  strokeIntersectsEraser,
+  translatePoints,
+} from "./ink-geometry";
+import type { EraserMode } from "./ink-geometry";
+export {
+  boundsForPointSets,
+  clonePoints,
+  cloneStroke,
+  constrainDelta,
+  distance,
+  eraseStrokeSegments,
+  eraseStrokeSegmentsByScribble,
+  isScribbleEraseGesture,
+  pointInPolygon,
+  pointInsideRect,
+  selectionBounds,
+  strokeIntersectsEraser,
+  translatePoints,
+} from "./ink-geometry";
+export type { EraserMode } from "./ink-geometry";
 
 const PASTE_HOLD_DELAY_MS = 600;
 const PASTE_HOLD_SLOP_PX = 10;
 const MAX_SCRIBBLE_GESTURE_POINTS = 2_048;
+const MAX_SCRIBBLE_RANGE_SAMPLES = MAX_SCRIBBLE_GESTURE_POINTS * 2;
+const SCRIBBLE_RANGE_SAMPLE_SPACING_DIVISOR = 2;
 const SCRIBBLE_REFERENCE_SIZE = 24;
 export const QUEUED_PAGE_SWIPE_DURATION_MS = 64;
-/** A fast paging burst must hand the rail back within a second of stopping. */
-const FAST_PAGING_RAIL_IDLE_MS = 1000;
+/** Leave the rail visible long enough to inspect the destination after a burst. */
+const FAST_PAGING_RAIL_IDLE_MS = 1300;
 
 export interface ToolState {
   tool: InkTool;
@@ -72,7 +108,6 @@ export interface ToolState {
   lasso: { mode: LassoMode; crossFileClipboard: boolean };
 }
 
-export type EraserMode = "stroke" | "circle" | "square";
 export type LassoMode = "freehand" | "rectangle";
 
 export interface EditCommand {
@@ -136,6 +171,7 @@ export interface PenCapture {
 }
 
 const STROKE_ERASER_HIT_RADIUS = 10;
+const MAX_ERASER_SWEEP_STEPS = 1024;
 const OVERLAY_PIXEL_BUDGET = 12_000_000;
 const SAVE_IDLE_DELAY = 1_500;
 const SAVE_MAX_DELAY = 10_000;
@@ -143,7 +179,7 @@ export const INK_COMMIT_IDLE_DELAY = 180;
 const LIVE_TAIL_SAMPLE_LIMIT = 32;
 const COMPLETED_PREVIEW_SAMPLE_LIMIT = 256;
 // How long the pen must rest in place before a drawn path straightens.
-const LINE_HOLD_MS = 2_000;
+const LINE_HOLD_MS = 800;
 // Modeled pen samples are deduplicated against this page-pixel radius. The
 // radius must exceed the modeler's end-of-stroke catch-up step sizes: those
 // converging (and overshoot-reversing) micro-segments otherwise reach the
@@ -160,19 +196,6 @@ const PEN_SPARSE_MIN_INTERVALS = 8;
 /** Undo entries retained per editor. Full-notebook snapshots are heavy; the
  *  cap keeps worst-case memory bounded without being reachable in practice. */
 const UNDO_STACK_LIMIT = 200;
-
-// ---------------------------------------------------------------------------
-// Pure geometry / model helpers
-// ---------------------------------------------------------------------------
-
-export function distance(a: { x: number; y: number }, b: { x: number; y: number }): number {
-  return Math.hypot(a.x - b.x, a.y - b.y);
-}
-
-export function pointInsideRect(point: { clientX: number; clientY: number }, rect: DOMRect): boolean {
-  return point.clientX >= rect.left && point.clientX <= rect.right
-    && point.clientY >= rect.top && point.clientY <= rect.bottom;
-}
 
 function stylusTouchSample(touch: StylusTouch, timeStamp?: number): InkPointerSample {
   const altitude = touch.altitudeAngle;
@@ -227,199 +250,6 @@ export function penSampleTimeMillis(sample: InkPointerSample): number {
   // Date.now() would give every coalesced sample of one event the same time
   // and defeat the modeler's resampling.
   return typeof sample.timeStamp === "number" && Number.isFinite(sample.timeStamp) ? sample.timeStamp : Date.now();
-}
-
-export function strokeIntersectsEraser(stroke: InkStroke, center: InkPoint, radius: number, mode: EraserMode, width: number, height: number): boolean {
-  if (stroke.points.some((point) => pointInsideEraser(point, center, radius, mode, width, height))) return true;
-  for (let index = 1; index < stroke.points.length; index++) {
-    if (segmentIntersectsEraser(stroke.points[index - 1], stroke.points[index], center, radius, mode, width, height)) return true;
-  }
-  return false;
-}
-
-export function isScribbleEraseGesture(points: InkPoint[], eraserSize: number, width: number, height: number, sensitivity: number): boolean {
-  if (points.length < 8) return false;
-  const filtered = [points[0]];
-  for (const point of points.slice(1)) {
-    const previous = filtered[filtered.length - 1];
-    if (Math.hypot((point.x - previous.x) * width, (point.y - previous.y) * height) >= 2) filtered.push(point);
-  }
-  if (filtered.length < 8) return false;
-
-  let pathLength = 0;
-  let distanceSinceTurn = 0;
-  let turns = 0;
-  for (let index = 1; index < filtered.length; index++) {
-    const previous = filtered[index - 1], point = filtered[index];
-    const segmentLength = Math.hypot((point.x - previous.x) * width, (point.y - previous.y) * height);
-    pathLength += segmentLength;
-    distanceSinceTurn += segmentLength;
-    if (index < 2) continue;
-    const before = filtered[index - 2];
-    const ax = (previous.x - before.x) * width, ay = (previous.y - before.y) * height;
-    const bx = (point.x - previous.x) * width, by = (point.y - previous.y) * height;
-    const lengths = Math.hypot(ax, ay) * Math.hypot(bx, by);
-    // These are raw pointer samples: ordinary corners and small backhooks
-    // must not count as deliberate scrubbing reversals.
-    if (lengths > 0 && (ax * bx + ay * by) / lengths < -0.35 && distanceSinceTurn >= Math.max(8, eraserSize * 0.25)) {
-      turns++;
-      distanceSinceTurn = 0;
-    }
-  }
-
-  let minX = Number.POSITIVE_INFINITY, minY = Number.POSITIVE_INFINITY;
-  let maxX = Number.NEGATIVE_INFINITY, maxY = Number.NEGATIVE_INFINITY;
-  for (const point of filtered) {
-    const x = point.x * width, y = point.y * height;
-    minX = Math.min(minX, x); minY = Math.min(minY, y);
-    maxX = Math.max(maxX, x); maxY = Math.max(maxY, y);
-  }
-  const boundsWidth = maxX - minX;
-  const boundsHeight = maxY - minY;
-  const boundsDiagonal = Math.hypot(boundsWidth, boundsHeight);
-  const duration = filtered[filtered.length - 1].t - filtered[0].t;
-  const ease = Math.max(0, Math.min(100, sensitivity)) / 100;
-  const minimumTurns = Math.round(6 - 3 * ease);
-  // Connected writing often has many corners but advances across the page.
-  // Require repeated substantial traversals of the same bounding region,
-  // ignoring short backhooks and sample jitter between those traversals.
-  const countTraversals = (axisX: number, axisY: number): number => {
-    const coordinates = filtered.map((point) => point.x * width * axisX + point.y * height * axisY);
-    let minimum = Number.POSITIVE_INFINITY, maximum = Number.NEGATIVE_INFINITY;
-    for (const value of coordinates) { minimum = Math.min(minimum, value); maximum = Math.max(maximum, value); }
-    let extreme = coordinates[0], initialMinimum = extreme, initialMaximum = extreme, direction = 0, traversals = 0;
-    const travel = Math.max(8, (maximum - minimum) * 0.6);
-    for (const value of coordinates.slice(1)) {
-      if (direction === 0) {
-        // A wave can start halfway between its peaks. Track its first range
-        // instead of requiring it to travel a full range from pointerdown.
-        initialMinimum = Math.min(initialMinimum, value); initialMaximum = Math.max(initialMaximum, value);
-        if (initialMaximum - initialMinimum >= travel) {
-          direction = value === initialMaximum ? 1 : -1; extreme = value; traversals++;
-        }
-      } else if ((value - extreme) * direction >= 0) {
-        extreme = value;
-      } else if ((extreme - value) * direction >= travel) {
-        direction *= -1; extreme = value; traversals++;
-      }
-    }
-    return traversals;
-  };
-  if (pathLength < Math.max(96, eraserSize * 3) || boundsDiagonal < eraserSize * 0.5
-    || duration < 0 || duration > 1_800) return false;
-  const density = pathLength / Math.max(1, boundsDiagonal);
-  const horizontalTraversals = countTraversals(1, 0);
-  const verticalTraversals = countTraversals(0, 1);
-  const dominantTraversals = boundsWidth >= boundsHeight ? horizontalTraversals : verticalTraversals;
-  if (turns >= minimumTurns && dominantTraversals >= minimumTurns + 1 && density >= 4.8 - 1.6 * ease) return true;
-
-  // Smooth loops and waves do not have sharp sample-to-sample corners. Count
-  // substantial excursions on either axis (also diagonals for rotated marks).
-  // More repetitions and higher density keep isolated circles, ordinary waves
-  // and handwriting that advances across a line from becoming erase commands.
-  const diagonal = Math.SQRT1_2;
-  return density >= 5.2 - 1.2 * ease && Math.max(horizontalTraversals, verticalTraversals,
-    countTraversals(diagonal, diagonal), countTraversals(diagonal, -diagonal)) >= minimumTurns + 2;
-}
-
-export function eraseStrokeSegmentsByScribble(stroke: InkStroke, path: InkPoint[], radius: number, width: number, height: number,
-  canErasePoint: (point: InkPoint) => boolean = () => true): InkPoint[][] | null {
-  const bounds = boundsForPointSets([path]);
-  if (!bounds) return null;
-  // Fill the complete gesture bounds as well as the nib path. Testing only
-  // the sampled path leaves islands between successive loops, which render as
-  // tiny dots. A rectangle is deterministic for circles, waves and rotated
-  // scribbles and matches the user's visible scrub area.
-  const result = splitErasedStrokeSamples(sampleStrokeForEraser(stroke.points, radius, width, height), (point) =>
-    point.x >= bounds.minX - radius / width && point.x <= bounds.maxX + radius / width
-    && point.y >= bounds.minY - radius / height && point.y <= bounds.maxY + radius / height
-    && canErasePoint(point));
-  return result.erased ? result.segments : null;
-}
-
-export function eraseStrokeSegments(stroke: InkStroke, center: InkPoint, radius: number, mode: Exclude<EraserMode, "stroke">, width: number, height: number): InkPoint[][] {
-  return splitErasedStrokeSamples(sampleStrokeForEraser(stroke.points, radius, width, height),
-    (point) => pointInsideEraser(point, center, radius, mode, width, height)).segments;
-}
-
-function splitErasedStrokeSamples(samples: InkPoint[], contains: (point: InkPoint) => boolean): { segments: InkPoint[][]; erased: boolean } {
-  const segments: InkPoint[][] = [];
-  let segment: InkPoint[] = [];
-  let erased = false;
-  const flush = () => {
-    if (segment.length > 0) segments.push(segment);
-    segment = [];
-  };
-  for (const point of samples) {
-    if (contains(point)) { flush(); erased = true; }
-    else segment.push({ ...point });
-  }
-  flush();
-  return { segments, erased };
-}
-
-function pointInsideEraser(point: InkPoint, center: InkPoint, radius: number, mode: EraserMode, width: number, height: number): boolean {
-  const dx = (point.x - center.x) * width;
-  const dy = (point.y - center.y) * height;
-  return mode === "square" ? Math.abs(dx) <= radius && Math.abs(dy) <= radius : Math.hypot(dx, dy) <= radius;
-}
-
-function segmentIntersectsEraser(start: InkPoint, end: InkPoint, center: InkPoint, radius: number, mode: EraserMode, width: number, height: number): boolean {
-  const ax = (start.x - center.x) * width;
-  const ay = (start.y - center.y) * height;
-  const bx = (end.x - center.x) * width;
-  const by = (end.y - center.y) * height;
-  if (mode === "square") return segmentIntersectsBox(ax, ay, bx, by, radius);
-  const dx = bx - ax, dy = by - ay;
-  const lengthSquared = dx * dx + dy * dy;
-  const t = lengthSquared === 0 ? 0 : Math.max(0, Math.min(1, -(ax * dx + ay * dy) / lengthSquared));
-  return Math.hypot(ax + dx * t, ay + dy * t) <= radius;
-}
-
-function segmentIntersectsBox(ax: number, ay: number, bx: number, by: number, radius: number): boolean {
-  let minimum = 0, maximum = 1;
-  const dx = bx - ax, dy = by - ay;
-  for (const [origin, delta] of [[ax, dx], [ay, dy]] as const) {
-    if (delta === 0) { if (origin < -radius || origin > radius) return false; continue; }
-    const near = (-radius - origin) / delta;
-    const far = (radius - origin) / delta;
-    minimum = Math.max(minimum, Math.min(near, far));
-    maximum = Math.min(maximum, Math.max(near, far));
-    if (minimum > maximum) return false;
-  }
-  return true;
-}
-
-function sampleStrokeForEraser(points: InkPoint[], radius: number, width: number, height: number): InkPoint[] {
-  if (points.length < 2) return points.map((point) => ({ ...point }));
-  const sampled: InkPoint[] = [{ ...points[0] }];
-  const step = Math.max(1, radius / 3);
-  for (let index = 1; index < points.length; index++) {
-    const start = points[index - 1], end = points[index];
-    const pixels = Math.hypot((end.x - start.x) * width, (end.y - start.y) * height);
-    const count = Math.max(1, Math.ceil(pixels / step));
-    for (let sample = 1; sample <= count; sample++) sampled.push(interpolateInkPoint(start, end, sample / count));
-  }
-  return sampled;
-}
-
-function interpolateInkPoint(start: InkPoint, end: InkPoint, amount: number): InkPoint {
-  return {
-    x: start.x + (end.x - start.x) * amount,
-    y: start.y + (end.y - start.y) * amount,
-    pressure: start.pressure + (end.pressure - start.pressure) * amount,
-    tiltX: start.tiltX === undefined || end.tiltX === undefined ? end.tiltX : start.tiltX + (end.tiltX - start.tiltX) * amount,
-    tiltY: start.tiltY === undefined || end.tiltY === undefined ? end.tiltY : start.tiltY + (end.tiltY - start.tiltY) * amount,
-    t: start.t + (end.t - start.t) * amount,
-  };
-}
-
-export function cloneStroke(stroke: InkStroke): InkStroke {
-  return { ...stroke, points: clonePoints(stroke.points), dynamics: stroke.dynamics ? { ...stroke.dynamics } : undefined };
-}
-
-export function clonePoints(points: InkPoint[]): InkPoint[] {
-  return points.map((point) => ({ ...point }));
 }
 
 export function packStrokePoints(points: readonly InkPoint[], start: number): Float64Array {
@@ -484,44 +314,6 @@ function restoredStroke(stroke: InkStroke): InkStroke {
   // it would lift restored ink above strokes drawn after it. updatedAt keeps
   // the merge timestamp.
   return { ...cloneStroke(stroke), id: newId("stroke"), updatedAt: now };
-}
-
-export function translatePoints(points: InkPoint[], dx: number, dy: number): InkPoint[] {
-  // Translation is an isometry: keep the sampled timestamps so the speed
-  // dynamics channel still sees the original writing pace after a lasso move
-  // (the spread operator already carries `t` over).
-  return points.map((point) => ({ ...point, x: point.x + dx, y: point.y + dy }));
-}
-
-export function selectionBounds(strokes: InkStroke[]): { minX: number; minY: number; maxX: number; maxY: number } | null {
-  return boundsForPointSets(strokes.map((stroke) => stroke.points));
-}
-
-export function boundsForPointSets(pointSets: InkPoint[][]): { minX: number; minY: number; maxX: number; maxY: number } | null {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const points of pointSets) for (const point of points) {
-    minX = Math.min(minX, point.x);
-    minY = Math.min(minY, point.y);
-    maxX = Math.max(maxX, point.x);
-    maxY = Math.max(maxY, point.y);
-  }
-  return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : null;
-}
-
-export function pointInPolygon(point: InkPoint, polygon: InkPoint[]): boolean {
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const a = polygon[i];
-    const b = polygon[j];
-    const crosses = (a.y > point.y) !== (b.y > point.y)
-      && point.x < ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x;
-    if (crosses) inside = !inside;
-  }
-  return inside;
-}
-
-export function constrainDelta(delta: number, minimum: number, maximum: number): number {
-  return Math.max(-minimum, Math.min(1 - maximum, delta));
 }
 
 function isPointerCaptureError(error: unknown): boolean {
@@ -867,6 +659,9 @@ export abstract class InkWritingView extends FileView {
   protected interaction: InteractionContext | null = null;
   protected interactionGeneration = 0;
   protected activePointerId: number | null = null;
+  /** Pointer mode handles pen contacts outside the generic ink interaction;
+   *  retain their ownership so a paired Touch stream cannot pan the page. */
+  private pointerToolPenId: number | null = null;
   protected activeStroke: InkStroke | null = null;
   /** Raw, session-only pen path for gesture recognition; rendered stroke
    *  points are smoothed and may no longer retain small rapid reversals. */
@@ -934,6 +729,7 @@ export abstract class InkWritingView extends FileView {
   /** Reused dedup map for eraseAt(): cleared per call instead of rebuilt, so
    *  a grazing eraser does not allocate a spread chain per input sample. */
   private eraserCandidateScratch = new Map<string, InkStroke>();
+  private lastEraserPoint: InkPoint | null = null;
 
   // --- lasso / selection
   protected lassoPath: InkPoint[] = [];
@@ -1555,6 +1351,18 @@ export abstract class InkWritingView extends FileView {
   protected fastPagingRailBorrowed = false;
   private fastPagingRailTimer: number | undefined;
 
+  /** A user action in the rail turns a temporary fast-paging reveal into an
+   *  explicit open state, so the quiet timer cannot hide it unexpectedly. */
+  protected claimFastPagingRail(): void {
+    this.fastPagingRailBorrowed = false;
+  }
+
+  /** Keep a fast-paging reveal open only when the user activates a page thumb. */
+  protected claimFastPagingRailFromSelection(event: Event): void {
+    const target = event.target as Element | null;
+    if (target?.closest?.(".ink-page-thumb")) this.claimFastPagingRail();
+  }
+
   /** Snapshot the trigger press before the host dismisses its menu on pointerdown. */
   protected beginPageOptionsMenu(event: Pick<MouseEvent, "currentTarget">): Menu | null {
     if (!this.pageOptionsDismissRegistered) {
@@ -1644,6 +1452,18 @@ export abstract class InkWritingView extends FileView {
     this.registerDomEvent(scroller, "scroll", () => { this.cancelPasteHold(); this.hideSelectionActions(); this.pasteTarget = null; }, { passive: true });
     this.register(() => { this.cancelPasteHold(); this.hideSelectionActions(); this.closeLassoSettings(); });
     scroller.tabIndex = 0;
+    this.registerDomEvent(scroller, "pointerdown", (event: PointerEvent) => {
+      if (event.pointerType !== "pen" || this.state.tool !== "pointer"
+        || !this.inputHost()?.contains(event.target as Node)) return;
+      this.pointerToolPenId = event.pointerId;
+      if (this.touchGesture?.axis === "x") this.cancelPageFlip();
+      this.touchGesture = null;
+    }, true);
+    for (const type of ["pointerup", "pointercancel"] as const) {
+      this.registerDomEvent(doc, type, (event: PointerEvent) => {
+        if (this.pointerToolPenId === event.pointerId) this.pointerToolPenId = null;
+      }, true);
+    }
     this.registerDomEvent(scroller, "pointerdown", (event) => {
       if (event.pointerType !== "mouse" || this.nativeMenuOpen()) return;
       if ((event.target as HTMLElement)?.closest?.(".ink-sticky-note") && !this.desktopSpaceDown && event.button !== 1) return;
@@ -1682,6 +1502,7 @@ export abstract class InkWritingView extends FileView {
       this.cancelPasteHold(); this.hideSelectionActions(); this.pasteTarget = null;
       this.finishFingerInput(); this.touchGesture = null;
       this.desktopSpaceDown = false;
+      this.pointerToolPenId = null;
       scroller.classList.remove("ink-pan-ready");
       this.endDesktopPan();
       this.desktopWheel.reset();
@@ -1699,8 +1520,13 @@ export abstract class InkWritingView extends FileView {
     // Undo/redo, text insertion, tool switching and selection deletion all
     // mutate the model; during a notebook open that model is transient.
     if (this.openingNotebook()) return false;
-    if (this.activePointerId !== null || this.desktopPan) return false;
     const key = event.key.toLowerCase();
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && (key === "z" || key === "y")) {
+      if (this.desktopPan || this.flipSettling || this.inputLocked()) return false;
+      if (key === "z") { if (event.shiftKey) this.redo(); else this.undo(); return true; }
+      if (!event.shiftKey) { this.redo(); return true; }
+    }
+    if (this.activePointerId !== null || this.desktopPan) return false;
     if ((event.ctrlKey || event.metaKey) && !event.altKey) {
       if (this.flipSettling) return false;
       if (key === "+" || key === "=") { this.desktopZoom(1.1); return true; }
@@ -1712,8 +1538,6 @@ export abstract class InkWritingView extends FileView {
         if (key === "x" && this.selectedStrokes().length > 0) { this.copySelection(true); return true; }
         if (key === "v" && this.availableClipboard()) { this.pasteSelection(); return true; }
       }
-      if (key === "z") { if (event.shiftKey) this.redo(); else this.undo(); return true; }
-      if (key === "y" && !event.shiftKey) { this.redo(); return true; }
       return false;
     }
     if (event.altKey) {
@@ -1805,6 +1629,7 @@ export abstract class InkWritingView extends FileView {
       this.showZoomHud(); this.scheduleZoomHudHide();
       return;
     }
+    this.refreshFastPagingRailQuietTimer();
     const motion = this.desktopWheel.begin(delta, event.shiftKey, event.timeStamp);
     // Nested surfaces own only their scrollable axis, even at their edge.
     const ownerWindow = scroller.ownerDocument.defaultView!;
@@ -1833,8 +1658,21 @@ export abstract class InkWritingView extends FileView {
       }
       return;
     }
+    if (motion.suppressed) {
+      event.preventDefault();
+      return;
+    }
+    // Keep ordinary vertical panning on the browser's native scroll path.
+    // Cancelling every touchpad sample and synchronously writing scrollTop
+    // forced high-rate scrolling through the main-thread wheel handler. At a
+    // page edge (or while a page flip is settling) custom handling below still
+    // owns the gesture so navigation and queued flips remain deterministic.
+    if (!this.flipSettling && motion.axis === "y"
+      && this.wheelCanScroll(scroller, motion.axis, motion.movement)) {
+      this.desktopWheel.pageDelta(motion, true);
+      return;
+    }
     event.preventDefault();
-    if (motion.suppressed) return;
     let scrolled = false;
     if (!this.flipSettling && (motion.axis === "y" || this.zoomLevel() > 1)) {
       const property = motion.axis === "x" ? "scrollLeft" : "scrollTop";
@@ -1885,14 +1723,23 @@ export abstract class InkWritingView extends FileView {
 
   /** Feeds wheel-driven page flips into the fast-paging detector. Only a
    *  flip that keeps the window engaged re-arms the collapse timer, so once
-   *  the rate drops below the threshold the rail comes back one quiet second
-   *  after the last fast flip - continued slow paging never extends it. */
+   *  the rate drops below the threshold the rail comes back after a short
+   *  quiet pause following the last fast flip - continued slow paging never
+   *  extends it. */
   private noteWheelPages(pages: number, axis: "x" | "y", at: number): void {
     if (!this.wheelPacer.record(pages, axis, at)) return;
     if (!this.fastPagingRail) {
       this.fastPagingRail = true;
       this.onFastPagingRailExpanded();
     }
+    this.refreshFastPagingRailQuietTimer();
+  }
+
+  /** Wheel events are the only portable signal that a trackpad gesture is
+   *  still active. Keep a borrowed preview rail visible while valid scroll
+   *  input continues, even when the input does not produce another page flip. */
+  private refreshFastPagingRailQuietTimer(): void {
+    if (!this.fastPagingRail) return;
     if (this.fastPagingRailTimer !== undefined) window.clearTimeout(this.fastPagingRailTimer);
     this.fastPagingRailTimer = window.setTimeout(() => this.quietFastPagingRail(), FAST_PAGING_RAIL_IDLE_MS);
   }
@@ -1901,7 +1748,7 @@ export abstract class InkWritingView extends FileView {
    *  that can outlive this window (slow page renders, loaded machine), so a
    *  drain still in flight re-arms instead: collapsing mid-drain hides the
    *  rail while pages keep flipping and strands the remaining flips without
-   *  the centered follow - the quiet second belongs to the last flip, not
+   *  the centered follow - the quiet pause belongs to the last flip, not
    *  the last wheel event. */
   private quietFastPagingRail(): void {
     this.fastPagingRailTimer = undefined;
@@ -1924,19 +1771,30 @@ export abstract class InkWritingView extends FileView {
     this.wheelPacer.end();
   }
 
-  /** Keeps the active thumbnail vertically centered in the rail while fast
-   *  paging. The relative-rect delta moves only the rail's own scroll box
-   *  (unlike scrollIntoView, which may drag outer containers along), and
-   *  scrollTop clamps at both ends, so first and last pages settle at their
-   *  natural edge instead of forcing a center that does not exist. */
+  /** Scrolls only the thumbnail list so updates cannot move the editor. */
+  protected scrollRailThumb(rail: HTMLElement, thumb: HTMLElement, center = false): void {
+    const scrollContainer = thumb.closest<HTMLElement>(".ink-rail-thumbs") ?? rail;
+    const box = scrollContainer.getBoundingClientRect();
+    const rect = thumb.getBoundingClientRect();
+    if (scrollContainer.clientHeight <= 0 || rect.height <= 0) return;
+    const top = box.top + scrollContainer.clientTop;
+    const bottom = top + scrollContainer.clientHeight;
+    if (center) {
+      scrollContainer.scrollTop += (rect.top + rect.height / 2) - (top + scrollContainer.clientHeight / 2);
+    } else if (rect.top < top) {
+      scrollContainer.scrollTop += rect.top - top;
+    } else if (rect.bottom > bottom) {
+      scrollContainer.scrollTop += rect.bottom - bottom;
+    }
+  }
+
+  /** Keeps the active thumbnail vertically centered in the list while fast
+   *  paging. scrollTop clamps at both ends, so first and last pages settle at
+   *  their natural edge instead of forcing a center that does not exist. */
   protected followWheelPageThumb(): void {
     const rail = this.containerEl?.querySelector?.<HTMLElement>(".ink-page-rail");
     const thumb = rail?.querySelector<HTMLElement>(".ink-page-thumb.is-active");
-    if (!rail || !thumb) return;
-    const box = rail.getBoundingClientRect();
-    const rect = thumb.getBoundingClientRect();
-    if (box.height <= 0 || rect.height <= 0) return;
-    rail.scrollTop += (rect.top + rect.height / 2) - (box.top + box.height / 2);
+    if (rail && thumb) this.scrollRailThumb(rail, thumb, true);
   }
 
   protected onPointerDown(event: InkPointerSample, source: InteractionContext["source"] = "pointer"): void {
@@ -2011,6 +1869,7 @@ export abstract class InkWritingView extends FileView {
     this.eraserPreviewCells.clear();
     if (tool === "eraser") {
       this.updateEraserHover(point, true);
+      this.lastEraserPoint = point;
       if (this.eraseAt(point, page)) this.requestRender();
       return;
     }
@@ -2269,7 +2128,19 @@ export abstract class InkWritingView extends FileView {
         const sample = feed[index];
         const point = this.toPoint(sample, rect);
         if (interaction.tool === "eraser") {
-          changed = this.eraseAt(point, page, interaction.eraserMode, interaction.eraserSize) || changed;
+          const previous = this.lastEraserPoint ?? point;
+          const distance = Math.hypot((point.x - previous.x) * this.canvasLogicalWidth,
+            (point.y - previous.y) * this.canvasLogicalHeight);
+          const radius = (interaction.eraserMode ?? this.state.eraserMode) === "stroke"
+            ? STROKE_ERASER_HIT_RADIUS
+            : (interaction.eraserSize ?? this.state.eraserSize) / 2;
+          const spacing = Math.max(1, radius / 2);
+          const steps = Math.max(1, Math.min(MAX_ERASER_SWEEP_STEPS, Math.ceil(distance / spacing)));
+          for (let step = 1; step <= steps; step++) {
+            changed = this.eraseAt(interpolateInkPoint(previous, point, step / steps), page,
+              interaction.eraserMode, interaction.eraserSize) || changed;
+          }
+          this.lastEraserPoint = point;
         } else if (this.activeStroke && this.lastPoint) {
           clampLiftPressure(point, phase === "up" && index === feed.length - 1 ? this.lastPoint : null);
           // Raw capture: every sample is stored exactly as delivered. Repeated
@@ -2693,6 +2564,15 @@ export abstract class InkWritingView extends FileView {
 
   protected onTouchStart(event: TouchEvent): void {
     this.cancelPasteHold();
+    if (this.state.tool === "pointer" && this.pointerToolPenId !== null) {
+      // Pointer mode does not create a generic interaction for the pen. The
+      // parallel Touch stream must still stay with that pen, rather than
+      // being mistaken for a finger page-pan gesture.
+      this.touchGesture = null;
+      event.stopPropagation?.();
+      if (event.cancelable && event.touches.length < 2) event.preventDefault();
+      return;
+    }
     if (event.type === "touchstart") {
       this.hideSelectionActions(); this.pasteTarget = null;
       if (this.state.tool !== "lasso" && this.activePointerId === null && this.selectedStrokeIds.size
@@ -2754,7 +2634,7 @@ export abstract class InkWritingView extends FileView {
     };
     if (b) this.showZoomHud();
     else if (event.type === "touchstart" && !this.inputLocked()
-      && (this.state.fingerAsPen || this.state.tool === "lasso") && this.state.tool !== "pointer"
+      && this.state.fingerAsPen && this.state.tool !== "pointer" && this.state.tool !== "lasso"
       && this.inputHost()?.contains(a.target as Node) && pointInsideRect(a, rect)) {
       this.onPointerDown(fingerTouchSample(a, event.timeStamp), "finger-touch");
     }
@@ -2805,6 +2685,12 @@ export abstract class InkWritingView extends FileView {
 
   protected onTouchMove(event: TouchEvent): void {
     if (this.nativeMenuOpen()) { this.touchGesture = null; return; }
+    if (this.state.tool === "pointer" && this.pointerToolPenId !== null) {
+      this.touchGesture = null;
+      event.stopPropagation?.();
+      if (event.cancelable) event.preventDefault();
+      return;
+    }
     event.stopPropagation?.();
     if (this.onStylusTouch(event)) return;
     if (this.interaction?.source === "finger-touch") {
@@ -3529,9 +3415,9 @@ export abstract class InkWritingView extends FileView {
     this.drawPreview();
   }
 
-  protected drawInteractiveStrokes(strokes: InkStroke[], refine = false): void {
+  protected drawInteractiveStrokes(strokes: InkStroke[], refine = false, progressive = false): void {
     if (!this.ctx) return;
-    this.tiles?.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine);
+    this.tiles?.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine, undefined, progressive);
     this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
     this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
@@ -3699,7 +3585,7 @@ export abstract class InkWritingView extends FileView {
     const start = this.scribbleGesturePoints[0];
     // Keep device-rate input constant-time; inspect the whole path only on hold.
     if (!start || Math.hypot((point.x - start.x) * this.canvasLogicalWidth,
-      (point.y - start.y) * this.canvasLogicalHeight) < 40) return;
+      (point.y - start.y) * this.canvasLogicalHeight) < STRAIGHT_LINE_MIN_LENGTH_PX) return;
     // One timer serves the whole stroke. Raw-update streams used to cancel and
     // re-arm here on every hardware sample (hundreds of timers per second);
     // the settle callback instead re-checks the rest deadline and re-arms the
@@ -3719,7 +3605,7 @@ export abstract class InkWritingView extends FileView {
     const anchor = this.lineHoldAnchor;
     const start = this.scribbleGesturePoints[0];
     if (!anchor || !start || Math.hypot((anchor.x - start.x) * this.canvasLogicalWidth,
-      (anchor.y - start.y) * this.canvasLogicalHeight) < 40
+      (anchor.y - start.y) * this.canvasLogicalHeight) < STRAIGHT_LINE_MIN_LENGTH_PX
       || !canStraighten(this.scribbleGesturePoints, this.canvasLogicalWidth, this.canvasLogicalHeight)) return;
     this.geometricStroke = { start: { ...start }, kind: "line" };
     this.penModeler = null;
@@ -3762,6 +3648,7 @@ export abstract class InkWritingView extends FileView {
     this.scribbleGesturePoints = [];
     this.workerStrokePointIndex = 0;
     this.lastPoint = null;
+    this.lastEraserPoint = null;
     this.pendingLassoPoint = null;
     this.lassoPath = [];
     this.lassoDrag = null;
@@ -3865,9 +3752,9 @@ export abstract class InkWritingView extends FileView {
     // Recognition uses a stable logical size too: changing the ordinary eraser
     // must not make the same pen gesture stop qualifying as a scribble.
     if (!isScribbleEraseGesture(path, SCRIBBLE_REFERENCE_SIZE, this.canvasLogicalWidth, this.canvasLogicalHeight, this.state.scribbleSensitivity)) return false;
-    // A crossing-out mark erases locally, regardless of the regular eraser's
-    // mode/size. A narrow nib-sized tolerance must not erase neighbouring ink.
-    const radius = Math.max(2, Math.min(4, gesture.width / 2));
+    // Use the existing size control as a circular range around the pen's
+    // scribble path, but delete each intersecting stroke as one history item.
+    const radius = this.state.eraserSize / 2;
     let minX = Number.POSITIVE_INFINITY, minY = Number.POSITIVE_INFINITY;
     let maxX = Number.NEGATIVE_INFINITY, maxY = Number.NEGATIVE_INFINITY;
     for (const point of path) {
@@ -3893,26 +3780,24 @@ export abstract class InkWritingView extends FileView {
       ...(this.committingInkStrokes ?? []),
     ].map((stroke) => [stroke.id, stroke])).values()]
       .filter((stroke) => stroke.id !== gesture.id);
+    // Bound the temporary sweep for pathological input traces. If the full
+    // circle path cannot be represented within this cap, leave ink unchanged
+    // rather than allocate an unbounded sample array or erase only part of it.
+    const sweep = sampleStrokeForEraser(path, radius, this.canvasLogicalWidth, this.canvasLogicalHeight,
+      MAX_SCRIBBLE_RANGE_SAMPLES, SCRIBBLE_RANGE_SAMPLE_SPACING_DIVISOR);
+    if (sweep.length === 0) return false;
     const notes = [...(this.stickyInput?.notes ?? [])].reverse().filter((note) => !note.collapsed)
       .map((note) => ({ id: note.id, bounds: stickyBounds(note, this.stickyGeometry()) }));
-    const removed: InkStroke[] = [], replacements: InkStroke[] = [];
-    const now = Date.now();
+    const removed: InkStroke[] = [];
     for (const stroke of candidates) {
       const owner = this.stickyInput?.owners.get(stroke.id);
-      const segments = eraseStrokeSegmentsByScribble(stroke, path, radius, this.canvasLogicalWidth, this.canvasLogicalHeight, (point) => {
-        const top = notes.find(({ bounds: r }) => point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom);
-        return top?.id === owner?.id;
+      const hit = sweep.some((center) => {
+        const top = notes.find(({ bounds }) => center.x >= bounds.left && center.x <= bounds.right
+          && center.y >= bounds.top && center.y <= bounds.bottom);
+        if (owner ? top?.id !== owner.id : Boolean(top)) return false;
+        return strokeIntersectsEraser(stroke, center, radius, "circle", this.canvasLogicalWidth, this.canvasLogicalHeight);
       });
-      if (segments === null) continue;
-      removed.push(stroke);
-      for (const points of segments) {
-        // Keep the original createdAt so scribble-erase fragments stay below
-        // ink drawn after the original stroke (synthesis order = createdAt
-        // order). updatedAt keeps the merge timestamp.
-        const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, updatedAt: now };
-        replacements.push(replacement);
-        if (owner) this.stickyInput?.owners.set(replacement.id, owner);
-      }
+      if (hit) removed.push(stroke);
     }
     if (removed.length === 0) return false;
 
@@ -3921,8 +3806,6 @@ export abstract class InkWritingView extends FileView {
     this.materializePendingInkPreview(page);
     const removedIds = [gesture.id, ...removed.map((stroke) => stroke.id)];
     this.deleteStrokes(page, removedIds);
-    page.strokes.push(...replacements);
-    page.strokes.sort((left, right) => left.createdAt - right.createdAt);
     this.markChanged(page);
     this.queueWorkerOperation({
       type: "complete-stroke", pageId: page.id, strokeId: gesture.id,
@@ -3931,15 +3814,15 @@ export abstract class InkWritingView extends FileView {
     this.queueWorkerOperation({
       type: "patch-strokes",
       pageId: page.id,
-      upsert: replacements.map(cloneStroke),
+      upsert: [],
       remove: removedIds,
       deletedStrokeIds: [...page.deletedStrokeIds],
       pageUpdatedAt: page.updatedAt,
       notebookUpdatedAt: this.currentNotebook().updatedAt,
     });
-    this.tiles?.patchStrokes(replacements.filter((stroke) => !this.stickyInput?.owners.has(stroke.id)), removedIds,
+    this.tiles?.patchStrokes([], removedIds,
       page.strokes.filter((stroke) => !this.stickyInput?.owners.has(stroke.id)));
-    this.pushCommand(this.erasedStrokesCommand(page.id, removed.map(cloneStroke), replacements));
+    this.pushCommand(this.erasedStrokesCommand(page.id, removed.map(cloneStroke), []));
     this.activeStroke = null;
     this.drawInteractiveStrokes(page.strokes, true);
     return true;
@@ -3949,6 +3832,7 @@ export abstract class InkWritingView extends FileView {
 
   protected undo(): void {
     if (this.readingMode) return;
+    this.finishPointerInput(false);
     const command = this.undoStack.pop();
     if (!command) return;
     command.undo();
@@ -3958,6 +3842,7 @@ export abstract class InkWritingView extends FileView {
 
   protected redo(): void {
     if (this.readingMode) return;
+    this.finishPointerInput(false);
     const command = this.redoStack.pop();
     if (!command) return;
     command.redo();
@@ -3978,7 +3863,12 @@ export abstract class InkWritingView extends FileView {
     this.clearSelection();
     this.updateHistoryButtons();
     if (command.rebuild) this.renderAll();
-    else this.drawInteractiveStrokes(this.currentPage().strokes, true);
+    // History steps mount their replacement tiles as each render settles: the
+    // worker renders a batch cell by cell, so the atomic swap would hold the
+    // previous frame until the widest batch finished (the reported iPad
+    // undo/redo freeze). No preview layer is live here, so per-cell refresh
+    // exposes nothing transient — see InkCommit.progressive.
+    else this.drawInteractiveStrokes(this.currentPage().strokes, true, true);
     this.scheduleSave();
   }
 
@@ -4173,7 +4063,7 @@ export abstract class InkWritingView extends FileView {
       });
     }
     const sizeRow = pop.createDiv({ cls: "ink-eraser-size-row" });
-    sizeRow.createDiv({ cls: "ink-settings-label", text: "Size" });
+    const sizeLabel = sizeRow.createDiv({ cls: "ink-settings-label", text: "Size" });
     const range = sizeRow.createEl("input", { attr: { type: "range", "aria-label": "Eraser size" } });
     range.min = "8";
     range.max = "160";
@@ -4192,6 +4082,7 @@ export abstract class InkWritingView extends FileView {
     scribbleToggle.addEventListener("change", () => {
       this.state.scribbleErase = scribbleToggle.checked;
       sensitivity.disabled = !scribbleToggle.checked;
+      syncSizeVisibility();
       this.scheduleToolStateSave();
     });
     const sensitivityLabel = scribbleRow.createEl("label", { cls: "ink-eraser-size-row" });
@@ -4206,11 +4097,14 @@ export abstract class InkWritingView extends FileView {
       updateSensitivityLabel();
       this.scheduleToolStateSave();
     });
-    scribbleRow.createDiv({ cls: "ink-settings-label", text: "Scrub, loop or wave repeatedly over ink with the pen. Low: fewer accidental erases. High: fewer repetitions needed." });
-    // The stroke eraser ignores the size (fixed hit radius) - offer the
-    // slider only for the shapes that use it.
+    scribbleRow.createDiv({ cls: "ink-settings-label", text: "Scrub, loop or wave over ink with the pen. Strokes touched by its circular range are removed whole. Sensitivity controls how many repetitions are needed." });
+    // The stroke eraser itself keeps its fixed hit radius. In that mode the
+    // existing size setting controls the circular range for pen scribbling.
     const syncSizeVisibility = (): void => {
-      sizeRow.style.display = this.state.eraserMode === "stroke" ? "none" : "";
+      const scribbleRange = this.state.eraserMode === "stroke" && this.state.scribbleErase;
+      sizeLabel.setText(scribbleRange ? "Scribble range" : "Size");
+      range.setAttribute("aria-label", scribbleRange ? "Scribble erase range" : "Eraser size");
+      sizeRow.style.display = this.state.eraserMode === "stroke" && !this.state.scribbleErase ? "none" : "";
     };
     syncSizeVisibility();
     this.eraserPopover = pop;

@@ -26,6 +26,13 @@ export interface RenderBackend {
 }
 
 export interface Rect { x: number; y: number; width: number; height: number }
+export interface TilePrewarmPage {
+  page: InkPage;
+  width: number;
+  height: number;
+  viewport: Rect;
+  density: number;
+}
 const TILE = 128;
 // Bleed is measured in logical page pixels. Keeping it independent from
 // backing density prevents high-DPR tiles from exposing seams at boundaries.
@@ -33,6 +40,7 @@ const BLEED = 4;
 const FIRST_FRAME_PREVIEW_STROKE_LIMIT = 64;
 const MAX_PIXELS = 16_000_000;
 const MAX_TILE_DENSITY = 9;
+const MAX_PENDING_PREWARM_TILES = 4;
 
 interface IndexedStroke {
   stroke: InkStroke;
@@ -219,6 +227,14 @@ interface InkCommit {
   // must skip still-pending strokes (the overlay draws them), while strokes
   // patched into the index for this commit have already left the set.
   excluded: readonly string[] | undefined;
+  // History commits (undo/redo) keep no live preview layer, so each tile may
+  // mount the moment its render settles. Holding them for the atomic swap
+  // serializes the whole batch in front of one visible refresh, and the
+  // worker renders cells one request at a time — a wide batch then reads as
+  // a multi-second frozen frame on iPad instead of a cell-by-cell refresh.
+  // Gesture commits (eraser/lasso) keep the swap: their preview layers must
+  // not expose half-committed frames.
+  progressive: boolean;
 }
 
 export function tileDensity(viewport: Rect, density: number): number {
@@ -264,6 +280,7 @@ export class TileRenderer {
   private backend: RenderBackend | null = null;
   private backendError: ((error: unknown) => void) | null = null;
   private pendingTiles = new Map<string, number>();
+  private pendingPrewarmTiles = new Set<string>();
   private displayScale = 1;
   // Strokes the latest sync/setPage excluded from the main-thread index are
   // already in the worker index (complete-stroke fires at pen-up), so worker
@@ -285,6 +302,7 @@ export class TileRenderer {
     this.backendError = onError ?? null;
     this.jobs = [];
     this.pendingTiles.clear();
+    this.pendingPrewarmTiles?.clear();
   }
 
   setPage(page: InkPage, width: number, height: number, exclude?: StrokeExclusion): void {
@@ -292,6 +310,7 @@ export class TileRenderer {
     this.backend?.cancelGeneration?.(this.renderGeneration);
     const state = this.state(page, width, height);
     this.pendingTiles.clear();
+    this.pendingPrewarmTiles?.clear();
     // A page switch orphans the dropped refine queue: it described the
     // previous page's viewport, so the flag must not compensate here.
     this.droppedRefine = false;
@@ -403,7 +422,8 @@ export class TileRenderer {
     this.evict();
   }
 
-  commitInteractive(viewport: Rect, density: number, refine = true, onComplete: (committed: boolean) => void = () => undefined): void {
+  commitInteractive(viewport: Rect, density: number, refine = true, onComplete: (committed: boolean) => void = () => undefined,
+    progressive = false): void {
     this.cancelInkCommit();
     if (!this.active || this.disposed) { onComplete(false); return; }
     // Keep the previous complete frame mounted while every changed visible
@@ -433,7 +453,8 @@ export class TileRenderer {
     for (const cell of cells) this.heldCells.add(this.holdKey(this.active, cell));
     this.jobs = this.jobs.filter(job => !this.isHeld(job));
     this.inkCommit = { state: this.active, strokes: [], cells, clearCells, jobs, tiles: [], onComplete,
-      invalid: false, generation: this.renderGeneration, inFlight: 0, excluded: this.workerExclusionSnapshot() };
+      invalid: false, generation: this.renderGeneration, inFlight: 0, excluded: this.workerExclusionSnapshot(),
+      progressive };
     this.scheduleInkCommit();
   }
 
@@ -453,7 +474,7 @@ export class TileRenderer {
     }
     this.jobs = this.jobs.filter(job => !this.isHeld(job));
     this.inkCommit = { state: this.active, strokes, cells, clearCells: [], jobs, tiles, onComplete, invalid: false,
-      generation: this.renderGeneration, inFlight: 0, excluded: this.workerExclusionSnapshot() };
+      generation: this.renderGeneration, inFlight: 0, excluded: this.workerExclusionSnapshot(), progressive: false };
     if (jobs.length === 0) this.finishInkCommit(true);
     else this.scheduleInkCommit();
   }
@@ -478,6 +499,7 @@ export class TileRenderer {
     this.frame = null;
     this.jobs = [];
     this.pendingTiles.clear();
+    this.pendingPrewarmTiles?.clear();
     this.gestureActive = true;
   }
 
@@ -555,29 +577,71 @@ export class TileRenderer {
 
   prewarm(pages: InkPage[]): void {
     if (!this.active) return;
-    const keep = new Set([this.active.page, ...pages]);
+    const { width, height } = this.active.index;
+    this.prewarmPages(pages.map((page) => ({ page, width, height, viewport: this.viewport, density: this.density })));
+  }
+
+  /** Schedule neighbor tiles before a page-turn input needs to paint them. */
+  prewarmPages(pages: TilePrewarmPage[]): void {
+    if (!this.active) return;
+    const keep = new Set([this.active.page, ...pages.map(({ page }) => page)]);
     for (const [page, state] of this.states) if (!keep.has(page)) {
       this.states.delete(page);
       for (const [key, tile] of this.cache) if (tile.state === state) this.drop(key, tile);
     }
     this.jobs = this.jobs.filter(job => keep.has(job.state.page));
-    for (const page of pages) {
-      const state = this.state(page, this.active.index.width, this.active.index.height);
-      state.index.sync(page.strokes);
+    for (const request of pages) {
+      const { page, width, height, viewport } = request;
+      const density = tileDensity(viewport, request.density);
+      const state = this.state(page, width, height);
+      if (state.syncedStrokes !== page.strokes || state.syncedPageRevision !== page.updatedAt) {
+        state.index.sync(page.strokes);
+      }
       state.syncedStrokes = page.strokes;
       state.syncedPageRevision = page.updatedAt;
-      // Preload only the same visible region, not entire neighboring pages.
-      for (const cell of cellKeys(this.viewport, state.index.width, state.index.height)) {
+      for (const cell of cellKeys(viewport, state.index.width, state.index.height)) {
         if (!state.index.hasCell(cell)) continue;
-        if (this.get(state, cell, this.density)) continue;
+        if (this.get(state, cell, density)) continue;
         // Repeated prewarm passes must not queue a cell twice: the schedule
         // loop drains one job per frame, so duplicates would linger behind
         // and re-render work that an earlier pass already has in flight.
-        if (this.jobs.some(job => job.state === state && job.cell === cell && job.density === this.density)) continue;
-        this.jobs.push({ state, cell, density: this.density, priority: "prewarm" });
+        if (this.jobs.some(job => job.state === state && job.cell === cell && job.density === density)) continue;
+        this.jobs.push({ state, cell, density, priority: "prewarm" });
       }
     }
     this.schedule();
+  }
+
+  /** True only when the page snapshot has every occupied tile at exact density. */
+  hasCachedPreview(request: TilePrewarmPage): boolean {
+    return this.cachedPreviewTiles(request) !== null;
+  }
+
+  /** Copy exact-density cached tiles into a page preview without re-running stroke geometry on input. */
+  drawCachedPreview(request: TilePrewarmPage, context: CanvasRenderingContext2D): boolean {
+    const tiles = this.cachedPreviewTiles(request);
+    if (!tiles) return false;
+    const { width } = request;
+    for (const tile of tiles) {
+      const [column, row] = tile.cell.split(":").map(Number);
+      const x = column * TILE, y = row * TILE;
+      const cellWidth = Math.min(TILE, width - x), cellHeight = Math.min(TILE, request.height - y);
+      const bleed = Math.ceil(BLEED * tile.density);
+      const sourceWidth = Math.ceil(cellWidth * tile.density), sourceHeight = Math.ceil(cellHeight * tile.density);
+      context.drawImage(tile.canvas, bleed, bleed, sourceWidth, sourceHeight, x, y, cellWidth, cellHeight);
+    }
+    return true;
+  }
+
+  private cachedPreviewTiles(request: TilePrewarmPage): Tile[] | null {
+    const { page, width, height, viewport } = request;
+    const state = this.states.get(page);
+    if (!state || state.index.width !== width || state.index.height !== height
+      || state.syncedStrokes !== page.strokes || state.syncedPageRevision !== page.updatedAt) return null;
+    const density = tileDensity(viewport, request.density);
+    const cells = cellKeys(viewport, width, height).filter((cell) => state.index.hasCell(cell));
+    const tiles = cells.map((cell) => this.get(state, cell, density));
+    return tiles.some((tile) => tile === undefined) ? null : tiles as Tile[];
   }
 
   dispose(): void {
@@ -588,7 +652,7 @@ export class TileRenderer {
     this.abortInkCommit(false);
     this.discardResizeGhost();
     for (const [key, tile] of this.cache) this.drop(key, tile);
-    this.states.clear(); this.jobs = []; this.pendingTiles.clear(); this.host.replaceChildren();
+    this.states.clear(); this.jobs = []; this.pendingTiles.clear(); this.pendingPrewarmTiles?.clear(); this.host.replaceChildren();
   }
 
   private state(page: InkPage, width: number, height: number): PageTiles {
@@ -630,7 +694,7 @@ export class TileRenderer {
       this.ghost = ghost;
       this.host.appendChild(ghost);
     }
-    // Repeat relayouts (the rail's 200ms animation) rescale the original
+    // Repeat relayouts (the rail's width animation) rescale the original
     // rasters instead of re-wrapping an already-scaled ghost.
     this.ghost.style.transform = `scale(${nextWidth / this.ghostBaseWidth})`;
   }
@@ -680,6 +744,9 @@ export class TileRenderer {
 
   private schedule(): void {
     if (!this.jobs.length || this.disposed || this.inkCommitPaused || this.inkCommit) return;
+    const pendingPrewarmTiles = this.pendingPrewarmTiles ?? (this.pendingPrewarmTiles = new Set());
+    const hasVisibleJobs = () => this.jobs.some((job) => job.priority !== "prewarm");
+    if (this.backend && !hasVisibleJobs() && pendingPrewarmTiles.size >= MAX_PENDING_PREWARM_TILES) return;
     if (this.backend && this.frame === null) {
       const firstVisible = this.jobs.findIndex((job) => job.priority !== "prewarm");
       if (firstVisible >= 0) this.requestWorkerTile(this.jobs.splice(firstVisible, 1)[0]);
@@ -689,10 +756,18 @@ export class TileRenderer {
       this.frame = null;
       // The worker owns a priority queue, so feed it the visible batch at once
       // instead of limiting its throughput to one request per animation frame.
+      // Prewarm tiles are only snapshots for a later turn, so cap their in-flight
+      // transfers to keep a page-sized burst from competing with animation frames.
       // Main-thread rasterization stays one tile per frame to bound input work.
-      const limit = this.backend ? this.jobs.length : 1;
+      const visibleCount = this.backend ? this.jobs.filter((job) => job.priority !== "prewarm").length : 0;
+      const limit = this.backend
+        ? visibleCount || Math.min(this.jobs.length, MAX_PENDING_PREWARM_TILES - pendingPrewarmTiles.size)
+        : 1;
       for (let count = 0; count < limit; count++) {
-        const job = this.jobs.shift();
+        const jobIndex = this.backend && hasVisibleJobs()
+          ? this.jobs.findIndex((job) => job.priority !== "prewarm") : 0;
+        if (jobIndex < 0) break;
+        const [job] = this.jobs.splice(jobIndex, 1);
         if (!job || this.isHeld(job)) continue;
         const tile = this.get(job.state, job.cell, job.density);
         if (tile) {
@@ -752,8 +827,19 @@ export class TileRenderer {
                 this.finishInkCommit(false);
                 return;
               }
-              if (result.revision === (job.state.index.revisions.get(job.cell) ?? 0)) commit.tiles.push(this.tileFromBitmap(job, result));
-              else commit.invalid = true;
+              if (result.revision === (job.state.index.revisions.get(job.cell) ?? 0)) {
+                const tile = this.tileFromBitmap(job, result);
+                commit.tiles.push(tile);
+                // Progressive history commits mount the moment their tile
+                // settles (see InkCommit.progressive). finishInkCommit repeats
+                // the cache/attach pair idempotently, and its invalid path
+                // keeps individually settled tiles because cacheTile already
+                // holds them.
+                if (commit.progressive) {
+                  this.cacheTile(tile);
+                  if (this.visible.has(tile.cell)) this.attach(tile);
+                }
+              } else commit.invalid = true;
               commit.inFlight -= 1;
               if (commit.inFlight === 0) this.finishInkCommit(true);
             })
@@ -795,7 +881,12 @@ export class TileRenderer {
           });
         return;
       }
-      commit.tiles.push(this.createInkTile(job, commit.strokes));
+      const painted = this.createInkTile(job, commit.strokes);
+      commit.tiles.push(painted);
+      if (commit.progressive) {
+        this.cacheTile(painted);
+        if (this.visible.has(painted.cell)) this.attach(painted);
+      }
       if (commit.jobs.length > 0) this.scheduleInkCommit();
       else this.finishInkCommit(true);
     });
@@ -870,10 +961,14 @@ export class TileRenderer {
     const revision = job.state.index.revisions.get(job.cell) ?? 0;
     const generation = this.renderGeneration;
     this.pendingTiles.set(key, generation);
+    if (job.priority === "prewarm") (this.pendingPrewarmTiles ??= new Set()).add(key);
     this.backend.renderTile(job.state.page.id, job.cell, job.density, revision, job.state.index.width, job.state.index.height,
       generation, job.priority ?? "visible", this.workerExclusionSnapshot(), this.candidateStrokeIds(job.state, job.cell))
       .then((result) => {
-        if (this.pendingTiles.get(key) === generation) this.pendingTiles.delete(key);
+        if (this.pendingTiles.get(key) === generation) {
+          this.pendingTiles.delete(key);
+          this.pendingPrewarmTiles?.delete(key);
+        }
         if (this.disposed || generation !== this.renderGeneration || result.pageId !== job.state.page.id || result.cell !== job.cell) {
           result.bitmap.close();
           return;
@@ -891,7 +986,10 @@ export class TileRenderer {
         this.schedule();
       })
       .catch((error) => {
-        if (this.pendingTiles.get(key) === generation) this.pendingTiles.delete(key);
+        if (this.pendingTiles.get(key) === generation) {
+          this.pendingTiles.delete(key);
+          this.pendingPrewarmTiles?.delete(key);
+        }
         if (isStaleRenderError(error)) { this.schedule(); return; }
         this.backendError?.(error);
         this.schedule();

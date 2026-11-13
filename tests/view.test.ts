@@ -351,6 +351,23 @@ describe("consecutive handwriting input", () => {
     expect(run(160)).toBe(true);
   });
 
+  it("sweeps the eraser across sparse pointer samples", () => {
+    const { internal } = setup();
+    const page = internal.notebook.pages[0];
+    page.strokes.push({
+      id: "crossed-between-events", pageId: page.id, tool: "pen", color: "#000", width: 3, opacity: 1,
+      points: [{ x: 0.5, y: 0.2, pressure: 0.5, t: 1 }], createdAt: 1, updatedAt: 1,
+    });
+    internal.state.tool = "eraser";
+    internal.state.eraserMode = "stroke";
+
+    internal.onPointerDown(pointer(0, { clientY: 20 }));
+    internal.onPointerUp(pointer(100, { clientY: 20 }));
+
+    expect(page.strokes).toEqual([]);
+    expect(page.deletedStrokeIds).toContain("crossed-between-events");
+  });
+
   it("commits a cross-tile stroke erasure as one coherent visible update", () => {
     const { internal } = setup();
     const page = internal.notebook.pages[0];
@@ -364,7 +381,9 @@ describe("consecutive handwriting input", () => {
     internal.onPointerUp(pointer(50, { clientY: 50 }));
     const tiles = (internal as unknown as { tiles: { commitInteractive: ReturnType<typeof vi.fn> } }).tiles;
     expect(page.strokes).toHaveLength(0);
-    expect(tiles.commitInteractive).toHaveBeenCalledWith(expect.any(Object), 1, true);
+    // Eraser commits stay atomic: the progressive flag rides only on the
+    // undo/redo history path (afterCommand).
+    expect(tiles.commitInteractive).toHaveBeenCalledWith(expect.any(Object), 1, true, undefined, false);
   });
 
   it("splits a stroke around a circular local eraser", () => {
@@ -432,7 +451,7 @@ describe("consecutive handwriting input", () => {
       .toBeLessThan(page.strokes.findIndex((stroke) => stroke.id === "newer"));
   });
 
-  it("keeps scribble-erase fragments at the original createdAt", () => {
+  it("deletes whole strokes hit by the circular scribble range and restores them on undo", () => {
     const { internal } = setup();
     const page = internal.notebook.pages[0];
     page.strokes.push({
@@ -443,51 +462,58 @@ describe("consecutive handwriting input", () => {
       id: "newer", pageId: page.id, tool: "pen", color: "#f00", width: 3, opacity: 1,
       points: [{ x: 0.1, y: 0.1, pressure: 0.5, t: 3 }], createdAt: 3000, updatedAt: 3000,
     });
+    const original = structuredClone(page.strokes[0]);
+    internal.state.eraserSize = 20;
     const gesture = { id: "gesture", pageId: page.id, tool: "pen" as const, color: "#000", width: 8, opacity: 1, points: [], createdAt: 4000, updatedAt: 4000 };
     const path = scribbleWaves(4, 50).map((point, index, all) => ({
       x: point.x / 100, y: point.y / 100, pressure: 0.5, t: 1_000 + 1_200 * index / (all.length - 1),
     }));
     expect(internal.finishScribbleErase(page, gesture, path)).toBe(true);
     expect(page.strokes.every((stroke) => stroke.id !== "early" && stroke.id !== "gesture")).toBe(true);
-    const fragments = page.strokes.filter((stroke) => stroke.id !== "newer");
-    expect(fragments.length).toBeGreaterThan(0);
-    expect(fragments.every((fragment) => fragment.createdAt === 1000)).toBe(true);
-    // Scribble replacements keep push order; the createdAt they carry decides
-    // the next sort (undo/redo restore, worker tile patches).
-    page.strokes.sort((left, right) => left.createdAt - right.createdAt);
-    for (const fragment of fragments) {
-      expect(page.strokes.indexOf(fragment)).toBeLessThan(page.strokes.findIndex((stroke) => stroke.id === "newer"));
-    }
+    expect(page.strokes.map((stroke) => stroke.id)).toEqual(["newer"]);
+    internal.undo();
+    const restored = page.strokes.find((stroke) => stroke.id !== "newer");
+    expect(restored?.points).toEqual(original.points);
+    expect(restored?.createdAt).toBe(1000);
+    expect(page.strokes.indexOf(restored!)).toBeLessThan(page.strokes.findIndex((stroke) => stroke.id === "newer"));
+    internal.redo();
+    expect(page.strokes.map((stroke) => stroke.id)).toEqual(["newer"]);
   });
 
-  it("keeps scribble-erase fragments below newer strokes in raw array order", () => {
+  it("leaves strokes outside the circular scribble range untouched", () => {
     const { internal } = setup();
     const page = internal.notebook.pages[0];
     page.strokes.push({
-      id: "early", pageId: page.id, tool: "pen", color: "#000", width: 3, opacity: 1,
-      points: [{ x: 0.1, y: 0.5, pressure: 0.5, t: 1 }, { x: 0.9, y: 0.5, pressure: 0.5, t: 2 }], createdAt: 1000, updatedAt: 1000,
+      id: "outside", pageId: page.id, tool: "pen", color: "#f00", width: 3, opacity: 1,
+      points: [{ x: 0.95, y: 0.95, pressure: 0.5, t: 3 }], createdAt: 3000, updatedAt: 3000,
     });
-    page.strokes.push({
-      id: "newer", pageId: page.id, tool: "pen", color: "#f00", width: 3, opacity: 1,
-      points: [{ x: 0.1, y: 0.1, pressure: 0.5, t: 3 }], createdAt: 3000, updatedAt: 3000,
-    });
+    internal.state.eraserSize = 20;
     const gesture = { id: "gesture", pageId: page.id, tool: "pen" as const, color: "#000", width: 8, opacity: 1, points: [], createdAt: 4000, updatedAt: 4000 };
     const path = scribbleWaves(4, 50).map((point, index, all) => ({
       x: point.x / 100, y: point.y / 100, pressure: 0.5, t: 1_000 + 1_200 * index / (all.length - 1),
     }));
-    expect(internal.finishScribbleErase(page, gesture, path)).toBe(true);
-    expect(page.strokes.every((stroke) => stroke.id !== "early" && stroke.id !== "gesture")).toBe(true);
-    // Tile synthesis follows array order and a worker save never re-sorts the
-    // UI model, so finishScribbleErase must leave the array in createdAt
-    // order itself (asserted without a post-hoc sort here).
-    const fragments = page.strokes.filter((stroke) => stroke.id !== "newer");
-    expect(fragments.length).toBeGreaterThan(0);
-    expect(fragments.every((fragment) => fragment.createdAt === 1000)).toBe(true);
-    const newerIndex = page.strokes.findIndex((stroke) => stroke.id === "newer");
-    expect(newerIndex).toBeGreaterThanOrEqual(0);
-    for (const fragment of fragments) {
-      expect(page.strokes.indexOf(fragment)).toBeLessThan(newerIndex);
-    }
+    expect(internal.finishScribbleErase(page, gesture, path)).toBe(false);
+    expect(page.strokes.map((stroke) => stroke.id)).toEqual(["outside"]);
+    expect(page.deletedStrokeIds).not.toContain("outside");
+  });
+
+  it("leaves ink unchanged when a scribble range would exceed the sweep sample limit", () => {
+    const { internal } = setup();
+    const page = internal.notebook.pages[0];
+    const target = {
+      id: "target", pageId: page.id, tool: "pen" as const, color: "#000", width: 3, opacity: 1,
+      points: [{ x: 0.5, y: 0.5, pressure: 0.5, t: 1 }], createdAt: 1, updatedAt: 1,
+    };
+    page.strokes.push(target);
+    internal.state.eraserSize = 8;
+    internal.state.scribbleSensitivity = 100;
+    const gesture = { id: "gesture", pageId: page.id, tool: "pen" as const, color: "#000", width: 8, opacity: 1, points: [], createdAt: 4000, updatedAt: 4000 };
+    const path = Array.from({ length: 2_048 }, (_, index) => ({
+      x: index % 2 ? 1 : 0, y: index % 2 ? 1 : 0, pressure: 0.5, t: 1_000 + index / 2,
+    }));
+    expect(internal.finishScribbleErase(page, gesture, path)).toBe(false);
+    expect(page.strokes).toEqual([target]);
+    expect(page.deletedStrokeIds).toHaveLength(0);
   });
 
   it("uses rectangular hit testing for the square local eraser", () => {

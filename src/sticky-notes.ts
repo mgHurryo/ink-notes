@@ -218,6 +218,14 @@ export class StickyNoteLayer {
       height: `${stickyFrameHeight(note, this.host.clientWidth, this.host.clientHeight)}px`,
       backgroundColor: note.kind === "text" ? "transparent" : note.color,
     });
+    // The build path bakes the header height as an inline style, so a
+    // width-only reposition must refresh it too: the board element sits below
+    // the header, and a stale height drops the board's visual top below the
+    // STICKY_HEADER offset stickyBounds assumes at zoom != 1. Board ink then
+    // projects past the note's frame edge and finishStickyInput leaves the
+    // outside part behind as stray page ink.
+    if (!note.collapsed && note.kind !== "text")
+      el.querySelector<HTMLElement>(".ink-sticky-header")?.setCssStyles({ height: `${STICKY_HEADER * scale}px` });
     el.setCssProps({ "--sticky-header-height": `${STICKY_HEADER * scale}px` });
   }
   private card(id: string): HTMLElement | undefined {
@@ -416,7 +424,12 @@ export class StickyNoteLayer {
     if (current) this.context.change(current, { ...current, ...patch });
   }
   private commitText(): void {
-    const edit = this.editing; if (!edit) return; this.editing = undefined;
+    const edit = this.editing; if (!edit) return;
+    // update() silently drops the patch while busy or read-only, and the
+    // cleanup below destroys the input holding the only draft copy. Keep the
+    // editor mounted so the user can commit once the guard clears.
+    if (this.context.busy() || !this.context.editable()) { new Notice("Your draft is kept in the editor; try committing again in a moment."); return; }
+    this.editing = undefined;
     const current = this.context.page().stickyNotes?.find((n) => n.id === edit.id);
     const currentBox = current && stickyTextBoxes(current).find((box) => box.id === edit.boxId);
     const baseBox = stickyTextBoxes(edit.base).find((box) => box.id === edit.boxId);
@@ -510,7 +523,10 @@ export class StickyNoteLayer {
     if (this.panningNote && (!editable || !this.context.pointer() || !page.stickyNotes?.some((note) => note.id === this.panningNote && !note.collapsed))) this.panningNote = undefined;
     const format = this.formatting;
     if (format && (!editable || format.page !== page.id || !page.stickyNotes?.some((note) => note.id === format.note && !note.collapsed && stickyTextBoxes(note).some((box) => box.id === format.box)))) this.closeFormat();
-    if (!editable) { this.editing = undefined; this.selectBox(); }
+    // A read-only page previously destroyed the draft together with the
+    // editor; commitText's guard keeps both, so defer the rebuild until the
+    // draft commits.
+    if (!editable) { if (this.editing) this.commitText(); this.selectBox(); }
     // Invalidating the render cache (for example after a text commit) is not
     // a page change, and must not cancel the contact that committed the text.
     if (this.editing && this.editing.base.pageId !== page.id) this.editing = undefined;
@@ -522,12 +538,18 @@ export class StickyNoteLayer {
       const { strokes, deletedStrokeIds, updatedAt, textUpdatedAt, ...frame } = note;
       return JSON.stringify(frame);
     };
-    if (this.last?.page === page.id && this.last.editable === editable && this.last.width === width
+    if (this.last?.page === page.id && this.last.editable === editable
       && this.last.notes?.length === page.stickyNotes?.length
       && page.stickyNotes?.every((note, i) => frameKey(note) === frameKey(this.last!.notes![i]))) {
       // Handwriting changes do not replace focused controls or re-run the
-      // Markdown renderer on every Pencil lift.
-      this.preview(page.stickyNotes); this.last.notes = page.stickyNotes; return;
+      // Markdown renderer on every Pencil lift. A width-only change lands
+      // here too: the Pages preview-rail toggle squeezes the page column at
+      // its settle timer, so every sync carries a new host width. Rebuilding
+      // for it unmounted every card and re-ran MarkdownRenderer per text box,
+      // which read as the whole interface re-rendering on iPad. Reposition
+      // the mounted cards and let preview() rescale boards and text boxes.
+      for (const note of page.stickyNotes ?? []) { const card = this.card(note.id); if (card) this.position(card, note); }
+      this.preview(page.stickyNotes); this.last.notes = page.stickyNotes; this.last.width = width; return;
     }
     this.last = { page: page.id, notes: page.stickyNotes, editable, width }; this.cards.abort(); this.cards = new AbortController();
     this.markdown.unload(); this.markdown = new Component(); this.markdown.load(); this.layer.empty();

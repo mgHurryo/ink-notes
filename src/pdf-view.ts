@@ -6,7 +6,7 @@ import { InkWritingView, QUEUED_PAGE_SWIPE_DURATION_MS } from "./ink-writing";
 import { reconcileNotebook } from "./notebook-reconciliation";
 import { clonePageValue } from "./worker-protocol";
 import type { SharedToolState } from "./tool-state";
-import { TileRenderer, cellKeys } from "./tiles";
+import { TileRenderer, cellKeys, type TilePrewarmPage } from "./tiles";
 import { InkWorkerService } from "./worker-service";
 import {
   PdfSidecar,
@@ -52,6 +52,9 @@ const SELECTION_OVERLAY_BUDGET = 4_000_000;
  *  side. iOS keeps the default - its WebKit canvas allocation past 16M is
  *  unverified, and zoom 1 there never hits 16M anyway. */
 const PDF_PAGE_RASTER_BUDGET = 64_000_000;
+/** Keep page-tree metadata reads concurrent without retaining a burst of
+ *  page proxies for large documents. */
+const SOURCE_PAGE_GEOMETRY_CONCURRENCY = 4;
 /** Swipe rasters must match live page density (dpr): a 4M per-page budget
  *  downsamples Retina pages, so the dragged-in page reads blurry for the
  *  whole flip and only sharpens at settle. 16M is the WebKit-safe ceiling
@@ -65,13 +68,15 @@ const SWIPE_PREVIEW_RETRY_MS = 50;
 /** Thumbnail bitmap width in CSS pixels; on a portrait A4 page the pdf.js
  *  render scale for this lands around 0.2. */
 const RAIL_THUMB_WIDTH = 120;
+/** Keep scrolling a long PDF rail from retaining one full bitmap per page. */
+const PDF_THUMB_CACHE_LIMIT = 12;
 /** Coalesces thumbnail repaints while the rail scrolls. */
 const RAIL_SWEEP_THROTTLE_MS = 120;
-/** After the rail's expand transition (200ms), repaint the visible range at
+/** After the rail's expand transition (280ms), repaint the visible range at
  *  full resolution; thumbnails skip painting while collapsed. */
-const RAIL_REVEAL_DELAY_MS = 230;
+const RAIL_REVEAL_DELAY_MS = 310;
 /** Matches the notebook editor's rail expand/collapse transition (view.ts). */
-const RAIL_TRANSITION_MS = 200;
+const RAIL_TRANSITION_MS = 280;
 /** Rail width persistence, separate from the notebook editor's key so each
  *  rail remembers the width its own thumbnails need. */
 const PDF_RAIL_WIDTH_STORAGE_KEY = "ink-pdf-page-rail-width";
@@ -88,6 +93,7 @@ interface PdfJsRenderTask {
 interface PdfJsPage {
   getViewport(options: { scale: number }): PdfJsViewport;
   render(options: { canvasContext: CanvasRenderingContext2D; viewport: PdfJsViewport }): PdfJsRenderTask;
+  cleanup?(): void;
   getTextContent?(): Promise<unknown>;
 }
 
@@ -581,18 +587,39 @@ export class PdfInkView extends InkWritingView {
   // --------------------------------------------------------------- sidecar
 
   private async readSourcePages(doc: PdfJsDocument, generation: number): Promise<PdfSourcePageGeometry[]> {
-    const pages: PdfSourcePageGeometry[] = [];
-    for (let index = 1; index <= doc.numPages; index++) {
-      const page = await doc.getPage(index);
-      if (generation !== this.loadGeneration) return [];
-      const raw = page as unknown as { view?: number[]; rotate?: number };
-      pages.push({
-        width: Math.round((raw.view?.[2] ?? page.getViewport({ scale: 1 }).width) * 100) / 100,
-        height: Math.round((raw.view?.[3] ?? page.getViewport({ scale: 1 }).height) * 100) / 100,
-        rotation: (raw.rotate ?? 0) as PdfSourcePageGeometry["rotation"],
-      });
-    }
-    return pages;
+    const pages = new Array<PdfSourcePageGeometry>(doc.numPages);
+    let nextPage = 1;
+    let failed = false;
+    let failure: unknown;
+    const readNextPage = async (): Promise<void> => {
+      while (generation === this.loadGeneration && !failed) {
+        const index = nextPage++;
+        if (index > doc.numPages) return;
+        let page: PdfJsPage | null = null;
+        try {
+          page = await doc.getPage(index);
+          if (generation !== this.loadGeneration) return;
+          const raw = page as unknown as { view?: number[]; rotate?: number };
+          pages[index - 1] = {
+            width: Math.round((raw.view?.[2] ?? page.getViewport({ scale: 1 }).width) * 100) / 100,
+            height: Math.round((raw.view?.[3] ?? page.getViewport({ scale: 1 }).height) * 100) / 100,
+            rotation: (raw.rotate ?? 0) as PdfSourcePageGeometry["rotation"],
+          };
+        } catch (error) {
+          // A replaced PDF can destroy its document while page metadata is loading.
+          if (generation !== this.loadGeneration) return;
+          failed = true;
+          failure = error;
+          return;
+        } finally {
+          page?.cleanup?.();
+        }
+      }
+    };
+    const workers = Math.min(SOURCE_PAGE_GEOMETRY_CONCURRENCY, doc.numPages);
+    await Promise.all(Array.from({ length: workers }, () => readNextPage()));
+    if (failed) throw failure;
+    return generation === this.loadGeneration ? pages : [];
   }
 
   /**
@@ -876,6 +903,8 @@ export class PdfInkView extends InkWritingView {
    */
   private buildPageRail(body: HTMLElement): void {
     const rail = body.createDiv({ cls: "ink-page-rail", attr: { "aria-label": "PDF pages" } });
+    rail.addEventListener("click", (event) => this.claimFastPagingRailFromSelection(event), true);
+    rail.addEventListener("keydown", (event) => this.claimFastPagingRailFromSelection(event), true);
     this.pageRail = rail;
     applyStoredRailWidth(rail, PDF_RAIL_WIDTH_STORAGE_KEY);
     const header = rail.createDiv({ cls: "ink-rail-header" });
@@ -892,7 +921,7 @@ export class PdfInkView extends InkWritingView {
     this.railThumbs = rail.createDiv({ cls: "ink-rail-thumbs" });
     // Scrolling long documents brings new thumbnails into view; repaint the
     // fresh range (throttled) instead of pre-rendering every page.
-    this.registerDomEvent(rail, "scroll", () => this.scheduleRailSweep(), { passive: true });
+    this.registerDomEvent(this.railThumbs, "scroll", () => this.scheduleRailSweep(), { passive: true });
     // Parity with the notebook editor's rail: the right edge is draggable and
     // the final width persists under the PDF-specific key. Thumbnails raster
     // during the drag at stale widths; repaint the visible range at the end.
@@ -962,7 +991,10 @@ export class PdfInkView extends InkWritingView {
     // Fast paging keeps the current page under the user's eye: center the
     // active thumb instead of the usual nearest-visibility nudge.
     if (this.isFastPagingRailOpen()) this.followWheelPageThumb();
-    else this.thumbButtons.get(this.noteIndex)?.scrollIntoView?.({ block: "nearest" });
+    else {
+      const active = this.thumbButtons.get(this.noteIndex);
+      if (active) this.scrollRailThumb(thumbs, active);
+    }
     this.evictDistantThumbnails();
     this.paintVisibleThumbnails();
     this.scheduleSwipeThumbnailPaint();
@@ -1004,10 +1036,10 @@ export class PdfInkView extends InkWritingView {
   private rebuildRailButtons(count: number): void {
     const thumbs = this.railThumbs;
     if (!thumbs) return;
+    // Release mounted thumbnail surfaces before their button nodes are removed.
+    this.invalidateThumbnails();
     thumbs.empty();
     this.thumbButtons.clear();
-    // Indexes shift with the rebuild, so cached thumbnails die too.
-    this.invalidateThumbnails();
     const pages = this.sidecar?.notePages;
     for (let index = 0; index < count; index++) {
       const display = this.rotatedSize(pages?.[index] ?? null);
@@ -1143,7 +1175,9 @@ export class PdfInkView extends InkWritingView {
   }
 
   private invalidateThumbnails(): void {
+    for (const canvas of this.thumbCache.values()) this.releaseCanvas(canvas);
     this.thumbCache.clear();
+    this.releaseDistantThumbnailSurfaces(new Set());
     this.thumbPaintTokens.clear();
     this.pendingThumbRenders.clear();
     this.railBuiltIds = "";
@@ -1162,9 +1196,44 @@ export class PdfInkView extends InkWritingView {
 
   /** Thumbnail bitmaps only stay for the current page and its direct
    *  neighbours - the same eviction policy as the neighbour prewarm cache. */
-  private evictDistantThumbnails(): void {
+  private evictDistantThumbnails(visibleIndexes: readonly number[] = []): void {
+    const retained = new Set(visibleIndexes);
+    for (const index of [this.noteIndex - 1, this.noteIndex, this.noteIndex + 1]) retained.add(index);
     for (const key of [...this.thumbCache.keys()]) {
-      if (Math.abs(key - this.noteIndex) > 1) this.thumbCache.delete(key);
+      if (retained.has(key)) continue;
+      const canvas = this.thumbCache.get(key);
+      this.thumbCache.delete(key);
+      if (canvas) this.releaseCanvas(canvas);
+    }
+    this.releaseDistantThumbnailSurfaces(retained);
+  }
+
+  private releaseDistantThumbnailSurfaces(retained: ReadonlySet<number>): void {
+    for (const [index, button] of this.thumbButtons) {
+      if (retained.has(index)) continue;
+      const canvas = button.querySelector<HTMLCanvasElement>("canvas");
+      if (!canvas || canvas.width <= 1 && canvas.height <= 1) continue;
+      canvas.width = 1;
+      canvas.height = 1;
+      delete canvas.dataset.previewReady;
+    }
+  }
+
+  private cacheThumbnail(index: number, canvas: HTMLCanvasElement): void {
+    const previous = this.thumbCache.get(index);
+    if (previous !== canvas) {
+      if (previous) this.releaseCanvas(previous);
+      this.thumbCache.delete(index);
+    } else {
+      this.thumbCache.delete(index); // Refresh insertion order for LRU eviction.
+    }
+    this.thumbCache.set(index, canvas);
+    while (this.thumbCache.size > PDF_THUMB_CACHE_LIMIT) {
+      const oldest = this.thumbCache.keys().next().value as number | undefined;
+      if (oldest === undefined) break;
+      const evicted = this.thumbCache.get(oldest);
+      this.thumbCache.delete(oldest);
+      if (evicted) this.releaseCanvas(evicted);
     }
   }
 
@@ -1214,8 +1283,9 @@ export class PdfInkView extends InkWritingView {
     const count = this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 0;
     const nearby = Array.from({ length: count }, (_, index) => index)
       .filter((index) => Math.abs(index - this.noteIndex) <= 1);
-    const railRect = this.pageRail?.getBoundingClientRect();
-    if (!railRect || this.pageRail!.clientHeight <= 0) return nearby;
+    const thumbs = this.railThumbs;
+    const railRect = thumbs?.getBoundingClientRect();
+    if (!railRect || thumbs!.clientHeight <= 0) return nearby;
     const visible: number[] = [];
     for (const [index, button] of this.thumbButtons) {
       if (button.classList.contains("is-filtered-out")) continue;
@@ -1230,7 +1300,9 @@ export class PdfInkView extends InkWritingView {
     // Collapsed rail: nothing visible to paint; the expand toggle schedules
     // the repaint for when the transition has revealed the thumbnails.
     if (this.root?.hasClass("ink-rail-hidden")) return;
-    for (const index of this.visibleThumbIndexes()) this.paintThumbnail(index);
+    const visible = this.visibleThumbIndexes();
+    this.evictDistantThumbnails(visible);
+    for (const index of visible) this.paintThumbnail(index);
   }
 
   /**
@@ -1244,7 +1316,7 @@ export class PdfInkView extends InkWritingView {
     const canvas = button?.querySelector<HTMLCanvasElement>("canvas");
     if (!button || !canvas) return;
     const cached = this.thumbCache.get(index);
-    if (cached) { this.paintThumbBitmap(canvas, cached, index); return; }
+    if (cached) { this.cacheThumbnail(index, cached); this.paintThumbBitmap(canvas, cached, index); return; }
     if (this.pendingThumbRenders.has(index)) return;
     const notePage = this.sidecar?.notePages[index];
     const display = this.rotatedSize(notePage ?? null);
@@ -1254,7 +1326,7 @@ export class PdfInkView extends InkWritingView {
       thumb.width = this.thumbPixelWidth();
       thumb.height = Math.max(1, Math.round(thumb.width * display.height / display.width));
       thumb.getContext("2d")?.drawImage(neighbour, 0, 0, thumb.width, thumb.height);
-      this.thumbCache.set(index, thumb);
+      this.cacheThumbnail(index, thumb);
       this.paintThumbBitmap(canvas, thumb, index);
       return;
     }
@@ -1265,7 +1337,7 @@ export class PdfInkView extends InkWritingView {
       blank.height = Math.max(1, Math.round(blank.width * display.height / display.width));
       const ctx = blank.getContext("2d");
       if (ctx) { ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, blank.width, blank.height); }
-      this.thumbCache.set(index, blank);
+      this.cacheThumbnail(index, blank);
       this.paintThumbBitmap(canvas, blank, index);
       return;
     }
@@ -1292,21 +1364,28 @@ export class PdfInkView extends InkWritingView {
       && generation === this.loadGeneration
       && this.sidecar?.notePages[index]?.id === notePage.id
       && this.thumbButtons.get(index)?.querySelector("canvas") === canvas;
+    let thumb: HTMLCanvasElement | null = null;
+    let cached = false;
+    let page: PdfJsPage | null = null;
     try {
-      const page = await this.pdfDoc!.getPage(notePage.sourceIndex! + 1);
+      page = await this.pdfDoc!.getPage(notePage.sourceIndex! + 1);
       if (!isCurrent()) return;
       const scale = this.thumbPixelWidth() / display.width;
       const viewport = page.getViewport({ scale });
-      const thumb = document.createElement("canvas");
+      thumb = document.createElement("canvas");
       thumb.width = Math.max(1, Math.round(display.width * scale));
       thumb.height = Math.max(1, Math.round(display.height * scale));
       await page.render({ canvasContext: thumb.getContext("2d")!, viewport }).promise;
       if (!isCurrent()) return;
-      this.thumbCache.set(index, thumb);
+      this.cacheThumbnail(index, thumb);
+      cached = this.thumbCache.get(index) === thumb;
       if (canvas.isConnected) this.paintThumbBitmap(canvas, thumb, index);
     } catch (error) {
       if (this.pdfjs?.RenderingCancelledException && error instanceof this.pdfjs.RenderingCancelledException) return;
       // Thumbnail renders are best-effort; the button stays on blank paper.
+    } finally {
+      page?.cleanup?.();
+      if (thumb && !cached) this.releaseCanvas(thumb);
     }
   }
 
@@ -1463,6 +1542,10 @@ export class PdfInkView extends InkWritingView {
     const next = this.noteIndex + delta;
     if (next < 0 || next >= count) return;
     this.finishPointerInput(false);
+    // Completed ink can remain on the shared overlay while its tile commit is
+    // pending. That overlay belongs to the old note page, so clear it before
+    // layoutPage() retargets the same host to the destination page.
+    this.discardPendingInkPreview();
     this.noteIndex = next;
     this.clearSelection();
     this.closeLassoSettings();
@@ -1609,12 +1692,35 @@ export class PdfInkView extends InkWritingView {
     };
     this.tiles?.update(this.viewport, this.desktopRenderDensity ?? (window.devicePixelRatio || 1) * this.zoom,
       refine && this.desktopRenderDensity === undefined);
+    if (refine && this.desktopRenderDensity === undefined) this.prewarmInkNeighbours();
     if (refine || this.hasInkPreview() || this.selectedStrokeIds.size > 0 || this.lassoPath.length > 0) {
       this.resizeSelectionCanvas();
       this.resizePreview();
       this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
       if (this.activeStroke) this.drawPreview();
     }
+  }
+
+  /** Keep full-density ink tiles for adjacent PDF note pages ready before input. */
+  private prewarmInkNeighbours(): void {
+    const sidecar = this.sidecar;
+    const scroller = this.scroller;
+    if (!sidecar || !scroller || !this.tiles) return;
+    const pages: TilePrewarmPage[] = [];
+    for (const delta of [-1, 1]) {
+      const index = this.noteIndex + delta;
+      const notePage = sidecar.notePages[index];
+      const page = sidecar.notebook.pages[index];
+      if (!notePage || !page) continue;
+      const size = this.swipePageSize(notePage);
+      const display = this.rotatedSize(notePage);
+      const width = Math.max(1, Math.round(size.baseWidth * 64) / 64);
+      const height = Math.max(1, Math.round(size.baseWidth * display.height / display.width * 64) / 64);
+      pages.push({ page, width, height,
+        viewport: { x: 0, y: 0, width, height },
+        density: (window.devicePixelRatio || 1) * size.zoom });
+    }
+    this.tiles.prewarmPages(pages);
   }
 
   private onViewportMotion(): void {
@@ -1847,18 +1953,37 @@ export class PdfInkView extends InkWritingView {
     }
     void this.renderSwipeStagePage(stage, neighborIndex);
     const ink = stage.createEl("canvas", { cls: "ink-swipe-canvas" });
-    const logicalHeight = baseWidth * display.height / display.width;
-    const resolution = canvasResolution(baseWidth, logicalHeight, window.devicePixelRatio || 1, zoom, SWIPE_PREVIEW_BUDGET);
+    const logicalWidth = Math.max(1, Math.round(baseWidth * 64) / 64);
+    const logicalHeight = Math.max(1, Math.round(baseWidth * display.height / display.width * 64) / 64);
+    const resolution = canvasResolution(logicalWidth, logicalHeight, window.devicePixelRatio || 1, zoom, SWIPE_PREVIEW_BUDGET);
     ink.width = resolution.width; ink.height = resolution.height;
     const ctx = ink.getContext("2d");
     if (ctx) {
-      ctx.setTransform(ink.width / baseWidth, 0, 0, ink.height / logicalHeight, 0, 0);
+      ctx.setTransform(ink.width / logicalWidth, 0, 0, ink.height / logicalHeight, 0, 0);
       const page = this.sidecar?.notebook.pages[neighborIndex];
-      if (page) paintPageImages(this.imageLibrary, ink, page, (context) => context.clearRect(0, 0, ink.width, ink.height), (context) => {
-        context.setTransform(ink.width / baseWidth, 0, 0, ink.height / logicalHeight, 0, 0);
-        for (const stroke of page.strokes) drawInkStroke(context, stroke, baseWidth, logicalHeight);
-        context.setTransform(1, 0, 0, 1, 0, 0);
-      });
+      if (page) {
+        const preview = { page, width: logicalWidth, height: logicalHeight,
+          viewport: { x: 0, y: 0, width: logicalWidth, height: logicalHeight },
+          density: (window.devicePixelRatio || 1) * zoom };
+        const paint = (drawInk: boolean) => paintPageImages(this.imageLibrary, ink, page,
+          (context) => context.clearRect(0, 0, ink.width, ink.height), (context) => {
+            context.setTransform(ink.width / logicalWidth, 0, 0, ink.height / logicalHeight, 0, 0);
+            if (drawInk) this.tiles?.drawCachedPreview(preview, context);
+            context.setTransform(1, 0, 0, 1, 0, 0);
+          });
+        if (this.tiles?.hasCachedPreview(preview)) paint(true);
+        else {
+          // PDF.js paints the page independently; show note images now and
+          // add exact-density ink when its neighbor tiles are ready.
+          paint(false);
+          const paintWhenReady = () => {
+            if (!stage.isConnected || !this.tiles) return;
+            if (this.tiles.hasCachedPreview(preview)) paint(true);
+            else requestAnimationFrame(paintWhenReady);
+          };
+          requestAnimationFrame(paintWhenReady);
+        }
+      }
     }
   }
 
@@ -1880,8 +2005,9 @@ export class PdfInkView extends InkWritingView {
       canvas.getContext("2d")?.drawImage(cached, 0, 0);
       return;
     }
+    let page: PdfJsPage | null = null;
     try {
-      const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
+      page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
       if (!stage.isConnected) return;
       const scale = resolution.width / page.getViewport({ scale: 1 }).width;
       canvas.width = resolution.width;
@@ -1891,6 +2017,8 @@ export class PdfInkView extends InkWritingView {
       if (stage.isConnected && canvas.width > 0) this.cacheNeighbour(index, canvas);
     } catch {
       // The neighbour preview is best-effort; a blank page is fine.
+    } finally {
+      page?.cleanup?.();
     }
   }
 
@@ -1929,8 +2057,9 @@ export class PdfInkView extends InkWritingView {
     const notePage = this.sidecar?.notePages[index];
     if (!notePage || notePage.sourceIndex === undefined || !this.pdfDoc) return null;
     let buffer: HTMLCanvasElement | undefined;
+    let page: PdfJsPage | null = null;
     try {
-      const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
+      page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
       if (token !== this.prewarmToken || this.neighbourCache.has(index)) return this.neighbourCache.get(index) ?? null;
       const size = this.swipePageSize(notePage);
       const resolution = canvasResolution(size.width, size.height, window.devicePixelRatio || 1, 1,
@@ -1949,6 +2078,7 @@ export class PdfInkView extends InkWritingView {
       // Best-effort prewarm.
       return null;
     } finally {
+      page?.cleanup?.();
       if (buffer) this.releaseCanvas(buffer);
     }
   }
@@ -2140,8 +2270,9 @@ export class PdfInkView extends InkWritingView {
         this.releaseCanvas(ready);
       }
     }
+    let page: PdfJsPage | null = null;
     try {
-      const page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
+      page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
       if (generation !== this.pdfRenderGeneration) return;
       // Double-buffer: render offscreen and only swap onto the visible
       // canvas once the frame is complete. Assigning the visible canvas
@@ -2169,6 +2300,8 @@ export class PdfInkView extends InkWritingView {
       if (this.pdfjs?.RenderingCancelledException && error instanceof this.pdfjs.RenderingCancelledException) return;
       if (generation === this.pdfRenderGeneration) this.setStatus(`Could not render this page: ${messageOf(error)}`, true);
       return;
+    } finally {
+      page?.cleanup?.();
     }
   }
 
@@ -2194,6 +2327,7 @@ export class PdfInkView extends InkWritingView {
   }
 
   private resetViewState(): void {
+    const previousPdfDoc = this.pdfDoc;
     this.finishDesktopZoom(false);
     this.prewarmToken += 1;
     this.pendingNeighbourRenders.clear();
@@ -2213,6 +2347,7 @@ export class PdfInkView extends InkWritingView {
     // call site in the exclusion-passing form.
     this.tiles?.setPage(EMPTY_NOTEBOOK.pages[0]!, this.canvasLogicalWidth, this.canvasLogicalHeight, this.tileExclusion());
     this.pdfDoc = null;
+    void previousPdfDoc?.destroy().catch(() => undefined);
     this.sourcePages = [];
     this.noteIndex = 0;
     this.zoom = 1;

@@ -33,6 +33,18 @@ export function gestureContract(create: () => Promise<any>): void {
       return { editor, page, host, finger, send, draw };
     }
 
+    function makeScrollable(editor: { inputScroller(): HTMLElement }) {
+      const scroller = editor.inputScroller();
+      let top = 200, left = 0;
+      Object.defineProperties(scroller, {
+        clientHeight: { configurable: true, value: 600 }, scrollHeight: { configurable: true, value: 1200 },
+        clientWidth: { configurable: true, value: 800 }, scrollWidth: { configurable: true, value: 1000 },
+        scrollTop: { configurable: true, get: () => top, set: (value: number) => { top = Math.max(0, Math.min(600, value)); } },
+        scrollLeft: { configurable: true, get: () => left, set: (value: number) => { left = Math.max(0, Math.min(200, value)); } },
+      });
+      return () => top;
+    }
+
     async function desktopSetup() {
       const { editor, finger, send } = await setup();
       const scroller = editor.inputScroller() as HTMLElement;
@@ -50,7 +62,14 @@ export function gestureContract(create: () => Promise<any>): void {
         const { timeStamp, ...init } = options;
         const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX: x, deltaY: y, ...init });
         Object.defineProperty(event, "timeStamp", { configurable: true, value: timeStamp ?? (wheelTime += 200) });
-        target.dispatchEvent(event); return event;
+        target.dispatchEvent(event);
+        // jsdom has no wheel default action; model the browser's native scroll
+        // when the view lets a vertical event pass through uncanceled.
+        if (target === scroller && !event.defaultPrevented && y !== 0) {
+          const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? scroller.clientHeight : 1;
+          scroller.scrollTop += y * scale;
+        }
+        return event;
       };
       return { editor, scroller, settle, wheel, finger, send };
     }
@@ -81,7 +100,7 @@ export function gestureContract(create: () => Promise<any>): void {
       button.click(); expect(document.querySelector(".menu")).toBeNull();
     });
 
-    it.each(["pointer", "stylus-touch"])("straightens held %s input after two seconds, tolerates jitter and adjusts the endpoint", async source => {
+    it.each(["pointer", "stylus-touch"])("straightens held %s input after 800ms, tolerates jitter and adjusts the endpoint", async source => {
       const { editor, page } = await setup();
       editor.capturePointer = vi.fn(); editor.releasePointer = vi.fn(); editor.state.pen.smooth = 60;
       const operation = vi.spyOn(editor, "queueWorkerOperation");
@@ -91,8 +110,8 @@ export function gestureContract(create: () => Promise<any>): void {
         const sample = (x: number, y: number) => ({ pointerId: 42, pointerType: "pen", clientX: x, clientY: y, pressure: .6, timeStamp: time += 10 });
         editor.onPointerDown(sample(200, 200), source);
         for (const [x,y] of [[300,201], [400,199], [500,200]]) editor.onPointerMove(sample(x,y), source);
-        vi.advanceTimersByTime(1500); editor.onPointerMove(sample(501,200), source);
-        vi.advanceTimersByTime(499); expect(editor.geometricStroke).toBeNull();
+        vi.advanceTimersByTime(500); editor.onPointerMove(sample(501,200), source);
+        vi.advanceTimersByTime(299); expect(editor.geometricStroke).toBeNull();
         vi.advanceTimersByTime(1); expect(page.strokes[0].points).toHaveLength(2);
         expect(page.strokes[0].points[0].x).toBeCloseTo(.2);
         editor.onPointerMove(sample(700,250), source);
@@ -168,7 +187,7 @@ export function gestureContract(create: () => Promise<any>): void {
         if (scenario === "tool") editor.selectWritingTool("eraser");
         if (scenario === "reading") editor.setReadingMode(true);
         if (scenario === "blur") window.dispatchEvent(new Event("blur"));
-        if (scenario === "moving") { vi.advanceTimersByTime(1500); editor.onPointerMove(sample(600,200)); vi.advanceTimersByTime(1000); }
+        if (scenario === "moving") { vi.advanceTimersByTime(700); editor.onPointerMove(sample(600,250)); vi.advanceTimersByTime(900); }
         else vi.advanceTimersByTime(2500);
         expect(editor.geometricStroke).toBeNull();
         expect(page.strokes[0].points.length).toBeGreaterThan(2);
@@ -356,9 +375,8 @@ export function gestureContract(create: () => Promise<any>): void {
       // A Windows precision trackpad bridges a human re-flick with an inertia
       // tail whose gaps all stay under the quiet-gap threshold, and a moderate
       // re-swipe rises 4-6x off the settled (<=4px) tail while every sample
-      // stays under the 24px jump floor. The jump still re-arms the gesture
-      // (the vertical mirror below flips its renewed page), but the horizontal
-      // contact has spent its single page, so nothing flips here.
+      // stays under the 24px jump floor. Once its rise is confirmed, the new
+      // horizontal swipe receives its own page budget just like vertical.
       wheel(140, 0, { timeStamp: 100 });
       for (const [delta, timeStamp] of [[90, 110], [60, 120], [30, 130], [20, 140], [14, 150],
         [10, 160], [8, 170], [6, 180], [4, 190], [3, 200], [3, 210], [2, 220]]) {
@@ -366,7 +384,7 @@ export function gestureContract(create: () => Promise<any>): void {
       }
       expect(settle).toHaveBeenCalledTimes(1);
       for (let i = 0; i < 30; i++) wheel(13 + (i % 5) * 2, 0, { timeStamp: 230 + i * 10 });
-      expect(settle).toHaveBeenCalledTimes(1);
+      expect(settle).toHaveBeenCalledTimes(2);
     });
 
     it("rearms a moderate vertical re-swipe over a settled tail without a quiet gap", async () => {
@@ -447,7 +465,7 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(3);
     });
 
-    it("expands the page rail for fast vertical paging and hands it back within a second of stopping", async () => {
+    it("keeps the page rail open briefly after fast vertical paging, then hands it back", async () => {
       const { editor, scroller, wheel } = await desktopSetup();
       const root = (editor as any).root as HTMLElement;
       const railHidden = () => root.classList.contains("ink-rail-hidden");
@@ -463,9 +481,12 @@ export function gestureContract(create: () => Promise<any>): void {
         scroller.scrollTop = 600;
         for (const timeStamp of [1000, 1200, 1400]) wheel(0, 100, { timeStamp });
         expect(railHidden()).toBe(false);
-        // Once the window stops holding three pages the burst is over; the
-        // quiet timer hands the rail back within the second.
+        // Once the window stops holding three pages the burst is over; keep
+        // the destination visible beyond the former one-second cutoff.
         vi.advanceTimersByTime(1000);
+        expect(railHidden()).toBe(false);
+        // The rail then hands back after the full quiet pause.
+        vi.advanceTimersByTime(300);
         expect(railHidden()).toBe(true);
         // A sideways burst never drives the rail: horizontal flips are one
         // page per contact and do not count toward the vertical page rate.
@@ -474,7 +495,7 @@ export function gestureContract(create: () => Promise<any>): void {
       } finally { vi.useRealTimers(); }
     });
 
-    it("does not let a sideways stream re-arm the fast-paging rail's collapse timer", async () => {
+    it("keeps a borrowed rail open while wheel activity continues, then closes after silence", async () => {
       const { editor, scroller, wheel } = await desktopSetup();
       const root = (editor as any).root as HTMLElement;
       const railHidden = () => root.classList.contains("ink-rail-hidden");
@@ -485,20 +506,21 @@ export function gestureContract(create: () => Promise<any>): void {
         scroller.scrollTop = 600;
         for (const timeStamp of [1000, 1200, 1400]) wheel(0, 100, { timeStamp });
         expect(railHidden()).toBe(false);
-        // A sideways stream keeps flipping at a <1s cadence while the vertical
-        // window ages out. Horizontal flips never count toward it, so none of
-        // them may re-arm the collapse timer: the rail must come back one
-        // quiet second after the last engaged flip, not after the last
-        // sideways one.
+        // Horizontal wheel input does not count toward the vertical fast-page
+        // rate, but it still proves that a trackpad gesture is active and
+        // should keep the borrowed rail visible.
         vi.advanceTimersByTime(300);
         wheel(140, 0, { timeStamp: 2500 });
         vi.advanceTimersByTime(300);
         wheel(140, 0, { timeStamp: 2900 });
         vi.advanceTimersByTime(300);
         wheel(140, 0, { timeStamp: 3300 });
-        // 1700ms of quiet time have passed since the last engaged flip; only
-        // stale horizontal re-arms could still hold the rail open here.
         vi.advanceTimersByTime(800);
+        expect(railHidden()).toBe(false);
+        // With no further wheel events, the normal quiet interval hands back
+        // a rail that the fast vertical burst borrowed from the user (the
+        // 1.3s window #428 settled on: 800 + 501 crosses it).
+        vi.advanceTimersByTime(501);
         expect(railHidden()).toBe(true);
       } finally { vi.useRealTimers(); }
     });
@@ -520,29 +542,45 @@ export function gestureContract(create: () => Promise<any>): void {
       } finally { vi.useRealTimers(); }
     });
 
+    it("keeps the preview rail open after the user selects a thumbnail", async () => {
+      const { editor } = await setup();
+      const root = editor.toolbarRoot() as HTMLElement;
+      const rail = root.querySelector<HTMLElement>(".ink-page-rail")!;
+      const thumb = rail.querySelector<HTMLElement>(".ink-page-thumb")!;
+      const hidden = () => root.classList.contains("ink-rail-hidden");
+
+      (editor as any).onFastPagingRailExpanded();
+      expect(hidden()).toBe(false);
+      thumb.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      thumb.click();
+      (editor as any).onFastPagingRailCollapsed();
+      expect(hidden()).toBe(false);
+    });
+
     it("centers the active thumbnail in the rail through the shared follow seam", async () => {
       const { editor } = await desktopSetup();
       const rail = (editor.containerEl.querySelector(".ink-page-rail") ?? null) as HTMLElement;
+      const list = (rail.querySelector(".ink-rail-thumbs") ?? null) as HTMLElement;
       const thumb = (rail.querySelector(".ink-page-thumb.is-active") ?? null) as HTMLElement;
-      // jsdom reports no boxes; pin a rail box with the active thumb far
-      // below it and drive the shared follow seam directly.
-      rail.getBoundingClientRect = () => new DOMRect(0, 0, 176, 600);
+      // jsdom reports no boxes; pin a thumbnail-list box with the active thumb
+      // far below it and drive the shared follow seam directly.
+      list.getBoundingClientRect = () => new DOMRect(0, 0, 160, 600);
       thumb.getBoundingClientRect = () => new DOMRect(0, 2400, 150, 120);
-      let railTop = 0;
-      Object.defineProperties(rail, {
+      let listTop = 0;
+      Object.defineProperties(list, {
         clientHeight: { configurable: true, value: 600 },
         scrollHeight: { configurable: true, value: 3000 },
-        scrollTop: { configurable: true, get: () => railTop, set: (value: number) => { railTop = value; } },
+        scrollTop: { configurable: true, get: () => listTop, set: (value: number) => { listTop = value; } },
       });
       (editor as any).followWheelPageThumb();
       // Center: 2400 + 120/2 - 600/2 = 2160.
-      expect(railTop).toBe(2160);
+      expect(listTop).toBe(2160);
       // Already centered: with the thumb rect reflecting the scroll that just
-      // happened (2400 - 2160 = 240), the delta is zero and the rail holds
+      // happened (2400 - 2160 = 240), the delta is zero and the list holds
       // still instead of drifting.
       thumb.getBoundingClientRect = () => new DOMRect(0, 240, 150, 120);
       (editor as any).followWheelPageThumb();
-      expect(railTop).toBe(2160);
+      expect(listTop).toBe(2160);
     });
 
     it("rearms a horizontal trackpad flick after a short pause and a renewed swipe", async () => {
@@ -615,15 +653,13 @@ export function gestureContract(create: () => Promise<any>): void {
 
     it("rearms a same-direction touchpad flick that ramps up from small deltas", async () => {
       const { wheel, settle } = await desktopSetup();
-      // The ramp still re-arms the gesture (the vertical accelerating swipe
-      // below flips its renewed page), but the horizontal contact has spent
-      // its strict single page, so nothing flips here.
+      // The confirmed ramped re-swipe opens a new horizontal page budget.
       wheel(140, 0, { timeStamp: 100 });
       for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [10, 140], [4, 150]]) wheel(delta, 0, { timeStamp: time });
       expect(settle).toHaveBeenCalledOnce();
 
       for (const [delta, time] of [[8, 210], [20, 220], [35, 230], [70, 240]]) wheel(delta, 0, { timeStamp: time });
-      expect(settle).toHaveBeenCalledOnce();
+      expect(settle).toHaveBeenCalledTimes(2);
     });
 
     it("turns a page on a short intentional horizontal touchpad swipe", async () => {
@@ -662,18 +698,16 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(1);
     });
 
-    it("keeps repeated horizontal swipes that start below the prior inertia to one page per contact", async () => {
+    it("rearms repeated horizontal swipes that start below prior inertia", async () => {
       const { wheel, settle } = await desktopSetup();
-      // Each new stream starts below the prior inertia delta, so none of them
-      // resets into a fresh contact - and the strict one-page-per-contact
-      // contract lets only the first flip (the vertical mirror below keeps
-      // the re-arm-every-stream renewal contract).
+      // Each new stream starts below the prior inertia delta, then rises far
+      // enough to be confirmed as a new same-direction swipe.
       for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [30, 130], [10, 140],
         [20, 200], [30, 210], [45, 220], [20, 280], [30, 290], [45, 300]]) {
         wheel(delta, 0, { timeStamp: time });
       }
 
-      expect(settle).toHaveBeenCalledTimes(1);
+      expect(settle).toHaveBeenCalledTimes(2);
     });
 
     it("rearms every vertical stream that starts below the prior inertia delta", async () => {
@@ -701,6 +735,27 @@ export function gestureContract(create: () => Promise<any>): void {
         [140, 210], [90, 220], [60, 230], [30, 240], [10, 250], [4, 260], [140, 320],
       ]) wheel(delta, 0, { timeStamp });
       expect(settle).toHaveBeenCalledTimes(3);
+    });
+
+    it("continues same-direction paging after a full-idle and reversal sequence", async () => {
+      const { wheel, settle } = await desktopSetup();
+      let start = 100;
+      const swipe = (direction: number) => {
+        for (const [magnitude, offset] of [[140, 0], [90, 10], [60, 20], [30, 30], [10, 40], [4, 50]]) {
+          wheel(direction * magnitude, 0, { timeStamp: start + offset });
+        }
+        // The next input begins 250ms after this swipe's settled tail, beyond
+        // the idle boundary seen when users lift and place their fingers again.
+        start += 300;
+      };
+
+      swipe(1);  // move forward
+      swipe(1);  // same direction after the previous input sequence is idle
+      swipe(-1); // return to the previous page
+      swipe(1);  // forward to the page that used to become stuck
+      swipe(1);  // continue forward instead of getting stuck there again
+
+      expect(settle.mock.calls.map(([direction]) => direction)).toEqual([1, 1, -1, 1, 1]);
     });
 
     it("bounds trackpad pages queued during one slow page handoff", async () => {
@@ -879,23 +934,23 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(3);
     });
 
-    it("keeps a single horizontal contact to exactly one page however its tail re-arms", async () => {
+    it("rearms confirmed horizontal re-swipes and pages a fresh idle swipe", async () => {
       const { wheel, settle } = await desktopSetup();
       wheel(140, 0, { timeStamp: 100 });
       for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [10, 140], [4, 150]]) {
         wheel(delta, 0, { timeStamp: time });
       }
       expect(settle).toHaveBeenCalledTimes(1);
-      // The mid-tail flick re-arms the gesture (suppression lifts) but the
-      // strict one-page-per-contact contract refuses the second page the old
-      // per-gesture budget granted.
+      // A confirmed rising re-swipe gets another page even while the previous
+      // inertia stream is still settling.
       for (const [delta, time] of [[50, 160], [55, 170], [60, 180], [30, 190], [20, 200], [12, 210], [25, 220]]) {
         wheel(delta, 0, { timeStamp: time });
       }
-      expect(settle).toHaveBeenCalledTimes(1);
-      // Only a new contact after an idle gap produces the next page.
-      wheel(140, 0, { timeStamp: 500 });
       expect(settle).toHaveBeenCalledTimes(2);
+      // A fresh same-direction swipe after idle gets its own page as well.
+      wheel(140, 0, { timeStamp: 500 });
+      wheel(140, 0, { timeStamp: 510 });
+      expect(settle).toHaveBeenCalledTimes(3);
     });
 
     it("keeps one stalled merged sample from posing as a renewed flick", async () => {
@@ -1262,19 +1317,16 @@ export function gestureContract(create: () => Promise<any>): void {
       const last = path[path.length - 1]; editor.onPointerUp(sample(last.x, last.y));
       expect(page.deletedStrokeIds).toContain(original.id);
       expect(page.strokes).toContainEqual(adjacent);
-      const remaining = page.strokes.filter((s) => s.id !== adjacent.id);
-      expect(remaining.length).toBeGreaterThanOrEqual(2);
-      expect(Math.min(...remaining.flatMap((s) => s.points.map((p) => p.x)))).toBeCloseTo(original.points[0].x);
-      expect(Math.max(...remaining.flatMap((s) => s.points.map((p) => p.x)))).toBeCloseTo(original.points.at(-1)!.x);
+      expect(page.strokes.map((s) => s.id)).toEqual([adjacent.id]);
       expect(editor.undoStack).toHaveLength(history + 1);
       expect(editor.pendingInkStrokes).toHaveLength(0);
       expect(editor.committingInkStrokes).toBeNull();
       editor.undo(); expect(page.strokes).toHaveLength(2);
       expect(page.strokes.find((s) => s.id !== adjacent.id)!.points).toEqual(original.points);
-      editor.redo(); expect(page.strokes.filter((s) => s.id !== adjacent.id).map((s) => s.points)).toEqual(remaining.map((s) => s.points));
+      editor.redo(); expect(page.strokes.map((s) => s.id)).toEqual([adjacent.id]);
     });
 
-    it("clips scribbling to visible sticky ink and leaves the page and covered notes untouched", async () => {
+    it("removes whole visible sticky strokes and leaves page and covered notes untouched", async () => {
       const { editor, page } = await setup();
       editor.capturePointer = vi.fn(); editor.releasePointer = vi.fn(); editor.state.tool = "pen"; editor.state.pen.smooth = 0;
       let time = 1000;
@@ -1294,12 +1346,11 @@ export function gestureContract(create: () => Promise<any>): void {
       for (const p of path.slice(1, -1)) editor.onPointerMove(sample(p.x, p.y));
       editor.onPointerUp(sample(path.at(-1)!.x, path.at(-1)!.y));
       expect(page.strokes).toEqual(underlying); expect(page.stickyNotes![0].strokes).toEqual(covered);
-      expect(page.stickyNotes![1].strokes).toHaveLength(2);
+      expect(page.stickyNotes![1].strokes).toHaveLength(0);
       expect(page.stickyNotes![1].deletedStrokeIds).toContain(original[0].id);
       expect(editor.undoStack).toHaveLength(history + 1);
-      const clipped = page.stickyNotes![1].strokes.map((s) => s.points);
       editor.undo(); expect(page.stickyNotes![1].strokes.map((s) => s.points)).toEqual(original.map((s) => s.points));
-      editor.redo(); expect(page.stickyNotes![1].strokes.map((s) => s.points)).toEqual(clipped);
+      editor.redo(); expect(page.stickyNotes![1].strokes).toHaveLength(0);
       expect(page.strokes).toEqual(underlying); expect(page.stickyNotes![0].strokes).toEqual(covered);
     });
 
@@ -1339,29 +1390,28 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(editor.activePointerId).toBeNull();
     });
 
-    it("selects and moves ink with a finger, and cancels its drag when pinch takes over", async () => {
+    it("pans the page with a finger while lasso is selected, then lets pinch take over", async () => {
       const { editor, page, finger, send, draw } = await setup();
       editor.state.fingerAsPen = true; draw("pen"); editor.state.fingerAsPen = false;
       editor.state.tool = "lasso"; editor.state.lasso.mode = "rectangle";
-      send("touchstart", [finger(1, 100, 100)]); send("touchmove", [finger(1, 400, 400)]);
-      send("touchend", [], [finger(1, 400, 400)]);
-      expect(editor.selectedStrokeIds.size).toBe(1);
+      const scrollTop = makeScrollable(editor);
       const original = page.strokes[0].points.map((p) => ({ ...p }));
-      send("touchstart", [finger(1, 250, 250)]); send("touchmove", [finger(1, 350, 350)]);
-      send("touchend", [], [finger(1, 350, 350)]);
-      expect(page.strokes[0].points[0].x).toBeCloseTo(original[0].x + .1);
-      editor.undo(); expect(page.strokes[0].points).toEqual(original);
-      editor.selectedStrokeIds = new Set([page.strokes[0].id]);
-      send("touchstart", [finger(1, 250, 250)]); send("touchmove", [finger(1, 350, 350)]);
-      send("touchstart", [finger(1, 350, 350), finger(2, 500, 350)], [finger(2, 500, 350)]);
-      send("touchmove", [finger(1, 300, 350), finger(2, 550, 350)]);
-      send("touchend", [], [finger(1, 300, 350), finger(2, 550, 350)]);
+      send("touchstart", [finger(1, 100, 100)]); send("touchmove", [finger(1, 150, 150)]);
+      send("touchend", [], [finger(1, 150, 150)]);
+      expect(scrollTop()).toBe(150);
+      expect(editor.selectedStrokeIds.size).toBe(0);
+      expect(page.strokes[0].points).toEqual(original);
+
+      send("touchstart", [finger(1, 250, 250)]);
+      send("touchstart", [finger(1, 250, 250), finger(2, 500, 250)], [finger(2, 500, 250)]);
+      send("touchmove", [finger(1, 200, 250), finger(2, 550, 250)]);
+      send("touchend", [], [finger(1, 200, 250), finger(2, 550, 250)]);
       expect(page.strokes[0].points).toEqual(original); expect(editor.zoom).toBeGreaterThan(1);
       expect(editor.activePointerId).toBeNull(); expect(editor.lassoDrag).toBeNull();
       expect(editor.toolbarRoot().querySelector(".ink-selection-actions")).toBeNull();
     });
 
-    it.each(["freehand", "rectangle"])("directly selects the topmost sparse stroke in %s mode, moves only it and undoes", async (mode) => {
+    it.each(["freehand", "rectangle"])("pans with a finger in %s lasso mode without selecting ink", async (mode) => {
       const { editor, page, finger, send, draw } = await setup();
       editor.state.fingerAsPen = true; draw("pen"); draw("pen"); editor.state.fingerAsPen = false;
       const originals = page.strokes.map((stroke) => ({ ...stroke, points: [
@@ -1370,15 +1420,12 @@ export function gestureContract(create: () => Promise<any>): void {
       page.strokes = originals.map((s) => ({ ...s, points: s.points.map((p) => ({ ...p })) }));
       editor.queueStrokePatch(page, page.strokes, []); editor.drawStrokes(page.strokes);
       editor.state.tool = "lasso"; editor.state.lasso.mode = mode;
-      send("touchstart", [finger(1, 300, 200)]); send("touchend", [], [finger(1, 301, 200)]);
-      expect([...editor.selectedStrokeIds]).toEqual([page.strokes[1].id]);
-      expect(page.strokes.map((s) => s.points)).toEqual(originals.map((s) => s.points));
-      send("touchstart", [finger(1, 300, 200)]); send("touchmove", [finger(1, 350, 250)]); send("touchend", [], [finger(1, 350, 250)]);
-      expect(page.strokes[0].points).toEqual(originals[0].points); expect(page.strokes[1].points[0].x).toBeCloseTo(.25);
-      editor.undo(); expect(page.strokes.map((s) => s.points)).toEqual(originals.map((s) => s.points));
-      editor.redo(); expect(page.strokes[1].points[0].x).toBeCloseTo(.25);
-      send("touchstart", [finger(1, 800, 800)]); send("touchend", [], [finger(1, 800, 800)]);
+      const scrollTop = makeScrollable(editor);
+      send("touchstart", [finger(1, 300, 200)]); send("touchmove", [finger(1, 350, 250)]);
+      send("touchend", [], [finger(1, 350, 250)]);
+      expect(scrollTop()).toBe(150);
       expect(editor.selectedStrokeIds.size).toBe(0);
+      expect(page.strokes.map((s) => s.points)).toEqual(originals.map((s) => s.points));
     });
 
     it("keeps an existing multi-stroke selection when its ink is grabbed and cancels pointer drag on interruption", async () => {

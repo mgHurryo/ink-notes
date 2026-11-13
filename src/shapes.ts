@@ -6,6 +6,7 @@ export const SHAPES: readonly [ShapeKind, string, string][] = [
   ["rectangle", "Rectangle", "rectangle-horizontal"], ["square", "Square", "square"],
   ["ellipse", "Ellipse", "ellipse"], ["circle", "Circle", "circle"], ["triangle", "Triangle", "triangle"],
 ];
+export const STRAIGHT_LINE_MIN_LENGTH_PX = 32;
 
 /** Geometry stays in ordinary stroke points, so every existing consumer works. */
 export function shapePoints(kind: ShapeKind, start: InkPoint, end: InkPoint, width: number, height: number): InkPoint[] {
@@ -41,16 +42,18 @@ export function canStraighten(points: readonly InkPoint[], width: number, height
   if (points.length < 2 || points.length >= 2048) return false;
   const first = points[0], last = points[points.length - 1];
   const dx = (last.x - first.x) * width, dy = (last.y - first.y) * height, chord = Math.hypot(dx, dy);
-  if (chord < 40) return false;
-  const tolerance = Math.max(2, Math.min(6, chord * .025));
+  if (chord < STRAIGHT_LINE_MIN_LENGTH_PX) return false;
+  // Real pen paths wobble more than the old 2–6px band, especially on touch.
+  // Allow modest nib-scale deviation while still rejecting curves and corners.
+  const tolerance = Math.max(3, Math.min(10, chord * .04));
   let travel = 0, previousProjection = 0;
   for (let i = 1; i < points.length; i++) {
     const px = (points[i].x - first.x) * width, py = (points[i].y - first.y) * height;
     if (Math.abs(px * dy - py * dx) / chord > tolerance) return false;
     const projection = (px * dx + py * dy) / chord;
-    if (projection < previousProjection - 2 || projection < -2 || projection > chord + 2) return false;
+    if (projection < previousProjection - 4 || projection < -4 || projection > chord + 4) return false;
     previousProjection = projection;
     travel += Math.hypot((points[i].x - points[i - 1].x) * width, (points[i].y - points[i - 1].y) * height);
   }
-  return travel <= chord * 1.08;
+  return travel <= chord * 1.16;
 }

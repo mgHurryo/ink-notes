@@ -18,28 +18,26 @@ import { reconcileNotebook } from "./notebook-reconciliation";
 import { exportNotebookPdf, exportPathFor, notebookHasInk } from "./pdf-export";
 import { paintPageImages } from "./image-library";
 import { registerDocumentPointerEndEvents } from "./ink-input";
-import { InkWritingView, InkPointerSample, cloneStroke, QUEUED_PAGE_SWIPE_DURATION_MS, SPARSE_SAMPLE_INTERVAL_MS } from "./ink-writing";
+import { InkWritingView, InkPointerSample, QUEUED_PAGE_SWIPE_DURATION_MS, SPARSE_SAMPLE_INTERVAL_MS } from "./ink-writing";
+import { cloneStroke } from "./ink-geometry";
 import type { EditCommand } from "./ink-writing";
 import type { SharedToolState } from "./tool-state";
 export { BrushSettings, BrushTool, INK_COLORS, isBrushTool } from "./brush-popover";
+export type { ToolState, InkPointerSample } from "./ink-writing";
+export type { EraserMode } from "./ink-geometry";
+export { clampLiftPressure, penSampleTimeMillis, packStrokePoints } from "./ink-writing";
 export {
-  ToolState,
-  EraserMode,
-  InkPointerSample,
-  clampLiftPressure,
-  penSampleTimeMillis,
   strokeIntersectsEraser,
   eraseStrokeSegments,
   cloneStroke,
   clonePoints,
-  packStrokePoints,
   translatePoints,
   selectionBounds,
   boundsForPointSets,
   pointInPolygon,
   constrainDelta,
   distance,
-} from "./ink-writing";
+} from "./ink-geometry";
 import { canvasResolution, drawInkStroke, scaledStroke, STROKE_WIDTH_REFERENCE } from "./rendering";
 import { applyStoredRailWidth, mountRailResizer } from "./rail-resizer";
 import {
@@ -75,8 +73,8 @@ const SWIPE_PREVIEW_RESIZE_BUDGET = 16_000_000;
 /** Rail width persistence. localStorage (not the plugin data file) is enough
  *  here: the width is per-device window chrome, not notebook content. */
 const RAIL_WIDTH_STORAGE_KEY = "ink-notes-page-rail-width";
-/** Keep in sync with the 200ms expand/collapse transition on .ink-page-rail. */
-const RAIL_TRANSITION_MS = 200;
+/** Keep in sync with the 280ms expand/collapse transition on .ink-page-rail. */
+const RAIL_TRANSITION_MS = 280;
 /** Fallback for the CSS aspect-ratio(.73) thumb box when clientHeight is 0. */
 const THUMB_ASPECT = 0.73;
 const SWIPE_PREVIEW_IDLE_DELAY_MS = 120;
@@ -319,6 +317,11 @@ export class InkView extends InkWritingView {
               () => loadGeneration !== this.notebookLoadGeneration);
           } else notebook = normalizeNotebook(parseStoredJson(raw), { reuseCanonicalPoints: true });
         } catch (loadError) {
+          // A connected preview may already have mounted the worker backend;
+          // once workerSession is cleared below, the onError guard can never
+          // route failures to disableWorkerSession, so drop the backend here
+          // like every other teardown path.
+          this.tiles?.setBackend?.(null);
           session.dispose();
           if (this.workerSession === session) this.workerSession = null;
           if (loadGeneration !== this.notebookLoadGeneration) return;
@@ -442,6 +445,8 @@ export class InkView extends InkWritingView {
   private renderCanvas(): void {
     const workspace = this.root.createDiv({ cls: "ink-workspace" });
     const rail = workspace.createDiv({ cls: "ink-page-rail", attr: { "aria-label": "Notebook pages" } });
+    rail.addEventListener("click", (event) => this.claimFastPagingRailFromSelection(event), true);
+    rail.addEventListener("keydown", (event) => this.claimFastPagingRailFromSelection(event), true);
     applyStoredRailWidth(rail, RAIL_WIDTH_STORAGE_KEY);
     this.pageScroller = workspace.createDiv({ cls: "ink-page-scroller" });
     this.loadFeedback = workspace.createDiv({ cls: "ink-notebook-load-feedback", attr: { role: "status", "aria-live": "polite", hidden: "" } });
@@ -495,7 +500,7 @@ export class InkView extends InkWritingView {
       this.onTouchCancel(event);
     }, { passive: false });
     const observer = new ResizeObserver(() => {
-      // The page rail animates its width for 200ms. Resizing the backing
+      // The page rail animates its width for 280ms. Resizing the backing
       // canvas on every intermediate width makes the rest of the editor miss
       // frames; the transition settle callback performs one final resize.
       if (this.railRevealTimer !== undefined) return;
@@ -615,7 +620,10 @@ export class InkView extends InkWritingView {
     // Fast paging keeps the current page under the user's eye: center the
     // active thumb instead of the usual nearest-visibility nudge.
     if (this.isFastPagingRailOpen()) this.followWheelPageThumb();
-    else rail.querySelector<HTMLElement>(".ink-page-thumb.is-active")?.scrollIntoView?.({ block: "nearest" });
+    else {
+      const active = rail.querySelector<HTMLElement>(".ink-page-thumb.is-active");
+      if (active) this.scrollRailThumb(rail, active);
+    }
   }
 
   /** Notebook pages surviving the active rail filters, in notebook order. */
@@ -1181,11 +1189,26 @@ export class InkView extends InkWritingView {
     if (ctx) {
       ctx.setTransform(canvas.width / this.canvasLogicalWidth, 0, 0, canvas.height / this.canvasLogicalHeight, 0, 0);
       const width = this.canvasLogicalWidth, height = this.canvasLogicalHeight;
-      paintPageImages(this.imageLibrary, canvas, neighbor!, (context) => context.clearRect(0, 0, canvas.width, canvas.height), (context) => {
-        context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
-        for (const stroke of neighbor!.strokes) drawInkStroke(context, stroke, width, height);
-        context.setTransform(1, 0, 0, 1, 0, 0);
-      });
+      const preview = { page: neighbor!, width, height, viewport: this.viewport,
+        density: (window.devicePixelRatio || 1) * previewZoom };
+      const paint = (drawInk: boolean) => paintPageImages(this.imageLibrary, canvas,
+        neighbor!, (context) => context.clearRect(0, 0, canvas.width, canvas.height), (context) => {
+          context.setTransform(canvas.width / width, 0, 0, canvas.height / height, 0, 0);
+          if (drawInk) this.tiles?.drawCachedPreview(preview, context);
+          context.setTransform(1, 0, 0, 1, 0, 0);
+        });
+      if (this.tiles?.hasCachedPreview(preview)) paint(true);
+      else {
+        // Keep images and stickies visible while tiles finish off-thread; a
+        // cold neighbor must never rasterize every stroke inside the gesture.
+        paint(false);
+        const paintWhenReady = () => {
+          if (!stage.isConnected || !this.tiles) return;
+          if (this.tiles.hasCachedPreview(preview)) paint(true);
+          else requestAnimationFrame(paintWhenReady);
+        };
+        requestAnimationFrame(paintWhenReady);
+      }
     }
     this.swipeStage = stage;
   }

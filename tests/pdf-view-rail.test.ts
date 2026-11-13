@@ -33,8 +33,11 @@ interface RailInternals {
   pdfDoc: { numPages: number; getPage(n: number): Promise<unknown>; destroy(): Promise<void> } | null;
   neighbourCache: Map<number, HTMLCanvasElement>;
   thumbCache: Map<number, HTMLCanvasElement>;
+  thumbButtons: Map<number, HTMLElement>;
   renderPdfPage(): Promise<void>;
   renderAll(): void;
+  readSourcePages(doc: { numPages: number; getPage(n: number): Promise<unknown> }, generation: number): Promise<Array<{ width: number; height: number; rotation: number }>>;
+  loadGeneration: number;
   cacheNeighbour(index: number, canvas: HTMLCanvasElement): void;
   clearNeighbourCache(): void;
   refreshPageRail(): void;
@@ -49,11 +52,13 @@ interface RailInternals {
  *  records the 1-based page number it painted. */
 function fakePdfDoc(pageCount: number) {
   const renderedPages: number[] = [];
+  const cleanedPages: number[] = [];
   const getPage = vi.fn(async (pageNumber: number) => ({
     getViewport: ({ scale }: { scale: number }) => ({ width: 595.28 * scale, height: 841.89 * scale }),
     render: vi.fn(() => { renderedPages.push(pageNumber); return { promise: Promise.resolve() }; }),
+    cleanup: vi.fn(() => { cleanedPages.push(pageNumber); }),
   }));
-  return { renderedPages, getPage, doc: { numPages: pageCount, getPage, destroy: async () => undefined } };
+  return { renderedPages, cleanedPages, getPage, doc: { numPages: pageCount, getPage, destroy: async () => undefined } };
 }
 
 async function setup(sourcePageCount = 3, imageLibrary?: ImageLibraryStore) {
@@ -130,6 +135,51 @@ it("keeps mounted PDF tiles, preview buttons and background caches through ink-o
   // Source rasters prepared before this merge may finish asynchronously;
   // ink-only changes must not request new source thumbnail decoding.
   expect(fakeDoc.getPage).not.toHaveBeenCalled();
+});
+
+it("reads source page geometry concurrently with a bounded worker pool and preserves page order", async () => {
+  const { view, internal } = await setup(9);
+  let active = 0, maximumActive = 0;
+  const doc = {
+    numPages: 9,
+    getPage: async (pageNumber: number) => {
+      active += 1;
+      maximumActive = Math.max(maximumActive, active);
+      await new Promise((resolve) => setTimeout(resolve, pageNumber % 2 ? 4 : 1));
+      active -= 1;
+      return {
+        view: [0, 0, 500 + pageNumber, 700 + pageNumber],
+        rotate: pageNumber % 2 ? 0 : 90,
+        getViewport: () => ({ width: 500 + pageNumber, height: 700 + pageNumber }),
+      };
+    },
+  };
+  const pages = await internal.readSourcePages(doc, internal.loadGeneration);
+  expect(maximumActive).toBeGreaterThan(1);
+  expect(maximumActive).toBeLessThanOrEqual(4);
+  expect(pages.map(({ width, height, rotation }) => [width, height, rotation])).toEqual(
+    Array.from({ length: 9 }, (_, index) => [501 + index, 701 + index, (index + 1) % 2 ? 0 : 90]));
+  await view.onClose();
+});
+
+it("stops scheduling page geometry reads after a PDF page fails", async () => {
+  const { view, internal } = await setup(9);
+  const requested: number[] = [];
+  const doc = {
+    numPages: 9,
+    getPage: async (pageNumber: number) => {
+      requested.push(pageNumber);
+      if (pageNumber === 2) {
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        throw new Error("page metadata failed");
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      return { view: [0, 0, 500, 700], rotate: 0, getViewport: () => ({ width: 500, height: 700 }) };
+    },
+  };
+  await expect(internal.readSourcePages(doc, internal.loadGeneration)).rejects.toThrow("page metadata failed");
+  expect(requested).toEqual([1, 2, 3, 4]);
+  await view.onClose();
 });
 
 it("updates a remote PDF page's preview without touching the selected canvas or zoom", async () => {
@@ -1127,7 +1177,7 @@ describe("pdf page preview rail", () => {
       expect(layoutPage).not.toHaveBeenCalled();
       expect(renderPdfPage).not.toHaveBeenCalled();
       // At the transition settle the parked resize work runs exactly once.
-      vi.advanceTimersByTime(140);
+      vi.advanceTimersByTime(210);
       expect(layoutPage).toHaveBeenCalledTimes(1);
       vi.advanceTimersByTime(120);
       expect(renderPdfPage).toHaveBeenCalledTimes(1);
@@ -1198,28 +1248,35 @@ describe("pdf page preview rail", () => {
     await view.onClose();
   });
 
-  it("centers the active thumb through rail refreshes while a fast paging burst holds the rail open", async () => {
+  it("scrolls the thumbnail list while keeping rail controls and PDF viewport fixed", async () => {
     const { view, internal } = await setup(3);
     internal.renderAll();
     const rail = document.querySelector<HTMLElement>(".ink-pdf-view .ink-page-rail")!;
+    const scroller = document.querySelector<HTMLElement>(".ink-pdf-scroller")!;
+    const list = rail.querySelector<HTMLElement>(".ink-rail-thumbs")!;
+    scroller.scrollTop = 96;
     const thumb = thumbAt(0);
     rail.getBoundingClientRect = () => new DOMRect(0, 0, 176, 600);
-    thumb.getBoundingClientRect = () => new DOMRect(0, 2400, 150, 120);
-    let railTop = 0;
-    Object.defineProperties(rail, {
+    let listTop = 0;
+    list.getBoundingClientRect = () => new DOMRect(0, 0, 160, 600);
+    thumb.getBoundingClientRect = () => new DOMRect(0, 2400 - listTop, 150, 120);
+    Object.defineProperties(list, {
       clientHeight: { configurable: true, value: 600 },
       scrollHeight: { configurable: true, value: 3000 },
-      scrollTop: { configurable: true, get: () => railTop, set: (value: number) => { railTop = value; } },
+      scrollTop: { configurable: true, get: () => listTop, set: (value: number) => { listTop = value; } },
     });
-    // Without the burst the refresh keeps the usual nearest-visibility nudge
-    // (jsdom has no scrollIntoView: no scroll movement at all).
+    // The active thumbnail moves within its own list, not the whole rail.
     internal.renderAll();
-    expect(railTop).toBe(0);
+    expect(listTop).toBe(1920);
+    expect(rail.scrollTop).toBe(0);
+    expect(scroller.scrollTop).toBe(96);
     // While the burst holds the rail open the refresh centers the page the
     // user is flipping through.
     (internal as unknown as { fastPagingRail: boolean }).fastPagingRail = true;
     internal.renderAll();
-    expect(railTop).toBe(2160);
+    expect(listTop).toBe(2160);
+    expect(rail.scrollTop).toBe(0);
+    expect(scroller.scrollTop).toBe(96);
     (internal as unknown as { fastPagingRail: boolean }).fastPagingRail = false;
     await view.onClose();
   });
@@ -1299,12 +1356,103 @@ describe("pdf page preview rail", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(fakeDoc.getPage.mock.calls.map((call) => call[0])).toEqual([1, 2]);
     expect(fakeDoc.renderedPages).toEqual([1, 2]);
+    expect(fakeDoc.cleanedPages).toEqual(expect.arrayContaining([1, 2]));
     const bitmap = internal.thumbCache.get(0)!;
     expect(bitmap.width).toBe(120); // RAIL_THUMB_WIDTH at devicePixelRatio 1
     expect(bitmap.height).toBe(Math.round(120 * 841.89 / 595.28));
     // A repaint sweep is served from the thumbnail cache: no new pdf.js work.
     internal.paintVisibleThumbnails();
     expect(fakeDoc.getPage.mock.calls).toHaveLength(2);
+    await view.onClose();
+  });
+
+  it("bounds thumbnail bitmaps and releases evicted cached and mounted canvases", async () => {
+    const { view, internal } = await setupExpanded(16);
+    const editor = view as any;
+    internal.renderAll();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    editor.noteIndex = 8;
+    const bitmaps = Array.from({ length: 14 }, () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 240;
+      canvas.height = 340;
+      return canvas;
+    });
+    bitmaps.forEach((bitmap, index) => editor.cacheThumbnail(index, bitmap));
+    expect(internal.thumbCache.size).toBe(12);
+    expect(bitmaps[0]!.width).toBe(1);
+
+    editor.visibleThumbIndexes = vi.fn(() => [9, 10]);
+    vi.spyOn(editor, "paintThumbnail").mockImplementation(() => undefined);
+    editor.paintVisibleThumbnails();
+    expect([...internal.thumbCache.keys()].every((index) => [7, 8, 9, 10].includes(index))).toBe(true);
+    expect(bitmaps[2]!.width).toBe(1);
+
+    const distantSurface = internal.thumbButtons.get(4)!.querySelector("canvas") as HTMLCanvasElement;
+    const retainedSurface = internal.thumbButtons.get(8)!.querySelector("canvas") as HTMLCanvasElement;
+    distantSurface.width = retainedSurface.width = 240;
+    distantSurface.height = retainedSurface.height = 340;
+    distantSurface.dataset.previewReady = retainedSurface.dataset.previewReady = "true";
+    editor.paintVisibleThumbnails();
+    expect(distantSurface.width).toBe(1);
+    expect(distantSurface.dataset.previewReady).toBeUndefined();
+    expect(retainedSurface.width).toBe(240);
+    await view.onClose();
+  });
+
+  it("releases cached and mounted thumbnail canvases when invalidating a document", async () => {
+    const { view, internal } = await setup(2);
+    internal.renderAll();
+    const bitmap = document.createElement("canvas");
+    bitmap.width = 360;
+    bitmap.height = 510;
+    internal.thumbCache.set(1, bitmap);
+    const surface = internal.thumbButtons.get(1)!.querySelector("canvas") as HTMLCanvasElement;
+    surface.width = 360;
+    surface.height = 510;
+    surface.dataset.previewReady = "true";
+
+    (view as any).invalidateThumbnails();
+
+    expect(internal.thumbCache.size).toBe(0);
+    expect(bitmap.width).toBe(1);
+    expect(bitmap.height).toBe(1);
+    expect(surface.width).toBe(1);
+    expect(surface.dataset.previewReady).toBeUndefined();
+    await view.onClose();
+  });
+
+  it("cleans up each pdf.js page after reading source geometry", async () => {
+    const { view } = await setup(2);
+    const cleanup = vi.fn();
+    const doc = {
+      numPages: 2,
+      getPage: vi.fn(async () => ({
+        view: [0, 0, 612, 792],
+        rotate: 0,
+        getViewport: () => ({ width: 612, height: 792 }),
+        cleanup,
+      })),
+    };
+
+    const pages = await (view as any).readSourcePages(doc, (view as any).loadGeneration);
+
+    expect(pages).toEqual([
+      { width: 612, height: 792, rotation: 0 },
+      { width: 612, height: 792, rotation: 0 },
+    ]);
+    expect(cleanup).toHaveBeenCalledTimes(2);
+    await view.onClose();
+  });
+
+  it("destroys the old PDF document when resetting the view for a replacement", async () => {
+    const { view, internal } = await setup(1);
+    const destroy = vi.spyOn(internal.pdfDoc!, "destroy");
+
+    (view as any).resetViewState();
+
+    expect(destroy).toHaveBeenCalledOnce();
+    expect(internal.pdfDoc).toBeNull();
     await view.onClose();
   });
 
@@ -1444,7 +1592,7 @@ describe("pdf page preview rail", () => {
     const pending = new Promise<void>((resolve) => { finish = resolve; });
     const render = vi.fn(() => ({ promise: pending }));
     fakeDoc.getPage.mockResolvedValueOnce({
-      getViewport: ({ scale }: { scale: number }) => ({ width: 595.28 * scale, height: 841.89 * scale }), render,
+      getViewport: ({ scale }: { scale: number }) => ({ width: 595.28 * scale, height: 841.89 * scale }), render, cleanup: vi.fn(),
     });
     internal.prewarmNeighbours();
     await Promise.resolve();
@@ -1467,6 +1615,7 @@ describe("pdf page preview rail", () => {
       getViewport: ({ scale }: { scale: number }) => ({ width: 595.28 * scale, height: 841.89 * scale }),
       render: vi.fn(() => ({ promise: pageNumber === 3 ? oldPaint
         : inserted && pageNumber === 2 ? newPaint : Promise.resolve() })),
+      cleanup: vi.fn(),
     }));
     internal.noteIndex = 1;
     internal.renderAll();

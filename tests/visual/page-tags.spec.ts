@@ -16,6 +16,25 @@ test("notebook pages: tag from the rail, badges, stacked filters and undo", asyn
   await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
   await page.getByRole("button", { name: "Pages", exact: true }).click();
   await expect(page.locator(".ink-page-thumb")).toHaveCount(1);
+  const firstThumb = page.locator(".ink-page-thumb").first();
+  const pageNumber = await firstThumb.locator(".ink-page-thumb-number").boundingBox();
+  const tagButton = await firstThumb.locator(".ink-thumb-tag-button").boundingBox();
+  expect(pageNumber).not.toBeNull();
+  expect(tagButton).not.toBeNull();
+  expect(pageNumber!.x >= tagButton!.x + tagButton!.width || tagButton!.x >= pageNumber!.x + pageNumber!.width)
+    .toBe(true);
+  await page.getByRole("button", { name: "Manage pages", exact: true }).click();
+  const selectedThumb = page.locator(".ink-page-thumb").first();
+  await selectedThumb.click();
+  await expect(selectedThumb).toHaveClass(/is-selected/);
+  const marker = await selectedThumb.evaluate((element) => {
+    const style = getComputedStyle(element, "::after");
+    return { width: parseFloat(style.width), height: parseFloat(style.height), radius: style.borderRadius };
+  });
+  expect(marker.width).toBe(marker.height);
+  expect(marker.radius).toBe("2px");
+  await page.getByRole("button", { name: "Done managing pages", exact: true }).click();
+  await expect(page.locator(".ink-page-thumb")).toHaveCount(1);
   // A second page (blank, untagged) gives the filters something to hide.
   // Added BEFORE tagging so the tag session sits on top of the undo stack.
   await page.evaluate(() => (window as unknown as {
@@ -29,11 +48,11 @@ test("notebook pages: tag from the rail, badges, stacked filters and undo", asyn
 
   // "With ink" alone: the written page stays, the blank page leaves.
   await page.getByRole("button", { name: "Pages with ink only" }).click();
-  await expect(page.locator(".ink-page-thumb:not(.is-filtered-out)")).toHaveCount(1);
+  await expect(page.locator(".ink-page-thumb")).toHaveCount(1);
   await expect(page.locator(".ink-rail-count")).toHaveText("1 of 2");
   // Stacked "tagged": still the same page (ink + tag).
   await page.getByRole("button", { name: "Tagged pages only" }).click();
-  await expect(page.locator(".ink-page-thumb:not(.is-filtered-out)")).toHaveCount(1);
+  await expect(page.locator(".ink-page-thumb")).toHaveCount(1);
   await expect(page.locator(".ink-rail-count")).toHaveText("1 of 2");
   await page.screenshot({ path: "test-results/page-tags-notebook.png" });
 
@@ -68,14 +87,18 @@ test("pdf pages: tag through the sidecar view with badges and filters", async ({
 
   await page.getByRole("button", { name: "Tagged pages only" }).click();
   await expect(page.locator(".ink-page-thumb:not(.is-filtered-out)")).toHaveCount(1);
+  await expect(page.locator(".ink-page-thumb.is-filtered-out")).toBeHidden();
   await expect(page.locator(".ink-rail-count")).toHaveText("1 of 2");
   await page.getByRole("button", { name: "Pages with ink only" }).click();
   // The tagged source page has no ink either: stacked filters empty the rail
   // while the counter keeps explaining the result.
   await expect(page.locator(".ink-page-thumb:not(.is-filtered-out)")).toHaveCount(0);
+  await expect(page.locator(".ink-page-thumb.is-filtered-out")).toHaveCount(2);
+  await expect(page.locator(".ink-page-thumb.is-filtered-out").first()).toBeHidden();
   await expect(page.locator(".ink-rail-count")).toHaveText("0 of 2");
   await page.screenshot({ path: "test-results/page-tags-pdf.png" });
   await page.getByRole("button", { name: "Pages with ink only" }).click();
   await page.getByRole("button", { name: "Tagged pages only" }).click();
   await expect(page.locator(".ink-page-thumb")).toHaveCount(2);
+  await expect(page.locator(".ink-page-thumb.is-filtered-out")).toHaveCount(0);
 });

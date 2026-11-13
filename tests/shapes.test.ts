@@ -31,4 +31,13 @@ describe("shape stroke geometry", () => {
       [p(.1,.1), p(.1,.3), p(.3,.3)], [p(.1,.1), p(.3,.1), p(.1,.1)],
     ]) expect(canStraighten(points, 1000, 1000)).toBe(false);
   });
+  it("accepts moderate pen wobble and short straight marks but still rejects curves", () => {
+    expect(canStraighten([p(.1, .1), p(.135, .1)], 1000, 1000)).toBe(true);
+    expect(canStraighten([
+      p(.1, .2), p(.3, .192), p(.5, .208), p(.7, .193), p(.9, .2),
+    ], 1000, 1000)).toBe(true);
+    expect(canStraighten([
+      p(.1, .2), p(.3, .18), p(.5, .24), p(.7, .18), p(.9, .2),
+    ], 1000, 1000)).toBe(false);
+  });
 });

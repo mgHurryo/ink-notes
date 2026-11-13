@@ -22,13 +22,26 @@ test(`${mode}, ${reducedMotion}: vertical native wheel scrolls the page, then fl
   }, mode);
   const scroller = page.locator(mode === "ink" ? ".ink-page-scroller" : ".ink-pdf-scroller");
   const status = page.locator(mode === "ink" ? ".ink-page-status" : ".ink-pdf-page-indicator");
+  await scroller.evaluate(el => {
+    (window as any).__nativeWheelSamples = [];
+    el.addEventListener("wheel", event => {
+      const wheel = event as WheelEvent;
+      (window as any).__nativeWheelSamples.push({ deltaY: wheel.deltaY, defaultPrevented: wheel.defaultPrevented });
+    });
+  });
   const box = await scroller.boundingBox();
   await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
-  await page.mouse.wheel(0, 120);
-  await expect.poll(() => scroller.evaluate(el => el.scrollTop)).toBeGreaterThan(100);
+  for (let i = 0; i < 6; i++) await page.mouse.wheel(0, 20);
+  await expect.poll(() => scroller.evaluate(el => el.scrollTop)).toBeGreaterThan(200);
+  const nativeSamples = await page.evaluate(() => (window as any).__nativeWheelSamples);
+  expect(nativeSamples).toHaveLength(6);
+  expect(nativeSamples.every((sample: { defaultPrevented: boolean }) => !sample.defaultPrevented)).toBe(true);
+  expect(nativeSamples.reduce((sum: number, sample: { deltaY: number }) => sum + sample.deltaY, 0)).toBe(120);
   await expect(status).toHaveText("1 / 2");
   await scroller.evaluate(el => { el.scrollTop = el.scrollHeight; });
   await page.mouse.wheel(0, 140);
+  await expect.poll(() => page.evaluate(() => (window as any).__nativeWheelSamples.length)).toBe(7);
+  expect((await page.evaluate(() => (window as any).__nativeWheelSamples.at(-1))).defaultPrevented).toBe(true);
   await expect(status).toHaveText("2 / 2");
   await expect(page.locator(".ink-swipe-stage")).toHaveCount(0);
   expect(await scroller.evaluate(el => el.scrollTop)).toBe(0);

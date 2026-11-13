@@ -312,6 +312,33 @@ describe("stylus touch input ownership", () => {
     expect(drawing.activePointerId).toBeNull();
   });
 
+  it.each(["pointer-first", "touch-first"])("does not let a %s Pointer Pencil's paired direct Touch pan in Pointer mode", (order) => {
+    clickButton("Pointer");
+    const pairedTouch = touch(8, { touchType: "direct" });
+    if (order === "pointer-first") dispatchPointer("pointerdown", { pointerId: 8, pointerType: "pen" });
+    dispatchTouch("touchstart", [pairedTouch]);
+    if (order === "touch-first") dispatchPointer("pointerdown", { pointerId: 8, pointerType: "pen" });
+    dispatchPointer("pointermove", { pointerId: 8, pointerType: "pen", clientX: 420 });
+    dispatchTouch("touchmove", [touch(8, { touchType: "direct", clientY: 290 })]);
+    expect(scroller.scrollTop).toBe(0);
+    dispatchPointer("pointerup", { pointerId: 8, pointerType: "pen", clientX: 420 });
+    dispatchTouch("touchend", [pairedTouch], []);
+    const finger = touch(91, { touchType: "direct" });
+    dispatchTouch("touchstart", [finger]);
+    dispatchTouch("touchmove", [touch(91, { touchType: "direct", clientY: 290 })]);
+    expect(scroller.scrollTop).toBeGreaterThan(0);
+    dispatchTouch("touchend", [finger], []);
+  });
+
+  it("keeps direct finger page panning available in Pointer mode without a stylus contact", () => {
+    clickButton("Pointer");
+    const finger = touch(91, { touchType: "direct" });
+    dispatchTouch("touchstart", [finger]);
+    dispatchTouch("touchmove", [touch(91, { touchType: "direct", clientY: 290 })]);
+    expect(scroller.scrollTop).toBeGreaterThan(0);
+    dispatchTouch("touchend", [finger], []);
+  });
+
   it.each(["pointer-first", "touch-first"])("deduplicates overlapping %s streams per contact", (order) => {
     if (order === "pointer-first") dispatchPointer("pointerdown");
     dispatchTouch("touchstart", [touch(20)]);
@@ -439,6 +466,31 @@ describe("stylus touch input ownership", () => {
     expect(drawing.interaction).toBeNull();
   });
 
+  it.each(["toolbar", "shortcut"])("undoes an active eraser before consuming history via %s", (trigger) => {
+    (view as any).state.pen.smooth = 0;
+    for (const [start, end] of [[300, 380], [500, 580]]) {
+      dispatchPointer("pointerdown", { clientX: start, clientY: 350 });
+      dispatchPointer("pointermove", { clientX: end, clientY: 350 });
+      dispatchPointer("pointerup", { clientX: end + 20, clientY: 350 });
+    }
+    const originalPoints = drawing.currentPage().strokes.map((stroke) => stroke.points.map((point) => ({ ...point })));
+    expect(originalPoints).toHaveLength(2);
+    clickButton("Erase");
+    dispatchPointer("pointerdown", { clientX: 500, clientY: 350 });
+    expect(drawing.currentPage().strokes).toHaveLength(1);
+
+    if (trigger === "toolbar") clickButton("Undo");
+    else {
+      const event = new KeyboardEvent("keydown", { bubbles: true, cancelable: true, key: "z", ctrlKey: true });
+      paper.dispatchEvent(event);
+      expect(event.defaultPrevented).toBe(true);
+    }
+
+    expect(drawing.activePointerId).toBeNull();
+    expect(drawing.currentPage().strokes.map((stroke) => stroke.points)).toEqual(originalPoints);
+    dispatchPointer("pointerup", { clientX: 500, clientY: 350 });
+  });
+
   it("selects completed ink with a stylus Touch lasso without adding ink", () => {
     dispatchTouch("touchstart", [touch()]);
     dispatchTouch("touchend", [touch(7, { clientX: 420 })], []);
@@ -453,6 +505,27 @@ describe("stylus touch input ownership", () => {
     expect(drawing.selectedStrokeIds).toEqual(new Set([stroke.id]));
     expect(drawing.currentPage().strokes).toEqual([stroke]);
     expect(drawing.activePointerId).toBeNull();
+  });
+
+  it("keeps finger movement as page pan while the lasso tool is selected", () => {
+    clickButton("Select");
+    (view as any).state.fingerAsPen = true;
+    let scrollTop = 100;
+    Object.defineProperty(scroller, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => { scrollTop = value; },
+    });
+    const finger = touch(91, { touchType: "direct", clientY: 350 });
+
+    dispatchTouch("touchstart", [finger]);
+    dispatchTouch("touchmove", [touch(91, { touchType: "direct", clientY: 320 })]);
+
+    expect(scrollTop).toBe(130);
+    expect(drawing.activePointerId).toBeNull();
+    expect(drawing.interaction).toBeNull();
+    expect(drawing.currentPage().strokes).toHaveLength(0);
+    dispatchTouch("touchend", [touch(91, { touchType: "direct", clientY: 320 })], []);
   });
 
   it("undoes and redoes one deduplicated Pencil stroke as a single edit", () => {

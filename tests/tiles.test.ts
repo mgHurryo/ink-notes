@@ -178,6 +178,39 @@ describe("interactive tile commits", () => {
     vi.unstubAllGlobals();
   });
 
+  it("paces pending neighbor prewarm tiles while keeping the worker queue replenished", () => {
+    const frames: FrameRequestCallback[] = [];
+    vi.stubGlobal("requestAnimationFrame", vi.fn((callback: FrameRequestCallback) => { frames.push(callback); return frames.length; }));
+    const state = { id: 1, page: { id: "page" }, index: { width: 1280, height: 128,
+      revisions: new Map(Array.from({ length: 10 }, (_, index) => [`${index}:0`, 1])), query: () => [] } };
+    const backend = { renderTile: vi.fn(() => new Promise(() => {})) };
+    const renderer = Object.create(TileRenderer.prototype) as any;
+    Object.assign(renderer, { backend, disposed: false, inkCommitPaused: false, inkCommit: null, frame: null,
+      active: state, renderGeneration: 1, pendingTiles: new Map(), pendingPrewarmTiles: new Set(), cache: new Map(),
+      jobs: Array.from({ length: 10 }, (_, index) => ({ state, cell: `${index}:0`, density: 1, priority: "prewarm" })),
+      visible: new Set(), get: vi.fn(() => undefined), isHeld: vi.fn(() => false),
+      key: (jobState: any, cell: string, density: number) => `${jobState.id}/${cell}/${density}` });
+
+    renderer.schedule();
+    frames.shift()!(0);
+
+    expect(backend.renderTile).toHaveBeenCalledTimes(4);
+    expect(renderer.pendingPrewarmTiles.size).toBe(4);
+    expect(renderer.jobs).toHaveLength(6);
+    expect(frames).toHaveLength(0);
+
+    const completedKey = renderer.pendingPrewarmTiles.values().next().value;
+    renderer.pendingPrewarmTiles.delete(completedKey);
+    renderer.pendingTiles.delete(completedKey);
+    renderer.schedule();
+    frames.shift()!(16);
+
+    expect(backend.renderTile).toHaveBeenCalledTimes(5);
+    expect(renderer.pendingPrewarmTiles.size).toBe(4);
+    expect(renderer.jobs).toHaveLength(5);
+    vi.unstubAllGlobals();
+  });
+
   it("dispatches a gesture-free interactive commit batch to the worker in one animation frame", async () => {
     // Undo/redo refills run through commitInteractive while holding the old
     // frame until the whole batch lands. Pacing the renders one per frame made
