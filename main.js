@@ -29519,8 +29519,20 @@ var InkWritingView = class extends import_obsidian7.FileView {
   }
   onDesktopKeyDown(event) {
     if (this.openingNotebook()) return false;
-    if (this.activePointerId !== null || this.desktopPan) return false;
     const key = event.key.toLowerCase();
+    if ((event.ctrlKey || event.metaKey) && !event.altKey && (key === "z" || key === "y")) {
+      if (this.desktopPan || this.flipSettling || this.inputLocked()) return false;
+      if (key === "z") {
+        if (event.shiftKey) this.redo();
+        else this.undo();
+        return true;
+      }
+      if (!event.shiftKey) {
+        this.redo();
+        return true;
+      }
+    }
+    if (this.activePointerId !== null || this.desktopPan) return false;
     if ((event.ctrlKey || event.metaKey) && !event.altKey) {
       if (this.flipSettling) return false;
       if (key === "+" || key === "=") {
@@ -29549,15 +29561,6 @@ var InkWritingView = class extends import_obsidian7.FileView {
           this.pasteSelection();
           return true;
         }
-      }
-      if (key === "z") {
-        if (event.shiftKey) this.redo();
-        else this.undo();
-        return true;
-      }
-      if (key === "y" && !event.shiftKey) {
-        this.redo();
-        return true;
       }
       return false;
     }
@@ -31751,6 +31754,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
   // -------------------------------------------------------- history stack
   undo() {
     if (this.readingMode) return;
+    this.finishPointerInput(false);
     const command = this.undoStack.pop();
     if (!command) return;
     command.undo();
@@ -31759,6 +31763,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
   }
   redo() {
     if (this.readingMode) return;
+    this.finishPointerInput(false);
     const command = this.redoStack.pop();
     if (!command) return;
     command.redo();
