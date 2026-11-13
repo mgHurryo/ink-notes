@@ -455,6 +455,27 @@ describe("stylus touch input ownership", () => {
     expect(drawing.activePointerId).toBeNull();
   });
 
+  it("keeps finger movement as page pan while the lasso tool is selected", () => {
+    clickButton("Select");
+    (view as any).state.fingerAsPen = true;
+    let scrollTop = 100;
+    Object.defineProperty(scroller, "scrollTop", {
+      configurable: true,
+      get: () => scrollTop,
+      set: (value: number) => { scrollTop = value; },
+    });
+    const finger = touch(91, { touchType: "direct", clientY: 350 });
+
+    dispatchTouch("touchstart", [finger]);
+    dispatchTouch("touchmove", [touch(91, { touchType: "direct", clientY: 320 })]);
+
+    expect(scrollTop).toBe(130);
+    expect(drawing.activePointerId).toBeNull();
+    expect(drawing.interaction).toBeNull();
+    expect(drawing.currentPage().strokes).toHaveLength(0);
+    dispatchTouch("touchend", [touch(91, { touchType: "direct", clientY: 320 })], []);
+  });
+
   it("undoes and redoes one deduplicated Pencil stroke as a single edit", () => {
     dispatchPointer("pointerdown");
     dispatchTouch("touchstart", [touch(20)]);
