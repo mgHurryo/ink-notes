@@ -17,7 +17,7 @@
 import { FileView, Menu, Notice, Platform, setIcon, type ViewStateResult } from "obsidian";
 import { defaultReadingMode } from "./device-mode";
 import { DesktopWheelGesture, WheelPagePacer, normalizeWheel } from "./desktop-wheel";
-import { canStraighten, shapePoints, SHAPES, type ShapeKind } from "./shapes";
+import { canStraighten, shapePoints, SHAPES, STRAIGHT_LINE_MIN_LENGTH_PX, type ShapeKind } from "./shapes";
 import { ImageLibraryModal, ImageLibraryStore, placedImage } from "./image-library";
 import { PageImageLayer } from "./page-images";
 import { StickyNoteLayer, markdownStickyLink } from "./sticky-notes";
@@ -146,7 +146,7 @@ export const INK_COMMIT_IDLE_DELAY = 180;
 const LIVE_TAIL_SAMPLE_LIMIT = 32;
 const COMPLETED_PREVIEW_SAMPLE_LIMIT = 256;
 // How long the pen must rest in place before a drawn path straightens.
-const LINE_HOLD_MS = 2_000;
+const LINE_HOLD_MS = 800;
 // Modeled pen samples are deduplicated against this page-pixel radius. The
 // radius must exceed the modeler's end-of-stroke catch-up step sizes: those
 // converging (and overshoot-reversing) micro-segments otherwise reach the
@@ -3752,7 +3752,7 @@ export abstract class InkWritingView extends FileView {
     const start = this.scribbleGesturePoints[0];
     // Keep device-rate input constant-time; inspect the whole path only on hold.
     if (!start || Math.hypot((point.x - start.x) * this.canvasLogicalWidth,
-      (point.y - start.y) * this.canvasLogicalHeight) < 40) return;
+      (point.y - start.y) * this.canvasLogicalHeight) < STRAIGHT_LINE_MIN_LENGTH_PX) return;
     // One timer serves the whole stroke. Raw-update streams used to cancel and
     // re-arm here on every hardware sample (hundreds of timers per second);
     // the settle callback instead re-checks the rest deadline and re-arms the
@@ -3772,7 +3772,7 @@ export abstract class InkWritingView extends FileView {
     const anchor = this.lineHoldAnchor;
     const start = this.scribbleGesturePoints[0];
     if (!anchor || !start || Math.hypot((anchor.x - start.x) * this.canvasLogicalWidth,
-      (anchor.y - start.y) * this.canvasLogicalHeight) < 40
+      (anchor.y - start.y) * this.canvasLogicalHeight) < STRAIGHT_LINE_MIN_LENGTH_PX
       || !canStraighten(this.scribbleGesturePoints, this.canvasLogicalWidth, this.canvasLogicalHeight)) return;
     this.geometricStroke = { start: { ...start }, kind: "line" };
     this.penModeler = null;

@@ -25317,6 +25317,7 @@ var SHAPES = [
   ["circle", "Circle", "circle"],
   ["triangle", "Triangle", "triangle"]
 ];
+var STRAIGHT_LINE_MIN_LENGTH_PX = 32;
 function shapePoints(kind, start, end, width, height) {
   const x = start.x * width, y = start.y * height;
   let dx = (end.x - start.x) * width, dy = (end.y - start.y) * height;
@@ -25353,18 +25354,18 @@ function canStraighten(points, width, height) {
   if (points.length < 2 || points.length >= 2048) return false;
   const first = points[0], last = points[points.length - 1];
   const dx = (last.x - first.x) * width, dy = (last.y - first.y) * height, chord = Math.hypot(dx, dy);
-  if (chord < 40) return false;
-  const tolerance = Math.max(2, Math.min(6, chord * 0.025));
+  if (chord < STRAIGHT_LINE_MIN_LENGTH_PX) return false;
+  const tolerance = Math.max(3, Math.min(10, chord * 0.04));
   let travel = 0, previousProjection = 0;
   for (let i = 1; i < points.length; i++) {
     const px = (points[i].x - first.x) * width, py = (points[i].y - first.y) * height;
     if (Math.abs(px * dy - py * dx) / chord > tolerance) return false;
     const projection = (px * dx + py * dy) / chord;
-    if (projection < previousProjection - 2 || projection < -2 || projection > chord + 2) return false;
+    if (projection < previousProjection - 4 || projection < -4 || projection > chord + 4) return false;
     previousProjection = projection;
     travel += Math.hypot((points[i].x - points[i - 1].x) * width, (points[i].y - points[i - 1].y) * height);
   }
-  return travel <= chord * 1.08;
+  return travel <= chord * 1.16;
 }
 
 // src/page-images.ts
@@ -27963,7 +27964,7 @@ var SAVE_MAX_DELAY = 1e4;
 var INK_COMMIT_IDLE_DELAY = 180;
 var LIVE_TAIL_SAMPLE_LIMIT = 32;
 var COMPLETED_PREVIEW_SAMPLE_LIMIT = 256;
-var LINE_HOLD_MS = 2e3;
+var LINE_HOLD_MS = 800;
 var PEN_CAPTURE_MIN_DISTANCE = 0.35;
 var SPARSE_SAMPLE_INTERVAL_MS = 24;
 var PEN_SAMPLE_INTERVAL_WINDOW = 32;
@@ -31517,7 +31518,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     if (!start || Math.hypot(
       (point.x - start.x) * this.canvasLogicalWidth,
       (point.y - start.y) * this.canvasLogicalHeight
-    ) < 40) return;
+    ) < STRAIGHT_LINE_MIN_LENGTH_PX) return;
     const generation = (_a = this.interaction) == null ? void 0 : _a.generation;
     this.lineHoldTimer = window.setTimeout(() => this.settleLineHold(generation), LINE_HOLD_MS);
   }
@@ -31535,7 +31536,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     if (!anchor || !start || Math.hypot(
       (anchor.x - start.x) * this.canvasLogicalWidth,
       (anchor.y - start.y) * this.canvasLogicalHeight
-    ) < 40 || !canStraighten(this.scribbleGesturePoints, this.canvasLogicalWidth, this.canvasLogicalHeight)) return;
+    ) < STRAIGHT_LINE_MIN_LENGTH_PX || !canStraighten(this.scribbleGesturePoints, this.canvasLogicalWidth, this.canvasLogicalHeight)) return;
     this.geometricStroke = { start: { ...start }, kind: "line" };
     this.penModeler = null;
     this.activeStroke.dynamics = { taper: 0, pressure: 0, speed: 0 };

@@ -93,7 +93,7 @@ export function gestureContract(create: () => Promise<any>): void {
       button.click(); expect(document.querySelector(".menu")).toBeNull();
     });
 
-    it.each(["pointer", "stylus-touch"])("straightens held %s input after two seconds, tolerates jitter and adjusts the endpoint", async source => {
+    it.each(["pointer", "stylus-touch"])("straightens held %s input after 800ms, tolerates jitter and adjusts the endpoint", async source => {
       const { editor, page } = await setup();
       editor.capturePointer = vi.fn(); editor.releasePointer = vi.fn(); editor.state.pen.smooth = 60;
       const operation = vi.spyOn(editor, "queueWorkerOperation");
@@ -103,8 +103,8 @@ export function gestureContract(create: () => Promise<any>): void {
         const sample = (x: number, y: number) => ({ pointerId: 42, pointerType: "pen", clientX: x, clientY: y, pressure: .6, timeStamp: time += 10 });
         editor.onPointerDown(sample(200, 200), source);
         for (const [x,y] of [[300,201], [400,199], [500,200]]) editor.onPointerMove(sample(x,y), source);
-        vi.advanceTimersByTime(1500); editor.onPointerMove(sample(501,200), source);
-        vi.advanceTimersByTime(499); expect(editor.geometricStroke).toBeNull();
+        vi.advanceTimersByTime(500); editor.onPointerMove(sample(501,200), source);
+        vi.advanceTimersByTime(299); expect(editor.geometricStroke).toBeNull();
         vi.advanceTimersByTime(1); expect(page.strokes[0].points).toHaveLength(2);
         expect(page.strokes[0].points[0].x).toBeCloseTo(.2);
         editor.onPointerMove(sample(700,250), source);
@@ -180,7 +180,7 @@ export function gestureContract(create: () => Promise<any>): void {
         if (scenario === "tool") editor.selectWritingTool("eraser");
         if (scenario === "reading") editor.setReadingMode(true);
         if (scenario === "blur") window.dispatchEvent(new Event("blur"));
-        if (scenario === "moving") { vi.advanceTimersByTime(1500); editor.onPointerMove(sample(600,200)); vi.advanceTimersByTime(1000); }
+        if (scenario === "moving") { vi.advanceTimersByTime(700); editor.onPointerMove(sample(600,250)); vi.advanceTimersByTime(900); }
         else vi.advanceTimersByTime(2500);
         expect(editor.geometricStroke).toBeNull();
         expect(page.strokes[0].points.length).toBeGreaterThan(2);
