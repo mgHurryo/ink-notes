@@ -738,6 +738,9 @@
 
 .ink-page-rail {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
   /* Width lives in one variable so the drag handle only has to update a
      custom property; stylesheet rules (container queries, collapse) keep
      precedence over it. */
@@ -745,7 +748,7 @@
   flex: 0 0 var(--ink-rail-width, 176px);
   min-width: 0;
   padding: 14px 12px 24px;
-  overflow-y: auto;
+  overflow: hidden;
   overflow-x: hidden;
   border-right: 1px solid var(--ink-border);
   background: var(--ink-panel);
@@ -811,9 +814,16 @@
    the room the title label needs below each thumb. */
 .ink-rail-thumbs {
   display: grid;
+  flex: 1 1 auto;
+  min-height: 0;
   grid-template-columns: repeat(auto-fill, minmax(96px, 1fr));
+  align-content: start;
   column-gap: 10px;
   row-gap: 30px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
 }
 
 .ink-rail-header {

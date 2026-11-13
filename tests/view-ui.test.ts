@@ -1276,44 +1276,46 @@ describe("page rail thumbnails and resizing", () => {
     expect(header.style.height).toBe("49.92px"); // STICKY_HEADER * 624 / 800
   });
 
-  it("keeps the active thumb in the rail without scrolling editor ancestors", () => {
+  it("scrolls the thumbnail list while keeping rail controls and editor fixed", () => {
     const internal = view as unknown as { addPage(): void; renderPageRail(): void; fastPagingRail: boolean };
     internal.addPage();
     button("Pages").click();   // expand so the thumbs exist in a visible rail
     const rail = document.querySelector<HTMLElement>(".ink-page-rail")!;
     const pageScroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
     pageScroller.scrollTop = 96;
-    let railTop = 0;
-    Object.defineProperties(rail, {
-      clientHeight: { configurable: true, value: 600 },
-      scrollHeight: { configurable: true, value: 3000 },
-      scrollTop: { configurable: true, get: () => railTop, set: (value: number) => { railTop = value; } },
-    });
+    let listTop = 0;
     let scrollIntoViewCalls = 0;
     const originalScrollIntoView = HTMLElement.prototype.scrollIntoView;
     HTMLElement.prototype.scrollIntoView = function () { scrollIntoViewCalls++; };
-    // renderPageRail rebuilds the thumbs every time, so the active thumb's
-    // box is pinned at the prototype level; the rail's own rect stays direct.
+    internal.renderPageRail();
+    const list = rail.querySelector<HTMLElement>(".ink-rail-thumbs")!;
+    const active = rail.querySelector<HTMLElement>(".ink-page-thumb.is-active")!;
+    Object.defineProperties(list, {
+      clientHeight: { configurable: true, value: 600 },
+      scrollHeight: { configurable: true, value: 3000 },
+      scrollTop: { configurable: true, get: () => listTop, set: (value: number) => { listTop = value; } },
+    });
+    list.getBoundingClientRect = () => new DOMRect(0, 0, 160, 600);
+    active.getBoundingClientRect = () => new DOMRect(0, 2400 - listTop, 150, 120);
+    const helper = view as unknown as {
+      scrollRailThumb(rail: HTMLElement, thumb: HTMLElement, center?: boolean): void;
+      followWheelPageThumb(): void;
+    };
     const originalRect = HTMLElement.prototype.getBoundingClientRect;
     HTMLElement.prototype.getBoundingClientRect = function (this: HTMLElement) {
       if (this === rail) return new DOMRect(0, 0, 176, 600);
-      if (this.classList.contains("ink-page-thumb") && this.classList.contains("is-active")) return new DOMRect(0, 2400 - railTop, 150, 120);
       return originalRect.call(this);
     };
     try {
-      // The page scrolls into view inside the rail, while the editor keeps
-      // its existing viewport position.
-      internal.renderPageRail();
-      expect(railTop).toBe(1920);
+      helper.scrollRailThumb(rail, active);
+      expect(listTop).toBe(1920);
+      expect(rail.scrollTop).toBe(0);
+      expect(pageScroller.scrollTop).toBe(96);
+      helper.followWheelPageThumb();
+      expect(listTop).toBe(2160);
+      expect(rail.scrollTop).toBe(0);
       expect(pageScroller.scrollTop).toBe(96);
       expect(scrollIntoViewCalls).toBe(0);
-      // While the burst holds the rail open the rebuild centers the page the
-      // user is flipping through.
-      internal.fastPagingRail = true;
-      internal.renderPageRail();
-      expect(railTop).toBe(2160);
-      expect(pageScroller.scrollTop).toBe(96);
-      internal.fastPagingRail = false;
     } finally {
       HTMLElement.prototype.getBoundingClientRect = originalRect;
       HTMLElement.prototype.scrollIntoView = originalScrollIntoView;
