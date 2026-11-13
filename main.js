@@ -37222,8 +37222,18 @@ var PdfInkView = class extends InkWritingView {
     observer.observe(scroller);
     this.register(() => observer.disconnect());
   }
-  /** One relayout + re-render pass for a scroller size change. */
+  /** One relayout + re-render pass for a scroller size change. Sub-3px
+   *  jitter is ignored: engine rounding (or a missing scrollbar-gutter
+   *  support) feeding the page box back into its own scrollbar state made
+   *  the fit zoom oscillate and the ink lag the background. */
   applyPaneResize() {
+    const scroller = this.scroller;
+    if (scroller) {
+      const width = scroller.clientWidth, height = scroller.clientHeight;
+      if (this.lastPaneWidth !== void 0 && Math.abs(width - this.lastPaneWidth) < 3 && this.lastPaneHeight !== void 0 && Math.abs(height - this.lastPaneHeight) < 3) return;
+      this.lastPaneWidth = width;
+      this.lastPaneHeight = height;
+    }
     this.prewarmToken += 1;
     this.clearNeighbourCache();
     this.layoutPage();

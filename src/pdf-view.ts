@@ -137,6 +137,9 @@ export class PdfInkView extends InkWritingView {
   private pdfRenderGeneration = 0;
   private loadGeneration = 0;
   private resizeRenderTimer: number | undefined;
+  /** Last scroller box seen by applyPaneResize, for its sub-3px hysteresis. */
+  private lastPaneWidth: number | undefined;
+  private lastPaneHeight: number | undefined;
   /** Set while the rail's width animation is running: the ResizeObserver
    *  parks its per-frame work until scheduleRailResizeSettle runs once. */
   private railResizeTimer: number | undefined;
@@ -266,8 +269,19 @@ export class PdfInkView extends InkWritingView {
     this.register(() => observer.disconnect());
   }
 
-  /** One relayout + re-render pass for a scroller size change. */
+  /** One relayout + re-render pass for a scroller size change. Sub-3px
+   *  jitter is ignored: engine rounding (or a missing scrollbar-gutter
+   *  support) feeding the page box back into its own scrollbar state made
+   *  the fit zoom oscillate and the ink lag the background. */
   private applyPaneResize(): void {
+    const scroller = this.scroller;
+    if (scroller) {
+      const width = scroller.clientWidth, height = scroller.clientHeight;
+      if (this.lastPaneWidth !== undefined && Math.abs(width - this.lastPaneWidth) < 3
+        && this.lastPaneHeight !== undefined && Math.abs(height - this.lastPaneHeight) < 3) return;
+      this.lastPaneWidth = width;
+      this.lastPaneHeight = height;
+    }
     this.prewarmToken += 1;
     this.clearNeighbourCache();
     this.layoutPage();
