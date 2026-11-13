@@ -8,6 +8,9 @@ class FakeWorker {
   static transferable = true;
   static holdApplyResponses = false;
   static silenceNextType: InkWorkerRequest["type"] | null = null;
+  /** When set, this request type gets neither a receipt ack nor a response:
+   *  it never leaves the (simulated) serial queue. */
+  static starveNextType: InkWorkerRequest["type"] | null = null;
   onmessage: ((event: MessageEvent<InkWorkerResponse>) => void) | null = null;
   onerror: ((event: ErrorEvent) => void) | null = null;
   terminated = false;
@@ -23,6 +26,15 @@ class FakeWorker {
   postMessage(value: InkWorkerRequest, transfer: Transferable[] = []): void {
     const request = transfer.length > 0 ? structuredClone(value, { transfer }) : structuredClone(value);
     this.requests.push(request);
+    if (request.type === FakeWorker.starveNextType) {
+      FakeWorker.starveNextType = null;
+      return;
+    }
+    // Receipt ack, like the real worker's serial queue: the request left the
+    // queue and is being processed now (even when its response is silenced
+    // below - that is the "picked up but stuck" hang the work guard covers).
+    queueMicrotask(() => this.emit({ type: "processing", requestId: request.requestId,
+      sessionId: request.sessionId, generation: request.generation, notebookRevision: request.notebookRevision }));
     if (request.type === FakeWorker.silenceNextType) {
       FakeWorker.silenceNextType = null;
       return;
@@ -47,6 +59,11 @@ class FakeWorker {
         revision: Math.max(request.notebookRevision, request.minimumRevision) });
       else if (request.type === "dispose-session") this.emit({ type: "session-disposed", requestId: request.requestId,
         sessionId: request.sessionId, generation: request.generation, notebookRevision: request.notebookRevision });
+      else if (request.type === "render-tile") this.emit({ type: "tile-rendered", requestId: request.requestId,
+        sessionId: request.sessionId, generation: request.generation, notebookRevision: request.notebookRevision,
+        pageId: request.pageId, cell: request.cell, density: request.density, revision: request.revision,
+        x: 0, y: 0, width: 64, height: 64, canvasWidth: 64, canvasHeight: 64,
+        renderGeneration: request.renderGeneration, bitmap: {} as ImageBitmap });
     });
   }
 
@@ -63,6 +80,7 @@ describe("InkWorkerService recovery", () => {
     FakeWorker.transferable = true;
     FakeWorker.holdApplyResponses = false;
     FakeWorker.silenceNextType = null;
+    FakeWorker.starveNextType = null;
     vi.stubGlobal("Worker", FakeWorker);
     vi.stubGlobal("URL", { createObjectURL: vi.fn(() => "blob:ink-worker"), revokeObjectURL: vi.fn() });
   });
@@ -258,6 +276,41 @@ afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); });
     const recovered = FakeWorker.instances[1];
     expect(recovered.requests.filter(request => request.type === "initialize-notebook")).toHaveLength(1);
     expect(recovered.requests.filter(request => request.type === "apply-operation" && request.revision === 1)).toHaveLength(0);
+    service.dispose();
+  });
+
+  it("keeps a queued operation waiting behind a long render instead of killing the worker", async () => {
+    // The reported severe defect: a stroke finalize (apply-operation, 2s
+    // work guard) queued behind a busy tile render used to time out at
+    // DISPATCH, terminate the healthy worker mid-render, and - once the
+    // restart also hiccuped - permanently disable the worker
+    // ("could not restart its background worker"), leaving the slow
+    // main-thread fallback. Receipt-acked guards measure work from the
+    // worker's pickup, so queue waits cannot kill anything.
+    vi.useFakeTimers();
+    const service = new InkWorkerService(vi.fn());
+    const notebook = createNotebook();
+    const session = service.createSession(() => ({ notebook, revision: 0 }));
+    await session.initializeRaw(JSON.stringify(notebook), 0);
+    // The render never leaves the queue: no ack, no response. The operation
+    // queues behind it and must NOT hit its 2s work guard while waiting.
+    FakeWorker.starveNextType = "render-tile";
+    const rendering = session.renderTile(notebook.pages[0].id, "0:0", 2, 0, 64, 64);
+    await vi.waitFor(() => expect(FakeWorker.instances[0].requests.some(request => request.type === "render-tile")).toBe(true));
+    const applying = session.apply(1, { type: "complete-stroke", pageId: notebook.pages[0].id, strokeId: "s1", pageUpdatedAt: 1, notebookUpdatedAt: 1 });
+    await vi.waitFor(() => expect(FakeWorker.instances[0].requests.some(request => request.type === "apply-operation")).toBe(true));
+    await vi.advanceTimersByTimeAsync(3_000);
+    // Past the OLD 2s dispatch timeout: the worker is still alive, the
+    // operation still pending, no restart happened.
+    expect(FakeWorker.instances).toHaveLength(1);
+    expect(FakeWorker.instances[0].terminated).toBe(false);
+    // The queue-wait guard still owns a request the worker truly never
+    // picks up: the starved render fails at 20s, recovery restarts the
+    // worker, and the retry succeeds against the fresh instance.
+    await vi.advanceTimersByTimeAsync(17_000);
+    await expect(rendering).resolves.toMatchObject({ type: "tile-rendered" });
+    await expect(applying).resolves.toMatchObject({ type: "operation-applied" });
+    expect(FakeWorker.instances[0].terminated).toBe(true);
     service.dispose();
   });
 });
