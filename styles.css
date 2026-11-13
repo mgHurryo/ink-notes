@@ -1034,8 +1034,11 @@
   display: grid;
   width: 20px;
   height: 20px;
+  min-width: 20px;
+  aspect-ratio: 1;
+  box-sizing: border-box;
   place-items: center;
-  border-radius: 50%;
+  border-radius: 2px;
   color: var(--ink-panel);
   background: var(--ink-danger);
   font-size: 13px;
