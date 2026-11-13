@@ -140,6 +140,11 @@ interface ResponseBase {
 
 export type InkWorkerResponse =
   | { type: "ready"; requestId: 0; sessionId: ""; generation: 0; notebookRevision: 0; capabilities: WorkerCapabilities }
+  /** Receipt ack: the worker picked this request off its serial queue and is
+   *  processing it now. Hang guards measure from here, not from dispatch -
+   *  a request can legitimately sit in the queue behind multi-second tile
+   *  renders without anything being wrong. */
+  | ResponseBase & { type: "processing" }
   | ResponseBase & { type: "initialized"; revision: number }
   | ResponseBase & {
     type: "operation-applied";

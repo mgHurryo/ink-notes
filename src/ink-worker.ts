@@ -37,7 +37,23 @@ function drain(): void {
   queue.sort((left, right) => workerPriority(left) - workerPriority(right));
   const request = queue.shift()!;
   running = true;
-  void core.handle(request).then(({ response, transfer }) => scope.postMessage(response, transfer ?? []))
+  // Receipt ack: the main thread's hang guards measure from this moment,
+  // not from dispatch - this request may have waited in the serial queue
+  // behind multi-second tile renders.
+  scope.postMessage({ type: "processing", requestId: request.requestId, sessionId: request.sessionId,
+    generation: request.generation, notebookRevision: request.notebookRevision });
+  void core.handle(request)
+    .then(({ response, transfer }) => scope.postMessage(response, transfer ?? []))
+    .catch((error) => {
+      // A failed response postMessage (bad transfer, detached buffer) must
+      // still answer the caller: a silently lost response hangs the main
+      // thread until its hang guard kills a perfectly healthy worker.
+      try {
+        scope.postMessage({ type: "error", requestId: request.requestId, sessionId: request.sessionId,
+          generation: request.generation, notebookRevision: request.notebookRevision,
+          code: "internal", message: error instanceof Error ? error.message : String(error) });
+      } catch { /* the channel itself is gone; the main-thread guard owns it */ }
+    })
     .finally(() => { running = false; drain(); });
 }
 
