@@ -1248,33 +1248,34 @@ describe("pdf page preview rail", () => {
     await view.onClose();
   });
 
-  it("keeps the active thumb in the rail without scrolling the PDF viewport", async () => {
+  it("scrolls the thumbnail list while keeping rail controls and PDF viewport fixed", async () => {
     const { view, internal } = await setup(3);
     internal.renderAll();
     const rail = document.querySelector<HTMLElement>(".ink-pdf-view .ink-page-rail")!;
     const scroller = document.querySelector<HTMLElement>(".ink-pdf-scroller")!;
+    const list = rail.querySelector<HTMLElement>(".ink-rail-thumbs")!;
     scroller.scrollTop = 96;
     const thumb = thumbAt(0);
     rail.getBoundingClientRect = () => new DOMRect(0, 0, 176, 600);
-    let railTop = 0;
-    thumb.getBoundingClientRect = () => new DOMRect(0, 2400 - railTop, 150, 120);
-    const scrollIntoView = vi.fn();
-    Object.defineProperty(thumb, "scrollIntoView", { configurable: true, value: scrollIntoView });
-    Object.defineProperties(rail, {
+    let listTop = 0;
+    list.getBoundingClientRect = () => new DOMRect(0, 0, 160, 600);
+    thumb.getBoundingClientRect = () => new DOMRect(0, 2400 - listTop, 150, 120);
+    Object.defineProperties(list, {
       clientHeight: { configurable: true, value: 600 },
       scrollHeight: { configurable: true, value: 3000 },
-      scrollTop: { configurable: true, get: () => railTop, set: (value: number) => { railTop = value; } },
+      scrollTop: { configurable: true, get: () => listTop, set: (value: number) => { listTop = value; } },
     });
-    // Rebuilds keep the active thumb visible by adjusting only the rail.
+    // The active thumbnail moves within its own list, not the whole rail.
     internal.renderAll();
-    expect(railTop).toBe(1920);
+    expect(listTop).toBe(1920);
+    expect(rail.scrollTop).toBe(0);
     expect(scroller.scrollTop).toBe(96);
-    expect(scrollIntoView).not.toHaveBeenCalled();
     // While the burst holds the rail open the refresh centers the page the
     // user is flipping through.
     (internal as unknown as { fastPagingRail: boolean }).fastPagingRail = true;
     internal.renderAll();
-    expect(railTop).toBe(2160);
+    expect(listTop).toBe(2160);
+    expect(rail.scrollTop).toBe(0);
     expect(scroller.scrollTop).toBe(96);
     (internal as unknown as { fastPagingRail: boolean }).fastPagingRail = false;
     await view.onClose();

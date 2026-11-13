@@ -919,7 +919,7 @@ export class PdfInkView extends InkWritingView {
     this.railThumbs = rail.createDiv({ cls: "ink-rail-thumbs" });
     // Scrolling long documents brings new thumbnails into view; repaint the
     // fresh range (throttled) instead of pre-rendering every page.
-    this.registerDomEvent(rail, "scroll", () => this.scheduleRailSweep(), { passive: true });
+    this.registerDomEvent(this.railThumbs, "scroll", () => this.scheduleRailSweep(), { passive: true });
     // Parity with the notebook editor's rail: the right edge is draggable and
     // the final width persists under the PDF-specific key. Thumbnails raster
     // during the drag at stale widths; repaint the visible range at the end.
@@ -991,7 +991,7 @@ export class PdfInkView extends InkWritingView {
     if (this.isFastPagingRailOpen()) this.followWheelPageThumb();
     else {
       const active = this.thumbButtons.get(this.noteIndex);
-      if (this.pageRail && active) this.scrollRailThumb(this.pageRail, active);
+      if (active) this.scrollRailThumb(thumbs, active);
     }
     this.evictDistantThumbnails();
     this.paintVisibleThumbnails();
@@ -1281,8 +1281,9 @@ export class PdfInkView extends InkWritingView {
     const count = this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 0;
     const nearby = Array.from({ length: count }, (_, index) => index)
       .filter((index) => Math.abs(index - this.noteIndex) <= 1);
-    const railRect = this.pageRail?.getBoundingClientRect();
-    if (!railRect || this.pageRail!.clientHeight <= 0) return nearby;
+    const thumbs = this.railThumbs;
+    const railRect = thumbs?.getBoundingClientRect();
+    if (!railRect || thumbs!.clientHeight <= 0) return nearby;
     const visible: number[] = [];
     for (const [index, button] of this.thumbButtons) {
       if (button.classList.contains("is-filtered-out")) continue;

@@ -29783,22 +29783,24 @@ var InkWritingView = class extends import_obsidian7.FileView {
     this.fastPagingRailBorrowed = false;
     this.wheelPacer.end();
   }
-  /** Scrolls only the page rail so thumbnail updates cannot move the editor. */
+  /** Scrolls only the thumbnail list so updates cannot move the editor. */
   scrollRailThumb(rail, thumb, center = false) {
-    const box = rail.getBoundingClientRect();
+    var _a;
+    const scrollContainer = (_a = thumb.closest(".ink-rail-thumbs")) != null ? _a : rail;
+    const box = scrollContainer.getBoundingClientRect();
     const rect = thumb.getBoundingClientRect();
-    if (rail.clientHeight <= 0 || rect.height <= 0) return;
-    const top = box.top + rail.clientTop;
-    const bottom = top + rail.clientHeight;
+    if (scrollContainer.clientHeight <= 0 || rect.height <= 0) return;
+    const top = box.top + scrollContainer.clientTop;
+    const bottom = top + scrollContainer.clientHeight;
     if (center) {
-      rail.scrollTop += rect.top + rect.height / 2 - (top + rail.clientHeight / 2);
+      scrollContainer.scrollTop += rect.top + rect.height / 2 - (top + scrollContainer.clientHeight / 2);
     } else if (rect.top < top) {
-      rail.scrollTop += rect.top - top;
+      scrollContainer.scrollTop += rect.top - top;
     } else if (rect.bottom > bottom) {
-      rail.scrollTop += rect.bottom - bottom;
+      scrollContainer.scrollTop += rect.bottom - bottom;
     }
   }
-  /** Keeps the active thumbnail vertically centered in the rail while fast
+  /** Keeps the active thumbnail vertically centered in the list while fast
    *  paging. scrollTop clamps at both ends, so first and last pages settle at
    *  their natural edge instead of forcing a center that does not exist. */
   followWheelPageThumb() {
@@ -37608,7 +37610,7 @@ var PdfInkView = class extends InkWritingView {
     this.railActions = rail.createDiv({ cls: "ink-rail-actions", attr: { role: "group", "aria-label": "Page management" } });
     this.renderPageRailActions();
     this.railThumbs = rail.createDiv({ cls: "ink-rail-thumbs" });
-    this.registerDomEvent(rail, "scroll", () => this.scheduleRailSweep(), { passive: true });
+    this.registerDomEvent(this.railThumbs, "scroll", () => this.scheduleRailSweep(), { passive: true });
     mountRailResizer(rail, { storageKey: PDF_RAIL_WIDTH_STORAGE_KEY, onDragEnd: () => this.paintVisibleThumbnails() });
   }
   /** Re-syncs the rail with the model: rebuilds the buttons when the page
@@ -37667,7 +37669,7 @@ var PdfInkView = class extends InkWritingView {
     if (this.isFastPagingRailOpen()) this.followWheelPageThumb();
     else {
       const active = this.thumbButtons.get(this.noteIndex);
-      if (this.pageRail && active) this.scrollRailThumb(this.pageRail, active);
+      if (active) this.scrollRailThumb(thumbs, active);
     }
     this.evictDistantThumbnails();
     this.paintVisibleThumbnails();
@@ -37942,11 +37944,12 @@ var PdfInkView = class extends InkWritingView {
    *  current page first. Without layout yet (just opened, collapsed pane,
    *  tests) the current page and its neighbours stand in for the range. */
   visibleThumbIndexes() {
-    var _a, _b, _c, _d, _e;
+    var _a, _b, _c, _d;
     const count = (_d = (_c = (_a = this.sidecar) == null ? void 0 : _a.notePages.length) != null ? _c : (_b = this.pdfDoc) == null ? void 0 : _b.numPages) != null ? _d : 0;
     const nearby = Array.from({ length: count }, (_, index) => index).filter((index) => Math.abs(index - this.noteIndex) <= 1);
-    const railRect = (_e = this.pageRail) == null ? void 0 : _e.getBoundingClientRect();
-    if (!railRect || this.pageRail.clientHeight <= 0) return nearby;
+    const thumbs = this.railThumbs;
+    const railRect = thumbs == null ? void 0 : thumbs.getBoundingClientRect();
+    if (!railRect || thumbs.clientHeight <= 0) return nearby;
     const visible = [];
     for (const [index, button3] of this.thumbButtons) {
       if (button3.classList.contains("is-filtered-out")) continue;

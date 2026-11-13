@@ -1949,23 +1949,24 @@ export abstract class InkWritingView extends FileView {
     this.wheelPacer.end();
   }
 
-  /** Scrolls only the page rail so thumbnail updates cannot move the editor. */
+  /** Scrolls only the thumbnail list so updates cannot move the editor. */
   protected scrollRailThumb(rail: HTMLElement, thumb: HTMLElement, center = false): void {
-    const box = rail.getBoundingClientRect();
+    const scrollContainer = thumb.closest<HTMLElement>(".ink-rail-thumbs") ?? rail;
+    const box = scrollContainer.getBoundingClientRect();
     const rect = thumb.getBoundingClientRect();
-    if (rail.clientHeight <= 0 || rect.height <= 0) return;
-    const top = box.top + rail.clientTop;
-    const bottom = top + rail.clientHeight;
+    if (scrollContainer.clientHeight <= 0 || rect.height <= 0) return;
+    const top = box.top + scrollContainer.clientTop;
+    const bottom = top + scrollContainer.clientHeight;
     if (center) {
-      rail.scrollTop += (rect.top + rect.height / 2) - (top + rail.clientHeight / 2);
+      scrollContainer.scrollTop += (rect.top + rect.height / 2) - (top + scrollContainer.clientHeight / 2);
     } else if (rect.top < top) {
-      rail.scrollTop += rect.top - top;
+      scrollContainer.scrollTop += rect.top - top;
     } else if (rect.bottom > bottom) {
-      rail.scrollTop += rect.bottom - bottom;
+      scrollContainer.scrollTop += rect.bottom - bottom;
     }
   }
 
-  /** Keeps the active thumbnail vertically centered in the rail while fast
+  /** Keeps the active thumbnail vertically centered in the list while fast
    *  paging. scrollTop clamps at both ends, so first and last pages settle at
    *  their natural edge instead of forcing a center that does not exist. */
   protected followWheelPageThumb(): void {

@@ -535,26 +535,27 @@ export function gestureContract(create: () => Promise<any>): void {
     it("centers the active thumbnail in the rail through the shared follow seam", async () => {
       const { editor } = await desktopSetup();
       const rail = (editor.containerEl.querySelector(".ink-page-rail") ?? null) as HTMLElement;
+      const list = (rail.querySelector(".ink-rail-thumbs") ?? null) as HTMLElement;
       const thumb = (rail.querySelector(".ink-page-thumb.is-active") ?? null) as HTMLElement;
-      // jsdom reports no boxes; pin a rail box with the active thumb far
-      // below it and drive the shared follow seam directly.
-      rail.getBoundingClientRect = () => new DOMRect(0, 0, 176, 600);
+      // jsdom reports no boxes; pin a thumbnail-list box with the active thumb
+      // far below it and drive the shared follow seam directly.
+      list.getBoundingClientRect = () => new DOMRect(0, 0, 160, 600);
       thumb.getBoundingClientRect = () => new DOMRect(0, 2400, 150, 120);
-      let railTop = 0;
-      Object.defineProperties(rail, {
+      let listTop = 0;
+      Object.defineProperties(list, {
         clientHeight: { configurable: true, value: 600 },
         scrollHeight: { configurable: true, value: 3000 },
-        scrollTop: { configurable: true, get: () => railTop, set: (value: number) => { railTop = value; } },
+        scrollTop: { configurable: true, get: () => listTop, set: (value: number) => { listTop = value; } },
       });
       (editor as any).followWheelPageThumb();
       // Center: 2400 + 120/2 - 600/2 = 2160.
-      expect(railTop).toBe(2160);
+      expect(listTop).toBe(2160);
       // Already centered: with the thumb rect reflecting the scroll that just
-      // happened (2400 - 2160 = 240), the delta is zero and the rail holds
+      // happened (2400 - 2160 = 240), the delta is zero and the list holds
       // still instead of drifting.
       thumb.getBoundingClientRect = () => new DOMRect(0, 240, 150, 120);
       (editor as any).followWheelPageThumb();
-      expect(railTop).toBe(2160);
+      expect(listTop).toBe(2160);
     });
 
     it("rearms a horizontal trackpad flick after a short pause and a renewed swipe", async () => {
