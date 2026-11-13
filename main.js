@@ -25932,6 +25932,7 @@ var StickyNoteLayer = class {
     this.open(id);
   }
   position(el, note) {
+    var _a;
     const { x, y } = stickyPosition(note);
     const scale = this.host.clientWidth / note.boardPageWidth;
     el.setCssStyles({
@@ -25941,6 +25942,8 @@ var StickyNoteLayer = class {
       height: `${stickyFrameHeight(note, this.host.clientWidth, this.host.clientHeight)}px`,
       backgroundColor: note.kind === "text" ? "transparent" : note.color
     });
+    if (!note.collapsed && note.kind !== "text")
+      (_a = el.querySelector(".ink-sticky-header")) == null ? void 0 : _a.setCssStyles({ height: `${STICKY_HEADER * scale}px` });
     el.setCssProps({ "--sticky-header-height": `${STICKY_HEADER * scale}px` });
   }
   card(id) {
