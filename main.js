@@ -24942,6 +24942,8 @@ var RENEWED_FLICK_HOT_REARM_RATIO = 1.25;
 var SLOW_SCROLL_EXIT_MS = 1200;
 var REF_DT_MS = 10;
 var RENEW_MIN_FLIPPED = 3;
+var SUSTAINED_SWIPE_MS = 300;
+var SUSTAINED_SWIPE_RETENTION = 0.78;
 var PAGE_TRAVEL_PX = 100;
 var HORIZONTAL_PAGE_TRAVEL_PX = 48;
 var MAX_TRACKPAD_PAGES_PER_GESTURE = 2;
@@ -25018,6 +25020,16 @@ var DesktopWheelGesture = class {
      *  inside a flipped continuous gesture (see SLOW_SCROLL_EXIT_MS). */
     this.slowScrollMs = 0;
     this.slowScrollTravel = 0;
+    /** Sustained-swipe window (see SUSTAINED_SWIPE_MS): how long the envelope
+     *  has held at/above SUSTAINED_SWIPE_RETENTION of the window's frozen
+     *  start value across continuous >=12px samples, plus their signed travel
+     *  for the page hand-off. Zeroed by every gesture-boundary path. */
+    this.sustainMs = 0;
+    this.sustainEnvelope = 0;
+    this.sustainedTravel = 0;
+    /** True once a >=55ms gap marked a resumption while the gesture was
+     *  flipped; the window may run (and fire once) until the next boundary. */
+    this.sustainArmed = false;
   }
   beginRenewedGesture(reopenSettledHorizontalPage = false) {
     this.gestureId += 1;
@@ -25025,6 +25037,7 @@ var DesktopWheelGesture = class {
     if (reopenSettledHorizontalPage) this.contactXPages = 0;
     this.flippedRun = 0;
     this.slowScrollMs = this.slowScrollTravel = 0;
+    this.sustainMs = this.sustainEnvelope = this.sustainedTravel = 0;
   }
   /** Whether a flipped continuous gesture's tail is still mid-flight. Sample
    *  sources that swallow a wheel event (nested scroll surfaces, text fields,
@@ -25053,6 +25066,8 @@ var DesktopWheelGesture = class {
     this.contactXPages = 0;
     this.flippedRun = 0;
     this.slowScrollMs = this.slowScrollTravel = 0;
+    this.sustainMs = this.sustainEnvelope = this.sustainedTravel = 0;
+    this.sustainArmed = false;
     this.flipped = this.discrete = false;
     this.mode = 0;
   }
@@ -25078,6 +25093,8 @@ var DesktopWheelGesture = class {
       this.travel = 0;
       this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
       this.slowScrollMs = this.slowScrollTravel = 0;
+      this.sustainMs = this.sustainEnvelope = this.sustainedTravel = 0;
+      this.sustainArmed = false;
       if (normalized > 0) {
         this.lastDelta = Math.sign(movement) * normalized;
         this.lastMagnitude = normalized;
@@ -25216,6 +25233,25 @@ var DesktopWheelGesture = class {
       }
     } else {
       this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
+    }
+    if (this.discrete || this.stallProbation || gap >= RENEWED_FLICK_GAP_MS || normalized < RENEWED_FLICK_JUMP_PX / 2 || movement !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta)) {
+      this.sustainMs = this.sustainEnvelope = this.sustainedTravel = 0;
+      if (gap >= RENEWED_FLICK_GAP_MS) this.sustainArmed = true;
+    } else if (movement !== 0 && axis === "x" && this.sustainArmed) {
+      if (this.sustainMs === 0) {
+        this.sustainEnvelope = normalized;
+        this.sustainedTravel = 0;
+      }
+      this.sustainMs += gap;
+      this.sustainedTravel += movement;
+      if (normalized < this.sustainEnvelope * SUSTAINED_SWIPE_RETENTION) {
+        this.sustainMs = this.sustainEnvelope = this.sustainedTravel = 0;
+      } else if (this.sustainMs >= SUSTAINED_SWIPE_MS) {
+        renewedTravel = this.sustainedTravel;
+        this.contactXPages = 0;
+        this.sustainMs = this.sustainEnvelope = this.sustainedTravel = 0;
+        this.sustainArmed = false;
+      }
     }
     this.flippedRun = this.flipped ? priorFlippedRun + 1 : 0;
     this.flippedPreviously = this.flipped;

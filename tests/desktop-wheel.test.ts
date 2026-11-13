@@ -241,6 +241,71 @@ describe("DesktopWheelGesture constant-velocity re-swipe over a settled tail", (
   });
 });
 
+describe("DesktopWheelGesture sustained same-direction re-swipe", () => {
+  // The reported beta1-era defect: one forward swipe pages, a second
+  // SAME-DIRECTION moderate swipe is swallowed whole (no rise over the hot
+  // tail envelope, so every rise-gated exit declines it), and only a
+  // REVERSAL hard-resets into a fresh contact. The sustain window ends the
+  // stuck state on the horizontal axis: a stream that RESUMED after a
+  // delivery gap (the portable lift evidence) and then holds the envelope
+  // flat for 300ms cannot be a tail. A decayed tail, a same-speed drag with
+  // no gap, and the vertical axis all keep their old behavior.
+  function feedAll(magnitudes: Array<number | readonly [number, number]>, axis: "x" | "y", stepMs = 10): number {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 0;
+    for (const delta of magnitudes) {
+      const [x, y] = Array.isArray(delta) ? delta : axis === "x" ? [delta, 0] as const : [0, delta] as const;
+      pages += gesture.pageDelta(gesture.begin({ x, y, mode: 0 }, false, at), false);
+      at += stepMs;
+    }
+    return pages;
+  }
+
+  it("pages a second same-direction sustained swipe on the horizontal axis", () => {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 0;
+    const feed = (values: number[], stepMs: number, axis: "x" | "y" = "x") => {
+      for (const magnitude of values) {
+        const delta = axis === "x" ? { x: magnitude, y: 0, mode: 0 } : { x: 0, y: magnitude, mode: 0 };
+        pages += gesture.pageDelta(gesture.begin(delta, false, at), false);
+        at += stepMs;
+      }
+    };
+    feed([140, 90, 60, 35, 20, 14], 10); // swipe one: a page; the tail parks hot at 14
+    at += 110;                           // the finger lifts: 120ms before the next contact
+    feed(Array.from({ length: 45 }, () => 15), 10); // swipe two: constant 15px/10ms, no rise
+    expect(pages).toBe(2);
+  });
+
+  it("keeps a resumed decaying tail at its contact's single page", () => {
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 0;
+    const feed = (values: number[], stepMs: number) => {
+      for (const magnitude of values) {
+        pages += gesture.pageDelta(gesture.begin({ x: magnitude, y: 0, mode: 0 }, false, at), false);
+        at += stepMs;
+      }
+    };
+    feed([140, 90, 60, 35, 20, 14], 10); // a page; hot tail at 14
+    at += 110;                           // a lift, so the window arms
+    // tau~330ms decay from 28px/10ms: >=12px for ~280ms but the envelope
+    // falls to 0.41x inside the window - a tail continuation, never a hold.
+    feed(Array.from({ length: 60 }, (_, i) => 28 * Math.exp(-i * 10 / 330)), 10);
+    expect(pages).toBe(1);
+  });
+
+  it("keeps one long continuous horizontal drag at a single page", () => {
+    // No gap after the flip: the window never arms, so one physical drag
+    // keeps the one-page-per-contact contract however long it lasts.
+    const held = Array.from({ length: 80 }, () => 15);
+    expect(feedAll([140, 90, 60, 35, 20, 14, ...held], "x")).toBe(1);
+  });
+
+});
+
 describe("DesktopWheelGesture ramp reswipe travel across reporting cadences", () => {
   // #320 normalized the ramp accumulator to speeds (px per 10ms) but kept
   // comparing it against the raw-px page thresholds, so the real distance a
