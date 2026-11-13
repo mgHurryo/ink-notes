@@ -18,28 +18,26 @@ import { reconcileNotebook } from "./notebook-reconciliation";
 import { exportNotebookPdf, exportPathFor, notebookHasInk } from "./pdf-export";
 import { paintPageImages } from "./image-library";
 import { registerDocumentPointerEndEvents } from "./ink-input";
-import { InkWritingView, InkPointerSample, cloneStroke, QUEUED_PAGE_SWIPE_DURATION_MS, SPARSE_SAMPLE_INTERVAL_MS } from "./ink-writing";
+import { InkWritingView, InkPointerSample, QUEUED_PAGE_SWIPE_DURATION_MS, SPARSE_SAMPLE_INTERVAL_MS } from "./ink-writing";
+import { cloneStroke } from "./ink-geometry";
 import type { EditCommand } from "./ink-writing";
 import type { SharedToolState } from "./tool-state";
 export { BrushSettings, BrushTool, INK_COLORS, isBrushTool } from "./brush-popover";
+export type { ToolState, InkPointerSample } from "./ink-writing";
+export type { EraserMode } from "./ink-geometry";
+export { clampLiftPressure, penSampleTimeMillis, packStrokePoints } from "./ink-writing";
 export {
-  ToolState,
-  EraserMode,
-  InkPointerSample,
-  clampLiftPressure,
-  penSampleTimeMillis,
   strokeIntersectsEraser,
   eraseStrokeSegments,
   cloneStroke,
   clonePoints,
-  packStrokePoints,
   translatePoints,
   selectionBounds,
   boundsForPointSets,
   pointInPolygon,
   constrainDelta,
   distance,
-} from "./ink-writing";
+} from "./ink-geometry";
 import { canvasResolution, drawInkStroke, scaledStroke, STROKE_WIDTH_REFERENCE } from "./rendering";
 import { applyStoredRailWidth, mountRailResizer } from "./rail-resizer";
 import {

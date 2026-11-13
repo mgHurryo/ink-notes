@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { canvasResolution, drawInkStroke, drawInkStrokePreview, drawInkStrokeTail, normalizePressureCurve, penOutline, smoothOutlineCenterline, smoothPenPressures } from "../src/rendering";
-import { translatePoints } from "../src/ink-writing";
+import { translatePoints } from "../src/ink-geometry";
 import type { InkStroke } from "../src/model";
 
 function stroke(pressure = 0.5): InkStroke {

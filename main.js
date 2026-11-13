@@ -27948,79 +27948,12 @@ function pasteClipboardStrokes(content, pageId, width, height, target) {
   }));
 }
 
-// src/ink-writing.ts
-var PASTE_HOLD_DELAY_MS = 600;
-var PASTE_HOLD_SLOP_PX = 10;
-var MAX_SCRIBBLE_GESTURE_POINTS = 2048;
-var MAX_SCRIBBLE_RANGE_SAMPLES = MAX_SCRIBBLE_GESTURE_POINTS * 2;
-var SCRIBBLE_RANGE_SAMPLE_SPACING_DIVISOR = 2;
-var SCRIBBLE_REFERENCE_SIZE = 24;
-var QUEUED_PAGE_SWIPE_DURATION_MS = 64;
-var FAST_PAGING_RAIL_IDLE_MS = 1300;
-var STROKE_ERASER_HIT_RADIUS = 10;
-var MAX_ERASER_SWEEP_STEPS = 1024;
-var OVERLAY_PIXEL_BUDGET = 12e6;
-var SAVE_IDLE_DELAY = 1500;
-var SAVE_MAX_DELAY = 1e4;
-var INK_COMMIT_IDLE_DELAY = 180;
-var LIVE_TAIL_SAMPLE_LIMIT = 32;
-var COMPLETED_PREVIEW_SAMPLE_LIMIT = 256;
-var LINE_HOLD_MS = 800;
-var PEN_CAPTURE_MIN_DISTANCE = 0.35;
-var SPARSE_SAMPLE_INTERVAL_MS = 24;
-var PEN_SAMPLE_INTERVAL_WINDOW = 32;
-var PEN_SPARSE_MIN_INTERVALS = 8;
-var UNDO_STACK_LIMIT = 200;
+// src/ink-geometry.ts
 function distance2(a, b) {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 function pointInsideRect(point, rect) {
   return point.clientX >= rect.left && point.clientX <= rect.right && point.clientY >= rect.top && point.clientY <= rect.bottom;
-}
-function stylusTouchSample(touch, timeStamp) {
-  const altitude = touch.altitudeAngle;
-  const azimuth = touch.azimuthAngle;
-  let tiltX = 0;
-  let tiltY = 0;
-  if (typeof altitude === "number" && altitude >= 0 && altitude <= Math.PI / 2 && typeof azimuth === "number" && azimuth >= 0 && azimuth <= Math.PI * 2) {
-    if (altitude === 0) {
-      tiltX = azimuth === Math.PI / 2 || azimuth === Math.PI * 1.5 ? 0 : Math.sign(Math.cos(azimuth)) * 90;
-      tiltY = azimuth === 0 || azimuth === Math.PI || azimuth === Math.PI * 2 ? 0 : Math.sign(Math.sin(azimuth)) * 90;
-    } else {
-      const slope = 1 / Math.tan(altitude);
-      tiltX = Math.atan(Math.cos(azimuth) * slope) * 180 / Math.PI;
-      tiltY = Math.atan(Math.sin(azimuth) * slope) * 180 / Math.PI;
-    }
-  }
-  return {
-    pointerId: touch.identifier,
-    pointerType: "pen",
-    clientX: touch.clientX,
-    clientY: touch.clientY,
-    pressure: touch.force,
-    tiltX,
-    tiltY,
-    // Touch objects carry no per-sample timestamp; the owning TouchEvent's is
-    // per-event, which is exactly the per-sample time for stylus input.
-    timeStamp: typeof timeStamp === "number" && Number.isFinite(timeStamp) ? timeStamp : void 0
-  };
-}
-function fingerTouchSample(touch, timeStamp) {
-  return {
-    pointerId: touch.identifier,
-    pointerType: "touch",
-    clientX: touch.clientX,
-    clientY: touch.clientY,
-    pressure: 0.5,
-    timeStamp
-  };
-}
-function clampLiftPressure(point, previous) {
-  if (!previous || point.pressure <= previous.pressure) return;
-  point.pressure = previous.pressure;
-}
-function penSampleTimeMillis(sample) {
-  return typeof sample.timeStamp === "number" && Number.isFinite(sample.timeStamp) ? sample.timeStamp : Date.now();
 }
 function strokeIntersectsEraser(stroke, center, radius, mode, width, height) {
   if (stroke.points.some((point) => pointInsideEraser(point, center, radius, mode, width, height))) return true;
@@ -28196,6 +28129,104 @@ function cloneStroke(stroke) {
 function clonePoints(points) {
   return points.map((point) => ({ ...point }));
 }
+function translatePoints(points, dx, dy) {
+  return points.map((point) => ({ ...point, x: point.x + dx, y: point.y + dy }));
+}
+function selectionBounds(strokes) {
+  return boundsForPointSets(strokes.map((stroke) => stroke.points));
+}
+function boundsForPointSets(pointSets) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const points of pointSets) for (const point of points) {
+    minX = Math.min(minX, point.x);
+    minY = Math.min(minY, point.y);
+    maxX = Math.max(maxX, point.x);
+    maxY = Math.max(maxY, point.y);
+  }
+  return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : null;
+}
+function pointInPolygon(point, polygon) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i];
+    const b = polygon[j];
+    const crosses = a.y > point.y !== b.y > point.y && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x;
+    if (crosses) inside = !inside;
+  }
+  return inside;
+}
+function constrainDelta(delta, minimum, maximum) {
+  return Math.max(-minimum, Math.min(1 - maximum, delta));
+}
+
+// src/ink-writing.ts
+var PASTE_HOLD_DELAY_MS = 600;
+var PASTE_HOLD_SLOP_PX = 10;
+var MAX_SCRIBBLE_GESTURE_POINTS = 2048;
+var MAX_SCRIBBLE_RANGE_SAMPLES = MAX_SCRIBBLE_GESTURE_POINTS * 2;
+var SCRIBBLE_RANGE_SAMPLE_SPACING_DIVISOR = 2;
+var SCRIBBLE_REFERENCE_SIZE = 24;
+var QUEUED_PAGE_SWIPE_DURATION_MS = 64;
+var FAST_PAGING_RAIL_IDLE_MS = 1300;
+var STROKE_ERASER_HIT_RADIUS = 10;
+var MAX_ERASER_SWEEP_STEPS = 1024;
+var OVERLAY_PIXEL_BUDGET = 12e6;
+var SAVE_IDLE_DELAY = 1500;
+var SAVE_MAX_DELAY = 1e4;
+var INK_COMMIT_IDLE_DELAY = 180;
+var LIVE_TAIL_SAMPLE_LIMIT = 32;
+var COMPLETED_PREVIEW_SAMPLE_LIMIT = 256;
+var LINE_HOLD_MS = 800;
+var PEN_CAPTURE_MIN_DISTANCE = 0.35;
+var SPARSE_SAMPLE_INTERVAL_MS = 24;
+var PEN_SAMPLE_INTERVAL_WINDOW = 32;
+var PEN_SPARSE_MIN_INTERVALS = 8;
+var UNDO_STACK_LIMIT = 200;
+function stylusTouchSample(touch, timeStamp) {
+  const altitude = touch.altitudeAngle;
+  const azimuth = touch.azimuthAngle;
+  let tiltX = 0;
+  let tiltY = 0;
+  if (typeof altitude === "number" && altitude >= 0 && altitude <= Math.PI / 2 && typeof azimuth === "number" && azimuth >= 0 && azimuth <= Math.PI * 2) {
+    if (altitude === 0) {
+      tiltX = azimuth === Math.PI / 2 || azimuth === Math.PI * 1.5 ? 0 : Math.sign(Math.cos(azimuth)) * 90;
+      tiltY = azimuth === 0 || azimuth === Math.PI || azimuth === Math.PI * 2 ? 0 : Math.sign(Math.sin(azimuth)) * 90;
+    } else {
+      const slope = 1 / Math.tan(altitude);
+      tiltX = Math.atan(Math.cos(azimuth) * slope) * 180 / Math.PI;
+      tiltY = Math.atan(Math.sin(azimuth) * slope) * 180 / Math.PI;
+    }
+  }
+  return {
+    pointerId: touch.identifier,
+    pointerType: "pen",
+    clientX: touch.clientX,
+    clientY: touch.clientY,
+    pressure: touch.force,
+    tiltX,
+    tiltY,
+    // Touch objects carry no per-sample timestamp; the owning TouchEvent's is
+    // per-event, which is exactly the per-sample time for stylus input.
+    timeStamp: typeof timeStamp === "number" && Number.isFinite(timeStamp) ? timeStamp : void 0
+  };
+}
+function fingerTouchSample(touch, timeStamp) {
+  return {
+    pointerId: touch.identifier,
+    pointerType: "touch",
+    clientX: touch.clientX,
+    clientY: touch.clientY,
+    pressure: 0.5,
+    timeStamp
+  };
+}
+function clampLiftPressure(point, previous) {
+  if (!previous || point.pressure <= previous.pressure) return;
+  point.pressure = previous.pressure;
+}
+function penSampleTimeMillis(sample) {
+  return typeof sample.timeStamp === "number" && Number.isFinite(sample.timeStamp) ? sample.timeStamp : Date.now();
+}
 function packStrokePoints(points, start) {
   var _a, _b;
   const packed = new Float64Array((points.length - start) * 6);
@@ -28237,35 +28268,6 @@ function boundedPreviewStroke(stroke) {
 function restoredStroke(stroke) {
   const now = Date.now();
   return { ...cloneStroke(stroke), id: newId("stroke"), updatedAt: now };
-}
-function translatePoints(points, dx, dy) {
-  return points.map((point) => ({ ...point, x: point.x + dx, y: point.y + dy }));
-}
-function selectionBounds(strokes) {
-  return boundsForPointSets(strokes.map((stroke) => stroke.points));
-}
-function boundsForPointSets(pointSets) {
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const points of pointSets) for (const point of points) {
-    minX = Math.min(minX, point.x);
-    minY = Math.min(minY, point.y);
-    maxX = Math.max(maxX, point.x);
-    maxY = Math.max(maxY, point.y);
-  }
-  return Number.isFinite(minX) ? { minX, minY, maxX, maxY } : null;
-}
-function pointInPolygon(point, polygon) {
-  let inside = false;
-  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
-    const a = polygon[i];
-    const b = polygon[j];
-    const crosses = a.y > point.y !== b.y > point.y && point.x < (b.x - a.x) * (point.y - a.y) / (b.y - a.y) + a.x;
-    if (crosses) inside = !inside;
-  }
-  return inside;
-}
-function constrainDelta(delta, minimum, maximum) {
-  return Math.max(-minimum, Math.min(1 - maximum, delta));
 }
 function isPointerCaptureError(error) {
   if (Object.prototype.toString.call(error) !== "[object DOMException]") return false;
