@@ -75,8 +75,8 @@ const SWIPE_PREVIEW_RESIZE_BUDGET = 16_000_000;
 /** Rail width persistence. localStorage (not the plugin data file) is enough
  *  here: the width is per-device window chrome, not notebook content. */
 const RAIL_WIDTH_STORAGE_KEY = "ink-notes-page-rail-width";
-/** Keep in sync with the 200ms expand/collapse transition on .ink-page-rail. */
-const RAIL_TRANSITION_MS = 200;
+/** Keep in sync with the 280ms expand/collapse transition on .ink-page-rail. */
+const RAIL_TRANSITION_MS = 280;
 /** Fallback for the CSS aspect-ratio(.73) thumb box when clientHeight is 0. */
 const THUMB_ASPECT = 0.73;
 const SWIPE_PREVIEW_IDLE_DELAY_MS = 120;
@@ -500,7 +500,7 @@ export class InkView extends InkWritingView {
       this.onTouchCancel(event);
     }, { passive: false });
     const observer = new ResizeObserver(() => {
-      // The page rail animates its width for 200ms. Resizing the backing
+      // The page rail animates its width for 280ms. Resizing the backing
       // canvas on every intermediate width makes the rest of the editor miss
       // frames; the transition settle callback performs one final resize.
       if (this.railRevealTimer !== undefined) return;

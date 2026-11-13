@@ -640,7 +640,7 @@ export class TileRenderer {
       this.ghost = ghost;
       this.host.appendChild(ghost);
     }
-    // Repeat relayouts (the rail's 200ms animation) rescale the original
+    // Repeat relayouts (the rail's width animation) rescale the original
     // rasters instead of re-wrapping an already-scaled ghost.
     this.ghost.style.transform = `scale(${nextWidth / this.ghostBaseWidth})`;
   }

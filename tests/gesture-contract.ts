@@ -459,7 +459,7 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(3);
     });
 
-    it("expands the page rail for fast vertical paging and hands it back within a second of stopping", async () => {
+    it("keeps the page rail open briefly after fast vertical paging, then hands it back", async () => {
       const { editor, scroller, wheel } = await desktopSetup();
       const root = (editor as any).root as HTMLElement;
       const railHidden = () => root.classList.contains("ink-rail-hidden");
@@ -475,9 +475,12 @@ export function gestureContract(create: () => Promise<any>): void {
         scroller.scrollTop = 600;
         for (const timeStamp of [1000, 1200, 1400]) wheel(0, 100, { timeStamp });
         expect(railHidden()).toBe(false);
-        // Once the window stops holding three pages the burst is over; the
-        // quiet timer hands the rail back within the second.
+        // Once the window stops holding three pages the burst is over; keep
+        // the destination visible beyond the former one-second cutoff.
         vi.advanceTimersByTime(1000);
+        expect(railHidden()).toBe(false);
+        // The rail then hands back after the full quiet pause.
+        vi.advanceTimersByTime(300);
         expect(railHidden()).toBe(true);
         // A sideways burst never drives the rail: horizontal flips are one
         // page per contact and do not count toward the vertical page rate.
@@ -499,8 +502,8 @@ export function gestureContract(create: () => Promise<any>): void {
         expect(railHidden()).toBe(false);
         // A sideways stream keeps flipping at a <1s cadence while the vertical
         // window ages out. Horizontal flips never count toward it, so none of
-        // them may re-arm the collapse timer: the rail must come back one
-        // quiet second after the last engaged flip, not after the last
+        // them may re-arm the collapse timer: the rail must come back after
+        // the quiet pause following the last engaged flip, not after the last
         // sideways one.
         vi.advanceTimersByTime(300);
         wheel(140, 0, { timeStamp: 2500 });
