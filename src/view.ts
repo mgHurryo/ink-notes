@@ -602,14 +602,16 @@ export class InkView extends InkWritingView {
         cls: "ink-thumb-tag-button",
         attr: { type: "button", "aria-label": `Tag page ${index + 1}`, title: "Tag", "aria-disabled": String(this.readingMode) },
       });
-      tagButton.disabled = this.readingMode;
+      // Read-only state stays visible via aria-disabled but never disables
+      // the entry: a disabled button swallows left AND right clicks with no
+      // feedback, which reads as broken. The popover opens read-only instead.
       tagButton.addEventListener("click", (event) => {
         event.stopPropagation();
         this.openThumbTagPopover(button);
       });
       button.addEventListener("contextmenu", (event) => {
         event.preventDefault();
-        if (!this.readingMode) this.openThumbTagPopover(button);
+        this.openThumbTagPopover(button);
       });
       button.addEventListener("click", () => this.pageManagement
         ? this.togglePageSelection(page.id) : this.explicitNavigateToPage(page.id));
@@ -654,6 +656,7 @@ export class InkView extends InkWritingView {
     this.tagPopoverClose = openTagPopover(this.root, thumb, {
       getPage: () => this.pageById(pageId) ?? null,
       isLocked: () => this.readingMode,
+      lockReason: () => this.readingMode ? "Reading mode is on" : null,
       onTagsChange: (page, tags) => this.applyRailTags(page, tags),
       onFlagChange: (page, flag) => this.applyRailFlag(page, flag),
     });

@@ -1480,16 +1480,24 @@ describe("page rail tagging and filters", () => {
     expect(button("Pages with ink only").getAttribute("aria-pressed")).toBe("false");
   });
 
-  it("disables the tag entry in reading mode but keeps the filters usable", () => {
+  it("keeps the tag entry clickable in reading mode and opens it read-only with a reason", () => {
     const host = view as unknown as { notebook: ReturnType<typeof createNotebook> };
     host.notebook.pages[0].tags = ["exam"];
     button("Pages").click();
     button("Reading mode").click();
-    // Reading mode blocks page mutations (same rule as manage/rename), so
-    // neither tagging entry opens the popover.
-    expect(button("Tag page 1").disabled).toBe(true);
+    // Reading mode blocks page mutations but must not dead-end the entry: a
+    // disabled button swallows both clicks with no feedback. The entry stays
+    // clickable, marked aria-disabled, and the popover opens read-only.
+    expect(button("Tag page 1").disabled).toBe(false);
+    expect(button("Tag page 1").getAttribute("aria-disabled")).toBe("true");
     button("Tag page 1").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
-    expect(document.querySelector(".ink-tag-popover")).toBeNull();
+    const popover = document.querySelector(".ink-tag-popover");
+    expect(popover).not.toBeNull();
+    expect(document.querySelector(".ink-tag-lock-reason")?.textContent).toContain("Reading mode");
+    expect(document.querySelector<HTMLButtonElement>('button[aria-label="Red flag"]')!.disabled).toBe(true);
+    expect(document.querySelector<HTMLInputElement>('input[aria-label="Add tag"]')!.disabled).toBe(true);
+    // The stored tag stays readable while locked.
+    expect(document.querySelector(".ink-tag-chip-name")?.textContent).toBe("exam");
     button("Tagged pages only").click();
     expect(visibleThumbs()).toHaveLength(1);
     // Stacking "with ink" hides the un-inked tagged page: an empty result

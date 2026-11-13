@@ -1517,8 +1517,29 @@ describe("pdf page preview rail", () => {
     expect(live().tags).toEqual([]);
     // The tag removal redone above predates the flag clear: still green here.
     expect(live().flag).toBe("green");
-    document.querySelector<HTMLButtonElement>('[aria-label="Redo"]')!.click();
+    document.querySelector<HTMLButtonElement>('button[aria-label="Redo"]')!.click();
     expect(live().flag).toBeUndefined();
+    await view.onClose();
+  });
+
+  it("opens the tag popover read-only with its reason when the source PDF changed", async () => {
+    const { view, internal, sidecar } = await setupExpanded(3);
+    sidecar.notebook.pages[0].tags = ["exam"];
+    internal.renderAll();
+    // An external edit flips the view read-only mid-session; the rail
+    // refresh grays the entry. The entry must stay clickable and explain
+    // itself — a disabled entry swallows left and right clicks silently.
+    (view as unknown as { sourcePdfModified(): void }).sourcePdfModified();
+    internal.refreshPageRail();
+    const entry = document.querySelector<HTMLButtonElement>('[aria-label="Tag page 1"]')!;
+    expect(entry.disabled).toBe(false);
+    expect(entry.getAttribute("aria-disabled")).toBe("true");
+    entry.click();
+    expect(document.querySelector(".ink-tag-popover")).not.toBeNull();
+    expect(document.querySelector(".ink-tag-lock-reason")?.textContent).toContain("source PDF changed");
+    expect(document.querySelector<HTMLButtonElement>('button[aria-label="Red flag"]')!.disabled).toBe(true);
+    // The stored tag stays readable while locked.
+    expect(document.querySelector(".ink-tag-chip-name")?.textContent).toBe("exam");
     await view.onClose();
   });
 

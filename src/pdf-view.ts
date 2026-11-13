@@ -979,7 +979,8 @@ export class PdfInkView extends InkWritingView {
       const notebookPage = this.sidecar?.notebook.pages[index];
       if (notebookPage) {
         paintThumbBadges(button, notebookPage);
-        button.querySelector<HTMLButtonElement>(":scope > .ink-thumb-tag-button")!.disabled = this.editingLocked();
+        button.querySelector<HTMLButtonElement>(":scope > .ink-thumb-tag-button")!
+          .setAttribute("aria-disabled", String(this.editingLocked()));
       }
       const matches = notebookPage ? pageMatchesRailFilters(notebookPage, this.railFilters) : true;
       button.toggleClass("is-filtered-out", !matches);
@@ -1056,11 +1057,14 @@ export class PdfInkView extends InkWritingView {
       if (notebookPage) {
         paintThumbBadges(button, notebookPage);
         // Hover/corner entry to the shared tagging popover (right-click too).
+        // Read-only state never disables the entry: a disabled button
+        // swallows left AND right clicks with no feedback, which reads as
+        // broken. The popover opens read-only and explains itself.
         const tagButton = button.createEl("button", {
           cls: "ink-thumb-tag-button",
           attr: { type: "button", "aria-label": `Tag page ${index + 1}`, title: "Tag" },
         });
-        tagButton.disabled = this.editingLocked();
+        tagButton.setAttribute("aria-disabled", String(this.editingLocked()));
         tagButton.addEventListener("click", (event) => {
           event.stopPropagation();
           if (pageId) this.openThumbTagPopover(button);
@@ -1069,7 +1073,7 @@ export class PdfInkView extends InkWritingView {
       button.addEventListener("contextmenu", (event) => {
         if (!pageId) return;
         event.preventDefault();
-        if (!this.editingLocked()) this.openThumbTagPopover(button);
+        this.openThumbTagPopover(button);
       });
       button.addEventListener("click", () => {
         if (this.pageManagement) {
@@ -1095,6 +1099,9 @@ export class PdfInkView extends InkWritingView {
     this.tagPopoverClose = openTagPopover(this.root, button, {
       getPage: () => this.sidecar?.notebook.pages.find((page) => page.id === pageId) ?? null,
       isLocked: () => this.editingLocked(),
+      lockReason: () => this.editingLocked()
+        ? this.writeBlockedReason ?? "Reading mode is on"
+        : null,
       onTagsChange: (page, tags) => this.applyRailTags(page, tags),
       onFlagChange: (page, flag) => this.applyRailFlag(page, flag),
     });

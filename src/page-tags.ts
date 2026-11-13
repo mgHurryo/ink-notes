@@ -79,6 +79,8 @@ export interface TagPopoverHost {
   onFlagChange(page: InkPage, flag: PageFlag | null): void;
   /** While true the flag/tag controls are disabled (read-only surface). */
   isLocked(): boolean;
+  /** Why the controls are read-only, shown inside a locked popover. */
+  lockReason?(): string | null;
 }
 
 /**
@@ -91,13 +93,21 @@ export interface TagPopoverHost {
  */
 export function openTagPopover(host: HTMLElement, anchor: HTMLElement, controller: TagPopoverHost): () => void {
   const popover = host.createDiv({ cls: "ink-tag-popover", attr: { role: "dialog", "aria-label": "Page tags" } });
-  // Below the anchor, clamped into the viewport when the rail sits at the
-  // screen edge; the popover caps its own height with internal scrolling.
+  // Beside the anchor, over the editor surface: rail thumbnails stack
+  // vertically, so a popover opening BELOW a thumbnail lands on the next
+  // page's thumbnail — it must read as belonging to the page it edits. Both
+  // rails sit at the editor's left edge, so opening to the right keeps the
+  // popover alongside its anchor; clamped into the viewport either way. The
+  // popover caps its own height with internal scrolling.
   const rect = anchor.getBoundingClientRect();
-  const left = Math.max(8, Math.min(rect.left, window.innerWidth - 240));
-  const top = Math.min(rect.bottom + 6, Math.max(8, window.innerHeight - 280));
+  const besideLeft = rect.right + 8 <= window.innerWidth - 240;
+  const left = besideLeft
+    ? Math.min(rect.right + 8, window.innerWidth - 240)
+    : Math.max(8, rect.left - 240 + Math.min(rect.width, 232));
+  const top = Math.max(8, Math.min(rect.top, window.innerHeight - 280));
   popover.setCssStyles({ left: `${Math.round(left)}px`, top: `${Math.round(top)}px` });
 
+  const reason = popover.createDiv({ cls: "ink-tag-lock-reason", attr: { role: "status" } });
   const flagsRow = popover.createDiv({ cls: "ink-tag-flags", attr: { role: "group", "aria-label": "Flag color" } });
   const choices = new Map<PageFlag | null, HTMLButtonElement>();
   for (const flag of [...PAGE_FLAGS, null]) {
@@ -143,6 +153,12 @@ export function openTagPopover(host: HTMLElement, anchor: HTMLElement, controlle
     const page = controller.getPage();
     if (!page) { close(); return; }
     const locked = controller.isLocked();
+    // A locked popover still opens: the tags stay readable, and the reason
+    // line tells the user WHY editing is off instead of leaving a dead
+    // button that swallows both left and right clicks without feedback.
+    const lockText = locked ? controller.lockReason?.() ?? null : null;
+    reason.setText(lockText ?? "");
+    reason.toggleClass("is-locked", locked);
     for (const [flag, button] of choices) {
       button.setAttribute("aria-pressed", String(page.flag === flag));
       button.disabled = locked;
