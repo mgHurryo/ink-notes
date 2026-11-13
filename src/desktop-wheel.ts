@@ -91,13 +91,9 @@ const RENEW_MIN_FLIPPED = 3;
 const PAGE_TRAVEL_PX = 100;
 const HORIZONTAL_PAGE_TRAVEL_PX = 48;
 const MAX_TRACKPAD_PAGES_PER_GESTURE = 2;
-/** Horizontal swipes flip exactly one page per CONTACT (the span between
- *  hard resets: idle gap, reversal, axis or mode change). The per-gesture
- *  budget alone used to let a mid-tail renewal re-open it and flip a second
- *  page inside one physical contact - sideways motion is a deliberate
- *  single-page affordance, and that continuation read as accidental
- *  navigation, so the budget is now per contact. Vertical keeps the
- *  per-gesture budget: repeated vertical flicks are the fast-paging input. */
+/** Horizontal swipes flip one page per inferred contact. A confirmed renewed
+ *  swipe opens a new contact because WheelEvent does not expose the physical
+ *  trackpad lift; unresolved renewal ramps keep the cap. */
 const X_PAGES_PER_CONTACT = 1;
 const AXIS_RETENTION_RATIO = 0.65;
 /** A zero held-axis component pauses a diagonal stream, but a sustained run
@@ -182,10 +178,9 @@ export class DesktopWheelGesture {
   private stallDeferralSpeed = 0;
   private stallDeferralTravel = 0;
   private trackpadPages = 0;
-  /** Pages already flipped on the x axis during the current contact. Unlike
-   *  trackpadPages it survives beginRenewedGesture: a mid-tail renewal is
-   *  the same physical contact, and the horizontal contract grants it
-   *  nothing further. */
+  /** Pages already flipped on the x axis during the inferred contact. It
+   *  survives ordinary renewals; only a confirmed rise from a settled tail
+   *  starts a new horizontal contact. */
   private contactXPages = 0;
   private zeroAxisPauses = 0;
   private gestureId = 0;
@@ -200,9 +195,13 @@ export class DesktopWheelGesture {
   private slowScrollMs = 0;
   private slowScrollTravel = 0;
 
-  private beginRenewedGesture(): void {
+  private beginRenewedGesture(reopenSettledHorizontalPage = false): void {
     this.gestureId += 1;
     this.trackpadPages = 0;
+    // WheelEvent has no touchpad contact phase. Re-open the horizontal cap
+    // only when a confirmed re-swipe rises from a settled tail; hot-tail
+    // renewals keep the original contact budget to reject merged inertia.
+    if (reopenSettledHorizontalPage) this.contactXPages = 0;
     this.flippedRun = 0;
     this.slowScrollMs = this.slowScrollTravel = 0;
   }
@@ -383,7 +382,11 @@ export class DesktopWheelGesture {
           this.stallDeferral = null;
           if (deferral === "rearm") {
             if (gap >= 2 && normalized >= this.stallDeferralSpeed * RENEWED_FLICK_HOLD_RATIO) {
-              this.beginRenewedGesture();
+              // A settled tail re-opens horizontal paging only when the
+              // confirmation rises beyond the candidate sample; flat or
+              // falling delivery can still be merged inertia.
+              const confirmedSettledRise = frozenSettled && normalized > this.stallDeferralSpeed;
+              this.beginRenewedGesture(confirmedSettledRise);
               this.flipped = false;
               this.travel = this.stallDeferralTravel;
               this.renewalBlocked = true;
