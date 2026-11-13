@@ -489,7 +489,7 @@ export function gestureContract(create: () => Promise<any>): void {
       } finally { vi.useRealTimers(); }
     });
 
-    it("does not let a sideways stream re-arm the fast-paging rail's collapse timer", async () => {
+    it("keeps a borrowed rail open while wheel activity continues, then closes after silence", async () => {
       const { editor, scroller, wheel } = await desktopSetup();
       const root = (editor as any).root as HTMLElement;
       const railHidden = () => root.classList.contains("ink-rail-hidden");
@@ -500,20 +500,21 @@ export function gestureContract(create: () => Promise<any>): void {
         scroller.scrollTop = 600;
         for (const timeStamp of [1000, 1200, 1400]) wheel(0, 100, { timeStamp });
         expect(railHidden()).toBe(false);
-        // A sideways stream keeps flipping at a <1s cadence while the vertical
-        // window ages out. Horizontal flips never count toward it, so none of
-        // them may re-arm the collapse timer: the rail must come back after
-        // the quiet pause following the last engaged flip, not after the last
-        // sideways one.
+        // Horizontal wheel input does not count toward the vertical fast-page
+        // rate, but it still proves that a trackpad gesture is active and
+        // should keep the borrowed rail visible.
         vi.advanceTimersByTime(300);
         wheel(140, 0, { timeStamp: 2500 });
         vi.advanceTimersByTime(300);
         wheel(140, 0, { timeStamp: 2900 });
         vi.advanceTimersByTime(300);
         wheel(140, 0, { timeStamp: 3300 });
-        // 1700ms of quiet time have passed since the last engaged flip; only
-        // stale horizontal re-arms could still hold the rail open here.
         vi.advanceTimersByTime(800);
+        expect(railHidden()).toBe(false);
+        // With no further wheel events, the normal quiet interval hands back
+        // a rail that the fast vertical burst borrowed from the user (the
+        // 1.3s window #428 settled on: 800 + 501 crosses it).
+        vi.advanceTimersByTime(501);
         expect(railHidden()).toBe(true);
       } finally { vi.useRealTimers(); }
     });
