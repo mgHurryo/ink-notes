@@ -89,7 +89,10 @@ const MAX_SCRIBBLE_GESTURE_POINTS = 2_048;
 const MAX_SCRIBBLE_RANGE_SAMPLES = MAX_SCRIBBLE_GESTURE_POINTS * 2;
 const SCRIBBLE_RANGE_SAMPLE_SPACING_DIVISOR = 2;
 const SCRIBBLE_REFERENCE_SIZE = 24;
-export const QUEUED_PAGE_SWIPE_DURATION_MS = 64;
+/** Queued fast-paging steps stay legible: at 64ms/page the drain reads as
+ *  teleporting ("flashed to some page") with no way to see where you are.
+ *  ~120ms keeps a fast burst fast (8 pages/s) while each step registers. */
+export const QUEUED_PAGE_SWIPE_DURATION_MS = 120;
 /** Leave the rail visible across brief trackpad finger lifts (reported
  *  1-2s pauses mid-burst) and long enough to inspect the destination after
  *  a burst; the rail only hands back once the input has truly gone quiet. */
@@ -613,6 +616,8 @@ export abstract class InkWritingView extends FileView {
   protected zoomLocked = false;
   private zoomHud: HTMLElement | null = null;
   private zoomHudValue: HTMLElement | null = null;
+  private pageHud: HTMLElement | null = null;
+  private pageHudValue: HTMLElement | null = null;
   private zoomLockButton: HTMLButtonElement | null = null;
   private zoomHudTimer: number | undefined;
   protected canvasLogicalWidth = 1;
@@ -839,6 +844,34 @@ export abstract class InkWritingView extends FileView {
 
   protected zoomLevel(): number { return this.zoom; }
   protected onZoomLockChanged(): void {}
+
+  /** Where-am-I readout for wheel fast paging; both editors mount it beside
+   *  the zoom HUD. A burst drains at multiple pages per second, and without
+   *  a big transient page number the user cannot tell which page they are
+   *  flying over (reported as "no idea where the target page is"). */
+  protected buildPageHud(parent: HTMLElement): void {
+    this.pageHud?.remove();
+    const hud = parent.createDiv({ cls: "ink-page-hud", attr: { "aria-hidden": "true" } });
+    this.pageHud = hud;
+    this.pageHudValue = hud.createSpan({ cls: "ink-page-hud-value" });
+  }
+
+  /** The label a burst should show; null hides the HUD (subclass opt-in). */
+  protected fastPagingPageLabel(): string | null {
+    return null;
+  }
+
+  /** Show/refresh the burst page readout; the quiet collapse hides it. */
+  protected showFastPagingHud(): void {
+    const label = this.fastPagingPageLabel();
+    if (!label || !this.pageHud) return;
+    if (this.pageHudValue && this.pageHudValue.textContent !== label) this.pageHudValue.textContent = label;
+    this.pageHud.addClass("is-visible");
+  }
+
+  protected hideFastPagingHud(): void {
+    this.pageHud?.removeClass("is-visible");
+  }
 
   protected buildZoomHud(parent: HTMLElement): void {
     this.disposeZoomHud();
@@ -1711,6 +1744,8 @@ export abstract class InkWritingView extends FileView {
       if (discrete) this.queuePageSwipeDelta(pages - direction, scrollEdge, true);
       else this.queueTrackpadPageSwipeDelta(pages - direction, gestureId, scrollEdge);
     }
+    // The readout belongs to bursts: an ordinary flip already moves visibly.
+    if (this.fastPagingRail) this.showFastPagingHud();
   }
 
   /** View hook: a fast paging burst expanded the page rail. */
@@ -1721,6 +1756,14 @@ export abstract class InkWritingView extends FileView {
   /** True while a fast paging burst holds the rail open. */
   protected isFastPagingRailOpen(): boolean {
     return this.fastPagingRail;
+  }
+
+  /** The page a burst is heading to: the queued swipe target when one is
+   *  draining, otherwise the current page. The HUD must read the DESTINATION
+   *  - the current index lags behind a multi-page drain. */
+  protected fastPagingDestinationIndex(): number | null {
+    if (this.pageSwipeRequest) return this.pageSwipeRequest.target;
+    return null;
   }
 
   /** Feeds wheel-driven page flips into the fast-paging detector. Only a
@@ -1734,6 +1777,7 @@ export abstract class InkWritingView extends FileView {
       this.fastPagingRail = true;
       this.onFastPagingRailExpanded();
     }
+    this.showFastPagingHud();
     this.refreshFastPagingRailQuietTimer();
   }
 
@@ -1761,6 +1805,7 @@ export abstract class InkWritingView extends FileView {
     }
     this.fastPagingRail = false;
     this.wheelPacer.end();
+    this.hideFastPagingHud();
     this.onFastPagingRailCollapsed();
   }
 
@@ -1770,6 +1815,7 @@ export abstract class InkWritingView extends FileView {
     this.fastPagingRailTimer = undefined;
     this.fastPagingRail = false;
     this.fastPagingRailBorrowed = false;
+    this.hideFastPagingHud();
     this.wheelPacer.end();
   }
 

@@ -28202,7 +28202,7 @@ var MAX_SCRIBBLE_GESTURE_POINTS = 2048;
 var MAX_SCRIBBLE_RANGE_SAMPLES = MAX_SCRIBBLE_GESTURE_POINTS * 2;
 var SCRIBBLE_RANGE_SAMPLE_SPACING_DIVISOR = 2;
 var SCRIBBLE_REFERENCE_SIZE = 24;
-var QUEUED_PAGE_SWIPE_DURATION_MS = 64;
+var QUEUED_PAGE_SWIPE_DURATION_MS = 120;
 var FAST_PAGING_RAIL_IDLE_MS = 3e3;
 var STROKE_ERASER_HIT_RADIUS = 10;
 var MAX_ERASER_SWEEP_STEPS = 1024;
@@ -28325,6 +28325,8 @@ var InkWritingView = class extends import_obsidian7.FileView {
     this.zoomLocked = false;
     this.zoomHud = null;
     this.zoomHudValue = null;
+    this.pageHud = null;
+    this.pageHudValue = null;
     this.zoomLockButton = null;
     this.canvasLogicalWidth = 1;
     this.canvasLogicalHeight = 1;
@@ -28892,6 +28894,32 @@ var InkWritingView = class extends import_obsidian7.FileView {
     return this.zoom;
   }
   onZoomLockChanged() {
+  }
+  /** Where-am-I readout for wheel fast paging; both editors mount it beside
+   *  the zoom HUD. A burst drains at multiple pages per second, and without
+   *  a big transient page number the user cannot tell which page they are
+   *  flying over (reported as "no idea where the target page is"). */
+  buildPageHud(parent) {
+    var _a;
+    (_a = this.pageHud) == null ? void 0 : _a.remove();
+    const hud = parent.createDiv({ cls: "ink-page-hud", attr: { "aria-hidden": "true" } });
+    this.pageHud = hud;
+    this.pageHudValue = hud.createSpan({ cls: "ink-page-hud-value" });
+  }
+  /** The label a burst should show; null hides the HUD (subclass opt-in). */
+  fastPagingPageLabel() {
+    return null;
+  }
+  /** Show/refresh the burst page readout; the quiet collapse hides it. */
+  showFastPagingHud() {
+    const label = this.fastPagingPageLabel();
+    if (!label || !this.pageHud) return;
+    if (this.pageHudValue && this.pageHudValue.textContent !== label) this.pageHudValue.textContent = label;
+    this.pageHud.addClass("is-visible");
+  }
+  hideFastPagingHud() {
+    var _a;
+    (_a = this.pageHud) == null ? void 0 : _a.removeClass("is-visible");
   }
   buildZoomHud(parent) {
     this.disposeZoomHud();
@@ -29792,6 +29820,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
       if (discrete) this.queuePageSwipeDelta(pages - direction, scrollEdge, true);
       else this.queueTrackpadPageSwipeDelta(pages - direction, gestureId, scrollEdge);
     }
+    if (this.fastPagingRail) this.showFastPagingHud();
   }
   /** View hook: a fast paging burst expanded the page rail. */
   onFastPagingRailExpanded() {
@@ -29802,6 +29831,13 @@ var InkWritingView = class extends import_obsidian7.FileView {
   /** True while a fast paging burst holds the rail open. */
   isFastPagingRailOpen() {
     return this.fastPagingRail;
+  }
+  /** The page a burst is heading to: the queued swipe target when one is
+   *  draining, otherwise the current page. The HUD must read the DESTINATION
+   *  - the current index lags behind a multi-page drain. */
+  fastPagingDestinationIndex() {
+    if (this.pageSwipeRequest) return this.pageSwipeRequest.target;
+    return null;
   }
   /** Feeds wheel-driven page flips into the fast-paging detector. Only a
    *  flip that keeps the window engaged re-arms the collapse timer, so once
@@ -29814,6 +29850,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
       this.fastPagingRail = true;
       this.onFastPagingRailExpanded();
     }
+    this.showFastPagingHud();
     this.refreshFastPagingRailQuietTimer();
   }
   /** Wheel events are the only portable signal that a trackpad gesture is
@@ -29839,6 +29876,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     }
     this.fastPagingRail = false;
     this.wheelPacer.end();
+    this.hideFastPagingHud();
     this.onFastPagingRailCollapsed();
   }
   /** View teardown: drop the burst state and its pending collapse timer. */
@@ -29847,6 +29885,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     this.fastPagingRailTimer = void 0;
     this.fastPagingRail = false;
     this.fastPagingRailBorrowed = false;
+    this.hideFastPagingHud();
     this.wheelPacer.end();
   }
   /** Scrolls only the thumbnail list so updates cannot move the editor. */
@@ -34185,6 +34224,7 @@ var InkView = class extends InkWritingView {
     this.renderCanvas();
     this.registerDesktopInput();
     this.buildZoomHud(this.root.querySelector(".ink-workspace"));
+    this.buildPageHud(this.root.querySelector(".ink-workspace"));
     this.register(() => this.closeEraserPopover());
     this.viewReady = true;
     this.renderAll();
@@ -34653,6 +34693,13 @@ var InkView = class extends InkWritingView {
       match = thumb.querySelector("canvas");
     });
     return match;
+  }
+  fastPagingPageLabel() {
+    var _a, _b, _c;
+    const count = (_b = (_a = this.notebook) == null ? void 0 : _a.pages.length) != null ? _b : 0;
+    if (count <= 0) return null;
+    const index = (_c = this.fastPagingDestinationIndex()) != null ? _c : this.pageIndex;
+    return `${Math.min(index + 1, count)} / ${count}`;
   }
   openThumbTagPopover(thumb) {
     this.closeTagPopover();
@@ -37153,6 +37200,7 @@ var PdfInkView = class extends InkWritingView {
     const scroller = body.createDiv({ cls: "ink-pdf-scroller" });
     this.scroller = scroller;
     this.buildZoomHud(body);
+    this.buildPageHud(body);
     this.pageWrap = scroller.createDiv({ cls: "ink-pdf-page-wrap" });
     this.pdfCanvas = this.pageWrap.createEl("canvas", { cls: "ink-pdf-canvas" });
     this.buildInkHost();
@@ -37747,6 +37795,13 @@ var PdfInkView = class extends InkWritingView {
   /** Scopes the PDF-surface popover rules (paper canvases, spacing). */
   brushPopoverExtraClass() {
     return "ink-pdf-brush-popover";
+  }
+  fastPagingPageLabel() {
+    var _a, _b, _c, _d, _e;
+    const count = (_d = (_c = (_a = this.sidecar) == null ? void 0 : _a.notePages.length) != null ? _c : (_b = this.pdfDoc) == null ? void 0 : _b.numPages) != null ? _d : 0;
+    if (count <= 0) return null;
+    const index = (_e = this.fastPagingDestinationIndex()) != null ? _e : this.noteIndex;
+    return `${Math.min(index + 1, count)} / ${count}`;
   }
   updatePageIndicator() {
     const indicator = this.toolbarButtons.get("indicator");
