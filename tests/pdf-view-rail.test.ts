@@ -33,6 +33,7 @@ interface RailInternals {
   pdfDoc: { numPages: number; getPage(n: number): Promise<unknown>; destroy(): Promise<void> } | null;
   neighbourCache: Map<number, HTMLCanvasElement>;
   thumbCache: Map<number, HTMLCanvasElement>;
+  thumbButtons: Map<number, HTMLElement>;
   renderPdfPage(): Promise<void>;
   renderAll(): void;
   cacheNeighbour(index: number, canvas: HTMLCanvasElement): void;
@@ -49,11 +50,13 @@ interface RailInternals {
  *  records the 1-based page number it painted. */
 function fakePdfDoc(pageCount: number) {
   const renderedPages: number[] = [];
+  const cleanedPages: number[] = [];
   const getPage = vi.fn(async (pageNumber: number) => ({
     getViewport: ({ scale }: { scale: number }) => ({ width: 595.28 * scale, height: 841.89 * scale }),
     render: vi.fn(() => { renderedPages.push(pageNumber); return { promise: Promise.resolve() }; }),
+    cleanup: vi.fn(() => { cleanedPages.push(pageNumber); }),
   }));
-  return { renderedPages, getPage, doc: { numPages: pageCount, getPage, destroy: async () => undefined } };
+  return { renderedPages, cleanedPages, getPage, doc: { numPages: pageCount, getPage, destroy: async () => undefined } };
 }
 
 async function setup(sourcePageCount = 3, imageLibrary?: ImageLibraryStore) {
@@ -1299,12 +1302,103 @@ describe("pdf page preview rail", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(fakeDoc.getPage.mock.calls.map((call) => call[0])).toEqual([1, 2]);
     expect(fakeDoc.renderedPages).toEqual([1, 2]);
+    expect(fakeDoc.cleanedPages).toEqual(expect.arrayContaining([1, 2]));
     const bitmap = internal.thumbCache.get(0)!;
     expect(bitmap.width).toBe(120); // RAIL_THUMB_WIDTH at devicePixelRatio 1
     expect(bitmap.height).toBe(Math.round(120 * 841.89 / 595.28));
     // A repaint sweep is served from the thumbnail cache: no new pdf.js work.
     internal.paintVisibleThumbnails();
     expect(fakeDoc.getPage.mock.calls).toHaveLength(2);
+    await view.onClose();
+  });
+
+  it("bounds thumbnail bitmaps and releases evicted cached and mounted canvases", async () => {
+    const { view, internal } = await setupExpanded(16);
+    const editor = view as any;
+    internal.renderAll();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    editor.noteIndex = 8;
+    const bitmaps = Array.from({ length: 14 }, () => {
+      const canvas = document.createElement("canvas");
+      canvas.width = 240;
+      canvas.height = 340;
+      return canvas;
+    });
+    bitmaps.forEach((bitmap, index) => editor.cacheThumbnail(index, bitmap));
+    expect(internal.thumbCache.size).toBe(12);
+    expect(bitmaps[0]!.width).toBe(1);
+
+    editor.visibleThumbIndexes = vi.fn(() => [9, 10]);
+    vi.spyOn(editor, "paintThumbnail").mockImplementation(() => undefined);
+    editor.paintVisibleThumbnails();
+    expect([...internal.thumbCache.keys()].every((index) => [7, 8, 9, 10].includes(index))).toBe(true);
+    expect(bitmaps[2]!.width).toBe(1);
+
+    const distantSurface = internal.thumbButtons.get(4)!.querySelector("canvas") as HTMLCanvasElement;
+    const retainedSurface = internal.thumbButtons.get(8)!.querySelector("canvas") as HTMLCanvasElement;
+    distantSurface.width = retainedSurface.width = 240;
+    distantSurface.height = retainedSurface.height = 340;
+    distantSurface.dataset.previewReady = retainedSurface.dataset.previewReady = "true";
+    editor.paintVisibleThumbnails();
+    expect(distantSurface.width).toBe(1);
+    expect(distantSurface.dataset.previewReady).toBeUndefined();
+    expect(retainedSurface.width).toBe(240);
+    await view.onClose();
+  });
+
+  it("releases cached and mounted thumbnail canvases when invalidating a document", async () => {
+    const { view, internal } = await setup(2);
+    internal.renderAll();
+    const bitmap = document.createElement("canvas");
+    bitmap.width = 360;
+    bitmap.height = 510;
+    internal.thumbCache.set(1, bitmap);
+    const surface = internal.thumbButtons.get(1)!.querySelector("canvas") as HTMLCanvasElement;
+    surface.width = 360;
+    surface.height = 510;
+    surface.dataset.previewReady = "true";
+
+    (view as any).invalidateThumbnails();
+
+    expect(internal.thumbCache.size).toBe(0);
+    expect(bitmap.width).toBe(1);
+    expect(bitmap.height).toBe(1);
+    expect(surface.width).toBe(1);
+    expect(surface.dataset.previewReady).toBeUndefined();
+    await view.onClose();
+  });
+
+  it("cleans up each pdf.js page after reading source geometry", async () => {
+    const { view } = await setup(2);
+    const cleanup = vi.fn();
+    const doc = {
+      numPages: 2,
+      getPage: vi.fn(async () => ({
+        view: [0, 0, 612, 792],
+        rotate: 0,
+        getViewport: () => ({ width: 612, height: 792 }),
+        cleanup,
+      })),
+    };
+
+    const pages = await (view as any).readSourcePages(doc, (view as any).loadGeneration);
+
+    expect(pages).toEqual([
+      { width: 612, height: 792, rotation: 0 },
+      { width: 612, height: 792, rotation: 0 },
+    ]);
+    expect(cleanup).toHaveBeenCalledTimes(2);
+    await view.onClose();
+  });
+
+  it("destroys the old PDF document when resetting the view for a replacement", async () => {
+    const { view, internal } = await setup(1);
+    const destroy = vi.spyOn(internal.pdfDoc!, "destroy");
+
+    (view as any).resetViewState();
+
+    expect(destroy).toHaveBeenCalledOnce();
+    expect(internal.pdfDoc).toBeNull();
     await view.onClose();
   });
 
@@ -1444,7 +1538,7 @@ describe("pdf page preview rail", () => {
     const pending = new Promise<void>((resolve) => { finish = resolve; });
     const render = vi.fn(() => ({ promise: pending }));
     fakeDoc.getPage.mockResolvedValueOnce({
-      getViewport: ({ scale }: { scale: number }) => ({ width: 595.28 * scale, height: 841.89 * scale }), render,
+      getViewport: ({ scale }: { scale: number }) => ({ width: 595.28 * scale, height: 841.89 * scale }), render, cleanup: vi.fn(),
     });
     internal.prewarmNeighbours();
     await Promise.resolve();
@@ -1467,6 +1561,7 @@ describe("pdf page preview rail", () => {
       getViewport: ({ scale }: { scale: number }) => ({ width: 595.28 * scale, height: 841.89 * scale }),
       render: vi.fn(() => ({ promise: pageNumber === 3 ? oldPaint
         : inserted && pageNumber === 2 ? newPaint : Promise.resolve() })),
+      cleanup: vi.fn(),
     }));
     internal.noteIndex = 1;
     internal.renderAll();
