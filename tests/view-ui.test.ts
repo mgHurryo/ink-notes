@@ -995,7 +995,9 @@ describe("page rail thumbnails and resizing", () => {
       expect(canvases).toHaveLength(2);
       // jsdom reports no boxes; give both thumbs the 176px rail's box.
       canvases.forEach((canvas) => withBox(canvas, 152, 208));
-      vi.advanceTimersByTime(240);
+      // The rail settles after its 280ms transition plus the 30ms resize
+      // buffer; run the delayed repaint after that callback completes.
+      vi.advanceTimersByTime(320);
       const dpr = window.devicePixelRatio || 1;
       expect(canvases[0].width).toBe(Math.round(152 * dpr));
       expect(canvases[1].height).toBe(Math.round(208 * dpr));
@@ -1158,7 +1160,7 @@ describe("page rail thumbnails and resizing", () => {
     try {
       button("Pages").click(); // 预览全部: the preview rail expands over the settle timer
       scrollerWidth = 624;     // the rail's width squeezes the page column
-      vi.advanceTimersByTime(240);
+      vi.advanceTimersByTime(320);
       console.log("DEBUG", {
         cells: Array.from(layer.children).map((n) => (n as HTMLElement).dataset.cell ?? n.className),
         logical: [(view as unknown as { canvasLogicalWidth: number }).canvasLogicalWidth,
@@ -1226,7 +1228,7 @@ describe("page rail thumbnails and resizing", () => {
       button("Pages").click(); // 预览全部: the settle relayout squeezes the page column
       scrollerWidth = 624;     // the rail's width squeezes the page column
       hostWidth = 624;
-      vi.advanceTimersByTime(240);
+      vi.advanceTimersByTime(320);
       // The toggle repositions the mounted cards; it must not rebuild them:
       // a rebuild aborts every card's listeners, unloads the Markdown
       // component and re-runs MarkdownRenderer per text box, which on iPad
@@ -1357,23 +1359,23 @@ describe("page rail thumbnails and resizing", () => {
       internal.noteWheelPages(1, "y", 400);
       internal.noteWheelPages(1, "y", 600);
       expect(internal.fastPagingRail).toBe(true);
-      vi.advanceTimersByTime(1000);
+      vi.advanceTimersByTime(1300);
       expect(internal.fastPagingRail).toBe(false);
       expect(collapsed).toHaveBeenCalledTimes(1);
       // A burst whose queued swipes outlive the quiet window (slow page
       // renders, loaded machine) must not collapse mid-drain: the remaining
       // flips would lose the centered follow. The hand-back waits for the
-      // drain, then takes its own quiet second.
+      // drain, then takes its own quiet interval.
       internal.noteWheelPages(1, "y", 4000);
       internal.noteWheelPages(1, "y", 4200);
       internal.noteWheelPages(1, "y", 4400);
       expect(internal.fastPagingRail).toBe(true);
       internal.pageSwipeRequest = { target: 4, activeTarget: 3, count: 6, scrollEdge: "top", wheelGestureId: null, wheelQueued: true };
-      vi.advanceTimersByTime(1000);
+      vi.advanceTimersByTime(1300);
       expect(internal.fastPagingRail).toBe(true);
       expect(collapsed).toHaveBeenCalledTimes(1);
       internal.pageSwipeRequest = null;
-      vi.advanceTimersByTime(1000);
+      vi.advanceTimersByTime(1300);
       expect(internal.fastPagingRail).toBe(false);
       expect(collapsed).toHaveBeenCalledTimes(2);
     } finally { vi.useRealTimers(); }
