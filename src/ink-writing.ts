@@ -52,6 +52,8 @@ import { InkClipboard, pasteClipboardStrokes } from "./lasso-clipboard";
 const PASTE_HOLD_DELAY_MS = 600;
 const PASTE_HOLD_SLOP_PX = 10;
 const MAX_SCRIBBLE_GESTURE_POINTS = 2_048;
+const MAX_SCRIBBLE_RANGE_SAMPLES = MAX_SCRIBBLE_GESTURE_POINTS * 2;
+const SCRIBBLE_RANGE_SAMPLE_SPACING_DIVISOR = 2;
 const SCRIBBLE_REFERENCE_SIZE = 24;
 export const QUEUED_PAGE_SWIPE_DURATION_MS = 64;
 /** A fast paging burst must hand the rail back within a second of stopping. */
@@ -390,14 +392,16 @@ function segmentIntersectsBox(ax: number, ay: number, bx: number, by: number, ra
   return true;
 }
 
-function sampleStrokeForEraser(points: InkPoint[], radius: number, width: number, height: number): InkPoint[] {
+function sampleStrokeForEraser(points: InkPoint[], radius: number, width: number, height: number,
+  maxSamples = Number.POSITIVE_INFINITY, spacingDivisor = 3): InkPoint[] {
   if (points.length < 2) return points.map((point) => ({ ...point }));
   const sampled: InkPoint[] = [{ ...points[0] }];
-  const step = Math.max(1, radius / 3);
+  const step = Math.max(1, radius / spacingDivisor);
   for (let index = 1; index < points.length; index++) {
     const start = points[index - 1], end = points[index];
     const pixels = Math.hypot((end.x - start.x) * width, (end.y - start.y) * height);
     const count = Math.max(1, Math.ceil(pixels / step));
+    if (sampled.length + count > maxSamples) return [];
     for (let sample = 1; sample <= count; sample++) sampled.push(interpolateInkPoint(start, end, sample / count));
   }
   return sampled;
@@ -3899,9 +3903,9 @@ export abstract class InkWritingView extends FileView {
     // Recognition uses a stable logical size too: changing the ordinary eraser
     // must not make the same pen gesture stop qualifying as a scribble.
     if (!isScribbleEraseGesture(path, SCRIBBLE_REFERENCE_SIZE, this.canvasLogicalWidth, this.canvasLogicalHeight, this.state.scribbleSensitivity)) return false;
-    // A crossing-out mark erases locally, regardless of the regular eraser's
-    // mode/size. A narrow nib-sized tolerance must not erase neighbouring ink.
-    const radius = Math.max(2, Math.min(4, gesture.width / 2));
+    // Use the existing size control as a circular range around the pen's
+    // scribble path, but delete each intersecting stroke as one history item.
+    const radius = this.state.eraserSize / 2;
     let minX = Number.POSITIVE_INFINITY, minY = Number.POSITIVE_INFINITY;
     let maxX = Number.NEGATIVE_INFINITY, maxY = Number.NEGATIVE_INFINITY;
     for (const point of path) {
@@ -3927,26 +3931,24 @@ export abstract class InkWritingView extends FileView {
       ...(this.committingInkStrokes ?? []),
     ].map((stroke) => [stroke.id, stroke])).values()]
       .filter((stroke) => stroke.id !== gesture.id);
+    // Bound the temporary sweep for pathological input traces. If the full
+    // circle path cannot be represented within this cap, leave ink unchanged
+    // rather than allocate an unbounded sample array or erase only part of it.
+    const sweep = sampleStrokeForEraser(path, radius, this.canvasLogicalWidth, this.canvasLogicalHeight,
+      MAX_SCRIBBLE_RANGE_SAMPLES, SCRIBBLE_RANGE_SAMPLE_SPACING_DIVISOR);
+    if (sweep.length === 0) return false;
     const notes = [...(this.stickyInput?.notes ?? [])].reverse().filter((note) => !note.collapsed)
       .map((note) => ({ id: note.id, bounds: stickyBounds(note, this.stickyGeometry()) }));
-    const removed: InkStroke[] = [], replacements: InkStroke[] = [];
-    const now = Date.now();
+    const removed: InkStroke[] = [];
     for (const stroke of candidates) {
       const owner = this.stickyInput?.owners.get(stroke.id);
-      const segments = eraseStrokeSegmentsByScribble(stroke, path, radius, this.canvasLogicalWidth, this.canvasLogicalHeight, (point) => {
-        const top = notes.find(({ bounds: r }) => point.x >= r.left && point.x <= r.right && point.y >= r.top && point.y <= r.bottom);
-        return top?.id === owner?.id;
+      const hit = sweep.some((center) => {
+        const top = notes.find(({ bounds }) => center.x >= bounds.left && center.x <= bounds.right
+          && center.y >= bounds.top && center.y <= bounds.bottom);
+        if (owner ? top?.id !== owner.id : Boolean(top)) return false;
+        return strokeIntersectsEraser(stroke, center, radius, "circle", this.canvasLogicalWidth, this.canvasLogicalHeight);
       });
-      if (segments === null) continue;
-      removed.push(stroke);
-      for (const points of segments) {
-        // Keep the original createdAt so scribble-erase fragments stay below
-        // ink drawn after the original stroke (synthesis order = createdAt
-        // order). updatedAt keeps the merge timestamp.
-        const replacement = { ...cloneStroke(stroke), id: newId("stroke"), points, updatedAt: now };
-        replacements.push(replacement);
-        if (owner) this.stickyInput?.owners.set(replacement.id, owner);
-      }
+      if (hit) removed.push(stroke);
     }
     if (removed.length === 0) return false;
 
@@ -3955,8 +3957,6 @@ export abstract class InkWritingView extends FileView {
     this.materializePendingInkPreview(page);
     const removedIds = [gesture.id, ...removed.map((stroke) => stroke.id)];
     this.deleteStrokes(page, removedIds);
-    page.strokes.push(...replacements);
-    page.strokes.sort((left, right) => left.createdAt - right.createdAt);
     this.markChanged(page);
     this.queueWorkerOperation({
       type: "complete-stroke", pageId: page.id, strokeId: gesture.id,
@@ -3965,15 +3965,15 @@ export abstract class InkWritingView extends FileView {
     this.queueWorkerOperation({
       type: "patch-strokes",
       pageId: page.id,
-      upsert: replacements.map(cloneStroke),
+      upsert: [],
       remove: removedIds,
       deletedStrokeIds: [...page.deletedStrokeIds],
       pageUpdatedAt: page.updatedAt,
       notebookUpdatedAt: this.currentNotebook().updatedAt,
     });
-    this.tiles?.patchStrokes(replacements.filter((stroke) => !this.stickyInput?.owners.has(stroke.id)), removedIds,
+    this.tiles?.patchStrokes([], removedIds,
       page.strokes.filter((stroke) => !this.stickyInput?.owners.has(stroke.id)));
-    this.pushCommand(this.erasedStrokesCommand(page.id, removed.map(cloneStroke), replacements));
+    this.pushCommand(this.erasedStrokesCommand(page.id, removed.map(cloneStroke), []));
     this.activeStroke = null;
     this.drawInteractiveStrokes(page.strokes, true);
     return true;
@@ -4214,7 +4214,7 @@ export abstract class InkWritingView extends FileView {
       });
     }
     const sizeRow = pop.createDiv({ cls: "ink-eraser-size-row" });
-    sizeRow.createDiv({ cls: "ink-settings-label", text: "Size" });
+    const sizeLabel = sizeRow.createDiv({ cls: "ink-settings-label", text: "Size" });
     const range = sizeRow.createEl("input", { attr: { type: "range", "aria-label": "Eraser size" } });
     range.min = "8";
     range.max = "160";
@@ -4233,6 +4233,7 @@ export abstract class InkWritingView extends FileView {
     scribbleToggle.addEventListener("change", () => {
       this.state.scribbleErase = scribbleToggle.checked;
       sensitivity.disabled = !scribbleToggle.checked;
+      syncSizeVisibility();
       this.scheduleToolStateSave();
     });
     const sensitivityLabel = scribbleRow.createEl("label", { cls: "ink-eraser-size-row" });
@@ -4247,11 +4248,14 @@ export abstract class InkWritingView extends FileView {
       updateSensitivityLabel();
       this.scheduleToolStateSave();
     });
-    scribbleRow.createDiv({ cls: "ink-settings-label", text: "Scrub, loop or wave repeatedly over ink with the pen. Low: fewer accidental erases. High: fewer repetitions needed." });
-    // The stroke eraser ignores the size (fixed hit radius) - offer the
-    // slider only for the shapes that use it.
+    scribbleRow.createDiv({ cls: "ink-settings-label", text: "Scrub, loop or wave over ink with the pen. Strokes touched by its circular range are removed whole. Sensitivity controls how many repetitions are needed." });
+    // The stroke eraser itself keeps its fixed hit radius. In that mode the
+    // existing size setting controls the circular range for pen scribbling.
     const syncSizeVisibility = (): void => {
-      sizeRow.style.display = this.state.eraserMode === "stroke" ? "none" : "";
+      const scribbleRange = this.state.eraserMode === "stroke" && this.state.scribbleErase;
+      sizeLabel.setText(scribbleRange ? "Scribble range" : "Size");
+      range.setAttribute("aria-label", scribbleRange ? "Scribble erase range" : "Eraser size");
+      sizeRow.style.display = this.state.eraserMode === "stroke" && !this.state.scribbleErase ? "none" : "";
     };
     syncSizeVisibility();
     this.eraserPopover = pop;

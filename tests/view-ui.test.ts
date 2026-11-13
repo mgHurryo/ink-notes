@@ -814,16 +814,19 @@ describe("reference-style editor", () => {
     button("Erase").click();
     button("Erase").click();
     const popover = document.querySelector<HTMLElement>(".ink-eraser-popover")!;
-    const size = document.querySelector<HTMLInputElement>('input[aria-label="Eraser size"]')!;
+    const size = document.querySelector<HTMLInputElement>('input[aria-label="Scribble erase range"]')!;
     const strokeMode = popover.querySelector<HTMLElement>('[data-eraser-mode="stroke"]')!;
     expect(strokeMode.getAttribute("aria-checked")).toBe("true");
     expect(document.querySelector(".ink-eraser-reference-point")).not.toBeNull();
-    // The stroke eraser ignores the size - the slider hides for it.
+    // Stroke mode keeps its fixed eraser radius; the slider controls the
+    // circular range used by pen scribble erasing.
     const sizeRow = document.querySelector<HTMLElement>(".ink-eraser-size-row")!;
-    expect(sizeRow.style.display).toBe("none");
+    expect(sizeRow.style.display).toBe("");
+    expect(sizeRow.textContent).toContain("Scribble range");
     button("Circle eraser").click();
     expect(strokeMode.getAttribute("aria-checked")).toBe("false");
     expect(sizeRow.style.display).toBe("");
+    expect(document.querySelector<HTMLInputElement>('input[aria-label="Eraser size"]')).not.toBeNull();
     size.value = "48";
     size.dispatchEvent(new Event("input"));
     const cursor = document.querySelector<HTMLElement>(".ink-eraser-cursor")!;
@@ -852,9 +855,11 @@ describe("reference-style editor", () => {
     expect(scheduleSave).toHaveBeenCalled();
     expect((view as any).state.scribbleErase).toBe(false);
     expect(sensitivity.disabled).toBe(true);
+    expect(document.querySelector<HTMLElement>(".ink-eraser-size-row")!.style.display).toBe("none");
     toggle.checked = true;
     toggle.dispatchEvent(new Event("change", { bubbles: true }));
     expect(sensitivity.disabled).toBe(false);
+    expect(document.querySelector<HTMLElement>(".ink-eraser-size-row")!.style.display).toBe("");
   });
   it("toggles the eraser mini popover on re-tap without the reopen race", async () => {
     button("Erase").click();   // select the eraser
