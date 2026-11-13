@@ -32404,9 +32404,11 @@ function paintThumbBadges(button3, page) {
 function openTagPopover(host, anchor, controller) {
   const popover = host.createDiv({ cls: "ink-tag-popover", attr: { role: "dialog", "aria-label": "Page tags" } });
   const rect = anchor.getBoundingClientRect();
-  const left = Math.max(8, Math.min(rect.left, window.innerWidth - 240));
-  const top = Math.min(rect.bottom + 6, Math.max(8, window.innerHeight - 280));
+  const besideLeft = rect.right + 8 <= window.innerWidth - 240;
+  const left = besideLeft ? Math.min(rect.right + 8, window.innerWidth - 240) : Math.max(8, rect.left - 240 + Math.min(rect.width, 232));
+  const top = Math.max(8, Math.min(rect.top, window.innerHeight - 280));
   popover.setCssStyles({ left: `${Math.round(left)}px`, top: `${Math.round(top)}px` });
+  const reason = popover.createDiv({ cls: "ink-tag-lock-reason", attr: { role: "status" } });
   const flagsRow = popover.createDiv({ cls: "ink-tag-flags", attr: { role: "group", "aria-label": "Flag color" } });
   const choices = /* @__PURE__ */ new Map();
   for (const flag of [...PAGE_FLAGS, null]) {
@@ -32451,13 +32453,16 @@ function openTagPopover(host, anchor, controller) {
   (0, import_obsidian8.setIcon)(addButton, "plus");
   addButton.addEventListener("click", commitInput);
   function sync() {
-    var _a, _b, _c;
+    var _a, _b, _c, _d, _e;
     const page = controller.getPage();
     if (!page) {
       close();
       return;
     }
     const locked = controller.isLocked();
+    const lockText = locked ? (_b = (_a = controller.lockReason) == null ? void 0 : _a.call(controller)) != null ? _b : null : null;
+    reason.setText(lockText != null ? lockText : "");
+    reason.toggleClass("is-locked", locked);
     for (const [flag, button3] of choices) {
       button3.setAttribute("aria-pressed", String(page.flag === flag));
       button3.disabled = locked;
@@ -32465,7 +32470,7 @@ function openTagPopover(host, anchor, controller) {
     input.disabled = locked;
     addButton.disabled = locked;
     tagList.empty();
-    for (const tag of (_a = page.tags) != null ? _a : []) {
+    for (const tag of (_c = page.tags) != null ? _c : []) {
       const chip = tagList.createDiv({ cls: "ink-tag-chip" });
       chip.createSpan({ text: tag, cls: "ink-tag-chip-name" });
       const remove = chip.createEl("button", { cls: "ink-icon-button", attr: { type: "button", "aria-label": `Remove tag ${tag}`, title: "Remove" } });
@@ -32479,7 +32484,7 @@ function openTagPopover(host, anchor, controller) {
         sync();
       });
     }
-    if (((_c = (_b = page.tags) == null ? void 0 : _b.length) != null ? _c : 0) === 0) tagList.addClass("is-empty");
+    if (((_e = (_d = page.tags) == null ? void 0 : _d.length) != null ? _e : 0) === 0) tagList.addClass("is-empty");
     else tagList.removeClass("is-empty");
   }
   sync();
@@ -34555,14 +34560,13 @@ var InkView = class extends InkWritingView {
         cls: "ink-thumb-tag-button",
         attr: { type: "button", "aria-label": `Tag page ${index + 1}`, title: "Tag", "aria-disabled": String(this.readingMode) }
       });
-      tagButton.disabled = this.readingMode;
       tagButton.addEventListener("click", (event) => {
         event.stopPropagation();
         this.openThumbTagPopover(button3);
       });
       button3.addEventListener("contextmenu", (event) => {
         event.preventDefault();
-        if (!this.readingMode) this.openThumbTagPopover(button3);
+        this.openThumbTagPopover(button3);
       });
       button3.addEventListener("click", () => this.pageManagement ? this.togglePageSelection(page.id) : this.explicitNavigateToPage(page.id));
       this.scheduleThumbnail(canvas, page);
@@ -34604,6 +34608,7 @@ var InkView = class extends InkWritingView {
         return (_a = this.pageById(pageId)) != null ? _a : null;
       },
       isLocked: () => this.readingMode,
+      lockReason: () => this.readingMode ? "Reading mode is on" : null,
       onTagsChange: (page, tags) => this.applyRailTags(page, tags),
       onFlagChange: (page, flag) => this.applyRailFlag(page, flag)
     });
@@ -37775,7 +37780,7 @@ var PdfInkView = class extends InkWritingView {
       const notebookPage = (_b2 = this.sidecar) == null ? void 0 : _b2.notebook.pages[index];
       if (notebookPage) {
         paintThumbBadges(button3, notebookPage);
-        button3.querySelector(":scope > .ink-thumb-tag-button").disabled = this.editingLocked();
+        button3.querySelector(":scope > .ink-thumb-tag-button").setAttribute("aria-disabled", String(this.editingLocked()));
       }
       const matches = notebookPage ? pageMatchesRailFilters(notebookPage, this.railFilters) : true;
       button3.toggleClass("is-filtered-out", !matches);
@@ -37850,7 +37855,7 @@ var PdfInkView = class extends InkWritingView {
           cls: "ink-thumb-tag-button",
           attr: { type: "button", "aria-label": `Tag page ${index + 1}`, title: "Tag" }
         });
-        tagButton.disabled = this.editingLocked();
+        tagButton.setAttribute("aria-disabled", String(this.editingLocked()));
         tagButton.addEventListener("click", (event) => {
           event.stopPropagation();
           if (pageId) this.openThumbTagPopover(button3);
@@ -37859,7 +37864,7 @@ var PdfInkView = class extends InkWritingView {
       button3.addEventListener("contextmenu", (event) => {
         if (!pageId) return;
         event.preventDefault();
-        if (!this.editingLocked()) this.openThumbTagPopover(button3);
+        this.openThumbTagPopover(button3);
       });
       button3.addEventListener("click", () => {
         if (this.pageManagement) {
@@ -37886,6 +37891,10 @@ var PdfInkView = class extends InkWritingView {
         return (_b = (_a = this.sidecar) == null ? void 0 : _a.notebook.pages.find((page) => page.id === pageId)) != null ? _b : null;
       },
       isLocked: () => this.editingLocked(),
+      lockReason: () => {
+        var _a;
+        return this.editingLocked() ? (_a = this.writeBlockedReason) != null ? _a : "Reading mode is on" : null;
+      },
       onTagsChange: (page, tags) => this.applyRailTags(page, tags),
       onFlagChange: (page, flag) => this.applyRailFlag(page, flag)
     });

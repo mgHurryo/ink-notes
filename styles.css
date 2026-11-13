@@ -901,7 +901,10 @@
 }
 
 /* Corner entry to the tagging popover: dimmed by default, full on
-   hover/focus; a real button so touch and Playwright can always reach it. */
+   hover/focus; a real button so touch and Playwright can always reach it.
+   The geometry is pinned for every engine (aspect-ratio + min sizes +
+   appearance reset): WebKit otherwise paints its native button bezel,
+   which reads as a rectangle next to Chromium's square. */
 .ink-thumb-tag-button {
   position: absolute;
   left: 5px;
@@ -909,10 +912,17 @@
   display: grid;
   width: 20px;
   height: 20px;
+  min-width: 20px;
+  min-height: 20px;
+  aspect-ratio: 1;
+  box-sizing: border-box;
+  flex: none;
   place-items: center;
   padding: 0;
   border: none;
   border-radius: 4px;
+  appearance: none;
+  -webkit-appearance: none;
   color: var(--ink-text);
   background: rgb(255 255 255 / 85%);
   box-shadow: 0 1px 3px rgb(0 0 0 / 20%);
@@ -921,8 +931,12 @@
 .ink-thumb-tag-button svg { width: 13px; height: 13px; }
 .ink-page-thumb:hover .ink-thumb-tag-button,
 .ink-thumb-tag-button:focus-visible,
-.ink-thumb-tag-button:not(:disabled):active { opacity: 1; }
-.ink-thumb-tag-button:disabled { opacity: 0.2; }
+.ink-thumb-tag-button:active { opacity: 1; }
+/* Read-only surfaces keep the entry clickable (the popover explains); only
+   the dimmed look signals the state. */
+.ink-thumb-tag-button[aria-disabled="true"] { opacity: 0.3; }
+.ink-page-thumb:hover .ink-thumb-tag-button[aria-disabled="true"],
+.ink-thumb-tag-button[aria-disabled="true"]:active { opacity: 0.45; }
 
 /* Filtered-out thumbnails leave the rail (display, not visibility: hidden
    thumbs would still occupy their grid row). */
@@ -943,6 +957,19 @@
   border-radius: var(--ink-radius-md);
   background: var(--ink-panel);
   box-shadow: var(--ink-shadow-panel);
+}
+/* Read-only explanation inside a locked tagging popover; hidden entirely
+   while editing is available. */
+.ink-tag-lock-reason { display: none; }
+.ink-tag-lock-reason.is-locked {
+  display: block;
+  padding: 6px 8px;
+  border: 1px solid var(--ink-border);
+  border-radius: var(--ink-radius-sm);
+  background: var(--ink-workspace);
+  color: var(--ink-muted);
+  font-size: 12px;
+  line-height: 1.4;
 }
 .ink-tag-flags { display: flex; gap: 6px; }
 .ink-flag-choice {
