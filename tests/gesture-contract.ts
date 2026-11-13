@@ -730,6 +730,27 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(3);
     });
 
+    it("continues same-direction paging after a full-idle and reversal sequence", async () => {
+      const { wheel, settle } = await desktopSetup();
+      let start = 100;
+      const swipe = (direction: number) => {
+        for (const [magnitude, offset] of [[140, 0], [90, 10], [60, 20], [30, 30], [10, 40], [4, 50]]) {
+          wheel(direction * magnitude, 0, { timeStamp: start + offset });
+        }
+        // The next input begins 250ms after this swipe's settled tail, beyond
+        // the idle boundary seen when users lift and place their fingers again.
+        start += 300;
+      };
+
+      swipe(1);  // move forward
+      swipe(1);  // same direction after the previous input sequence is idle
+      swipe(-1); // return to the previous page
+      swipe(1);  // forward to the page that used to become stuck
+      swipe(1);  // continue forward instead of getting stuck there again
+
+      expect(settle.mock.calls.map(([direction]) => direction)).toEqual([1, 1, -1, 1, 1]);
+    });
+
     it("bounds trackpad pages queued during one slow page handoff", async () => {
       const { editor, wheel } = await desktopSetup();
       const desktop = editor as any;

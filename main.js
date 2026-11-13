@@ -25002,10 +25002,9 @@ var DesktopWheelGesture = class {
     this.stallDeferralSpeed = 0;
     this.stallDeferralTravel = 0;
     this.trackpadPages = 0;
-    /** Pages already flipped on the x axis during the current contact. Unlike
-     *  trackpadPages it survives beginRenewedGesture: a mid-tail renewal is
-     *  the same physical contact, and the horizontal contract grants it
-     *  nothing further. */
+    /** Pages already flipped on the x axis during the inferred contact. It
+     *  survives ordinary renewals; only a confirmed rise from a settled tail
+     *  starts a new horizontal contact. */
     this.contactXPages = 0;
     this.zeroAxisPauses = 0;
     this.gestureId = 0;
@@ -25020,9 +25019,10 @@ var DesktopWheelGesture = class {
     this.slowScrollMs = 0;
     this.slowScrollTravel = 0;
   }
-  beginRenewedGesture() {
+  beginRenewedGesture(reopenSettledHorizontalPage = false) {
     this.gestureId += 1;
     this.trackpadPages = 0;
+    if (reopenSettledHorizontalPage) this.contactXPages = 0;
     this.flippedRun = 0;
     this.slowScrollMs = this.slowScrollTravel = 0;
   }
@@ -25095,7 +25095,8 @@ var DesktopWheelGesture = class {
           this.stallDeferral = null;
           if (deferral === "rearm") {
             if (gap >= 2 && normalized >= this.stallDeferralSpeed * RENEWED_FLICK_HOLD_RATIO) {
-              this.beginRenewedGesture();
+              const confirmedSettledRise = frozenSettled && normalized > this.stallDeferralSpeed;
+              this.beginRenewedGesture(confirmedSettledRise);
               this.flipped = false;
               this.travel = this.stallDeferralTravel;
               this.renewalBlocked = true;
