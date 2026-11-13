@@ -1313,6 +1313,34 @@
   min-height: 0;
 }
 
+/* Fast-paging "where am I" readout: a burst drains several pages a second,
+   and without a big transient page number the destination is invisible. */
+.ink-page-hud {
+  position: absolute;
+  z-index: 20;
+  top: 12px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-4px);
+  padding: 4px 14px;
+  border: 1px solid var(--ink-border);
+  border-radius: 999px;
+  background: var(--ink-panel-raised);
+  color: var(--ink-text);
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  box-shadow: 0 2px 8px rgb(0 0 0 / 12%);
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 120ms ease, transform 120ms ease, visibility 0s 120ms;
+}
+.ink-page-hud.is-visible {
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(-50%) translateY(0);
+  transition: opacity 140ms ease-out, transform 140ms ease-out, visibility 0s;
+}
+
 /* A transient readout outside the scrolling page, shared by both editors. */
 .ink-zoom-hud {
   position: absolute;

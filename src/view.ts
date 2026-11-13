@@ -160,6 +160,7 @@ export class InkView extends InkWritingView {
     this.renderCanvas();
     this.registerDesktopInput();
     this.buildZoomHud(this.root.querySelector<HTMLElement>(".ink-workspace")!);
+    this.buildPageHud(this.root.querySelector<HTMLElement>(".ink-workspace")!);
     this.register(() => this.closeEraserPopover());
     this.viewReady = true;
     this.renderAll();
@@ -646,6 +647,13 @@ export class InkView extends InkWritingView {
       match = thumb.querySelector<HTMLCanvasElement>("canvas");
     });
     return match;
+  }
+
+  protected override fastPagingPageLabel(): string | null {
+    const count = this.notebook?.pages.length ?? 0;
+    if (count <= 0) return null;
+    const index = this.fastPagingDestinationIndex() ?? this.pageIndex;
+    return `${Math.min(index + 1, count)} / ${count}`;
   }
 
   private openThumbTagPopover(thumb: HTMLElement): void {

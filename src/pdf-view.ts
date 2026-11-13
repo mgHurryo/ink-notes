@@ -236,6 +236,7 @@ export class PdfInkView extends InkWritingView {
     const scroller = body.createDiv({ cls: "ink-pdf-scroller" });
     this.scroller = scroller;
     this.buildZoomHud(body);
+    this.buildPageHud(body);
     this.pageWrap = scroller.createDiv({ cls: "ink-pdf-page-wrap" });
     this.pdfCanvas = this.pageWrap.createEl("canvas", { cls: "ink-pdf-canvas" });
     this.buildInkHost();
@@ -878,6 +879,13 @@ export class PdfInkView extends InkWritingView {
   /** Scopes the PDF-surface popover rules (paper canvases, spacing). */
   protected brushPopoverExtraClass(): string {
     return "ink-pdf-brush-popover";
+  }
+
+  protected override fastPagingPageLabel(): string | null {
+    const count = this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 0;
+    if (count <= 0) return null;
+    const index = this.fastPagingDestinationIndex() ?? this.noteIndex;
+    return `${Math.min(index + 1, count)} / ${count}`;
   }
 
   private updatePageIndicator(): void {
