@@ -4,6 +4,7 @@ vi.mock("obsidian", () => ({ Modal: class {}, FileView: class {} }));
 
 import { InkView } from "../src/view";
 import { DesktopWheelGesture, WheelPagePacer } from "../src/desktop-wheel";
+import { defaultToolState } from "../src/tool-state";
 
 // Exercise the real view handlers with scroll bounds and centered-page geometry.
 function setup(viewportWidth = 800) {
@@ -15,7 +16,7 @@ function setup(viewportWidth = 800) {
   const viewportHeight = Math.min(600, height);
   let left = 0;
   let top = 0;
-  Object.assign(view, { zoom: 1, activePointerId: null, touchGesture: null, desktopWheel: new DesktopWheelGesture(),
+  Object.assign(view, { zoom: 1, state: defaultToolState(), activePointerId: null, touchGesture: null, desktopWheel: new DesktopWheelGesture(),
     selectedStrokeIds: new Set(), lassoPath: [], lassoDrag: null });
   const zoomReadout = { textContent: "100%" };
   const zoomOut = { disabled: false };
