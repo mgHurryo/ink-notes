@@ -894,7 +894,7 @@
    hover/focus; a real button so touch and Playwright can always reach it. */
 .ink-thumb-tag-button {
   position: absolute;
-  right: 5px;
+  left: 5px;
   bottom: 5px;
   display: grid;
   width: 20px;
@@ -1051,7 +1051,7 @@
   border-radius: 2px;
   pointer-events: none;
 }
-.ink-page-thumb-number { position: absolute; right: 7px; bottom: 5px; color: #555; font-size: 11px; font-variant-numeric: tabular-nums; }
+.ink-page-thumb-number { position: absolute; z-index: 2; right: 7px; bottom: 5px; color: #555; font-size: 11px; font-variant-numeric: tabular-nums; }
 .ink-page-thumb-title { position: absolute; top: calc(100% + 10px); left: 0; width: 100%; overflow: hidden; color: var(--ink-muted); font-size: 11px; text-align: left; text-overflow: ellipsis; white-space: nowrap; }
 
 .ink-page-status {
