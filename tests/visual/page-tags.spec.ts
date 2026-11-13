@@ -29,11 +29,11 @@ test("notebook pages: tag from the rail, badges, stacked filters and undo", asyn
 
   // "With ink" alone: the written page stays, the blank page leaves.
   await page.getByRole("button", { name: "Pages with ink only" }).click();
-  await expect(page.locator(".ink-page-thumb:not(.is-filtered-out)")).toHaveCount(1);
+  await expect(page.locator(".ink-page-thumb")).toHaveCount(1);
   await expect(page.locator(".ink-rail-count")).toHaveText("1 of 2");
   // Stacked "tagged": still the same page (ink + tag).
   await page.getByRole("button", { name: "Tagged pages only" }).click();
-  await expect(page.locator(".ink-page-thumb:not(.is-filtered-out)")).toHaveCount(1);
+  await expect(page.locator(".ink-page-thumb")).toHaveCount(1);
   await expect(page.locator(".ink-rail-count")).toHaveText("1 of 2");
   await page.screenshot({ path: "test-results/page-tags-notebook.png" });
 
@@ -68,14 +68,18 @@ test("pdf pages: tag through the sidecar view with badges and filters", async ({
 
   await page.getByRole("button", { name: "Tagged pages only" }).click();
   await expect(page.locator(".ink-page-thumb:not(.is-filtered-out)")).toHaveCount(1);
+  await expect(page.locator(".ink-page-thumb.is-filtered-out")).toBeHidden();
   await expect(page.locator(".ink-rail-count")).toHaveText("1 of 2");
   await page.getByRole("button", { name: "Pages with ink only" }).click();
   // The tagged source page has no ink either: stacked filters empty the rail
   // while the counter keeps explaining the result.
   await expect(page.locator(".ink-page-thumb:not(.is-filtered-out)")).toHaveCount(0);
+  await expect(page.locator(".ink-page-thumb.is-filtered-out")).toHaveCount(2);
+  await expect(page.locator(".ink-page-thumb.is-filtered-out").first()).toBeHidden();
   await expect(page.locator(".ink-rail-count")).toHaveText("0 of 2");
   await page.screenshot({ path: "test-results/page-tags-pdf.png" });
   await page.getByRole("button", { name: "Pages with ink only" }).click();
   await page.getByRole("button", { name: "Tagged pages only" }).click();
   await expect(page.locator(".ink-page-thumb")).toHaveCount(2);
+  await expect(page.locator(".ink-page-thumb.is-filtered-out")).toHaveCount(0);
 });
