@@ -30528,7 +30528,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
       pageY: (y - rect.top) / rect.height
     };
     if (b) this.showZoomHud();
-    else if (event.type === "touchstart" && !this.inputLocked() && (this.state.fingerAsPen || this.state.tool === "lasso") && this.state.tool !== "pointer" && ((_f = this.inputHost()) == null ? void 0 : _f.contains(a.target)) && pointInsideRect(a, rect)) {
+    else if (event.type === "touchstart" && !this.inputLocked() && this.state.fingerAsPen && this.state.tool !== "pointer" && this.state.tool !== "lasso" && ((_f = this.inputHost()) == null ? void 0 : _f.contains(a.target)) && pointInsideRect(a, rect)) {
       this.onPointerDown(fingerTouchSample(a, event.timeStamp), "finger-touch");
     }
     if (!b && event.type === "touchstart" && !this.inputLocked() && (this.availableClipboard() || this.selectedStrokeIds.size) && ((_g = this.inputHost()) == null ? void 0 : _g.contains(a.target)) && pointInsideRect(a, rect)) {

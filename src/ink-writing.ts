@@ -2754,7 +2754,7 @@ export abstract class InkWritingView extends FileView {
     };
     if (b) this.showZoomHud();
     else if (event.type === "touchstart" && !this.inputLocked()
-      && (this.state.fingerAsPen || this.state.tool === "lasso") && this.state.tool !== "pointer"
+      && this.state.fingerAsPen && this.state.tool !== "pointer" && this.state.tool !== "lasso"
       && this.inputHost()?.contains(a.target as Node) && pointInsideRect(a, rect)) {
       this.onPointerDown(fingerTouchSample(a, event.timeStamp), "finger-touch");
     }

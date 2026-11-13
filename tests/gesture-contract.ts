@@ -33,6 +33,18 @@ export function gestureContract(create: () => Promise<any>): void {
       return { editor, page, host, finger, send, draw };
     }
 
+    function makeScrollable(editor: { inputScroller(): HTMLElement }) {
+      const scroller = editor.inputScroller();
+      let top = 200, left = 0;
+      Object.defineProperties(scroller, {
+        clientHeight: { configurable: true, value: 600 }, scrollHeight: { configurable: true, value: 1200 },
+        clientWidth: { configurable: true, value: 800 }, scrollWidth: { configurable: true, value: 1000 },
+        scrollTop: { configurable: true, get: () => top, set: (value: number) => { top = Math.max(0, Math.min(600, value)); } },
+        scrollLeft: { configurable: true, get: () => left, set: (value: number) => { left = Math.max(0, Math.min(200, value)); } },
+      });
+      return () => top;
+    }
+
     async function desktopSetup() {
       const { editor, finger, send } = await setup();
       const scroller = editor.inputScroller() as HTMLElement;
@@ -1339,29 +1351,28 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(editor.activePointerId).toBeNull();
     });
 
-    it("selects and moves ink with a finger, and cancels its drag when pinch takes over", async () => {
+    it("pans the page with a finger while lasso is selected, then lets pinch take over", async () => {
       const { editor, page, finger, send, draw } = await setup();
       editor.state.fingerAsPen = true; draw("pen"); editor.state.fingerAsPen = false;
       editor.state.tool = "lasso"; editor.state.lasso.mode = "rectangle";
-      send("touchstart", [finger(1, 100, 100)]); send("touchmove", [finger(1, 400, 400)]);
-      send("touchend", [], [finger(1, 400, 400)]);
-      expect(editor.selectedStrokeIds.size).toBe(1);
+      const scrollTop = makeScrollable(editor);
       const original = page.strokes[0].points.map((p) => ({ ...p }));
-      send("touchstart", [finger(1, 250, 250)]); send("touchmove", [finger(1, 350, 350)]);
-      send("touchend", [], [finger(1, 350, 350)]);
-      expect(page.strokes[0].points[0].x).toBeCloseTo(original[0].x + .1);
-      editor.undo(); expect(page.strokes[0].points).toEqual(original);
-      editor.selectedStrokeIds = new Set([page.strokes[0].id]);
-      send("touchstart", [finger(1, 250, 250)]); send("touchmove", [finger(1, 350, 350)]);
-      send("touchstart", [finger(1, 350, 350), finger(2, 500, 350)], [finger(2, 500, 350)]);
-      send("touchmove", [finger(1, 300, 350), finger(2, 550, 350)]);
-      send("touchend", [], [finger(1, 300, 350), finger(2, 550, 350)]);
+      send("touchstart", [finger(1, 100, 100)]); send("touchmove", [finger(1, 150, 150)]);
+      send("touchend", [], [finger(1, 150, 150)]);
+      expect(scrollTop()).toBe(150);
+      expect(editor.selectedStrokeIds.size).toBe(0);
+      expect(page.strokes[0].points).toEqual(original);
+
+      send("touchstart", [finger(1, 250, 250)]);
+      send("touchstart", [finger(1, 250, 250), finger(2, 500, 250)], [finger(2, 500, 250)]);
+      send("touchmove", [finger(1, 200, 250), finger(2, 550, 250)]);
+      send("touchend", [], [finger(1, 200, 250), finger(2, 550, 250)]);
       expect(page.strokes[0].points).toEqual(original); expect(editor.zoom).toBeGreaterThan(1);
       expect(editor.activePointerId).toBeNull(); expect(editor.lassoDrag).toBeNull();
       expect(editor.toolbarRoot().querySelector(".ink-selection-actions")).toBeNull();
     });
 
-    it.each(["freehand", "rectangle"])("directly selects the topmost sparse stroke in %s mode, moves only it and undoes", async (mode) => {
+    it.each(["freehand", "rectangle"])("pans with a finger in %s lasso mode without selecting ink", async (mode) => {
       const { editor, page, finger, send, draw } = await setup();
       editor.state.fingerAsPen = true; draw("pen"); draw("pen"); editor.state.fingerAsPen = false;
       const originals = page.strokes.map((stroke) => ({ ...stroke, points: [
@@ -1370,15 +1381,12 @@ export function gestureContract(create: () => Promise<any>): void {
       page.strokes = originals.map((s) => ({ ...s, points: s.points.map((p) => ({ ...p })) }));
       editor.queueStrokePatch(page, page.strokes, []); editor.drawStrokes(page.strokes);
       editor.state.tool = "lasso"; editor.state.lasso.mode = mode;
-      send("touchstart", [finger(1, 300, 200)]); send("touchend", [], [finger(1, 301, 200)]);
-      expect([...editor.selectedStrokeIds]).toEqual([page.strokes[1].id]);
-      expect(page.strokes.map((s) => s.points)).toEqual(originals.map((s) => s.points));
-      send("touchstart", [finger(1, 300, 200)]); send("touchmove", [finger(1, 350, 250)]); send("touchend", [], [finger(1, 350, 250)]);
-      expect(page.strokes[0].points).toEqual(originals[0].points); expect(page.strokes[1].points[0].x).toBeCloseTo(.25);
-      editor.undo(); expect(page.strokes.map((s) => s.points)).toEqual(originals.map((s) => s.points));
-      editor.redo(); expect(page.strokes[1].points[0].x).toBeCloseTo(.25);
-      send("touchstart", [finger(1, 800, 800)]); send("touchend", [], [finger(1, 800, 800)]);
+      const scrollTop = makeScrollable(editor);
+      send("touchstart", [finger(1, 300, 200)]); send("touchmove", [finger(1, 350, 250)]);
+      send("touchend", [], [finger(1, 350, 250)]);
+      expect(scrollTop()).toBe(150);
       expect(editor.selectedStrokeIds.size).toBe(0);
+      expect(page.strokes.map((s) => s.points)).toEqual(originals.map((s) => s.points));
     });
 
     it("keeps an existing multi-stroke selection when its ink is grabbed and cancels pointer drag on interruption", async () => {
