@@ -1564,6 +1564,18 @@ export abstract class InkWritingView extends FileView {
   protected fastPagingRailBorrowed = false;
   private fastPagingRailTimer: number | undefined;
 
+  /** A user action in the rail turns a temporary fast-paging reveal into an
+   *  explicit open state, so the quiet timer cannot hide it unexpectedly. */
+  protected claimFastPagingRail(): void {
+    this.fastPagingRailBorrowed = false;
+  }
+
+  /** Keep a fast-paging reveal open only when the user activates a page thumb. */
+  protected claimFastPagingRailFromSelection(event: Event): void {
+    const target = event.target as Element | null;
+    if (target?.closest?.(".ink-page-thumb")) this.claimFastPagingRail();
+  }
+
   /** Snapshot the trigger press before the host dismisses its menu on pointerdown. */
   protected beginPageOptionsMenu(event: Pick<MouseEvent, "currentTarget">): Menu | null {
     if (!this.pageOptionsDismissRegistered) {

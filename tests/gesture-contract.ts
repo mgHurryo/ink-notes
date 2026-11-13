@@ -536,6 +536,21 @@ export function gestureContract(create: () => Promise<any>): void {
       } finally { vi.useRealTimers(); }
     });
 
+    it("keeps the preview rail open after the user selects a thumbnail", async () => {
+      const { editor } = await setup();
+      const root = editor.toolbarRoot() as HTMLElement;
+      const rail = root.querySelector<HTMLElement>(".ink-page-rail")!;
+      const thumb = rail.querySelector<HTMLElement>(".ink-page-thumb")!;
+      const hidden = () => root.classList.contains("ink-rail-hidden");
+
+      (editor as any).onFastPagingRailExpanded();
+      expect(hidden()).toBe(false);
+      thumb.dispatchEvent(new Event("pointerdown", { bubbles: true }));
+      thumb.click();
+      (editor as any).onFastPagingRailCollapsed();
+      expect(hidden()).toBe(false);
+    });
+
     it("centers the active thumbnail in the rail through the shared follow seam", async () => {
       const { editor } = await desktopSetup();
       const rail = (editor.containerEl.querySelector(".ink-page-rail") ?? null) as HTMLElement;

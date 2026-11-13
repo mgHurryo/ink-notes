@@ -903,6 +903,8 @@ export class PdfInkView extends InkWritingView {
    */
   private buildPageRail(body: HTMLElement): void {
     const rail = body.createDiv({ cls: "ink-page-rail", attr: { "aria-label": "PDF pages" } });
+    rail.addEventListener("click", (event) => this.claimFastPagingRailFromSelection(event), true);
+    rail.addEventListener("keydown", (event) => this.claimFastPagingRailFromSelection(event), true);
     this.pageRail = rail;
     applyStoredRailWidth(rail, PDF_RAIL_WIDTH_STORAGE_KEY);
     const header = rail.createDiv({ cls: "ink-rail-header" });
