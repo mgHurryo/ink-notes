@@ -1106,7 +1106,7 @@ describe("page rail thumbnails and resizing", () => {
     handle.dispatchEvent(pointer("pointermove", 300));
     expect(rail.style.getPropertyValue("--ink-rail-width")).toBe("300px");
     handle.dispatchEvent(pointer("pointerup", 300));
-    expect(window.localStorage.getItem("ink-notes-page-rail-width")).toBe("300");
+    expect(window.localStorage.getItem("ink-page-rail-width")).toBe("300");
     expect(captured.has(7)).toBe(false);
     // Widths clamp into the usable range before display or persistence.
     handle.dispatchEvent(pointer("pointerdown", 176, 9));
@@ -1118,7 +1118,7 @@ describe("page rail thumbnails and resizing", () => {
     handle.dispatchEvent(pointer("pointermove", 500, 3));
     expect(rail.style.getPropertyValue("--ink-rail-width")).toBe("150px");
     handle.dispatchEvent(pointer("pointercancel", 176 - 900, 9));
-    expect(window.localStorage.getItem("ink-notes-page-rail-width")).toBe("150");
+    expect(window.localStorage.getItem("ink-page-rail-width")).toBe("150");
   });
 
   it("expands the page preview rail without blanking or rebuilding the page", () => {
@@ -1382,6 +1382,7 @@ describe("page rail thumbnails and resizing", () => {
   });
 
   it("applies a stored rail width on open and ignores out-of-range values", async () => {
+    // Legacy per-view keys migrate into the shared slot the drag writes.
     window.localStorage.setItem("ink-notes-page-rail-width", "300");
     document.body.innerHTML = '<div id="host"><div></div><main></main></div>';
     const second = new InkView({} as WorkspaceLeaf, { read: async () => createNotebook("Stored width") } as unknown as NotebookStore);

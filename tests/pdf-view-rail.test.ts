@@ -1188,7 +1188,8 @@ describe("pdf page preview rail", () => {
     await view.onClose();
   });
 
-  it("mounts a drag-resizable rail that clamps and persists the width under the PDF key", async () => {
+  it("mounts a drag-resizable rail that clamps and persists the shared width", async () => {
+    window.localStorage.removeItem("ink-page-rail-width");
     window.localStorage.removeItem("ink-pdf-page-rail-width");
     const { view, internal } = await setup(3);
     const rail = document.querySelector<HTMLElement>(".ink-pdf-view .ink-page-rail")!;
@@ -1216,7 +1217,10 @@ describe("pdf page preview rail", () => {
     handle.dispatchEvent(pointer("pointermove", 228));
     expect(rail.style.getPropertyValue("--ink-rail-width")).toBe("228px");
     handle.dispatchEvent(pointer("pointerup", 228));
-    expect(window.localStorage.getItem("ink-pdf-page-rail-width")).toBe("228");
+    // The width lands in the ONE shared slot both rails read, and a finished
+    // drag retires the legacy per-view key.
+    expect(window.localStorage.getItem("ink-page-rail-width")).toBe("228");
+    expect(window.localStorage.getItem("ink-pdf-page-rail-width")).toBeNull();
     expect(captured.has(7)).toBe(false);
     expect(repaint).toHaveBeenCalledOnce();
     // Widths clamp into the usable range before display or persistence.
@@ -1229,12 +1233,13 @@ describe("pdf page preview rail", () => {
     handle.dispatchEvent(pointer("pointermove", 500, 3));
     expect(rail.style.getPropertyValue("--ink-rail-width")).toBe("150px");
     handle.dispatchEvent(pointer("pointercancel", 228 - 900, 9));
-    expect(window.localStorage.getItem("ink-pdf-page-rail-width")).toBe("150");
+    expect(window.localStorage.getItem("ink-page-rail-width")).toBe("150");
     await view.onClose();
   });
 
-  it("applies a stored PDF rail width on open and ignores out-of-range values", async () => {
+  it("applies a stored rail width on open and ignores out-of-range values", async () => {
     window.localStorage.setItem("ink-pdf-page-rail-width", "300");
+    window.localStorage.removeItem("ink-page-rail-width");
     const { view } = await setup(2);
     const rail = document.querySelector<HTMLElement>(".ink-pdf-view .ink-page-rail")!;
     expect(rail.style.getPropertyValue("--ink-rail-width")).toBe("300px");

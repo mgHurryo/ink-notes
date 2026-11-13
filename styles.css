@@ -809,6 +809,13 @@
 .ink-rail-resizer:hover::after,
 .ink-page-rail.is-resizing .ink-rail-resizer::after { background: var(--ink-accent); }
 
+/* Touch has no hover precision: a 14px hit strip is unreachable with a
+   finger (reported as "almost impossible to start the drag"). Coarse
+   pointers get a wide grip while the visible 2px line stays the same. */
+@media (hover: none) and (pointer: coarse) {
+  .ink-rail-resizer { width: 36px; }
+}
+
 /* Multi-column reflow: auto-fill keeps single-column at the default 176px
    rail and grows to 2 columns past ~260px, 3 past ~370px. Row gap reserves
    the room the title label needs below each thumb. */
