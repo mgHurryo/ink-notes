@@ -27,6 +27,10 @@ interface PdfViewInternals {
   sidecarRaw: string;
   sidecarFile: TFile | null;
   pendingMergedSidecar: PdfSidecar | null;
+  pendingInkPageId: string | null;
+  pendingInkStrokes: InkStroke[];
+  confirmedPreviewCanvas: HTMLCanvasElement;
+  previewCanvas: HTMLCanvasElement;
   dirty: boolean;
   writeBlockedReason: string | null;
   loadGeneration: number;
@@ -67,8 +71,8 @@ function pointer(x: number, y: number, options: Partial<PointerEvent> = {}): Poi
   } as PointerEvent;
 }
 
-function setup() {
-  const sidecar = createSidecar("docs/lecture.pdf", FINGERPRINT, SOURCE_PAGES);
+function setup(sourcePages: PdfSourcePageGeometry[] = SOURCE_PAGES) {
+  const sidecar = createSidecar("docs/lecture.pdf", FINGERPRINT, sourcePages);
   const raw = serializeSidecar(sidecar);
   const sidecarFile = { path: "A_pdfinkwrittern/lecture--x.pdfink.json" } as TFile;
   const appliedOps: NotebookOperation[] = [];
@@ -201,6 +205,31 @@ describe("split-pane edit availability", () => {
     expect(internal.canEdit()).toBe(false);
     internal.onPointerDown(pointer(100, 100));
     expect(sidecar.notebook.pages[0].strokes).toHaveLength(0);
+  });
+});
+
+describe("PDF page navigation preview cleanup", () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.stubGlobal("window", globalThis); });
+
+  it("clears the previous page's pending ink preview before showing the next page", async () => {
+    const { view, internal, sidecar } = setup([...SOURCE_PAGES, ...SOURCE_PAGES]);
+    internal.pendingInkPageId = sidecar.notebook.pages[0].id;
+    internal.pendingInkStrokes = [{
+      id: "pending-old-page", pageId: sidecar.notebook.pages[0].id, tool: "pen", color: "#000", width: 4, opacity: 1,
+      points: [{ x: 0.2, y: 0.2, pressure: 0.5, t: 1 }], createdAt: 1, updatedAt: 1,
+    }];
+    const createPreviewCanvas = () => ({
+      width: 400, height: 600, classList: { remove: vi.fn() },
+    }) as unknown as HTMLCanvasElement;
+    internal.confirmedPreviewCanvas = createPreviewCanvas();
+    internal.previewCanvas = createPreviewCanvas();
+
+    await view.navigatePages(1);
+
+    expect(internal.pendingInkStrokes).toEqual([]);
+    expect(internal.pendingInkPageId).toBeNull();
+    expect(internal.confirmedPreviewCanvas.width).toBe(1);
+    expect(internal.previewCanvas.width).toBe(1);
   });
 });
 

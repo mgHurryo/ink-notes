@@ -38052,6 +38052,7 @@ var PdfInkView = class extends InkWritingView {
     const next = this.noteIndex + delta;
     if (next < 0 || next >= count) return;
     this.finishPointerInput(false);
+    this.discardPendingInkPreview();
     this.noteIndex = next;
     this.clearSelection();
     this.closeLassoSettings();

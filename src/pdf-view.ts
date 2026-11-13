@@ -1463,6 +1463,10 @@ export class PdfInkView extends InkWritingView {
     const next = this.noteIndex + delta;
     if (next < 0 || next >= count) return;
     this.finishPointerInput(false);
+    // Completed ink can remain on the shared overlay while its tile commit is
+    // pending. That overlay belongs to the old note page, so clear it before
+    // layoutPage() retargets the same host to the destination page.
+    this.discardPendingInkPreview();
     this.noteIndex = next;
     this.clearSelection();
     this.closeLassoSettings();
