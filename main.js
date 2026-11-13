@@ -27955,7 +27955,7 @@ var MAX_SCRIBBLE_RANGE_SAMPLES = MAX_SCRIBBLE_GESTURE_POINTS * 2;
 var SCRIBBLE_RANGE_SAMPLE_SPACING_DIVISOR = 2;
 var SCRIBBLE_REFERENCE_SIZE = 24;
 var QUEUED_PAGE_SWIPE_DURATION_MS = 64;
-var FAST_PAGING_RAIL_IDLE_MS = 1e3;
+var FAST_PAGING_RAIL_IDLE_MS = 1300;
 var STROKE_ERASER_HIT_RADIUS = 10;
 var MAX_ERASER_SWEEP_STEPS = 1024;
 var OVERLAY_PIXEL_BUDGET = 12e6;
@@ -29747,8 +29747,9 @@ var InkWritingView = class extends import_obsidian7.FileView {
   }
   /** Feeds wheel-driven page flips into the fast-paging detector. Only a
    *  flip that keeps the window engaged re-arms the collapse timer, so once
-   *  the rate drops below the threshold the rail comes back one quiet second
-   *  after the last fast flip - continued slow paging never extends it. */
+   *  the rate drops below the threshold the rail comes back after a short
+   *  quiet pause following the last fast flip - continued slow paging never
+   *  extends it. */
   noteWheelPages(pages, axis, at) {
     if (!this.wheelPacer.record(pages, axis, at)) return;
     if (!this.fastPagingRail) {
@@ -29762,7 +29763,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
    *  that can outlive this window (slow page renders, loaded machine), so a
    *  drain still in flight re-arms instead: collapsing mid-drain hides the
    *  rail while pages keep flipping and strands the remaining flips without
-   *  the centered follow - the quiet second belongs to the last flip, not
+   *  the centered follow - the quiet pause belongs to the last flip, not
    *  the last wheel event. */
   quietFastPagingRail() {
     this.fastPagingRailTimer = void 0;
@@ -33959,7 +33960,7 @@ var OVERLAY_RESIZE_BUDGET = 4e6;
 var MIN_PAGE_ZOOM = 1;
 var SWIPE_PREVIEW_RESIZE_BUDGET = 16e6;
 var RAIL_WIDTH_STORAGE_KEY = "ink-notes-page-rail-width";
-var RAIL_TRANSITION_MS = 200;
+var RAIL_TRANSITION_MS = 280;
 var THUMB_ASPECT = 0.73;
 var SWIPE_PREVIEW_IDLE_DELAY_MS = 120;
 var SWIPE_PREVIEW_RETRY_MS = 50;
@@ -36880,8 +36881,8 @@ var SWIPE_PREVIEW_RETRY_MS2 = 50;
 var RAIL_THUMB_WIDTH = 120;
 var PDF_THUMB_CACHE_LIMIT = 12;
 var RAIL_SWEEP_THROTTLE_MS = 120;
-var RAIL_REVEAL_DELAY_MS = 230;
-var RAIL_TRANSITION_MS2 = 200;
+var RAIL_REVEAL_DELAY_MS = 310;
+var RAIL_TRANSITION_MS2 = 280;
 var PDF_RAIL_WIDTH_STORAGE_KEY = "ink-pdf-page-rail-width";
 var EMPTY_NOTEBOOK = createNotebook();
 var PdfInkView = class extends InkWritingView {

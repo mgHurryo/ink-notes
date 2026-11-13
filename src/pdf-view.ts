@@ -72,11 +72,11 @@ const RAIL_THUMB_WIDTH = 120;
 const PDF_THUMB_CACHE_LIMIT = 12;
 /** Coalesces thumbnail repaints while the rail scrolls. */
 const RAIL_SWEEP_THROTTLE_MS = 120;
-/** After the rail's expand transition (200ms), repaint the visible range at
+/** After the rail's expand transition (280ms), repaint the visible range at
  *  full resolution; thumbnails skip painting while collapsed. */
-const RAIL_REVEAL_DELAY_MS = 230;
+const RAIL_REVEAL_DELAY_MS = 310;
 /** Matches the notebook editor's rail expand/collapse transition (view.ts). */
-const RAIL_TRANSITION_MS = 200;
+const RAIL_TRANSITION_MS = 280;
 /** Rail width persistence, separate from the notebook editor's key so each
  *  rail remembers the width its own thumbnails need. */
 const PDF_RAIL_WIDTH_STORAGE_KEY = "ink-pdf-page-rail-width";

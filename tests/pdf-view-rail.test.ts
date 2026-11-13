@@ -1177,7 +1177,7 @@ describe("pdf page preview rail", () => {
       expect(layoutPage).not.toHaveBeenCalled();
       expect(renderPdfPage).not.toHaveBeenCalled();
       // At the transition settle the parked resize work runs exactly once.
-      vi.advanceTimersByTime(140);
+      vi.advanceTimersByTime(210);
       expect(layoutPage).toHaveBeenCalledTimes(1);
       vi.advanceTimersByTime(120);
       expect(renderPdfPage).toHaveBeenCalledTimes(1);

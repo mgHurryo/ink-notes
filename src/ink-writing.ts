@@ -56,8 +56,8 @@ const MAX_SCRIBBLE_RANGE_SAMPLES = MAX_SCRIBBLE_GESTURE_POINTS * 2;
 const SCRIBBLE_RANGE_SAMPLE_SPACING_DIVISOR = 2;
 const SCRIBBLE_REFERENCE_SIZE = 24;
 export const QUEUED_PAGE_SWIPE_DURATION_MS = 64;
-/** A fast paging burst must hand the rail back within a second of stopping. */
-const FAST_PAGING_RAIL_IDLE_MS = 1000;
+/** Leave the rail visible long enough to inspect the destination after a burst. */
+const FAST_PAGING_RAIL_IDLE_MS = 1300;
 
 export interface ToolState {
   tool: InkTool;
@@ -1910,8 +1910,9 @@ export abstract class InkWritingView extends FileView {
 
   /** Feeds wheel-driven page flips into the fast-paging detector. Only a
    *  flip that keeps the window engaged re-arms the collapse timer, so once
-   *  the rate drops below the threshold the rail comes back one quiet second
-   *  after the last fast flip - continued slow paging never extends it. */
+   *  the rate drops below the threshold the rail comes back after a short
+   *  quiet pause following the last fast flip - continued slow paging never
+   *  extends it. */
   private noteWheelPages(pages: number, axis: "x" | "y", at: number): void {
     if (!this.wheelPacer.record(pages, axis, at)) return;
     if (!this.fastPagingRail) {
@@ -1926,7 +1927,7 @@ export abstract class InkWritingView extends FileView {
    *  that can outlive this window (slow page renders, loaded machine), so a
    *  drain still in flight re-arms instead: collapsing mid-drain hides the
    *  rail while pages keep flipping and strands the remaining flips without
-   *  the centered follow - the quiet second belongs to the last flip, not
+   *  the centered follow - the quiet pause belongs to the last flip, not
    *  the last wheel event. */
   private quietFastPagingRail(): void {
     this.fastPagingRailTimer = undefined;

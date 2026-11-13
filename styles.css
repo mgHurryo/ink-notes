@@ -754,10 +754,10 @@
   background: var(--ink-panel);
   scrollbar-width: thin;
   /* Expand/collapse animates the width away instead of display:none so the
-     page column grows fluidly (~200ms). visibility is animated too: it flips
+     page column grows fluidly (~280ms). visibility is animated too: it flips
      at the END of the collapse (removing the buttons from tab order only
      once hidden) and immediately on expand. */
-  transition: flex-basis 200ms ease, width 200ms ease, padding 200ms ease, border-width 200ms ease, visibility 200ms ease, opacity 200ms ease;
+  transition: flex-basis 280ms ease, width 280ms ease, padding 280ms ease, border-width 280ms ease, visibility 280ms ease, opacity 280ms ease;
 }
 
 /* Collapsed: the same box at zero size. !important-free overrides win on
@@ -774,7 +774,7 @@
   opacity: 0;
 }
 
-/* The drag gesture must track the pointer; the 200ms transition would smear it. */
+/* The drag gesture must track the pointer; the transition would smear it. */
 .ink-page-rail.is-resizing { transition: none; }
 
 /* Right-edge drag handle. Sits inside the rail (overflow-x:hidden would clip
