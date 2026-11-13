@@ -27956,6 +27956,7 @@ var SCRIBBLE_REFERENCE_SIZE = 24;
 var QUEUED_PAGE_SWIPE_DURATION_MS = 64;
 var FAST_PAGING_RAIL_IDLE_MS = 1e3;
 var STROKE_ERASER_HIT_RADIUS = 10;
+var MAX_ERASER_SWEEP_STEPS = 1024;
 var OVERLAY_PIXEL_BUDGET = 12e6;
 var SAVE_IDLE_DELAY = 1500;
 var SAVE_MAX_DELAY = 1e4;
@@ -28362,6 +28363,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     /** Reused dedup map for eraseAt(): cleared per call instead of rebuilt, so
      *  a grazing eraser does not allocate a spread chain per input sample. */
     this.eraserCandidateScratch = /* @__PURE__ */ new Map();
+    this.lastEraserPoint = null;
     // --- lasso / selection
     this.lassoPath = [];
     this.selectedStrokeIds = /* @__PURE__ */ new Set();
@@ -29858,6 +29860,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     this.eraserPreviewCells.clear();
     if (tool === "eraser") {
       this.updateEraserHover(point, true);
+      this.lastEraserPoint = point;
       if (this.eraseAt(point, page)) this.requestRender();
       return;
     }
@@ -30040,6 +30043,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     this.finishPointerInput(false);
   }
   applyPointerSamples(event, rect, phase = "move") {
+    var _a, _b, _c;
     const interaction = this.interaction;
     if (!interaction || interaction.pointerId !== event.pointerId) return;
     const page = this.pageById(interaction.pageId);
@@ -30108,7 +30112,23 @@ var InkWritingView = class extends import_obsidian7.FileView {
         const sample = feed[index];
         const point = this.toPoint(sample, rect);
         if (interaction.tool === "eraser") {
-          changed = this.eraseAt(point, page, interaction.eraserMode, interaction.eraserSize) || changed;
+          const previous = (_a = this.lastEraserPoint) != null ? _a : point;
+          const distance3 = Math.hypot(
+            (point.x - previous.x) * this.canvasLogicalWidth,
+            (point.y - previous.y) * this.canvasLogicalHeight
+          );
+          const radius = ((_b = interaction.eraserMode) != null ? _b : this.state.eraserMode) === "stroke" ? STROKE_ERASER_HIT_RADIUS : ((_c = interaction.eraserSize) != null ? _c : this.state.eraserSize) / 2;
+          const spacing = Math.max(1, radius / 2);
+          const steps = Math.max(1, Math.min(MAX_ERASER_SWEEP_STEPS, Math.ceil(distance3 / spacing)));
+          for (let step = 1; step <= steps; step++) {
+            changed = this.eraseAt(
+              interpolateInkPoint(previous, point, step / steps),
+              page,
+              interaction.eraserMode,
+              interaction.eraserSize
+            ) || changed;
+          }
+          this.lastEraserPoint = point;
         } else if (this.activeStroke && this.lastPoint) {
           clampLiftPressure(point, phase === "up" && index === feed.length - 1 ? this.lastPoint : null);
           if (distance2(point, this.lastPoint) <= 0) continue;
@@ -31559,6 +31579,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     this.scribbleGesturePoints = [];
     this.workerStrokePointIndex = 0;
     this.lastPoint = null;
+    this.lastEraserPoint = null;
     this.pendingLassoPoint = null;
     this.lassoPath = [];
     this.lassoDrag = null;
