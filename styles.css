@@ -916,7 +916,7 @@
 
 /* Filtered-out thumbnails leave the rail (display, not visibility: hidden
    thumbs would still occupy their grid row). */
-.ink-page-thumb.is-filtered-out { display: none; }
+:is(.ink-notes-view, .ink-pdf-view) .ink-page-thumb.is-filtered-out { display: none; }
 
 /* Shared tagging popover (notebook + PDF rails). */
 .ink-tag-popover {
