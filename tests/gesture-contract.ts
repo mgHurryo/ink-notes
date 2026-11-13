@@ -62,7 +62,14 @@ export function gestureContract(create: () => Promise<any>): void {
         const { timeStamp, ...init } = options;
         const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX: x, deltaY: y, ...init });
         Object.defineProperty(event, "timeStamp", { configurable: true, value: timeStamp ?? (wheelTime += 200) });
-        target.dispatchEvent(event); return event;
+        target.dispatchEvent(event);
+        // jsdom has no wheel default action; model the browser's native scroll
+        // when the view lets a vertical event pass through uncanceled.
+        if (target === scroller && !event.defaultPrevented && y !== 0) {
+          const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? scroller.clientHeight : 1;
+          scroller.scrollTop += y * scale;
+        }
+        return event;
       };
       return { editor, scroller, settle, wheel, finger, send };
     }
