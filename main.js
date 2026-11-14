@@ -33191,8 +33191,8 @@ var TileRenderer = class {
    *  ratio are pixel-equivalent to the re-rendered ones - they only differ in
    *  resolution. Without this, setPage() empties the layer on every rail
    *  toggle and pane resize and the whole page visibly blanks and refills.
-   *  Nodes leave the ghost as their fresh tiles mount (attach), and the ghost
-   *  goes once the visible frame is complete (update). */
+   *  The old and new tile grids have different cell boundaries, so keep the
+   *  whole ghost until the fresh visible frame can replace it atomically. */
   captureResizeGhost(previousWidth, nextWidth) {
     if (!this.ghost) {
       if (previousWidth <= 0) return;
@@ -33212,8 +33212,11 @@ var TileRenderer = class {
   }
   discardResizeGhost() {
     var _a;
+    if (!this.ghost) return;
+    for (const canvas of Array.from(this.ghost.querySelectorAll("canvas"))) canvas.width = canvas.height = 1;
     (_a = this.ghost) == null ? void 0 : _a.remove();
     this.ghost = null;
+    for (const node of Array.from(this.host.children)) node.style.visibility = "";
   }
   key(state, cell, density) {
     return state.id + "/" + cell + "/" + density;
@@ -33240,7 +33243,7 @@ var TileRenderer = class {
     if (!this.active) return false;
     for (const cell of this.visible) {
       if (!this.active.index.hasCell(cell)) {
-        if (this.host.querySelector('[data-cell="' + cell + '"]')) return false;
+        if (this.host.querySelector(':scope > [data-cell="' + cell + '"]')) return false;
         continue;
       }
       const tile = this.get(this.active, cell, this.density);
@@ -33250,14 +33253,15 @@ var TileRenderer = class {
   }
   attach(tile) {
     var _a;
-    if (tile.node.parentElement === this.host) {
-      tile.used = ++this.sequence;
-      return;
+    if (tile.node.parentElement !== this.host) {
+      (_a = this.host.querySelector(':scope > [data-cell="' + tile.cell + '"]')) == null ? void 0 : _a.remove();
+      this.host.appendChild(tile.node);
     }
-    (_a = this.host.querySelector('[data-cell="' + tile.cell + '"]')) == null ? void 0 : _a.remove();
     tile.used = ++this.sequence;
-    this.host.appendChild(tile.node);
-    if (this.ghost && !this.ghost.childElementCount) this.discardResizeGhost();
+    if (this.ghost) {
+      tile.node.style.visibility = "hidden";
+      if (this.visibleCurrent()) this.discardResizeGhost();
+    }
   }
   schedule() {
     var _a;
@@ -34596,7 +34600,7 @@ var InkView = class extends InkWritingView {
       this.onTouchCancel(event);
     }, { passive: false });
     const observer = new ResizeObserver(() => {
-      if (this.railRevealTimer !== void 0) return;
+      if (this.railRevealTimer !== void 0 || this.root.querySelector(".ink-page-rail.is-resizing")) return;
       this.resizeCanvas();
       this.revealInlineEditor();
     });
@@ -34715,7 +34719,11 @@ var InkView = class extends InkWritingView {
       button3.addEventListener("click", () => this.pageManagement ? this.togglePageSelection(page.id) : this.explicitNavigateToPage(page.id));
       this.scheduleThumbnail(canvas, page);
     });
-    mountRailResizer(rail, { onDragEnd: () => this.redrawPageThumbnails() });
+    mountRailResizer(rail, { onDragEnd: () => {
+      this.resizeCanvas();
+      this.revealInlineEditor();
+      this.redrawPageThumbnails();
+    } });
     this.scheduleSwipePreviewPaint();
     if (this.isFastPagingRailOpen()) this.followWheelPageThumb();
     else {
@@ -37268,9 +37276,9 @@ var PdfInkView = class extends InkWritingView {
       this.onTouchCancel(event);
     }, { passive: false });
     const observer = new ResizeObserver(() => {
-      var _a;
+      var _a, _b;
       (_a = this.brushPopover) == null ? void 0 : _a.position();
-      if (this.railResizeTimer !== void 0) return;
+      if (this.railResizeTimer !== void 0 || ((_b = this.pageRail) == null ? void 0 : _b.classList.contains("is-resizing"))) return;
       this.applyPaneResize();
     });
     observer.observe(scroller);
@@ -37906,7 +37914,10 @@ var PdfInkView = class extends InkWritingView {
     this.renderPageRailActions();
     this.railThumbs = rail.createDiv({ cls: "ink-rail-thumbs" });
     this.registerDomEvent(this.railThumbs, "scroll", () => this.scheduleRailSweep(), { passive: true });
-    mountRailResizer(rail, { onDragEnd: () => this.paintVisibleThumbnails() });
+    mountRailResizer(rail, { onDragEnd: () => {
+      this.applyPaneResize();
+      this.paintVisibleThumbnails();
+    } });
   }
   /** Re-syncs the rail with the model: rebuilds the buttons when the page
    *  sequence changed, moves the highlight, and repaints what is on screen. */

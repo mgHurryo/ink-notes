@@ -262,7 +262,7 @@ export class PdfInkView extends InkWritingView {
       // strokes and flushes the neighbour caches against each intermediate
       // size. The toggle parks this work and runs it once at settle, the way
       // the notebook editor parks its ResizeObserver behind the same timer.
-      if (this.railResizeTimer !== undefined) return;
+      if (this.railResizeTimer !== undefined || this.pageRail?.classList.contains("is-resizing")) return;
       this.applyPaneResize();
     });
     observer.observe(scroller);
@@ -943,7 +943,12 @@ export class PdfInkView extends InkWritingView {
     // Parity with the notebook editor's rail: the right edge is draggable and
     // the final width persists under the PDF-specific key. Thumbnails raster
     // during the drag at stale widths; repaint the visible range at the end.
-    mountRailResizer(rail, { onDragEnd: () => this.paintVisibleThumbnails() });
+    mountRailResizer(rail, { onDragEnd: () => {
+      // The drag keeps the existing page/ink rasters mounted. Rebuild once
+      // at the released width, just as the rail-toggle settle path does.
+      this.applyPaneResize();
+      this.paintVisibleThumbnails();
+    } });
   }
 
   /** Re-syncs the rail with the model: rebuilds the buttons when the page
