@@ -19,6 +19,7 @@ import { canvasResolution } from "../src/rendering";
 import type { ImageLibraryStore } from "../src/image-library";
 import type { StickyNote } from "../src/sticky-model";
 import { gestureContract } from "./gesture-contract";
+import * as obsidian from "obsidian";
 
 const FINGERPRINT = { sha256: "a".repeat(64), byteLength: 100 };
 const views = new Set<PdfInkView>();
@@ -68,7 +69,7 @@ async function setup(sourcePageCount = 3, imageLibrary?: ImageLibraryStore) {
   const sidecarFile = { path: "A_pdfinkwrittern/lecture--x.pdfink.json" } as TFile;
   const store = {
     sidecarFileFor: vi.fn(() => sidecarFile),
-    createFor: vi.fn(async () => sidecarFile),
+    createFor: vi.fn(async (_pdf: TFile, _fingerprint: typeof FINGERPRINT, _sourcePages: unknown[]) => sidecarFile),
     readRaw: vi.fn(async () => raw),
     writeIfUnchanged: vi.fn(async (): Promise<boolean> => true),
     computeFingerprint: vi.fn(async () => FINGERPRINT),
@@ -99,7 +100,7 @@ async function setup(sourcePageCount = 3, imageLibrary?: ImageLibraryStore) {
   internal.pdfDoc = fakeDoc.doc;
   (internal as unknown as { attachSidecar(s: PdfSidecar, raw: string, f: TFile | null): void })
     .attachSidecar(sidecar, raw, sidecarFile);
-  return { view, internal, sidecar, fakeDoc };
+  return { view, internal, sidecar, fakeDoc, store };
 }
 
 const thumbs = () => document.querySelectorAll<HTMLButtonElement>(".ink-pdf-view .ink-page-thumb");
@@ -160,6 +161,58 @@ it("reads source page geometry concurrently with a bounded worker pool and prese
   expect(pages.map(({ width, height, rotation }) => [width, height, rotation])).toEqual(
     Array.from({ length: 9 }, (_, index) => [501 + index, 701 + index, (index + 1) % 2 ? 0 : 90]));
   await view.onClose();
+});
+
+it("paints a new PDF before blocked later-page metadata and keeps ink locked until notes are ready", async () => {
+  const { view, internal, store } = await setup(64);
+  const editor = view as any;
+  internal.renderPdfPage = (PdfInkView.prototype as any).renderPdfPage.bind(view);
+  const drawImage = vi.fn();
+  vi.spyOn(editor.pdfCanvas, "getContext").mockReturnValue({ drawImage } as unknown as CanvasRenderingContext2D);
+  store.sidecarFileFor.mockReturnValue(null as any);
+  editor.app.vault = { readBinary: vi.fn(async () => new ArrayBuffer(100)) };
+  const fake = fakePdfDoc(64);
+  let release!: () => void;
+  const laterPages = new Promise<void>((resolve) => { release = resolve; });
+  const getPage = vi.fn(async (n: number) => {
+    if (n > 1) await laterPages;
+    return fake.getPage(n);
+  });
+  vi.spyOn(obsidian, "loadPdfJs").mockResolvedValue({
+    getDocument: () => ({ promise: Promise.resolve({ ...fake.doc, getPage }) }),
+  } as never);
+  const opening = view.onLoadFile(view.file!);
+  try {
+    await vi.waitFor(() => expect(getPage).toHaveBeenCalledWith(2));
+    expect(fake.renderedPages).toEqual([1]);
+    expect(drawImage).toHaveBeenCalled();
+    expect(editor.inputLocked()).toBe(true);
+    expect(store.createFor).not.toHaveBeenCalled();
+  } finally {
+    release();
+    await opening;
+  }
+  expect(store.createFor.mock.calls[0][2]).toHaveLength(64);
+  expect(editor.inputLocked()).toBe(false);
+});
+
+it("reuses fingerprint-checked sidecar geometry without scanning all PDF pages on reopen", async () => {
+  const { view, internal, store } = await setup(64);
+  const editor = view as any;
+  internal.renderPdfPage = (PdfInkView.prototype as any).renderPdfPage.bind(view);
+  editor.app.vault = { readBinary: vi.fn(async () => new ArrayBuffer(100)) };
+  const fake = fakePdfDoc(64);
+  vi.spyOn(obsidian, "loadPdfJs").mockResolvedValue({
+    getDocument: () => ({ promise: Promise.resolve(fake.doc) }),
+  } as never);
+  const scan = vi.spyOn(editor, "readSourcePages");
+  await view.onLoadFile(view.file!);
+  expect(scan).not.toHaveBeenCalled();
+  expect(store.createFor).not.toHaveBeenCalled();
+  expect(editor.sidecar.sourcePages).toHaveLength(64);
+  expect(fake.renderedPages[0]).toBe(1);
+  // Visible page plus bounded neighbour prewarming, never all 64 pages.
+  expect(new Set(fake.getPage.mock.calls.map(([n]) => n)).size).toBeLessThanOrEqual(2);
 });
 
 it("stops scheduling page geometry reads after a PDF page fails", async () => {

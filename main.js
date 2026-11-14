@@ -37166,6 +37166,15 @@ var PDF_THUMB_CACHE_LIMIT = 12;
 var RAIL_SWEEP_THROTTLE_MS = 120;
 var RAIL_REVEAL_DELAY_MS = 310;
 var RAIL_TRANSITION_MS2 = 280;
+function sourcePageGeometry(page) {
+  var _a, _b, _c, _d, _e;
+  const raw = page;
+  return {
+    width: Math.round(((_b = (_a = raw.view) == null ? void 0 : _a[2]) != null ? _b : page.getViewport({ scale: 1 }).width) * 100) / 100,
+    height: Math.round(((_d = (_c = raw.view) == null ? void 0 : _c[3]) != null ? _d : page.getViewport({ scale: 1 }).height) * 100) / 100,
+    rotation: (_e = raw.rotate) != null ? _e : 0
+  };
+}
 var EMPTY_NOTEBOOK = createNotebook();
 var PdfInkView = class extends InkWritingView {
   constructor(leaf) {
@@ -37358,7 +37367,7 @@ var PdfInkView = class extends InkWritingView {
     this.root = null;
   }
   async onLoadFile(file) {
-    var _a, _b;
+    var _a, _b, _c;
     const sourceMtime = (_a = file.stat) == null ? void 0 : _a.mtime;
     const generation = ++this.loadGeneration;
     this.resetViewState();
@@ -37402,7 +37411,21 @@ var PdfInkView = class extends InkWritingView {
       return;
     }
     this.pdfDoc = doc;
-    this.sourcePages = await this.readSourcePages(doc, generation);
+    let firstPage;
+    try {
+      firstPage = await doc.getPage(1);
+    } catch (error) {
+      if (generation === this.loadGeneration) this.setStatus(`Could not read this PDF's first page: ${messageOf(error)}`, true);
+      return;
+    }
+    try {
+      if (generation !== this.loadGeneration) return;
+      this.sourcePages = [sourcePageGeometry(firstPage)];
+    } finally {
+      (_b = firstPage.cleanup) == null ? void 0 : _b.call(firstPage);
+    }
+    this.layoutPage();
+    await this.renderPdfPage();
     if (generation !== this.loadGeneration) return;
     await this.resolveSidecar(file, fingerprint, generation);
     if (generation !== this.loadGeneration) return;
@@ -37410,7 +37433,7 @@ var PdfInkView = class extends InkWritingView {
     this.layoutPage();
     this.renderAll(false);
     await this.renderPdfPage();
-    if (generation === this.loadGeneration && ((_b = file.stat) == null ? void 0 : _b.mtime) !== sourceMtime) await this.checkSourcePdfRevision();
+    if (generation === this.loadGeneration && ((_c = file.stat) == null ? void 0 : _c.mtime) !== sourceMtime) await this.checkSourcePdfRevision();
   }
   async onUnloadFile(_file) {
     var _a;
@@ -37596,7 +37619,7 @@ var PdfInkView = class extends InkWritingView {
     let failed = false;
     let failure;
     const readNextPage = async () => {
-      var _a, _b, _c, _d, _e, _f;
+      var _a;
       while (generation === this.loadGeneration && !failed) {
         const index = nextPage++;
         if (index > doc.numPages) return;
@@ -37604,19 +37627,14 @@ var PdfInkView = class extends InkWritingView {
         try {
           page = await doc.getPage(index);
           if (generation !== this.loadGeneration) return;
-          const raw = page;
-          pages[index - 1] = {
-            width: Math.round(((_b = (_a = raw.view) == null ? void 0 : _a[2]) != null ? _b : page.getViewport({ scale: 1 }).width) * 100) / 100,
-            height: Math.round(((_d = (_c = raw.view) == null ? void 0 : _c[3]) != null ? _d : page.getViewport({ scale: 1 }).height) * 100) / 100,
-            rotation: (_e = raw.rotate) != null ? _e : 0
-          };
+          pages[index - 1] = sourcePageGeometry(page);
         } catch (error) {
           if (generation !== this.loadGeneration) return;
           failed = true;
           failure = error;
           return;
         } finally {
-          (_f = page == null ? void 0 : page.cleanup) == null ? void 0 : _f.call(page);
+          (_a = page == null ? void 0 : page.cleanup) == null ? void 0 : _a.call(page);
         }
       }
     };
@@ -37740,6 +37758,10 @@ var PdfInkView = class extends InkWritingView {
       return;
     }
     try {
+      if (this.pdfDoc) {
+        this.sourcePages = await this.readSourcePages(this.pdfDoc, generation);
+        if (generation !== this.loadGeneration) return;
+      }
       const created = await this.store.createFor(file, fingerprint, this.sourcePages, slotPath);
       const raw = await this.store.readRaw(created);
       if (generation !== this.loadGeneration) return;
@@ -38584,8 +38606,10 @@ var PdfInkView = class extends InkWritingView {
   }
   // -------------------------------------------------------------- geometry
   currentNotePage() {
-    var _a, _b;
-    return (_b = (_a = this.sidecar) == null ? void 0 : _a.notePages[this.noteIndex]) != null ? _b : null;
+    var _a;
+    if (this.sidecar) return (_a = this.sidecar.notePages[this.noteIndex]) != null ? _a : null;
+    const source = this.sourcePages[this.noteIndex];
+    return source && this.pdfDoc ? { ...source, id: `pdfp-${this.noteIndex}`, sourceIndex: this.noteIndex } : null;
   }
   rotatedSize(page) {
     if (!page) return { width: 595.28, height: 841.89 };
