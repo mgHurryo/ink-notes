@@ -4,6 +4,9 @@ import type { InkPage } from "../src/model";
 import { rotateScribble, scribbleLoops, scribbleWaves } from "./scribble-fixtures";
 import { SHAPES } from "../src/shapes";
 import type { NotebookOperation } from "../src/worker-protocol";
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import type { WheelEventData } from "wheel-gestures";
 
 /** Run the same real DOM input contract against both editor implementations. */
 export function gestureContract(create: () => Promise<any>): void {
@@ -58,16 +61,18 @@ export function gestureContract(create: () => Promise<any>): void {
       const settle = vi.spyOn(editor, "swipeSettle").mockImplementation(() => undefined);
       vi.spyOn(editor, "swipeDrag").mockImplementation(() => undefined);
       let wheelTime = 0;
-      const wheel = (x: number, y: number, options: WheelEventInit & { timeStamp?: number } = {}, target: HTMLElement = scroller) => {
-        const { timeStamp, ...init } = options;
+      const wheel = (x: number, y: number, options: WheelEventInit & { timeStamp?: number; momentum?: boolean } = {}, target: HTMLElement = scroller) => {
+        const { timeStamp, momentum, ...init } = options;
         const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX: x, deltaY: y, ...init });
         Object.defineProperty(event, "timeStamp", { configurable: true, value: timeStamp ?? (wheelTime += 200) });
+        if (momentum !== undefined) Object.defineProperty(event, "momentum", { value: momentum });
         target.dispatchEvent(event);
         // jsdom has no wheel default action; model the browser's native scroll
-        // when the view lets a vertical event pass through uncanceled.
-        if (target === scroller && !event.defaultPrevented && y !== 0) {
+        // when either axis passes through uncanceled.
+        if (target === scroller && !event.defaultPrevented) {
           const scale = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? scroller.clientHeight : 1;
-          scroller.scrollTop += y * scale;
+          scroller.scrollLeft += (x || (event.shiftKey ? y : 0)) * scale;
+          if (!event.shiftKey) scroller.scrollTop += y * scale;
         }
         return event;
       };
@@ -195,6 +200,88 @@ export function gestureContract(create: () => Promise<any>): void {
       } finally { vi.useRealTimers(); }
     });
 
+
+    // Input-phase recognition is exercised with upstream device recordings.
+    // Historical tests tied to the removed rearm ratios/55ms windows are
+    // replaced here; application ownership, queues and mouse contracts remain.
+    for (const axis of ["x", "y"] as const) {
+      for (const direction of [-1, 1]) {
+        it.each([
+          ["win-chrome-right-ptp", 1], ["win-chrome-fast-right-ptp", 1],
+          ["double-swipe-right", 2], ["slow-drag-right", 1],
+        ] as const)(`${axis}, direction ${direction}: routes recorded %s through the shared view entry`, async (name, count) => {
+          const { editor, scroller, settle, wheel } = await desktopSetup();
+          const recording = JSON.parse(readFileSync(resolve("tests/fixtures/wheel-gestures", `${name}.json`), "utf8")) as { wheelEvents: WheelEventData[] };
+          scroller.scrollTop = direction > 0 ? 0 : 600;
+          vi.useFakeTimers();
+          try {
+            let previous = recording.wheelEvents[0].timeStamp;
+            for (const raw of recording.wheelEvents) {
+              vi.advanceTimersByTime(Math.max(0, raw.timeStamp - previous));
+              const lift = raw.deltaX === 0 && raw.deltaY === 0 && Object.is(raw.deltaX, -0);
+              const x = lift ? -0 : direction * (axis === "x" ? raw.deltaX : raw.deltaY);
+              const y = direction * (axis === "x" ? raw.deltaY : raw.deltaX);
+              wheel(x, y, { timeStamp: raw.timeStamp });
+              previous = raw.timeStamp;
+            }
+            expect(settle).toHaveBeenCalledTimes(count);
+            const edge = axis === "y" ? (direction > 0 ? "bottom" : "top") : undefined;
+            expect(settle).toHaveBeenLastCalledWith(-direction, 0, edge);
+            vi.advanceTimersByTime(1100);
+            expect(settle).toHaveBeenCalledTimes(count);
+          } finally { editor.desktopWheel.reset(); vi.useRealTimers(); }
+        });
+      }
+
+      it(`${axis}: pages again on a small native intentional swipe after inertia`, async () => {
+        const { scroller, wheel, settle } = await desktopSetup();
+        scroller.scrollTop = 600;
+        const send = (movement: number, at: number, momentum: boolean) =>
+          wheel(axis === "x" ? movement : 0, axis === "y" ? movement : 0, { timeStamp: at, momentum });
+        send(60, 0, false);
+        send(30, 10, true);
+        send(600, 20, true); // A merged inertia sample must not create a page.
+        expect(settle).toHaveBeenCalledTimes(1);
+        send(24, 30, false);
+        send(24, 40, false);
+        expect(settle).toHaveBeenCalledTimes(2);
+      });
+
+      it(`${axis}: pans natively while zoomed and pages only on continued input at the boundary`, async () => {
+        const { editor, scroller, settle, wheel } = await desktopSetup();
+        vi.spyOn(editor, "zoomLevel").mockReturnValue(2);
+        let left = 100;
+        Object.defineProperties(scroller, {
+          scrollWidth: { configurable: true, value: 1400 },
+          scrollLeft: { configurable: true, get: () => left, set: (v: number) => { left = Math.max(0, Math.min(600, v)); } },
+        });
+        scroller.scrollTop = 100;
+        const send = (movement: number, at: number) =>
+          wheel(axis === "x" ? movement : 0, axis === "y" ? movement : 0, { timeStamp: at, momentum: false });
+        expect(send(30, 0).defaultPrevented).toBe(false);
+        expect(axis === "x" ? scroller.scrollLeft : scroller.scrollTop).toBe(130);
+        expect(settle).not.toHaveBeenCalled();
+        if (axis === "x") scroller.scrollLeft = 600;
+        else scroller.scrollTop = 600;
+        expect(send(60, 10).defaultPrevented).toBe(true);
+        expect(settle).toHaveBeenCalledWith(1, 0, axis === "x" ? undefined : "top");
+      });
+
+      it(`${axis}: fast paging opens the same preview rail and user selection claims it`, async () => {
+        const { editor, scroller, settle, wheel } = await desktopSetup();
+        scroller.scrollTop = 600;
+        const expanded = vi.spyOn(editor, "onFastPagingRailExpanded");
+        const send = (movement: number, at: number, momentum: boolean) =>
+          wheel(axis === "x" ? movement : 0, axis === "y" ? movement : 0, { timeStamp: at, momentum });
+        for (const at of [0, 100, 200]) { send(60, at, false); send(10, at + 10, true); }
+        expect(settle).toHaveBeenCalledTimes(3);
+        expect(expanded).toHaveBeenCalledOnce();
+        expect(editor.isFastPagingRailOpen()).toBe(true);
+        editor.claimFastPagingRail();
+        expect(editor.fastPagingRailBorrowed).toBe(false);
+      });
+    }
+
     it.each([0, 1, 2])("scrolls inside the page before vertical boundary navigation (wheel mode %s)", async (mode) => {
       const { scroller, settle, wheel } = await desktopSetup();
       const amount = mode === 0 ? 120 : mode === 1 ? 8 : 1;
@@ -230,6 +317,8 @@ export function gestureContract(create: () => Promise<any>): void {
       const { editor, scroller, settle, wheel } = await desktopSetup();
       editor.capturePointer = vi.fn(); editor.releasePointer = vi.fn();
       scroller.scrollTop = 600;
+      vi.useFakeTimers();
+      try {
       // One flick plus its decay tail: a single contact, one page.
       wheel(0, 140, { timeStamp: 100 });
       for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [10, 140]]) wheel(0, delta, { timeStamp: time });
@@ -254,9 +343,13 @@ export function gestureContract(create: () => Promise<any>): void {
         [12, 290], [8, 310], [5, 330], [3, 350]]) wheel(0, delta, { timeStamp: time });
       expect(settle).toHaveBeenCalledTimes(1);
       // A deliberate re-swipe after the stroke still re-arms and flips.
+      // The external recognizer uses actual scheduled end events, not only
+      // the supplied sample timestamps: advance the real quiet interval too.
+      vi.advanceTimersByTime(300);
       wheel(0, 140, { timeStamp: 650 });
       wheel(0, 140, { timeStamp: 660 });
       expect(settle).toHaveBeenCalledTimes(2);
+      } finally { editor.desktopWheel.reset(); vi.useRealTimers(); }
     });
 
     it("turns one page for each standard vertical mouse-wheel notch", async () => {
@@ -280,125 +373,6 @@ export function gestureContract(create: () => Promise<any>): void {
       // third notch), but a sub-180ms notch stream is one gesture, so the
       // burst stops at MAX_TRACKPAD_PAGES_PER_GESTURE (2) pages in total.
       for (const timeStamp of [140, 180, 220, 260]) wheel(0, 100, { timeStamp });
-      expect(settle).toHaveBeenCalledTimes(2);
-    });
-
-    it("waits for a quiet gap before rearming a same-direction trackpad flick", async () => {
-      const { wheel, settle } = await desktopSetup();
-      vi.useFakeTimers();
-      try {
-        wheel(140, 0, { timeStamp: 100 });
-        for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [20, 140], [18, 150], [15, 160]]) {
-          wheel(delta, 0, { timeStamp: time });
-        }
-        expect(settle).toHaveBeenCalledTimes(1);
-        vi.advanceTimersByTime(180);
-        // The quiet-gap re-flick still re-arms, one sample later: the boundary
-        // sample itself is frozen (140px over 180ms sits below the hot 15px
-        // envelope at its real delivery gap), and the next sample's slope
-        // (140 >= 2.2x) mints the new contact that flips.
-        wheel(140, 0, { timeStamp: 340 });
-        wheel(140, 0, { timeStamp: 350 });
-        expect(settle).toHaveBeenCalledTimes(2);
-      } finally { vi.useRealTimers(); }
-    });
-
-    it("rearms a constant-velocity flick that lands inside the inertia tail", async () => {
-      const { wheel, settle } = await desktopSetup();
-      // A Windows precision trackpad bridges human re-flick cadence with a
-      // 1-2s inertia tail, and a fresh flick's fast-phase deltas hold nearly
-      // constant instead of compounding - the jump itself must re-arm the
-      // GESTURE (suppression lifts, the vertical mirror below flips again).
-      // The horizontal contact has already spent its single page, so the
-      // re-arm may not flip a second page here: sideways motion flips one
-      // page per contact, mid-tail continuation included.
-      wheel(140, 0, { timeStamp: 100 });
-      for (const [delta, timeStamp] of [[90, 110], [60, 120], [35, 130], [25, 140]]) {
-        wheel(delta, 0, { timeStamp });
-      }
-      expect(settle).toHaveBeenCalledTimes(1);
-      for (const timeStamp of [150, 160, 170]) wheel(60, 0, { timeStamp });
-      expect(settle).toHaveBeenCalledTimes(1);
-    });
-
-    it("rearms a constant-velocity vertical flick that lands inside the inertia tail", async () => {
-      const { scroller, wheel, settle } = await desktopSetup();
-      scroller.scrollTop = 600;
-      wheel(0, 140, { timeStamp: 100 });
-      for (const [delta, timeStamp] of [[90, 110], [60, 120], [30, 130], [10, 140], [4, 150]]) {
-        wheel(0, delta, { timeStamp });
-      }
-      expect(settle).toHaveBeenCalledTimes(1);
-      for (const timeStamp of [210, 220, 230, 240]) wheel(0, 60, { timeStamp });
-      expect(settle).toHaveBeenCalledTimes(2);
-    });
-
-    it("rearms a constant-velocity vertical flick landing inside the inertia tail without a quiet gap", async () => {
-      const { scroller, wheel, settle } = await desktopSetup();
-      // A real Windows precision trackpad bridges a human re-flick with a
-      // 1-2s inertia tail, so every gap stays under the quiet-gap threshold
-      // and the jump itself must re-arm - the vertical mirror of the
-      // horizontal constant-velocity rearm above.
-      scroller.scrollTop = 600;
-      wheel(0, 140, { timeStamp: 100 });
-      for (const [delta, timeStamp] of [[90, 110], [60, 120], [30, 130], [20, 140], [14, 150]]) {
-        wheel(0, delta, { timeStamp });
-      }
-      expect(settle).toHaveBeenCalledTimes(1);
-      for (const timeStamp of [160, 170, 180, 190]) wheel(0, 60, { timeStamp });
-      expect(settle).toHaveBeenCalledTimes(2);
-    });
-
-    it("rearms a constant-velocity vertical re-flick after a hot-tail mid-band gap", async () => {
-      const { scroller, wheel, settle } = await desktopSetup();
-      // A re-touch truncates the inertia tail while it is still hot (the
-      // envelope sits above the 4px release floor) and the re-flick lands
-      // 55-179ms later with a constant fast phase. The real delivery gap
-      // crushes the boundary sample under the hot envelope, the ramp detector
-      // seeds from it, and the constant phase used to stall the ramp at one
-      // rise forever - the page and the native scroll were swallowed whole.
-      scroller.scrollTop = 600;
-      wheel(0, 140, { timeStamp: 100 });
-      for (const [delta, timeStamp] of [[90, 110], [60, 120], [30, 130], [20, 140], [15, 150]]) {
-        wheel(0, delta, { timeStamp });
-      }
-      expect(settle).toHaveBeenCalledTimes(1);
-      // 140px over a 120ms gap reads 11.7px/10ms under the hot 15px envelope;
-      // the constant 140s that follow re-arm through the deferred exit.
-      wheel(0, 140, { timeStamp: 270 });
-      for (const timeStamp of [280, 290, 300, 310]) wheel(0, 140, { timeStamp });
-      expect(settle).toHaveBeenCalledTimes(2);
-    });
-
-    it("rearms a moderate same-direction re-swipe over a settled tail without a quiet gap", async () => {
-      const { wheel, settle } = await desktopSetup();
-      // A Windows precision trackpad bridges a human re-flick with an inertia
-      // tail whose gaps all stay under the quiet-gap threshold, and a moderate
-      // re-swipe rises 4-6x off the settled (<=4px) tail while every sample
-      // stays under the 24px jump floor. Once its rise is confirmed, the new
-      // horizontal swipe receives its own page budget just like vertical.
-      wheel(140, 0, { timeStamp: 100 });
-      for (const [delta, timeStamp] of [[90, 110], [60, 120], [30, 130], [20, 140], [14, 150],
-        [10, 160], [8, 170], [6, 180], [4, 190], [3, 200], [3, 210], [2, 220]]) {
-        wheel(delta, 0, { timeStamp });
-      }
-      expect(settle).toHaveBeenCalledTimes(1);
-      for (let i = 0; i < 30; i++) wheel(13 + (i % 5) * 2, 0, { timeStamp: 230 + i * 10 });
-      expect(settle).toHaveBeenCalledTimes(2);
-    });
-
-    it("rearms a moderate vertical re-swipe over a settled tail without a quiet gap", async () => {
-      const { scroller, wheel, settle } = await desktopSetup();
-      // The vertical mirror: same settled-tail moderate re-swipe, same
-      // sub-55ms reporting cadence, one renewed page expected.
-      scroller.scrollTop = 600;
-      wheel(0, 140, { timeStamp: 100 });
-      for (const [delta, timeStamp] of [[90, 110], [60, 120], [30, 130], [20, 140], [14, 150],
-        [10, 160], [8, 170], [6, 180], [4, 190], [3, 200], [3, 210], [2, 220]]) {
-        wheel(0, delta, { timeStamp });
-      }
-      expect(settle).toHaveBeenCalledTimes(1);
-      for (let i = 0; i < 30; i++) wheel(0, 13 + (i % 5) * 2, { timeStamp: 230 + i * 10 });
       expect(settle).toHaveBeenCalledTimes(2);
     });
 
@@ -437,9 +411,8 @@ export function gestureContract(create: () => Promise<any>): void {
 
     it("keeps the same decaying burst to one page on the vertical axis", async () => {
       const { scroller, wheel, settle } = await desktopSetup();
-      // The vertical mirror of the fixture burst above: sharing the jump
-      // re-arm with the x axis must not let a monotonically decaying y burst
-      // clear the 2.2x envelope and flip a second page.
+      // The vertical mirror of the fixture above remains one continuous
+      // gesture and must not gain another page from its decaying samples.
       scroller.scrollTop = 600;
       for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [30, 130], [20, 140],
         [14, 150], [10, 160]]) {
@@ -491,8 +464,8 @@ export function gestureContract(create: () => Promise<any>): void {
         expect(railHidden()).toBe(false);
         vi.advanceTimersByTime(500);
         expect(railHidden()).toBe(true);
-        // A sideways burst never drives the rail: horizontal flips are one
-        // page per contact and do not count toward the vertical page rate.
+        // Three synchronous samples are one continuous sideways gesture,
+        // so they contribute only one page and cannot reopen the rail.
         for (const timeStamp of [2600, 2800, 3000]) wheel(140, 0, { timeStamp });
         expect(railHidden()).toBe(true);
       } finally { vi.useRealTimers(); }
@@ -509,9 +482,8 @@ export function gestureContract(create: () => Promise<any>): void {
         scroller.scrollTop = 600;
         for (const timeStamp of [1000, 1200, 1400]) wheel(0, 100, { timeStamp });
         expect(railHidden()).toBe(false);
-        // Horizontal wheel input does not count toward the vertical fast-page
-        // rate, but it still proves that a trackpad gesture is active and
-        // should keep the borrowed rail visible.
+        // Continuing horizontal input keeps the borrowed rail visible even
+        // when this gesture has already spent its page budget.
         vi.advanceTimersByTime(300);
         wheel(140, 0, { timeStamp: 2500 });
         vi.advanceTimersByTime(300);
@@ -586,179 +558,10 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(listTop).toBe(2160);
     });
 
-    it("rearms a horizontal trackpad flick after a short pause and a renewed swipe", async () => {
-      const { wheel, settle } = await desktopSetup();
-      vi.useFakeTimers();
-      try {
-        wheel(140, 0, { timeStamp: 100 });
-        for (const [delta, timeStamp] of [[90, 110], [60, 120], [30, 130], [10, 140], [4, 150]]) {
-          wheel(delta, 0, { timeStamp });
-        }
-        expect(settle).toHaveBeenCalledTimes(1);
-        wheel(140, 0, { timeStamp: 210 });
-        expect(settle).toHaveBeenCalledTimes(2);
-      } finally { vi.useRealTimers(); }
-    });
-
-    it("keeps a horizontal contact to one page and re-arms navigation on reversal", async () => {
-      const { wheel, settle } = await desktopSetup();
-      wheel(140, 0, { timeStamp: 100 });
-      for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [10, 140], [4, 150]]) {
-        wheel(delta, 0, { timeStamp: time });
-      }
-      expect(settle).toHaveBeenCalledTimes(1);
-      // A new flick ramps up before the old burst reaches its idle timeout; the
-      // re-arm lifts the suppression, but the strict one-page-per-contact
-      // contract refuses the flip - sideways navigation needs a fresh contact.
-      for (const [delta, time] of [[8, 154], [20, 164], [35, 174], [70, 184]]) wheel(delta, 0, { timeStamp: time });
-      expect(settle).toHaveBeenCalledTimes(1);
-      // The reversal is a hard gesture boundary: a new contact with a fresh
-      // one-page budget, flipping the other way.
-      wheel(-60, 0, { timeStamp: 194 });
-      expect(settle).toHaveBeenLastCalledWith(-1, 0, undefined);
-      expect(settle).toHaveBeenCalledTimes(2);
-    });
-
-    it("keeps an aggressively stronger mid-tail flick to the contact's one page on x", async () => {
-      const { wheel, settle } = await desktopSetup();
-      for (const [delta, timeStamp] of [[140, 100], [90, 110], [60, 120], [40, 130], [26, 140],
-        [60, 150], [60, 160], [40, 170], [55, 180]]) {
-        wheel(delta, 0, { timeStamp });
-      }
-      // The blocked-window re-arm still lifts the suppression, but the
-      // horizontal contact has spent its single page.
-      expect(settle).toHaveBeenCalledTimes(1);
-      wheel(200, 0, { timeStamp: 190 });
-      expect(settle).toHaveBeenCalledTimes(1);
-    });
-
-    it("rearms an aggressively stronger flick while the previous renewal is still blocked on y", async () => {
-      const { scroller, wheel, settle } = await desktopSetup();
-      // The vertical mirror keeps the full renewal contract: each re-arm
-      // re-opens the vertical page budget, so the same shape flips three.
-      // (The 100px vertical travel threshold lands the renewed page one
-      // sample later than the 48px horizontal one, so the stream carries an
-      // extra sample to satisfy the three-flipped-samples re-arm guard.)
-      scroller.scrollTop = 600;
-      for (const [delta, timeStamp] of [[140, 100], [90, 110], [60, 120], [40, 130], [26, 140],
-        [60, 150], [60, 160], [40, 170], [45, 175], [55, 180]]) {
-        wheel(0, delta, { timeStamp });
-      }
-      expect(settle).toHaveBeenCalledTimes(2);
-      wheel(0, 200, { timeStamp: 190 });
-      // The blocked-window re-arm defers one beat: a jump-shaped sample inside
-      // the block may be a stall merge stamped at delivery cadence, so the
-      // re-arm confirms on the next sample's held speed and the renewed page
-      // flips on that beat - the stream carries one more sweep sample.
-      wheel(0, 200, { timeStamp: 200 });
-      expect(settle).toHaveBeenCalledTimes(3);
-    });
-
-    it("rearms a same-direction touchpad flick that ramps up from small deltas", async () => {
-      const { wheel, settle } = await desktopSetup();
-      // The confirmed ramped re-swipe opens a new horizontal page budget.
-      wheel(140, 0, { timeStamp: 100 });
-      for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [10, 140], [4, 150]]) wheel(delta, 0, { timeStamp: time });
-      expect(settle).toHaveBeenCalledOnce();
-
-      for (const [delta, time] of [[8, 210], [20, 220], [35, 230], [70, 240]]) wheel(delta, 0, { timeStamp: time });
-      expect(settle).toHaveBeenCalledTimes(2);
-    });
-
     it("turns a page on a short intentional horizontal touchpad swipe", async () => {
       const { wheel, settle } = await desktopSetup();
       wheel(60, 0, { timeStamp: 100 });
       expect(settle).toHaveBeenCalledOnce();
-    });
-
-    it("rearms a vertical trackpad swipe that accelerates before inertia goes idle", async () => {
-      const { scroller, wheel, settle } = await desktopSetup();
-      // The vertical mirror of the accelerating re-swipe above: the renewal
-      // re-opens the vertical page budget and the ramp flips again.
-      scroller.scrollTop = 600;
-      wheel(0, 140, { timeStamp: 100 });
-      for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [10, 140], [4, 150]]) wheel(0, delta, { timeStamp: time });
-      expect(settle).toHaveBeenCalledOnce();
-
-      for (const [delta, time] of [[8, 154], [20, 164], [35, 174], [70, 184]]) wheel(0, delta, { timeStamp: time });
-      expect(settle).toHaveBeenCalledTimes(2);
-    });
-
-    it("keeps a short-gap flick and its renewal to the contact's one page", async () => {
-      const { wheel, settle } = await desktopSetup();
-      // The whole stream is one contact (every gap stays under the idle
-      // boundary and nothing reverses): the flick flips its single page and
-      // both mid-stream re-arms lift suppression without flipping again.
-      for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [30, 130], [10, 140], [8, 150],
-        [20, 160], [35, 170], [70, 180], [90, 190], [60, 200], [30, 210], [10, 220]]) {
-        wheel(delta, 0, { timeStamp: time });
-      }
-      expect(settle).toHaveBeenCalledTimes(1);
-
-      for (const [delta, time] of [[8, 280], [20, 290], [35, 300], [70, 310]]) {
-        wheel(delta, 0, { timeStamp: time });
-      }
-      expect(settle).toHaveBeenCalledTimes(1);
-    });
-
-    it("rearms repeated horizontal swipes that start below prior inertia", async () => {
-      const { wheel, settle } = await desktopSetup();
-      // Each new stream starts below the prior inertia delta, then rises far
-      // enough to be confirmed as a new same-direction swipe.
-      for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [30, 130], [10, 140],
-        [20, 200], [30, 210], [45, 220], [20, 280], [30, 290], [45, 300]]) {
-        wheel(delta, 0, { timeStamp: time });
-      }
-
-      expect(settle).toHaveBeenCalledTimes(2);
-    });
-
-    it("rearms every vertical stream that starts below the prior inertia delta", async () => {
-      const { scroller, wheel, settle } = await desktopSetup();
-      // The vertical mirror of the streams above: each re-arm re-opens the
-      // vertical page budget, so both continuation streams flip (their
-      // deltas are scaled up because the vertical travel threshold is 100px
-      // against the horizontal 48px, and the renewal travel must clear it).
-      scroller.scrollTop = 600;
-      for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [30, 130], [10, 140],
-        [30, 200], [45, 210], [70, 220], [30, 280], [45, 290], [70, 300]]) {
-        wheel(0, delta, { timeStamp: time });
-      }
-
-      expect(settle).toHaveBeenCalledTimes(3);
-    });
-
-    it("starts a fresh one-page contact budget for each quiet-gap renewed swipe", async () => {
-      const { wheel, settle } = await desktopSetup();
-      // Each stream resumes RISING over the settled tail after a quiet gap,
-      // which resets into a new contact with its own strict single page -
-      // three streams, three pages (unchanged by the strict-1 contract).
-      for (const [delta, timeStamp] of [
-        [140, 100], [90, 110], [60, 120], [30, 130], [10, 140], [4, 150],
-        [140, 210], [90, 220], [60, 230], [30, 240], [10, 250], [4, 260], [140, 320],
-      ]) wheel(delta, 0, { timeStamp });
-      expect(settle).toHaveBeenCalledTimes(3);
-    });
-
-    it("continues same-direction paging after a full-idle and reversal sequence", async () => {
-      const { wheel, settle } = await desktopSetup();
-      let start = 100;
-      const swipe = (direction: number) => {
-        for (const [magnitude, offset] of [[140, 0], [90, 10], [60, 20], [30, 30], [10, 40], [4, 50]]) {
-          wheel(direction * magnitude, 0, { timeStamp: start + offset });
-        }
-        // The next input begins 250ms after this swipe's settled tail, beyond
-        // the idle boundary seen when users lift and place their fingers again.
-        start += 300;
-      };
-
-      swipe(1);  // move forward
-      swipe(1);  // same direction after the previous input sequence is idle
-      swipe(-1); // return to the previous page
-      swipe(1);  // forward to the page that used to become stuck
-      swipe(1);  // continue forward instead of getting stuck there again
-
-      expect(settle.mock.calls.map(([direction]) => direction)).toEqual([1, 1, -1, 1, 1]);
     });
 
     it("bounds trackpad pages queued during one slow page handoff", async () => {
@@ -897,81 +700,6 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(desktop.pageSwipeRequest.target).toBe(4);
     });
 
-    it("never pages again on decaying or constant momentum continuation", async () => {
-      const { wheel, settle } = await desktopSetup();
-      wheel(140, 0, { timeStamp: 100 });
-      // A tail that only decays or holds constant is what momentum looks like
-      // on supported trackpads (#264); it must stay suppressed, ripples below
-      // the 24px re-arm floor included.
-      for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [20, 140], [20, 150],
-        [20, 160], [12, 170], [12, 180], [6, 190], [5, 200]]) {
-        wheel(delta, 0, { timeStamp: time });
-      }
-      expect(settle).toHaveBeenCalledTimes(1);
-      // The idle-gap flick still opens the next page, one sample later: the
-      // boundary sample is frozen (140px over 310ms sits below the frozen
-      // 6px envelope at its real gap), and the next sample's slope re-arms
-      // the fresh contact that flips.
-      wheel(140, 0, { timeStamp: 500 });
-      wheel(140, 0, { timeStamp: 510 });
-      expect(settle).toHaveBeenCalledTimes(2);
-    });
-
-    it("re-arms a rising sequence after the tail as a fresh flick on the y axis", async () => {
-      const { scroller, wheel, settle } = await desktopSetup();
-      // The rising sequence re-arms the gesture on the y axis (the horizontal
-      // contact spends its single page either way), so the renewal flips.
-      scroller.scrollTop = 600;
-      wheel(0, 140, { timeStamp: 100 });
-      for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [10, 140], [4, 150],
-        [8, 154], [20, 164], [35, 174], [70, 184], [90, 194], [110, 204], [90, 214], [60, 224]]) {
-        wheel(0, delta, { timeStamp: time });
-      }
-      expect(settle).toHaveBeenCalledTimes(2);
-
-      // A second sustained rise (8 -> 70 within 30ms, 8.75x) cannot be
-      // momentum: supported-trackpad tails hold constant or decay (#264), so
-      // it is a new finger contact and the blocked window re-arms on it. This
-      // rise used to be swallowed here.
-      for (const [delta, time] of [[8, 234], [20, 244], [35, 254], [70, 264]]) wheel(0, delta, { timeStamp: time });
-      expect(settle).toHaveBeenCalledTimes(3);
-    });
-
-    it("rearms confirmed horizontal re-swipes and pages a fresh idle swipe", async () => {
-      const { wheel, settle } = await desktopSetup();
-      wheel(140, 0, { timeStamp: 100 });
-      for (const [delta, time] of [[90, 110], [60, 120], [30, 130], [10, 140], [4, 150]]) {
-        wheel(delta, 0, { timeStamp: time });
-      }
-      expect(settle).toHaveBeenCalledTimes(1);
-      // A confirmed rising re-swipe gets another page even while the previous
-      // inertia stream is still settling.
-      for (const [delta, time] of [[50, 160], [55, 170], [60, 180], [30, 190], [20, 200], [12, 210], [25, 220]]) {
-        wheel(delta, 0, { timeStamp: time });
-      }
-      expect(settle).toHaveBeenCalledTimes(2);
-      // A fresh same-direction swipe after idle gets its own page as well.
-      wheel(140, 0, { timeStamp: 500 });
-      wheel(140, 0, { timeStamp: 510 });
-      expect(settle).toHaveBeenCalledTimes(3);
-    });
-
-    it("keeps one stalled merged sample from posing as a renewed flick", async () => {
-      const { wheel, settle } = await desktopSetup();
-      // A main-thread stall merges several hardware samples into one event:
-      // 30px after a 30ms gap carries the same ~1px/ms speed as the tail it
-      // continues, but the raw-px jump floor saw 30 >= 24 and minted a fresh
-      // gesture id and page budget mid-flick.
-      for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [30, 130], [20, 140],
-        [16, 150], [12, 160], [10, 170]]) {
-        wheel(delta, 0, { timeStamp: time });
-      }
-      expect(settle).toHaveBeenCalledTimes(1);
-      wheel(30, 0, { timeStamp: 200 });
-      for (const [delta, time] of [[10, 210], [8, 220], [6, 230]]) wheel(delta, 0, { timeStamp: time });
-      expect(settle).toHaveBeenCalledTimes(1);
-    });
-
     it("keeps a single accelerating flick to one page across the flip boundary", async () => {
       const { wheel, settle } = await desktopSetup();
       // One contact whose fast phase crosses the page threshold must not
@@ -995,58 +723,6 @@ export function gestureContract(create: () => Promise<any>): void {
       expect(settle).toHaveBeenCalledTimes(1);
     });
 
-    it("keeps stalled tail delivery from reopening the page budget", async () => {
-      const { wheel, settle } = await desktopSetup();
-      // 55-179ms delivery stalls used to reset the gesture unconditionally,
-      // lifting the suppression and letting the resumed tail's travel flip
-      // another page: the stall is a delivery artifact, not a gesture border.
-      for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [30, 130], [25, 140], [20, 150]]) {
-        wheel(delta, 0, { timeStamp: time });
-      }
-      expect(settle).toHaveBeenCalledTimes(1);
-      for (const [delta, time] of [[18, 280], [15, 290], [13, 300]]) wheel(delta, 0, { timeStamp: time });
-      for (const [delta, time] of [[12, 420], [10, 430], [9, 440]]) wheel(delta, 0, { timeStamp: time });
-      expect(settle).toHaveBeenCalledTimes(1);
-    });
-
-    it("keeps a stall-merged tail sample from renewing the decayed flick", async () => {
-      // A 100ms main-thread stall merges the tau=300ms inertia tail's hardware
-      // samples into one event whose pixels already sum the whole stall, so the
-      // sample must be normalized at its real delivery gap. Clamping the gap to
-      // 50ms overstated its speed gap/50x, crossed the decayed envelope, reset
-      // the gesture and let the resumed tail's own travel flip a second page -
-      // the residual 55-180ms stall band #320's idle reset leaves behind.
-      const { scroller, wheel, settle } = await desktopSetup();
-      scroller.scrollTop = 600;
-      for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [35, 130], [20, 140], [14, 150]]) {
-        wheel(0, delta, { timeStamp: time });
-      }
-      wheel(0, 76.5, { timeStamp: 250 });
-      Array.from({ length: 45 }, (_, i) => 9 * Math.exp(-(10 + i * 10) / 300))
-        .forEach((delta, i) => wheel(0, delta, { timeStamp: 260 + i * 10 }));
-      expect(settle).toHaveBeenCalledTimes(1);
-    });
-
-    it("keeps a delivery-cadence stamped stall merge from renewing the decayed flick", async () => {
-      // The same burst as the stall-merged contract above, but the merged
-      // event carries a delivery-cadence stamp (timeStamp 160, gap 10ms)
-      // instead of its real 100ms stall gap - the shape platforms that stamp
-      // merged events inside the delivery rhythm produce. The short gap then
-      // reads the merge at ~5x its real speed, the jump exit re-armed and the
-      // resumed tail flipped a second page. A jump-shaped merge is
-      // indistinguishable from a real re-swipe at the single-sample level, so
-      // it must freeze for one sample; the resumed tail's decay exposes it.
-      const { scroller, wheel, settle } = await desktopSetup();
-      scroller.scrollTop = 600;
-      for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [35, 130], [20, 140], [14, 150]]) {
-        wheel(0, delta, { timeStamp: time });
-      }
-      wheel(0, 76.5, { timeStamp: 160 });
-      Array.from({ length: 45 }, (_, i) => 9 * Math.exp(-(10 + i * 10) / 300))
-        .forEach((delta, i) => wheel(0, delta, { timeStamp: 260 + i * 10 }));
-      expect(settle).toHaveBeenCalledTimes(1);
-    });
-
     it("keeps the same tail delivered without the stall to one page", async () => {
       // Control for the stall-merged regression above: the identical decaying
       // tail delivered continuously (no stall) is one page, so that regression
@@ -1059,159 +735,6 @@ export function gestureContract(create: () => Promise<any>): void {
       Array.from({ length: 45 }, (_, i) => 9 * Math.exp(-(10 + i * 10) / 300))
         .forEach((delta, i) => wheel(0, delta, { timeStamp: 160 + i * 10 }));
       expect(settle).toHaveBeenCalledTimes(1);
-    });
-
-    it("re-arms a real rising re-swipe delivered after the stall", async () => {
-      // Anti-overfix for the stall-merged regression above: normalizing at the
-      // real delivery gap must not swallow genuine renewals - a strictly
-      // rising re-swipe out of the stall (45->50->55) still re-arms through the
-      // ramp detector and flips the second page.
-      const { scroller, wheel, settle } = await desktopSetup();
-      scroller.scrollTop = 600;
-      for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [35, 130], [20, 140], [14, 150]]) {
-        wheel(0, delta, { timeStamp: time });
-      }
-      wheel(0, 76.5, { timeStamp: 250 });
-      for (const [delta, time] of [[45, 260], [50, 270], [55, 280]]) wheel(0, delta, { timeStamp: time });
-      expect(settle).toHaveBeenCalledTimes(2);
-    });
-
-    it("keeps a settled-tail stall merged sample from minting a fresh contact", async () => {
-      // The residual band under the hot-tail fix: once the envelope decays
-      // into the settled band (<= 4px) the [1,50]ms clamp returns, and a
-      // 100ms stall merged sample outran it on clamp-inflated speed alone -
-      // the reset minted a fresh contact and the remaining tail travel
-      // flipped a second page inside one physical contact.
-      const { scroller, wheel, settle } = await desktopSetup();
-      scroller.scrollTop = 600;
-      for (const [delta, time] of [[140, 100], [90, 110], [60, 120]]) wheel(0, delta, { timeStamp: time });
-      const windowPx = 30 * (1 - Math.exp(-10 / 300));
-      const tailSpeed = 11 * Math.exp(-320 / 300);
-      Array.from({ length: 32 }, (_, i) => 11 * Math.exp(-(10 + i * 10) / 300) * windowPx)
-        .forEach((delta, i) => wheel(0, delta, { timeStamp: 130 + i * 10 }));
-      wheel(0, tailSpeed * 30 * (1 - Math.exp(-100 / 300)), { timeStamp: 540 });
-      Array.from({ length: 70 }, (_, i) => tailSpeed * Math.exp(-(100 + (i + 1) * 10) / 300) * windowPx)
-        .forEach((delta, i) => wheel(0, delta, { timeStamp: 550 + i * 10 }));
-      expect(settle).toHaveBeenCalledTimes(1);
-    });
-
-    it("keeps an idle-boundary stall merged sample from minting a fresh contact", async () => {
-      // The >=180ms slice of the same stall family: the boundary itself no
-      // longer resets a flipped continuous gesture - that reset wiped the
-      // suppression and the page budget, so the stall's merged sample
-      // (51px here, 105px with the continuation) flipped a second page
-      // inside one physical contact. The merged sample is frozen instead
-      // (its real-gap speed sits below the settled envelope) and the tail
-      // continuation stays suppressed.
-      const { scroller, wheel, settle } = await desktopSetup();
-      scroller.scrollTop = 600;
-      for (const [delta, time] of [[140, 100], [90, 110], [60, 120]]) wheel(0, delta, { timeStamp: time });
-      const windowPx = 30 * (1 - Math.exp(-10 / 300));
-      const tailSpeed = 11 * Math.exp(-320 / 300);
-      Array.from({ length: 32 }, (_, i) => 11 * Math.exp(-(10 + i * 10) / 300) * windowPx)
-        .forEach((delta, i) => wheel(0, delta, { timeStamp: 130 + i * 10 }));
-      wheel(0, tailSpeed * 30 * (1 - Math.exp(-180 / 300)), { timeStamp: 620 });
-      Array.from({ length: 70 }, (_, i) => tailSpeed * Math.exp(-(180 + (i + 1) * 10) / 300) * windowPx)
-        .forEach((delta, i) => wheel(0, delta, { timeStamp: 630 + i * 10 }));
-      expect(settle).toHaveBeenCalledTimes(1);
-    });
-
-    it("releases a post-flick slow scroll to a second page once it latches", async () => {
-      // The swallow contract at the view seam: after a flick's tail settled, a
-      // steady same-direction slow scroll used to be preventDefault'd forever
-      // with no page and no native scroll. Past the latch the suppression
-      // lifts, the accumulated slow travel rides the existing renewedTravel
-      // hand-off, and the second page settles at the scroll boundary; the
-      // per-gesture budget still caps the contact after that.
-      const { scroller, wheel, settle } = await desktopSetup();
-      scroller.scrollTop = 600;
-      wheel(0, 140, { timeStamp: 100 });
-      for (const [delta, time] of [[90, 110], [60, 120], [40, 130], [25, 140], [16, 150],
-        [10, 160], [7, 170], [5, 180], [4, 190], [3, 200], [3, 210]]) wheel(0, delta, { timeStamp: time });
-      expect(settle).toHaveBeenCalledTimes(1);
-      // 500ms idle, then a steady 3px/10ms slow scroll - 3000px in total.
-      for (let i = 0; i < 1000; i++) wheel(0, 3, { timeStamp: 720 + i * 10 });
-      expect(settle).toHaveBeenCalledTimes(2);
-    });
-
-    it("re-arms the same moderate re-swipe speed at every report cadence on the y axis", async () => {
-      const { scroller, wheel, settle } = await desktopSetup();
-      // The re-arm floors are speeds (px per 10ms reference window), not
-      // per-event amplitudes: the same ~1.2px/ms re-swipe must re-arm whether
-      // the trackpad reports it in 8ms or 16ms slices. Raw-px floors swallow
-      // the fast-cadence slices whole. (This contract lives on the y axis
-      // now: a horizontal contact never flips past its single page.)
-      scroller.scrollTop = 600;
-      for (const [delta, time] of [[140, 100], [90, 110], [60, 120], [30, 130], [20, 140],
-        [14, 150], [10, 160], [8, 170], [6, 180], [4, 190], [3, 200]]) {
-        wheel(0, delta, { timeStamp: time });
-      }
-      expect(settle).toHaveBeenCalledTimes(1);
-      for (let i = 0; i < 30; i++) wheel(0, 9.6, { timeStamp: 208 + i * 8 });
-      expect(settle).toHaveBeenCalledTimes(2);
-      // The same speed on a slower cadence, one contact later.
-      for (const [delta, time] of [[140, 700], [90, 710], [60, 720], [30, 730], [20, 740],
-        [14, 750], [10, 760], [8, 770], [6, 780], [4, 790], [3, 800]]) {
-        wheel(0, delta, { timeStamp: time });
-      }
-      for (let i = 0; i < 30; i++) wheel(0, 20, { timeStamp: 816 + i * 16 });
-      expect(settle).toHaveBeenCalledTimes(4);
-    });
-
-    it("pins the visual fixture burst and notch cadence at three pages", async () => {
-      const { scroller, wheel, settle } = await desktopSetup();
-      // tests/visual/desktop-input.spec.ts "a trackpad flick advances one page
-      // and fast mouse-wheel notches are dampened" dispatches exactly these
-      // streams: the burst pinned at 9000+i*10 and the notch baseline at
-      // 10000+i*40. The fixture and this lock must evolve together.
-      scroller.scrollTop = 600;
-      for (const [delta, time] of [[140, 9000], [90, 9010], [60, 9020], [30, 9030], [20, 9040], [14, 9050], [10, 9060]]) {
-        wheel(delta, 0, { timeStamp: time });
-      }
-      expect(settle).toHaveBeenCalledTimes(1);
-      for (let i = 0; i < 5; i++) wheel(0, 100, { timeStamp: 10000 + i * 40 });
-      expect(settle).toHaveBeenCalledTimes(3);
-    });
-
-    it("hands the notch stream to a fresh gesture exactly at the idle boundary", async () => {
-      // Characterization for the fixture's burst/notch distance: a first
-      // notch landing GESTURE_IDLE_MS after the burst's last sample is
-      // frozen by the boundary judgment (its zero held-axis component pauses
-      // the stream, and 100px over 180ms sits below the burst's hot tail
-      // envelope), so the stream hands over to a fresh gesture one notch
-      // later - the next notch's slope re-arms it. Sync with the visual
-      // fixture (whose burst/notch baseline is 940ms apart and keeps its
-      // totals) before changing GESTURE_IDLE_MS or the notch sensitivity
-      // window.
-      const { scroller, wheel, settle } = await desktopSetup();
-      scroller.scrollTop = 600;
-      for (const [delta, time] of [[140, 9000], [90, 9010], [60, 9020], [30, 9030], [20, 9040], [14, 9050], [10, 9060]]) {
-        wheel(delta, 0, { timeStamp: time });
-      }
-      expect(settle).toHaveBeenCalledTimes(1);
-      wheel(0, 100, { timeStamp: 9240 });
-      expect(settle).toHaveBeenCalledTimes(1);
-      for (let i = 1; i < 5; i++) wheel(0, 100, { timeStamp: 9240 + i * 40 });
-      expect(settle).toHaveBeenCalledTimes(3);
-    });
-
-    it("rides a sub-idle notch stream through the burst gesture's page budget", async () => {
-      const { scroller, wheel, settle } = await desktopSetup();
-      // Inside the idle boundary a notch stream whose x component is exactly
-      // zero pauses the held axis instead of resetting: the first notches are
-      // diagonal pauses (no page), the sustained run re-classifies onto y and
-      // the per-gesture budget still caps the total. Sync with the visual
-      // fixture before changing GESTURE_IDLE_MS / RENEWED_FLICK_GAP_MS or the
-      // axis retention logic.
-      scroller.scrollTop = 600;
-      for (const [delta, time] of [[140, 9000], [90, 9010], [60, 9020], [30, 9030], [20, 9040], [14, 9050], [10, 9060]]) {
-        wheel(delta, 0, { timeStamp: time });
-      }
-      expect(settle).toHaveBeenCalledTimes(1);
-      wheel(0, 100, { timeStamp: 9230 });
-      expect(settle).toHaveBeenCalledTimes(1);
-      for (let i = 1; i < 5; i++) wheel(0, 100, { timeStamp: 9230 + i * 40 });
-      expect(settle).toHaveBeenCalledTimes(3);
     });
 
     it("keeps nested editing and scroll surfaces independent from document navigation", async () => {
