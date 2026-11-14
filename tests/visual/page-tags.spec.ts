@@ -5,13 +5,14 @@ async function tagNotebookPage(page: Page, thumb: string, flag: string, tag: str
   await page.getByRole("button", { name: thumb, exact: true }).click();
   const popover = page.locator(".ink-tag-popover");
   await expect(popover).toBeVisible();
-  // The popover must sit BESIDE its thumbnail, not below it: rail thumbs
-  // stack vertically, so anything opening under the thumb lands on the next
-  // page's thumbnail and reads as tagging the wrong page.
+  // The popover must open ON the anchor the user tapped ("where it comes
+  // from, there it opens"): its left edge starts at/near the tapped control
+  // (inside the rail, NOT floating out beside the rail over the reading
+  // content), and it vertically overlaps the anchor thumbnail.
   const anchor = page.locator(".ink-page-thumb").first();
   const anchorBox = (await anchor.boundingBox())!;
   const popBox = (await popover.boundingBox())!;
-  expect(popBox.x).toBeGreaterThanOrEqual(anchorBox.x + anchorBox.width - 1);
+  expect(popBox.x).toBeLessThan(anchorBox.x + anchorBox.width);
   expect(Math.min(popBox.y + popBox.height, anchorBox.y + anchorBox.height)
     - Math.max(popBox.y, anchorBox.y)).toBeGreaterThan(0);
   await page.getByRole("button", { name: flag, exact: true }).click();
