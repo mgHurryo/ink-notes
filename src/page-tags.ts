@@ -93,18 +93,15 @@ export interface TagPopoverHost {
  */
 export function openTagPopover(host: HTMLElement, anchor: HTMLElement, controller: TagPopoverHost): () => void {
   const popover = host.createDiv({ cls: "ink-tag-popover", attr: { role: "dialog", "aria-label": "Page tags" } });
-  // Beside the anchor, over the editor surface: rail thumbnails stack
-  // vertically, so a popover opening BELOW a thumbnail lands on the next
-  // page's thumbnail — it must read as belonging to the page it edits. Both
-  // rails sit at the editor's left edge, so opening to the right keeps the
-  // popover alongside its anchor; clamped into the viewport either way. The
-  // popover caps its own height with internal scrolling.
+  // ON the anchor the user tapped ("where it comes from, there it opens"):
+  // rail thumbnails stack vertically, so both a below-opening (lands on the
+  // next thumbnail) and a floating right-side opening (floats over reading
+  // content) read as tagging the wrong page. The popover's top edge starts
+  // at the anchor's top and it may overlap the thumbnail/rail; clamped into
+  // the viewport. The popover caps its own height with internal scrolling.
   const rect = anchor.getBoundingClientRect();
-  const besideLeft = rect.right + 8 <= window.innerWidth - 240;
-  const left = besideLeft
-    ? Math.min(rect.right + 8, window.innerWidth - 240)
-    : Math.max(8, rect.left - 240 + Math.min(rect.width, 232));
-  const top = Math.max(8, Math.min(rect.top, window.innerHeight - 280));
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - 240));
+  const top = Math.max(8, Math.min(rect.top - 6, window.innerHeight - 280));
   popover.setCssStyles({ left: `${Math.round(left)}px`, top: `${Math.round(top)}px` });
 
   const reason = popover.createDiv({ cls: "ink-tag-lock-reason", attr: { role: "status" } });

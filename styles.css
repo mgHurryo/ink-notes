@@ -935,6 +935,7 @@
   box-shadow: 0 1px 3px rgb(0 0 0 / 20%);
   opacity: 0.55;
 }
+.ink-thumb-tag-button { cursor: pointer; user-select: none; -webkit-user-select: none; }
 .ink-thumb-tag-button svg { width: 13px; height: 13px; }
 .ink-page-thumb:hover .ink-thumb-tag-button,
 .ink-thumb-tag-button:focus-visible,
