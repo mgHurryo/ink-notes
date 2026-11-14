@@ -279,6 +279,25 @@ describe("DesktopWheelGesture sustained same-direction re-swipe", () => {
     expect(pages).toBe(2);
   });
 
+  it("pages a rapid consecutive flick whose hold completes inside the window", () => {
+    // The beta.44 residual: fast same-direction flicks hold for only
+    // ~150-250ms, so a 300ms window never completed and rapid multi-page
+    // swiping stuck. At 120ms the hold fits inside one short flick.
+    const gesture = new DesktopWheelGesture();
+    let pages = 0;
+    let at = 0;
+    const feed = (values: number[], stepMs: number) => {
+      for (const magnitude of values) {
+        pages += gesture.pageDelta(gesture.begin({ x: magnitude, y: 0, mode: 0 }, false, at), false);
+        at += stepMs;
+      }
+    };
+    feed([140, 90, 60, 35, 20, 14], 10); // flick one: a page
+    at += 110;                           // ~120ms gap re-arms the window
+    feed(Array.from({ length: 14 }, () => 15), 10); // 140ms held flick: fires
+    expect(pages).toBe(2);
+  });
+
   it("keeps a resumed decaying tail at its contact's single page", () => {
     const gesture = new DesktopWheelGesture();
     let pages = 0;

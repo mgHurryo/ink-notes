@@ -598,20 +598,30 @@ export class InkView extends InkWritingView {
       button.createSpan({ text: String(index + 1), cls: "ink-page-thumb-number" });
       button.createSpan({ text: page.title, cls: "ink-page-thumb-title" });
       paintThumbBadges(button, page);
-      const tagButton = button.createEl("button", {
+      // A plain element with role=button, NOT a nested <button>: buttons
+      // cannot nest, and iPad WebKit paints UA form-control sizing onto the
+      // inner one, stretching the 20x20 square into a rectangle (the
+      // beta.44 geometry pin did not survive real-device WebKit).
+      const tagButton = button.createSpan({
         cls: "ink-thumb-tag-button",
-        attr: { type: "button", "aria-label": `Tag page ${index + 1}`, title: "Tag", "aria-disabled": String(this.readingMode) },
+        attr: { role: "button", tabindex: "0", "aria-label": `Tag page ${index + 1}`, title: "Tag", "aria-disabled": String(this.readingMode) },
       });
       // Read-only state stays visible via aria-disabled but never disables
-      // the entry: a disabled button swallows left AND right clicks with no
+      // the entry: a disabled control swallows left AND right clicks with no
       // feedback, which reads as broken. The popover opens read-only instead.
       tagButton.addEventListener("click", (event) => {
         event.stopPropagation();
         this.openThumbTagPopover(button);
       });
+      tagButton.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+        event.preventDefault();
+        event.stopPropagation();
+        this.openThumbTagPopover(button);
+      });
       button.addEventListener("contextmenu", (event) => {
         event.preventDefault();
-        this.openThumbTagPopover(button);
+        this.openThumbTagPopover(button.querySelector<HTMLElement>(":scope > .ink-thumb-tag-button") ?? button);
       });
       button.addEventListener("click", () => this.pageManagement
         ? this.togglePageSelection(page.id) : this.explicitNavigateToPage(page.id));
@@ -656,11 +666,16 @@ export class InkView extends InkWritingView {
     return `${Math.min(index + 1, count)} / ${count}`;
   }
 
-  private openThumbTagPopover(thumb: HTMLElement): void {
+  /** Opens the tag popover for the page the anchor belongs to. The anchor is
+   *  whatever the user actually tapped (the tag control, or the thumbnail
+   *  itself on right-click); the page id always resolves from the owning
+   *  thumbnail, so both anchors behave identically. */
+  private openThumbTagPopover(anchor: HTMLElement): void {
     this.closeTagPopover();
+    const thumb = anchor.closest<HTMLElement>(".ink-page-thumb") ?? anchor;
     const pageId = thumb.dataset.pageId;
     if (!pageId) return;
-    this.tagPopoverClose = openTagPopover(this.root, thumb, {
+    this.tagPopoverClose = openTagPopover(this.root, anchor, {
       getPage: () => this.pageById(pageId) ?? null,
       isLocked: () => this.readingMode,
       lockReason: () => this.readingMode ? "Reading mode is on" : null,

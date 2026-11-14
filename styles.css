@@ -935,6 +935,7 @@
   box-shadow: 0 1px 3px rgb(0 0 0 / 20%);
   opacity: 0.55;
 }
+.ink-thumb-tag-button { cursor: pointer; user-select: none; -webkit-user-select: none; }
 .ink-thumb-tag-button svg { width: 13px; height: 13px; }
 .ink-page-thumb:hover .ink-thumb-tag-button,
 .ink-thumb-tag-button:focus-visible,
@@ -1510,6 +1511,12 @@
   flex-direction: column;
   flex: 1 1 auto;
   overflow: auto;
+  /* Keep the vertical gutter reserved: near the fit zoom the content
+     height straddles the scrollbar boundary, and without a stable gutter
+     the appearing/disappearing bar resizes the page box, which re-derives
+     the fit, which flips the bar again - the 99/100/101% oscillation with
+     ink lagging the background (the notebook scroller already pins this). */
+  scrollbar-gutter: stable;
   padding: 24px;
   /* A theme-aware "desk" around the page instead of raw white bands. */
   background: color-mix(in srgb, var(--ink-text) 9%, var(--ink-panel));

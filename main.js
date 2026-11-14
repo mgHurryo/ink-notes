@@ -24942,7 +24942,7 @@ var RENEWED_FLICK_HOT_REARM_RATIO = 1.25;
 var SLOW_SCROLL_EXIT_MS = 1200;
 var REF_DT_MS = 10;
 var RENEW_MIN_FLIPPED = 3;
-var SUSTAINED_SWIPE_MS = 300;
+var SUSTAINED_SWIPE_MS = 120;
 var SUSTAINED_SWIPE_RETENTION = 0.78;
 var PAGE_TRAVEL_PX = 100;
 var HORIZONTAL_PAGE_TRAVEL_PX = 48;
@@ -32487,9 +32487,8 @@ function paintThumbBadges(button3, page) {
 function openTagPopover(host, anchor, controller) {
   const popover = host.createDiv({ cls: "ink-tag-popover", attr: { role: "dialog", "aria-label": "Page tags" } });
   const rect = anchor.getBoundingClientRect();
-  const besideLeft = rect.right + 8 <= window.innerWidth - 240;
-  const left = besideLeft ? Math.min(rect.right + 8, window.innerWidth - 240) : Math.max(8, rect.left - 240 + Math.min(rect.width, 232));
-  const top = Math.max(8, Math.min(rect.top, window.innerHeight - 280));
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - 240));
+  const top = Math.max(8, Math.min(rect.top - 6, window.innerHeight - 280));
   popover.setCssStyles({ left: `${Math.round(left)}px`, top: `${Math.round(top)}px` });
   const reason = popover.createDiv({ cls: "ink-tag-lock-reason", attr: { role: "status" } });
   const flagsRow = popover.createDiv({ cls: "ink-tag-flags", attr: { role: "group", "aria-label": "Flag color" } });
@@ -34652,17 +34651,24 @@ var InkView = class extends InkWritingView {
       button3.createSpan({ text: String(index + 1), cls: "ink-page-thumb-number" });
       button3.createSpan({ text: page.title, cls: "ink-page-thumb-title" });
       paintThumbBadges(button3, page);
-      const tagButton = button3.createEl("button", {
+      const tagButton = button3.createSpan({
         cls: "ink-thumb-tag-button",
-        attr: { type: "button", "aria-label": `Tag page ${index + 1}`, title: "Tag", "aria-disabled": String(this.readingMode) }
+        attr: { role: "button", tabindex: "0", "aria-label": `Tag page ${index + 1}`, title: "Tag", "aria-disabled": String(this.readingMode) }
       });
       tagButton.addEventListener("click", (event) => {
         event.stopPropagation();
         this.openThumbTagPopover(button3);
       });
-      button3.addEventListener("contextmenu", (event) => {
+      tagButton.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
         event.preventDefault();
+        event.stopPropagation();
         this.openThumbTagPopover(button3);
+      });
+      button3.addEventListener("contextmenu", (event) => {
+        var _a;
+        event.preventDefault();
+        this.openThumbTagPopover((_a = button3.querySelector(":scope > .ink-thumb-tag-button")) != null ? _a : button3);
       });
       button3.addEventListener("click", () => this.pageManagement ? this.togglePageSelection(page.id) : this.explicitNavigateToPage(page.id));
       this.scheduleThumbnail(canvas, page);
@@ -34701,14 +34707,20 @@ var InkView = class extends InkWritingView {
     const index = (_c = this.fastPagingDestinationIndex()) != null ? _c : this.pageIndex;
     return `${Math.min(index + 1, count)} / ${count}`;
   }
-  openThumbTagPopover(thumb) {
+  /** Opens the tag popover for the page the anchor belongs to. The anchor is
+   *  whatever the user actually tapped (the tag control, or the thumbnail
+   *  itself on right-click); the page id always resolves from the owning
+   *  thumbnail, so both anchors behave identically. */
+  openThumbTagPopover(anchor) {
+    var _a;
     this.closeTagPopover();
+    const thumb = (_a = anchor.closest(".ink-page-thumb")) != null ? _a : anchor;
     const pageId = thumb.dataset.pageId;
     if (!pageId) return;
-    this.tagPopoverClose = openTagPopover(this.root, thumb, {
+    this.tagPopoverClose = openTagPopover(this.root, anchor, {
       getPage: () => {
-        var _a;
-        return (_a = this.pageById(pageId)) != null ? _a : null;
+        var _a2;
+        return (_a2 = this.pageById(pageId)) != null ? _a2 : null;
       },
       isLocked: () => this.readingMode,
       lockReason: () => this.readingMode ? "Reading mode is on" : null,
@@ -37222,8 +37234,18 @@ var PdfInkView = class extends InkWritingView {
     observer.observe(scroller);
     this.register(() => observer.disconnect());
   }
-  /** One relayout + re-render pass for a scroller size change. */
+  /** One relayout + re-render pass for a scroller size change. Sub-3px
+   *  jitter is ignored: engine rounding (or a missing scrollbar-gutter
+   *  support) feeding the page box back into its own scrollbar state made
+   *  the fit zoom oscillate and the ink lag the background. */
   applyPaneResize() {
+    const scroller = this.scroller;
+    if (scroller) {
+      const width = scroller.clientWidth, height = scroller.clientHeight;
+      if (this.lastPaneWidth !== void 0 && Math.abs(width - this.lastPaneWidth) < 3 && this.lastPaneHeight !== void 0 && Math.abs(height - this.lastPaneHeight) < 3) return;
+      this.lastPaneWidth = width;
+      this.lastPaneHeight = height;
+    }
     this.prewarmToken += 1;
     this.clearNeighbourCache();
     this.layoutPage();
@@ -37961,20 +37983,27 @@ var PdfInkView = class extends InkWritingView {
       const notebookPage = (_d = this.sidecar) == null ? void 0 : _d.notebook.pages[index];
       if (notebookPage) {
         paintThumbBadges(button3, notebookPage);
-        const tagButton = button3.createEl("button", {
+        const tagButton = button3.createSpan({
           cls: "ink-thumb-tag-button",
-          attr: { type: "button", "aria-label": `Tag page ${index + 1}`, title: "Tag" }
+          attr: { role: "button", tabindex: "0", "aria-label": `Tag page ${index + 1}`, title: "Tag" }
         });
         tagButton.setAttribute("aria-disabled", String(this.editingLocked()));
         tagButton.addEventListener("click", (event) => {
           event.stopPropagation();
-          if (pageId) this.openThumbTagPopover(button3);
+          if (pageId) this.openThumbTagPopover(tagButton);
+        });
+        tagButton.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (pageId) this.openThumbTagPopover(tagButton);
         });
       }
       button3.addEventListener("contextmenu", (event) => {
+        var _a2;
         if (!pageId) return;
         event.preventDefault();
-        this.openThumbTagPopover(button3);
+        this.openThumbTagPopover((_a2 = button3.querySelector(":scope > .ink-thumb-tag-button")) != null ? _a2 : button3);
       });
       button3.addEventListener("click", () => {
         if (this.pageManagement) {
@@ -37990,20 +38019,25 @@ var PdfInkView = class extends InkWritingView {
     this.railFilters[key] = value;
     this.refreshPageRail();
   }
-  /** Shared tagging popover over the live sidecar notebook page. */
-  openThumbTagPopover(button3) {
+  /** Shared tagging popover over the live sidecar notebook page. The anchor
+   *  is whatever the user actually tapped (the tag control, or the thumbnail
+   *  itself on right-click); the page id always resolves from the owning
+   *  thumbnail, so both anchors behave identically. */
+  openThumbTagPopover(anchor) {
+    var _a;
     this.closeTagPopover();
-    const pageId = button3.dataset.pageId;
+    const thumb = (_a = anchor.closest(".ink-page-thumb")) != null ? _a : anchor;
+    const pageId = thumb.dataset.pageId;
     if (!pageId || !this.root) return;
-    this.tagPopoverClose = openTagPopover(this.root, button3, {
+    this.tagPopoverClose = openTagPopover(this.root, anchor, {
       getPage: () => {
-        var _a, _b;
-        return (_b = (_a = this.sidecar) == null ? void 0 : _a.notebook.pages.find((page) => page.id === pageId)) != null ? _b : null;
+        var _a2, _b;
+        return (_b = (_a2 = this.sidecar) == null ? void 0 : _a2.notebook.pages.find((page) => page.id === pageId)) != null ? _b : null;
       },
       isLocked: () => this.editingLocked(),
       lockReason: () => {
-        var _a;
-        return this.editingLocked() ? (_a = this.writeBlockedReason) != null ? _a : "Reading mode is on" : null;
+        var _a2;
+        return this.editingLocked() ? (_a2 = this.writeBlockedReason) != null ? _a2 : "Reading mode is on" : null;
       },
       onTagsChange: (page, tags) => this.applyRailTags(page, tags),
       onFlagChange: (page, flag) => this.applyRailFlag(page, flag)

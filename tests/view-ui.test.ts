@@ -18,7 +18,11 @@ import type { TFile, WorkspaceLeaf } from "obsidian";
 import { Menu } from "obsidian";
 import { gestureContract } from "./gesture-contract";
 
-const button = (label: string) => document.querySelector<HTMLButtonElement>('button[aria-label="' + label + '"]')!;
+// Matches plain buttons first, then role=button spans (the rail's tag entry
+// is a span: nested <button> elements break iPad WebKit's form-control
+// sizing). Button-first keeps aria-labelled sections from shadowing tools.
+const button = (label: string) => (document.querySelector('button[aria-label="' + label + '"]')
+  ?? document.querySelector('[role="button"][aria-label="' + label + '"]')) as HTMLButtonElement;
 /** iPads deliver no dblclick for touch; the preset editor opens on two taps. */
 const doubleTap = (el: HTMLElement): void => {
   el.dispatchEvent(new MouseEvent("pointerdown", { bubbles: true }));
@@ -1492,9 +1496,8 @@ describe("page rail tagging and filters", () => {
     button("Pages").click();
     button("Reading mode").click();
     // Reading mode blocks page mutations but must not dead-end the entry: a
-    // disabled button swallows both clicks with no feedback. The entry stays
-    // clickable, marked aria-disabled, and the popover opens read-only.
-    expect(button("Tag page 1").disabled).toBe(false);
+    // disabled control swallows both clicks with no feedback. The entry
+    // stays clickable, marked aria-disabled, and the popover opens read-only.
     expect(button("Tag page 1").getAttribute("aria-disabled")).toBe("true");
     button("Tag page 1").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
     const popover = document.querySelector(".ink-tag-popover");

@@ -137,6 +137,9 @@ export class PdfInkView extends InkWritingView {
   private pdfRenderGeneration = 0;
   private loadGeneration = 0;
   private resizeRenderTimer: number | undefined;
+  /** Last scroller box seen by applyPaneResize, for its sub-3px hysteresis. */
+  private lastPaneWidth: number | undefined;
+  private lastPaneHeight: number | undefined;
   /** Set while the rail's width animation is running: the ResizeObserver
    *  parks its per-frame work until scheduleRailResizeSettle runs once. */
   private railResizeTimer: number | undefined;
@@ -266,8 +269,19 @@ export class PdfInkView extends InkWritingView {
     this.register(() => observer.disconnect());
   }
 
-  /** One relayout + re-render pass for a scroller size change. */
+  /** One relayout + re-render pass for a scroller size change. Sub-3px
+   *  jitter is ignored: engine rounding (or a missing scrollbar-gutter
+   *  support) feeding the page box back into its own scrollbar state made
+   *  the fit zoom oscillate and the ink lag the background. */
   private applyPaneResize(): void {
+    const scroller = this.scroller;
+    if (scroller) {
+      const width = scroller.clientWidth, height = scroller.clientHeight;
+      if (this.lastPaneWidth !== undefined && Math.abs(width - this.lastPaneWidth) < 3
+        && this.lastPaneHeight !== undefined && Math.abs(height - this.lastPaneHeight) < 3) return;
+      this.lastPaneWidth = width;
+      this.lastPaneHeight = height;
+    }
     this.prewarmToken += 1;
     this.clearNeighbourCache();
     this.layoutPage();
@@ -1064,20 +1078,30 @@ export class PdfInkView extends InkWritingView {
         // Read-only state never disables the entry: a disabled button
         // swallows left AND right clicks with no feedback, which reads as
         // broken. The popover opens read-only and explains itself.
-        const tagButton = button.createEl("button", {
+        // role=button span, not a nested <button>: buttons cannot nest and
+        // iPad WebKit paints UA form-control sizing onto the inner one,
+        // stretching the 20x20 square into a rectangle (the beta.44
+        // geometry pin did not survive real-device WebKit).
+        const tagButton = button.createSpan({
           cls: "ink-thumb-tag-button",
-          attr: { type: "button", "aria-label": `Tag page ${index + 1}`, title: "Tag" },
+          attr: { role: "button", tabindex: "0", "aria-label": `Tag page ${index + 1}`, title: "Tag" },
         });
         tagButton.setAttribute("aria-disabled", String(this.editingLocked()));
         tagButton.addEventListener("click", (event) => {
           event.stopPropagation();
-          if (pageId) this.openThumbTagPopover(button);
+          if (pageId) this.openThumbTagPopover(tagButton);
+        });
+        tagButton.addEventListener("keydown", (event) => {
+          if (event.key !== "Enter" && event.key !== " ") return;
+          event.preventDefault();
+          event.stopPropagation();
+          if (pageId) this.openThumbTagPopover(tagButton);
         });
       }
       button.addEventListener("contextmenu", (event) => {
         if (!pageId) return;
         event.preventDefault();
-        this.openThumbTagPopover(button);
+        this.openThumbTagPopover(button.querySelector<HTMLElement>(":scope > .ink-thumb-tag-button") ?? button);
       });
       button.addEventListener("click", () => {
         if (this.pageManagement) {
@@ -1095,12 +1119,16 @@ export class PdfInkView extends InkWritingView {
     this.refreshPageRail();
   }
 
-  /** Shared tagging popover over the live sidecar notebook page. */
-  private openThumbTagPopover(button: HTMLElement): void {
+  /** Shared tagging popover over the live sidecar notebook page. The anchor
+   *  is whatever the user actually tapped (the tag control, or the thumbnail
+   *  itself on right-click); the page id always resolves from the owning
+   *  thumbnail, so both anchors behave identically. */
+  private openThumbTagPopover(anchor: HTMLElement): void {
     this.closeTagPopover();
-    const pageId = button.dataset.pageId;
+    const thumb = anchor.closest<HTMLElement>(".ink-page-thumb") ?? anchor;
+    const pageId = thumb.dataset.pageId;
     if (!pageId || !this.root) return;
-    this.tagPopoverClose = openTagPopover(this.root, button, {
+    this.tagPopoverClose = openTagPopover(this.root, anchor, {
       getPage: () => this.sidecar?.notebook.pages.find((page) => page.id === pageId) ?? null,
       isLocked: () => this.editingLocked(),
       lockReason: () => this.editingLocked()

@@ -97,15 +97,20 @@ const RENEW_MIN_FLIPPED = 3;
  *  min-chain envelope strictly falls, while a held swipe keeps it flat. If
  *  the envelope retains this fraction of its window-start value for this
  *  many CONTINUOUS >=12px samples (no probation freeze, no >=55ms gap, no
- *  reversal), the stream cannot be a tail: an e-folding of tau=1250ms decays
- *  to 0.79x at 300ms, just under the floor, and real trackpad tails peak far
- *  below that tau. Stall merges never accumulate: they arrive across their
- *  real gaps (>= the quiet threshold) which restarts the window, and the
- *  honest tail behind a merge burst falls under the floor inside the window.
+ *  reversal), the stream cannot be a tail. The window must be SHORT enough
+ *  for a rapid same-direction flick's constant phase to complete inside it:
+ *  beta.44's 300ms missed flicks that hold for only 150-250ms ("fast
+ *  consecutive swiping sticks"). Real tails decay with tau~300ms
+ *  (SLOW_SCROLL_EXIT's fixture model), falling below 0.78x within ~75ms, so
+ *  120ms of held input already proves non-tail; plateau merge streams decay
+ *  ~0.97x per 10ms beat and fall to 0.69x by 120ms - still under the floor.
+ *  Stall merges never accumulate: they arrive across their real gaps
+ *  (>= the quiet threshold) which restarts the window, and the honest tail
+ *  behind a merge burst falls under the floor inside the window.
  *  The exit re-arms through the same beginRenewedGesture hand-off the
  *  confirmed deferrals use, so the page budget and the flip suppression stay
  *  bounded exactly as before. */
-const SUSTAINED_SWIPE_MS = 300;
+const SUSTAINED_SWIPE_MS = 120;
 const SUSTAINED_SWIPE_RETENTION = 0.78;
 const PAGE_TRAVEL_PX = 100;
 const HORIZONTAL_PAGE_TRAVEL_PX = 48;
