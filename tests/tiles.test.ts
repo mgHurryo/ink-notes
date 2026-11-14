@@ -517,7 +517,7 @@ describe("interactive tile commits", () => {
     const renderer = Object.create(TileRenderer.prototype) as any;
     const active = { id: 1, index: { width: 128, height: 128, revisions: new Map([["0:0", 2]]), hasCell: () => false } };
     Object.assign(renderer, { active, disposed: false, host: { children, querySelector: (selector: string) =>
-      selector === '[data-cell="0:0"]' ? children.find(node => node.dataset.cell === "0:0") ?? null : null },
+      /\[data-cell="0:0"\]/.test(selector) ? children.find(node => node.dataset.cell === "0:0") ?? null : null },
       density: 1, visible: new Set(["0:0"]), viewport: { x: 0, y: 0, width: 128, height: 128 }, jobs: [],
       heldCells: new Set(), cache: new Map(), get: vi.fn(() => undefined), fallback: vi.fn(() => undefined), schedule: vi.fn() });
 

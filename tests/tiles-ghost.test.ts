@@ -38,7 +38,7 @@ describe("resize ghost", () => {
     expect(ghost.style.transformOrigin).toBe("0 0");
   });
 
-  it("hands each cell to its fresh tile and drops the ghost when it empties", () => {
+  it("keeps the complete old grid until the complete new grid replaces it", () => {
     const host = document.createElement("div");
     const renderer = makeRenderer(host);
     renderer.setPage(page, 800, 1143);
@@ -49,17 +49,22 @@ describe("resize ghost", () => {
     }
     renderer.setPage(page, 624, 891);
     expect(renderer.ghost.childElementCount).toBe(2);
+    renderer.visibleCurrent = vi.fn().mockReturnValueOnce(false).mockReturnValueOnce(true);
 
     const fresh = document.createElement("div");
     fresh.dataset.cell = "0:0";
     renderer.attach({ node: fresh, cell: "0:0" });
     expect(renderer.ghost).not.toBeNull();
-    expect(host.querySelector("[data-cell='0:0']")).toBe(fresh);
+    expect(renderer.ghost.childElementCount).toBe(2);
+    expect(fresh.style.visibility).toBe("hidden");
+    expect(host.querySelector(":scope > [data-cell='0:0']")).toBe(fresh);
 
     const freshNeighbour = document.createElement("div");
     freshNeighbour.dataset.cell = "1:0";
     renderer.attach({ node: freshNeighbour, cell: "1:0" });
     expect(renderer.ghost).toBeNull();
+    expect(fresh.style.visibility).toBe("");
+    expect(freshNeighbour.style.visibility).toBe("");
   });
 
   it("survives update sweeps and clears once the fresh visible frame is complete", () => {

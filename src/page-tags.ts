@@ -93,16 +93,36 @@ export interface TagPopoverHost {
  */
 export function openTagPopover(host: HTMLElement, anchor: HTMLElement, controller: TagPopoverHost): () => void {
   const popover = host.createDiv({ cls: "ink-tag-popover", attr: { role: "dialog", "aria-label": "Page tags" } });
-  // ON the anchor the user tapped ("where it comes from, there it opens"):
-  // rail thumbnails stack vertically, so both a below-opening (lands on the
-  // next thumbnail) and a floating right-side opening (floats over reading
-  // content) read as tagging the wrong page. The popover's top edge starts
-  // at the anchor's top and it may overlap the thumbnail/rail; clamped into
-  // the viewport. The popover caps its own height with internal scrolling.
-  const rect = anchor.getBoundingClientRect();
-  const left = Math.max(8, Math.min(rect.left, window.innerWidth - 240));
-  const top = Math.max(8, Math.min(rect.top - 6, window.innerHeight - 280));
-  popover.setCssStyles({ left: `${Math.round(left)}px`, top: `${Math.round(top)}px` });
+  const sourceThumb = anchor.closest<HTMLElement>(".ink-page-thumb") ?? anchor;
+  const pageId = sourceThumb.dataset.pageId;
+  function position(): void {
+    if (closed) return;
+    // Notebook tag edits rebuild the rail. Resolve the same page again so
+    // positioning never follows a detached thumbnail or another page.
+    const thumb = pageId ? Array.from(host.querySelectorAll<HTMLElement>(".ink-page-thumb"))
+      .find((candidate) => candidate.dataset.pageId === pageId) : sourceThumb;
+    if (!thumb?.isConnected) { close(); return; }
+    const rect = thumb.getBoundingClientRect();
+    const list = thumb.closest(".ink-rail-thumbs")?.getBoundingClientRect();
+    if (list && list.height > 0 && (rect.bottom <= list.top || rect.top >= list.bottom)) { close(); return; }
+    const rail = thumb.closest(".ink-page-rail")?.getBoundingClientRect() ?? rect;
+    const root = host.getBoundingClientRect();
+    // The editor's CSS containment establishes a containing block for fixed
+    // descendants. Use root-local absolute coordinates instead of mixing
+    // viewport coordinates with that containing block in offset/split panes.
+    const visibleWidth = Math.min(host.clientWidth, window.innerWidth - root.left);
+    // Keep the four flag choices usable, but shrink beside the rail on phone
+    // layouts before falling back to viewport clamping in very narrow panes.
+    popover.style.maxWidth = `${Math.max(0, Math.min(visibleWidth - 16,
+      Math.max(160, visibleWidth - (rail.right - root.left) - 16)))}px`;
+    const minLeft = Math.max(0, -root.left) + 8;
+    const minTop = Math.max(0, -root.top) + 8;
+    const maxLeft = Math.max(minLeft, Math.min(host.clientWidth, window.innerWidth - root.left) - popover.offsetWidth - 8);
+    const maxTop = Math.max(minTop, Math.min(host.clientHeight, window.innerHeight - root.top) - popover.offsetHeight - 8);
+    const left = Math.max(minLeft, Math.min(rail.right - root.left + 8, maxLeft));
+    const top = Math.max(minTop, Math.min(rect.top - root.top, maxTop));
+    popover.setCssStyles({ left: `${Math.round(left)}px`, top: `${Math.round(top)}px` });
+  }
 
   const reason = popover.createDiv({ cls: "ink-tag-lock-reason", attr: { role: "status" } });
   const flagsRow = popover.createDiv({ cls: "ink-tag-flags", attr: { role: "group", "aria-label": "Flag color" } });
@@ -178,12 +198,18 @@ export function openTagPopover(host: HTMLElement, anchor: HTMLElement, controlle
     }
     if ((page.tags?.length ?? 0) === 0) tagList.addClass("is-empty");
     else tagList.removeClass("is-empty");
+    position();
   }
-  sync();
 
+  let closed = false;
   const close = () => {
+    if (closed) return;
+    closed = true;
     document.removeEventListener("pointerdown", outside, true);
     document.removeEventListener("keydown", escape, true);
+    host.removeEventListener("scroll", position, true);
+    window.removeEventListener("resize", position);
+    resizeObserver?.disconnect();
     popover.remove();
   };
   const outside = (event: PointerEvent) => {
@@ -192,7 +218,14 @@ export function openTagPopover(host: HTMLElement, anchor: HTMLElement, controlle
   const escape = (event: KeyboardEvent) => {
     if (event.key === "Escape") { event.stopPropagation(); close(); }
   };
+  const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(position);
+  resizeObserver?.observe(host);
+  resizeObserver?.observe(sourceThumb.closest(".ink-page-rail") ?? sourceThumb);
+  resizeObserver?.observe(popover);
+  host.addEventListener("scroll", position, true);
+  window.addEventListener("resize", position);
   document.addEventListener("pointerdown", outside, true);
   document.addEventListener("keydown", escape, true);
+  sync();
   return close;
 }

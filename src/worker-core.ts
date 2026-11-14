@@ -54,6 +54,7 @@ class WorkerStrokeLookup {
 }
 
 const OUTLINE_CACHE_LIMIT = 512;
+const OUTLINE_CACHE_BYTES = 8 * 1024 * 1024;
 interface CachedOutline { signature: string; points: Float32Array }
 type OutlineCache = Map<string, CachedOutline>;
 
@@ -336,8 +337,18 @@ function drawWorkerStroke(ctx: CanvasRenderingContext2D, stroke: InkStroke, widt
     });
     outline = buffer;
     cache.delete(stroke.id);
-    cache.set(stroke.id, { signature, points: outline });
-    while (cache.size > OUTLINE_CACHE_LIMIT) cache.delete(cache.keys().next().value as string);
+    // A count limit alone can retain hundreds of very long stroke outlines.
+    // Oversized strokes still render in full; only their reusable copy is skipped.
+    if (outline.byteLength <= OUTLINE_CACHE_BYTES) {
+      let bytes = outline.byteLength;
+      for (const entry of cache.values()) bytes += entry.points.byteLength;
+      while (cache.size >= OUTLINE_CACHE_LIMIT || bytes > OUTLINE_CACHE_BYTES) {
+        const oldestId = cache.keys().next().value as string;
+        bytes -= cache.get(oldestId)!.points.byteLength;
+        cache.delete(oldestId);
+      }
+      cache.set(stroke.id, { signature, points: outline });
+    }
   } else {
     cache.delete(stroke.id);
     cache.set(stroke.id, cached!);

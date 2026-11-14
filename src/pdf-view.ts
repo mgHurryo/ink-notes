@@ -104,6 +104,15 @@ interface PdfJsLib {
   RenderingCancelledException?: new (...args: unknown[]) => Error;
 }
 
+function sourcePageGeometry(page: PdfJsPage): PdfSourcePageGeometry {
+  const raw = page as unknown as { view?: number[]; rotate?: number };
+  return {
+    width: Math.round((raw.view?.[2] ?? page.getViewport({ scale: 1 }).width) * 100) / 100,
+    height: Math.round((raw.view?.[3] ?? page.getViewport({ scale: 1 }).height) * 100) / 100,
+    rotation: raw.rotate ?? 0,
+  };
+}
+
 /** Fallback model when no sidecar is attached; keeps undo/redo seams safe. */
 const EMPTY_NOTEBOOK = createNotebook();
 
@@ -262,7 +271,7 @@ export class PdfInkView extends InkWritingView {
       // strokes and flushes the neighbour caches against each intermediate
       // size. The toggle parks this work and runs it once at settle, the way
       // the notebook editor parks its ResizeObserver behind the same timer.
-      if (this.railResizeTimer !== undefined) return;
+      if (this.railResizeTimer !== undefined || this.pageRail?.classList.contains("is-resizing")) return;
       this.applyPaneResize();
     });
     observer.observe(scroller);
@@ -383,7 +392,23 @@ export class PdfInkView extends InkWritingView {
       return;
     }
     this.pdfDoc = doc;
-    this.sourcePages = await this.readSourcePages(doc, generation);
+    // Display the first source page before a new sidecar's full page-tree scan.
+    // Ink stays locked until the fingerprint-checked sidecar has resolved.
+    let firstPage: PdfJsPage;
+    try {
+      firstPage = await doc.getPage(1);
+    } catch (error) {
+      if (generation === this.loadGeneration) this.setStatus(`Could not read this PDF's first page: ${messageOf(error)}`, true);
+      return;
+    }
+    try {
+      if (generation !== this.loadGeneration) return;
+      this.sourcePages = [sourcePageGeometry(firstPage)];
+    } finally {
+      firstPage.cleanup?.();
+    }
+    this.layoutPage();
+    await this.renderPdfPage();
     if (generation !== this.loadGeneration) return;
 
     await this.resolveSidecar(file, fingerprint, generation);
@@ -610,12 +635,7 @@ export class PdfInkView extends InkWritingView {
         try {
           page = await doc.getPage(index);
           if (generation !== this.loadGeneration) return;
-          const raw = page as unknown as { view?: number[]; rotate?: number };
-          pages[index - 1] = {
-            width: Math.round((raw.view?.[2] ?? page.getViewport({ scale: 1 }).width) * 100) / 100,
-            height: Math.round((raw.view?.[3] ?? page.getViewport({ scale: 1 }).height) * 100) / 100,
-            rotation: (raw.rotate ?? 0) as PdfSourcePageGeometry["rotation"],
-          };
+          pages[index - 1] = sourcePageGeometry(page);
         } catch (error) {
           // A replaced PDF can destroy its document while page metadata is loading.
           if (generation !== this.loadGeneration) return;
@@ -755,6 +775,12 @@ export class PdfInkView extends InkWritingView {
       return;
     }
     try {
+      // Existing/recovered sidecars already store this fingerprint's geometry.
+      // Only a new sidecar needs to walk the document's entire page tree.
+      if (this.pdfDoc) {
+        this.sourcePages = await this.readSourcePages(this.pdfDoc, generation);
+        if (generation !== this.loadGeneration) return;
+      }
       const created = await this.store.createFor(file, fingerprint, this.sourcePages, slotPath);
       const raw = await this.store.readRaw(created);
       if (generation !== this.loadGeneration) return;
@@ -943,7 +969,12 @@ export class PdfInkView extends InkWritingView {
     // Parity with the notebook editor's rail: the right edge is draggable and
     // the final width persists under the PDF-specific key. Thumbnails raster
     // during the drag at stale widths; repaint the visible range at the end.
-    mountRailResizer(rail, { onDragEnd: () => this.paintVisibleThumbnails() });
+    mountRailResizer(rail, { onDragEnd: () => {
+      // The drag keeps the existing page/ink rasters mounted. Rebuild once
+      // at the released width, just as the rail-toggle settle path does.
+      this.applyPaneResize();
+      this.paintVisibleThumbnails();
+    } });
   }
 
   /** Re-syncs the rail with the model: rebuilds the buttons when the page
@@ -991,14 +1022,13 @@ export class PdfInkView extends InkWritingView {
       button.toggleClass("is-selected", this.pageManagement && selected);
       button.setAttribute("aria-current", String(active));
       button.setAttribute("aria-pressed", String(this.pageManagement && selected));
-      button.setAttribute("aria-disabled", String(!pages || this.editingLocked()));
+      // Reading mode locks edits, not page navigation or the tag dialog.
+      button.setAttribute("aria-disabled", String(!pages));
       // Badges ride the persistent buttons; the notebook page mirrors the
       // note page at the same index (alignPageSequence keeps them 1:1).
       const notebookPage = this.sidecar?.notebook.pages[index];
       if (notebookPage) {
         paintThumbBadges(button, notebookPage);
-        button.querySelector<HTMLButtonElement>(":scope > .ink-thumb-tag-button")!
-          .setAttribute("aria-disabled", String(this.editingLocked()));
       }
       const matches = notebookPage ? pageMatchesRailFilters(notebookPage, this.railFilters) : true;
       button.toggleClass("is-filtered-out", !matches);
@@ -1084,9 +1114,9 @@ export class PdfInkView extends InkWritingView {
         // geometry pin did not survive real-device WebKit).
         const tagButton = button.createSpan({
           cls: "ink-thumb-tag-button",
-          attr: { role: "button", tabindex: "0", "aria-label": `Tag page ${index + 1}`, title: "Tag" },
+          attr: { role: "button", tabindex: "0", "aria-label": `Tag page ${index + 1}`, title: "Tag", "aria-haspopup": "dialog" },
         });
-        tagButton.setAttribute("aria-disabled", String(this.editingLocked()));
+        setIcon(tagButton, "tag");
         tagButton.addEventListener("click", (event) => {
           event.stopPropagation();
           if (pageId) this.openThumbTagPopover(tagButton);
@@ -1665,7 +1695,9 @@ export class PdfInkView extends InkWritingView {
   // -------------------------------------------------------------- geometry
 
   private currentNotePage(): PdfSidecarNotePage | null {
-    return this.sidecar?.notePages[this.noteIndex] ?? null;
+    if (this.sidecar) return this.sidecar.notePages[this.noteIndex] ?? null;
+    const source = this.sourcePages[this.noteIndex];
+    return source && this.pdfDoc ? { ...source, id: `pdfp-${this.noteIndex}`, sourceIndex: this.noteIndex } : null;
   }
 
   private rotatedSize(page: PdfSidecarNotePage | null): { width: number; height: number } {

@@ -4,6 +4,7 @@ import { parseStoredJson, serializeStoredJson } from "../src/storage-codec";
 import { InkWorkerCore } from "../src/worker-core";
 import type { InkWorkerRequest, InkWorkerResponse } from "../src/worker-protocol";
 import { penOutlineRings } from "../src/rendering";
+import * as rendering from "../src/rendering";
 
 type RequestInput = InkWorkerRequest extends infer Request
   ? Request extends InkWorkerRequest ? Omit<Request, "requestId" | "sessionId" | "generation" | "notebookRevision"> : never
@@ -24,6 +25,60 @@ async function response(core: InkWorkerCore, value: InkWorkerRequest): Promise<I
 }
 
 describe("InkWorkerCore persistence mirror", () => {
+  it("bounds retained outline bytes while rendering and reusing dense strokes", async () => {
+    let fills = 0;
+    class FakeOffscreenCanvas {
+      constructor(public width: number, public height: number) {}
+      getContext() {
+        return { setTransform() {}, save() {}, restore() {}, beginPath() {}, moveTo() {}, lineTo() {},
+          fill() { fills++; } };
+      }
+      transferToImageBitmap() { return { close() {} } as unknown as ImageBitmap; }
+    }
+    vi.stubGlobal("OffscreenCanvas", FakeOffscreenCanvas);
+    // Use dense generated geometry without a million sample objects: the worker
+    // receives real Float32Array allocations and renders through its normal path.
+    const generate = vi.spyOn(rendering, "penOutlineRings")
+      .mockReturnValue([Array(400_000).fill([1, 1])]);
+    try {
+      const core = new InkWorkerCore({ offscreenCanvas: true, imageBitmap: true });
+      const notebook = createNotebook();
+      const page = notebook.pages[0];
+      for (let i = 0; i < 5; i++) page.strokes.push({
+        id: `dense-${i}`, pageId: page.id, tool: "pen", color: "#000", width: 3, opacity: 1,
+        points: [{ x: 0.1, y: 0.1, pressure: 0.5, t: 1 }], createdAt: 1, updatedAt: 1,
+      });
+      await response(core, request({ type: "initialize-notebook", notebook, revision: 0 }));
+      const cache = (core as unknown as { sessions: Map<string, {
+        outlineCache: Map<string, { points: Float32Array }>
+      }> }).sessions.get("test")!.outlineCache;
+      const render = async (id: string) => {
+        expect(await response(core, request({ type: "render-tile", pageId: page.id, cell: "0:0", density: 1,
+          revision: 0, renderGeneration: 1, priority: "visible", width: notebook.pageWidth, height: notebook.pageHeight,
+          candidateStrokeIds: [id] }))).toMatchObject({ type: "tile-rendered" });
+      };
+      for (let i = 0; i < 4; i++) {
+        await render(`dense-${i}`);
+        expect([...cache.values()].reduce((bytes, entry) => bytes + entry.points.byteLength, 0))
+          .toBeLessThanOrEqual(8 * 1024 * 1024);
+      }
+      expect([...cache.keys()]).toEqual(["dense-2", "dense-3"]);
+      await render("dense-2");
+      expect(generate).toHaveBeenCalledTimes(4);
+      expect([...cache.keys()]).toEqual(["dense-3", "dense-2"]);
+      generate.mockReturnValue([Array(1_100_000).fill([1, 1])]);
+      await render("dense-4");
+      expect(cache.has("dense-4")).toBe(false);
+      expect([...cache.keys()]).toEqual(["dense-3", "dense-2"]);
+      expect(fills).toBe(6);
+      await response(core, request({ type: "dispose-session" }));
+      expect((core as unknown as { sessions: Map<string, unknown> }).sessions.size).toBe(0);
+    } finally {
+      generate.mockRestore();
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("reads an immutable raw snapshot asynchronously from a Blob", async () => {
     const core = new InkWorkerCore({ offscreenCanvas: false, imageBitmap: false });
     const notebook = createNotebook("Blob snapshot");

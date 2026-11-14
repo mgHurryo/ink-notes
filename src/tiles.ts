@@ -677,8 +677,8 @@ export class TileRenderer {
    *  ratio are pixel-equivalent to the re-rendered ones - they only differ in
    *  resolution. Without this, setPage() empties the layer on every rail
    *  toggle and pane resize and the whole page visibly blanks and refills.
-   *  Nodes leave the ghost as their fresh tiles mount (attach), and the ghost
-   *  goes once the visible frame is complete (update). */
+   *  The old and new tile grids have different cell boundaries, so keep the
+   *  whole ghost until the fresh visible frame can replace it atomically. */
   private captureResizeGhost(previousWidth: number, nextWidth: number): void {
     if (!this.ghost) {
       if (previousWidth <= 0) return;
@@ -700,8 +700,11 @@ export class TileRenderer {
   }
 
   private discardResizeGhost(): void {
+    if (!this.ghost) return;
+    for (const canvas of Array.from(this.ghost.querySelectorAll("canvas"))) canvas.width = canvas.height = 1;
     this.ghost?.remove();
     this.ghost = null;
+    for (const node of Array.from(this.host.children)) (node as HTMLElement).style.visibility = "";
   }
 
   private key(state: PageTiles, cell: string, density: number): string { return state.id + "/" + cell + "/" + density; }
@@ -726,7 +729,7 @@ export class TileRenderer {
     if (!this.active) return false;
     for (const cell of this.visible) {
       if (!this.active.index.hasCell(cell)) {
-        if (this.host.querySelector('[data-cell="' + cell + '"]')) return false;
+        if (this.host.querySelector(':scope > [data-cell="' + cell + '"]')) return false;
         continue;
       }
       const tile = this.get(this.active, cell, this.density);
@@ -735,11 +738,17 @@ export class TileRenderer {
     return true;
   }
   private attach(tile: Tile): void {
-    if (tile.node.parentElement === this.host) { tile.used = ++this.sequence; return; }
-    this.host.querySelector('[data-cell="' + tile.cell + '"]')?.remove();
+    if (tile.node.parentElement !== this.host) {
+      // A scaled ghost cell covers a different area than the new cell with
+      // the same key. Never remove pieces of the old frame by the new key.
+      this.host.querySelector(':scope > [data-cell="' + tile.cell + '"]')?.remove();
+      this.host.appendChild(tile.node);
+    }
     tile.used = ++this.sequence;
-    this.host.appendChild(tile.node);
-    if (this.ghost && !this.ghost.childElementCount) this.discardResizeGhost();
+    if (this.ghost) {
+      tile.node.style.visibility = "hidden";
+      if (this.visibleCurrent()) this.discardResizeGhost();
+    }
   }
 
   private schedule(): void {
