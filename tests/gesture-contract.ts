@@ -238,12 +238,12 @@ export function gestureContract(create: () => Promise<any>): void {
         scroller.scrollTop = 600;
         const send = (movement: number, at: number, momentum: boolean) =>
           wheel(axis === "x" ? movement : 0, axis === "y" ? movement : 0, { timeStamp: at, momentum });
-        send(60, 0, false);
+        send(96, 0, false);
         send(30, 10, true);
         send(600, 20, true); // A merged inertia sample must not create a page.
         expect(settle).toHaveBeenCalledTimes(1);
-        send(24, 30, false);
-        send(24, 40, false);
+        send(48, 30, false);
+        send(48, 40, false);
         expect(settle).toHaveBeenCalledTimes(2);
       });
 
@@ -284,7 +284,7 @@ export function gestureContract(create: () => Promise<any>): void {
         expect(settle).not.toHaveBeenCalled();
         if (axis === "x") scroller.scrollLeft = 600;
         else scroller.scrollTop = 600;
-        expect(send(60, 10).defaultPrevented).toBe(true);
+        expect(send(96, 10).defaultPrevented).toBe(true);
         expect(settle).toHaveBeenCalledWith(1, 0, axis === "x" ? undefined : "top");
       });
 
@@ -294,7 +294,7 @@ export function gestureContract(create: () => Promise<any>): void {
         const expanded = vi.spyOn(editor, "onFastPagingRailExpanded");
         const send = (movement: number, at: number, momentum: boolean) =>
           wheel(axis === "x" ? movement : 0, axis === "y" ? movement : 0, { timeStamp: at, momentum });
-        for (const at of [0, 100, 200]) { send(60, at, false); send(10, at + 10, true); }
+        for (const at of [0, 100, 200]) { send(96, at, false); send(10, at + 10, true); }
         expect(settle).toHaveBeenCalledTimes(3);
         expect(expanded).toHaveBeenCalledOnce();
         expect(editor.isFastPagingRailOpen()).toBe(true);
@@ -581,7 +581,7 @@ export function gestureContract(create: () => Promise<any>): void {
 
     it("turns a page on a short intentional horizontal touchpad swipe", async () => {
       const { wheel, settle } = await desktopSetup();
-      wheel(60, 0, { timeStamp: 100 });
+      wheel(96, 0, { timeStamp: 100 });
       expect(settle).toHaveBeenCalledOnce();
     });
 

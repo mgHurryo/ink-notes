@@ -1,7 +1,7 @@
 import { WheelGestures, type WheelEventState } from "wheel-gestures";
 
 /** Application policy; gesture phases and inertia belong to wheel-gestures. */
-const PAGE_TRAVEL_PX = 48;
+const PAGE_TRAVEL_PX = 96;
 const NOTCH_IDLE_MS = 180;
 const MAX_NOTCH_PAGES = 2;
 
@@ -59,6 +59,10 @@ export class DesktopWheelGesture {
   private notchCredit = 0;
   private notchPages = 0;
 
+  constructor(private readonly onGestureEnd?: () => void) {}
+
+  get pageTravel(): number { return this.travel; }
+
   get pagingTail(): boolean {
     return !this.discrete && !this.state?.isEnding && (this.flipped || !!this.state?.isMomentum);
   }
@@ -108,6 +112,7 @@ export class DesktopWheelGesture {
         this.unsubscribe = this.recognizer.on("wheel", (state) => {
           this.state = state;
           if (state.isStart) this.newPageGesture();
+          if (state.isMomentum || state.isEnding) this.onGestureEnd?.();
         });
       }
       this.recognizer.feedWheel({
