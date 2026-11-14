@@ -25068,7 +25068,7 @@ var clampAxisDelta = function clampAxisDelta2(wheel) {
     })
   });
 };
-var __DEV__ = process.env.NODE_ENV !== "production";
+var __DEV__ = false;
 var ACC_FACTOR_MIN = 0.6;
 var ACC_FACTOR_MAX = 0.96;
 var WHEELEVENTS_TO_MERGE = 2;

@@ -5,6 +5,9 @@ await build({
   entryPoints: ["src/main.ts"],
   bundle: true,
   external: ["obsidian"],
+  // wheel-gestures reads this at module initialization. Inline the release
+  // value so Obsidian Mobile does not need a Node `process` global.
+  define: { "process.env.NODE_ENV": '"production"' },
   format: "cjs",
   platform: "node",
   target: "es2018",
