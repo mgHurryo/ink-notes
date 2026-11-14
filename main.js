@@ -26914,16 +26914,32 @@ var PICKER_ARM_MS = 400;
 var PICKER_SETTLE_MS = 800;
 var POPOVER_TRANSITION_MS = 150;
 function placePopover(pop, anchor, margin = 12) {
+  var _a;
   const anchorRect = anchor.getBoundingClientRect();
-  const rect = pop.getBoundingClientRect();
-  if (rect.width <= 0 || rect.height <= 0) return;
-  const left = Math.max(margin, Math.min(window.innerWidth - rect.width - margin, anchorRect.left + anchorRect.width / 2 - rect.width / 2));
-  const below = anchorRect.bottom + 10;
-  const top = below + rect.height <= window.innerHeight - margin ? below : Math.max(margin, anchorRect.top - rect.height - 10);
-  pop.style.left = `${left}px`;
-  pop.style.top = `${top}px`;
-  const originX = Math.max(12, Math.min(rect.width - 12, anchorRect.left + anchorRect.width / 2 - left));
-  const originY = Math.max(0, Math.min(rect.height, top === below ? 0 : anchorRect.top - top));
+  const parent = (_a = pop.offsetParent) != null ? _a : pop.parentElement;
+  const win = pop.ownerDocument.defaultView;
+  if (!parent || !win) return;
+  const root = parent.getBoundingClientRect();
+  if (!parent.offsetWidth || !parent.offsetHeight || !root.width || !root.height) return;
+  const scaleX = root.width / parent.offsetWidth, scaleY = root.height / parent.offsetHeight;
+  const leftEdge = Math.max(0, root.left) + margin * scaleX;
+  const rightEdge = Math.min(win.innerWidth, root.right) - margin * scaleX;
+  const topEdge = Math.max(0, root.top) + margin * scaleY;
+  const bottomEdge = Math.min(win.innerHeight, root.bottom) - margin * scaleY;
+  pop.style.maxWidth = `${Math.max(0, (rightEdge - leftEdge) / scaleX)}px`;
+  pop.style.setProperty("--ink-popover-available-height", `${Math.max(0, (bottomEdge - topEdge) / scaleY)}px`);
+  const below = anchorRect.bottom + 10 * scaleY;
+  const above = anchorRect.top - 10 * scaleY;
+  const belowRoom = Math.max(0, bottomEdge - below), aboveRoom = Math.max(0, above - topEdge);
+  const useBelow = pop.offsetHeight * scaleY <= belowRoom || belowRoom >= aboveRoom;
+  pop.style.setProperty("--ink-popover-available-height", `${(useBelow ? belowRoom : aboveRoom) / scaleY}px`);
+  const width = pop.offsetWidth * scaleX, height = pop.offsetHeight * scaleY;
+  const left = Math.max(leftEdge, Math.min(rightEdge - width, anchorRect.left + anchorRect.width / 2 - width / 2));
+  const top = Math.max(topEdge, Math.min(bottomEdge - height, useBelow ? below : above - height));
+  pop.style.left = `${(left - root.left) / scaleX - parent.clientLeft + parent.scrollLeft}px`;
+  pop.style.top = `${(top - root.top) / scaleY - parent.clientTop + parent.scrollTop}px`;
+  const originX = Math.max(12, Math.min(pop.offsetWidth - 12, (anchorRect.left + anchorRect.width / 2 - left) / scaleX));
+  const originY = Math.max(0, Math.min(pop.offsetHeight, (anchorRect.top - top) / scaleY));
   pop.style.setProperty("--ink-popover-origin-x", `${Math.round(originX)}px`);
   pop.style.setProperty("--ink-popover-origin-y", `${Math.round(originY)}px`);
 }
@@ -27385,12 +27401,15 @@ var BrushPopoverController = class {
   }
   open() {
     this.openState = true;
+    this.root.style.visibility = "hidden";
     this.root.removeClass("is-closing");
     this.root.addClass("is-open");
     this.root.setAttribute("aria-hidden", "false");
     window.requestAnimationFrame(() => {
-      this.position();
+      if (!this.isOpen) return;
       this.update();
+      this.position();
+      this.root.style.visibility = "";
       this.body.scrollTop = 0;
       this.focusSizeSlider();
     });
@@ -29336,6 +29355,16 @@ var InkWritingView = class extends import_obsidian7.FileView {
   /** Host-specific popover class (the PDF view scopes its surface rules). */
   brushPopoverExtraClass() {
     return void 0;
+  }
+  /** Reuse the pane's existing resize observer for all toolbar panels. */
+  positionToolPopovers() {
+    var _a;
+    (_a = this.brushPopover) == null ? void 0 : _a.position();
+    const anchor = this.activeSettingsAnchor();
+    if (!anchor) return;
+    for (const pop of [this.eraserPopover, this.lassoSettingsPopover]) {
+      if (pop) placePopover(pop, anchor, 8);
+    }
   }
   /**
    * ONE popover entry for both editors: same controller, same tools, same
@@ -32379,20 +32408,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     });
     const doc = pop.ownerDocument, win = (_b = doc.defaultView) != null ? _b : window;
     const place = () => {
-      if (!anchor) return;
-      const root = this.toolbarRoot().getBoundingClientRect(), button3 = anchor.getBoundingClientRect();
-      const leftEdge = Math.max(8, root.left + 8), rightEdge = Math.min(win.innerWidth - 8, root.right - 8);
-      const topEdge = Math.max(8, root.top + 8), bottomEdge = Math.min(win.innerHeight - 8, root.bottom - 8);
-      pop.style.maxWidth = `${Math.max(44, rightEdge - leftEdge)}px`;
-      pop.style.maxHeight = `${Math.max(44, bottomEdge - topEdge)}px`;
-      const width = pop.offsetWidth, height = pop.offsetHeight;
-      const left = Math.max(leftEdge, Math.min(rightEdge - width, button3.left + button3.width / 2 - width / 2));
-      const below = button3.bottom + 10;
-      const top = below + height <= bottomEdge ? below : Math.max(topEdge, button3.top - height - 10);
-      pop.style.left = `${left - root.left}px`;
-      pop.style.top = `${top - root.top}px`;
-      pop.style.setProperty("--ink-popover-origin-x", `${button3.left + button3.width / 2 - left}px`);
-      pop.style.setProperty("--ink-popover-origin-y", `${top === below ? 0 : height}px`);
+      if (anchor) placePopover(pop, anchor, 8);
     };
     const outside = (event) => {
       var _a2;
@@ -32404,12 +32420,12 @@ var InkWritingView = class extends import_obsidian7.FileView {
       if (event.key === "Escape") this.closeLassoSettings();
     };
     doc.addEventListener("pointerdown", outside, true);
-    doc.addEventListener("keydown", key);
+    doc.addEventListener("keydown", key, true);
     win.addEventListener("resize", place);
     win.addEventListener("scroll", place, true);
     this.lassoSettingsCleanup = () => {
       doc.removeEventListener("pointerdown", outside, true);
-      doc.removeEventListener("keydown", key);
+      doc.removeEventListener("keydown", key, true);
       win.removeEventListener("resize", place);
       win.removeEventListener("scroll", place, true);
       anchor == null ? void 0 : anchor.setAttribute("aria-expanded", "false");
@@ -34738,6 +34754,7 @@ var InkView = class extends InkWritingView {
       this.onTouchCancel(event);
     }, { passive: false });
     const observer = new ResizeObserver(() => {
+      this.positionToolPopovers();
       if (this.railRevealTimer !== void 0 || this.root.querySelector(".ink-page-rail.is-resizing")) return;
       this.resizeCanvas();
       this.revealInlineEditor();
@@ -37423,9 +37440,9 @@ var PdfInkView = class extends InkWritingView {
       this.onTouchCancel(event);
     }, { passive: false });
     const observer = new ResizeObserver(() => {
-      var _a, _b;
-      (_a = this.brushPopover) == null ? void 0 : _a.position();
-      if (this.railResizeTimer !== void 0 || ((_b = this.pageRail) == null ? void 0 : _b.classList.contains("is-resizing"))) return;
+      var _a;
+      this.positionToolPopovers();
+      if (this.railResizeTimer !== void 0 || ((_a = this.pageRail) == null ? void 0 : _a.classList.contains("is-resizing"))) return;
       this.applyPaneResize();
     });
     observer.observe(scroller);

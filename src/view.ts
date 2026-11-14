@@ -500,6 +500,7 @@ export class InkView extends InkWritingView {
       this.onTouchCancel(event);
     }, { passive: false });
     const observer = new ResizeObserver(() => {
+      this.positionToolPopovers();
       // The page rail animates its width for 280ms. Resizing the backing
       // canvas on every intermediate width makes the rest of the editor miss
       // frames; the transition settle callback performs one final resize.

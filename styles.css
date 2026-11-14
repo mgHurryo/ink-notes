@@ -166,7 +166,7 @@
 .ink-size-button { display: none !important; }
 
 .ink-size-popover {
-  position: fixed;
+  position: absolute;
   z-index: 1000;
   display: none;
   flex-direction: column;
@@ -174,7 +174,7 @@
   /* Capped so the popover (now with the dynamics sliders) still fits below
      the toolbar row; taller content scrolls inside instead of covering the
      toolbar buttons when the below-placement flips. */
-  max-height: min(calc(100vh - 120px), 540px);
+  max-height: min(var(--ink-popover-available-height, calc(100vh - 120px)), 540px);
   padding: 16px;
   overflow: hidden;
   overscroll-behavior: contain;
@@ -305,13 +305,56 @@
 
 .ink-settings-label-presets { margin-top: 8px; }
 
-.ink-size-popover input[type="range"] {
+:is(.ink-size-popover, .ink-eraser-popover) input[type="range"] {
+  /* Obsidian paints its track on the input background. Keep the touch area
+     transparent and paint a thin track inside it instead of stretching it. */
+  appearance: none;
+  -webkit-appearance: none;
   display: block;
   width: 100%;
+  height: 28px;
   min-height: 28px;
   margin: 0;
-  accent-color: var(--ink-accent);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
   cursor: pointer;
+  touch-action: none;
+}
+
+:is(.ink-size-popover, .ink-eraser-popover) input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--ink-border);
+}
+
+:is(.ink-size-popover, .ink-eraser-popover) input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  top: 0;
+  width: 16px;
+  height: 16px;
+  margin-top: -6px;
+  border: 2px solid var(--ink-panel-raised);
+  border-radius: 50%;
+  background: var(--ink-accent);
+}
+
+:is(.ink-size-popover, .ink-eraser-popover) input[type="range"]::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: var(--ink-border);
+}
+
+:is(.ink-size-popover, .ink-eraser-popover) input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--ink-panel-raised);
+  border-radius: 50%;
+  background: var(--ink-accent);
 }
 
 .ink-toolbar-section-pen-widths,
@@ -347,17 +390,13 @@
 
 .ink-color-control {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
 }
 
 .ink-color-swatches {
-  display: flex;
-  flex: 1;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  min-width: 0;
+  display: contents;
 }
 
 :is(.ink-notes-view, .ink-pdf-view) .ink-color-control .ink-color-swatch {
@@ -1583,7 +1622,7 @@
 .ink-pdf-reading .ink-pdf-ink-host { pointer-events: none; }
 .ink-pdf-editing .ink-pdf-text-layer { display: none; }
 
-/* The shared controller owns the popover root (position: fixed + clamped
+/* The shared controller owns the popover root (editor-local + clamped
    via position()); these rules only add PDF-surface specifics. */
 .ink-size-popover.ink-pdf-brush-popover {
   z-index: 1000;
@@ -1626,12 +1665,14 @@
 
 /* Eraser mini popover: size + mode only, anchored to the eraser button. */
 .ink-eraser-popover {
-  position: fixed;
+  position: absolute;
   z-index: 1000;
   display: flex;
   flex-direction: column;
   gap: 10px;
   width: 220px;
+  max-height: min(var(--ink-popover-available-height, calc(100vh - 16px)), 540px);
+  overflow: auto;
   padding: 12px;
   border: 1px solid var(--ink-border);
   border-radius: 12px;
@@ -1640,7 +1681,6 @@
   overscroll-behavior: contain;
 }
 
-.ink-eraser-popover input[type="range"] { width: 100%; touch-action: none; }
 .ink-lasso-settings { position: absolute; overflow: auto; }
 
 .ink-eraser-size-row { display: flex; flex-direction: column; }

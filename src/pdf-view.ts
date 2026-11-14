@@ -265,7 +265,7 @@ export class PdfInkView extends InkWritingView {
     // without a window resize; stale page geometry there overflowed the pane
     // and mis-mapped strokes for views opened before the split.
     const observer = new ResizeObserver(() => {
-      this.brushPopover?.position();
+      this.positionToolPopovers();
       // The rail's width animation resizes the scroller every animation
       // frame; relayouting per frame re-derives the page box, re-indexes the
       // strokes and flushes the neighbour caches against each intermediate

@@ -1197,6 +1197,16 @@ export abstract class InkWritingView extends FileView {
   /** Host-specific popover class (the PDF view scopes its surface rules). */
   protected brushPopoverExtraClass(): string | undefined { return undefined; }
 
+  /** Reuse the pane's existing resize observer for all toolbar panels. */
+  protected positionToolPopovers(): void {
+    this.brushPopover?.position();
+    const anchor = this.activeSettingsAnchor();
+    if (!anchor) return;
+    for (const pop of [this.eraserPopover, this.lassoSettingsPopover]) {
+      if (pop) placePopover(pop, anchor, 8);
+    }
+  }
+
   /**
    * ONE popover entry for both editors: same controller, same tools, same
    * anchor rule (the active tool button) - the views only differ in an
@@ -4174,7 +4184,7 @@ export abstract class InkWritingView extends FileView {
       const target = anchor ?? this.activeSettingsAnchor();
       if (target) placePopover(pop, target, 8);
     };
-    // Hidden until placed: a fixed-position element without coordinates
+    // Hidden until placed: an element without coordinates
     // would flash at its static position for a frame.
     pop.setCssStyles({ visibility: "hidden" });
     window.requestAnimationFrame(() => {
@@ -4266,20 +4276,7 @@ export abstract class InkWritingView extends FileView {
     paste.addEventListener("click", () => { this.closeLassoSettings(); this.pasteSelection(); });
     const doc = pop.ownerDocument, win = doc.defaultView ?? window;
     const place = (): void => {
-      if (!anchor) return;
-      const root = this.toolbarRoot().getBoundingClientRect(), button = anchor.getBoundingClientRect();
-      const leftEdge = Math.max(8, root.left + 8), rightEdge = Math.min(win.innerWidth - 8, root.right - 8);
-      const topEdge = Math.max(8, root.top + 8), bottomEdge = Math.min(win.innerHeight - 8, root.bottom - 8);
-      pop.style.maxWidth = `${Math.max(44, rightEdge - leftEdge)}px`;
-      pop.style.maxHeight = `${Math.max(44, bottomEdge - topEdge)}px`;
-      const width = pop.offsetWidth, height = pop.offsetHeight;
-      const left = Math.max(leftEdge, Math.min(rightEdge - width, button.left + button.width / 2 - width / 2));
-      const below = button.bottom + 10;
-      const top = below + height <= bottomEdge ? below : Math.max(topEdge, button.top - height - 10);
-      pop.style.left = `${left - root.left}px`;
-      pop.style.top = `${top - root.top}px`;
-      pop.style.setProperty("--ink-popover-origin-x", `${button.left + button.width / 2 - left}px`);
-      pop.style.setProperty("--ink-popover-origin-y", `${top === below ? 0 : height}px`);
+      if (anchor) placePopover(pop, anchor, 8);
     };
     const outside = (event: Event): void => {
       const target = event.target as HTMLElement | null;
@@ -4288,12 +4285,14 @@ export abstract class InkWritingView extends FileView {
     };
     const key = (event: KeyboardEvent): void => { if (event.key === "Escape") this.closeLassoSettings(); };
     doc.addEventListener("pointerdown", outside, true);
-    doc.addEventListener("keydown", key);
+    // Capture before the editor's Escape shortcut consumes the event on
+    // the still-focused toolbar button, matching the eraser panel.
+    doc.addEventListener("keydown", key, true);
     win.addEventListener("resize", place);
     win.addEventListener("scroll", place, true);
     this.lassoSettingsCleanup = () => {
       doc.removeEventListener("pointerdown", outside, true);
-      doc.removeEventListener("keydown", key);
+      doc.removeEventListener("keydown", key, true);
       win.removeEventListener("resize", place);
       win.removeEventListener("scroll", place, true);
       anchor?.setAttribute("aria-expanded", "false");
