@@ -32485,11 +32485,39 @@ function paintThumbBadges(button3, page) {
   }
 }
 function openTagPopover(host, anchor, controller) {
+  var _a, _b;
   const popover = host.createDiv({ cls: "ink-tag-popover", attr: { role: "dialog", "aria-label": "Page tags" } });
-  const rect = anchor.getBoundingClientRect();
-  const left = Math.max(8, Math.min(rect.left, window.innerWidth - 240));
-  const top = Math.max(8, Math.min(rect.top - 6, window.innerHeight - 280));
-  popover.setCssStyles({ left: `${Math.round(left)}px`, top: `${Math.round(top)}px` });
+  const sourceThumb = (_a = anchor.closest(".ink-page-thumb")) != null ? _a : anchor;
+  const pageId = sourceThumb.dataset.pageId;
+  function position() {
+    var _a2, _b2, _c;
+    if (closed) return;
+    const thumb = pageId ? Array.from(host.querySelectorAll(".ink-page-thumb")).find((candidate) => candidate.dataset.pageId === pageId) : sourceThumb;
+    if (!(thumb == null ? void 0 : thumb.isConnected)) {
+      close();
+      return;
+    }
+    const rect = thumb.getBoundingClientRect();
+    const list = (_a2 = thumb.closest(".ink-rail-thumbs")) == null ? void 0 : _a2.getBoundingClientRect();
+    if (list && list.height > 0 && (rect.bottom <= list.top || rect.top >= list.bottom)) {
+      close();
+      return;
+    }
+    const rail = (_c = (_b2 = thumb.closest(".ink-page-rail")) == null ? void 0 : _b2.getBoundingClientRect()) != null ? _c : rect;
+    const root = host.getBoundingClientRect();
+    const visibleWidth = Math.min(host.clientWidth, window.innerWidth - root.left);
+    popover.style.maxWidth = `${Math.max(0, Math.min(
+      visibleWidth - 16,
+      Math.max(160, visibleWidth - (rail.right - root.left) - 16)
+    ))}px`;
+    const minLeft = Math.max(0, -root.left) + 8;
+    const minTop = Math.max(0, -root.top) + 8;
+    const maxLeft = Math.max(minLeft, Math.min(host.clientWidth, window.innerWidth - root.left) - popover.offsetWidth - 8);
+    const maxTop = Math.max(minTop, Math.min(host.clientHeight, window.innerHeight - root.top) - popover.offsetHeight - 8);
+    const left = Math.max(minLeft, Math.min(rail.right - root.left + 8, maxLeft));
+    const top = Math.max(minTop, Math.min(rect.top - root.top, maxTop));
+    popover.setCssStyles({ left: `${Math.round(left)}px`, top: `${Math.round(top)}px` });
+  }
   const reason = popover.createDiv({ cls: "ink-tag-lock-reason", attr: { role: "status" } });
   const flagsRow = popover.createDiv({ cls: "ink-tag-flags", attr: { role: "group", "aria-label": "Flag color" } });
   const choices = /* @__PURE__ */ new Map();
@@ -32515,11 +32543,11 @@ function openTagPopover(host, anchor, controller) {
     attr: { type: "text", "aria-label": "Add tag", placeholder: "Add tag" }
   });
   const commitInput = () => {
-    var _a;
+    var _a2;
     const page = controller.getPage();
     const tag = input.value.trim();
     if (!page || controller.isLocked() || !tag) return;
-    const tags = (_a = page.tags) != null ? _a : [];
+    const tags = (_a2 = page.tags) != null ? _a2 : [];
     if (!tags.includes(tag)) controller.onTagsChange(page, [...tags, tag]);
     input.value = "";
     sync();
@@ -32535,14 +32563,14 @@ function openTagPopover(host, anchor, controller) {
   (0, import_obsidian8.setIcon)(addButton, "plus");
   addButton.addEventListener("click", commitInput);
   function sync() {
-    var _a, _b, _c, _d, _e;
+    var _a2, _b2, _c, _d, _e;
     const page = controller.getPage();
     if (!page) {
       close();
       return;
     }
     const locked = controller.isLocked();
-    const lockText = locked ? (_b = (_a = controller.lockReason) == null ? void 0 : _a.call(controller)) != null ? _b : null : null;
+    const lockText = locked ? (_b2 = (_a2 = controller.lockReason) == null ? void 0 : _a2.call(controller)) != null ? _b2 : null : null;
     reason.setText(lockText != null ? lockText : "");
     reason.toggleClass("is-locked", locked);
     for (const [flag, button3] of choices) {
@@ -32559,20 +32587,26 @@ function openTagPopover(host, anchor, controller) {
       (0, import_obsidian8.setIcon)(remove, "x");
       remove.disabled = locked;
       remove.addEventListener("click", () => {
-        var _a2;
+        var _a3;
         const current = controller.getPage();
         if (!current || controller.isLocked()) return;
-        controller.onTagsChange(current, ((_a2 = current.tags) != null ? _a2 : []).filter((candidate) => candidate !== tag));
+        controller.onTagsChange(current, ((_a3 = current.tags) != null ? _a3 : []).filter((candidate) => candidate !== tag));
         sync();
       });
     }
     if (((_e = (_d = page.tags) == null ? void 0 : _d.length) != null ? _e : 0) === 0) tagList.addClass("is-empty");
     else tagList.removeClass("is-empty");
+    position();
   }
-  sync();
+  let closed = false;
   const close = () => {
+    if (closed) return;
+    closed = true;
     document.removeEventListener("pointerdown", outside, true);
     document.removeEventListener("keydown", escape, true);
+    host.removeEventListener("scroll", position, true);
+    window.removeEventListener("resize", position);
+    resizeObserver == null ? void 0 : resizeObserver.disconnect();
     popover.remove();
   };
   const outside = (event) => {
@@ -32584,8 +32618,15 @@ function openTagPopover(host, anchor, controller) {
       close();
     }
   };
+  const resizeObserver = typeof ResizeObserver === "undefined" ? null : new ResizeObserver(position);
+  resizeObserver == null ? void 0 : resizeObserver.observe(host);
+  resizeObserver == null ? void 0 : resizeObserver.observe((_b = sourceThumb.closest(".ink-page-rail")) != null ? _b : sourceThumb);
+  resizeObserver == null ? void 0 : resizeObserver.observe(popover);
+  host.addEventListener("scroll", position, true);
+  window.addEventListener("resize", position);
   document.addEventListener("pointerdown", outside, true);
   document.addEventListener("keydown", escape, true);
+  sync();
   return close;
 }
 
@@ -34653,8 +34694,9 @@ var InkView = class extends InkWritingView {
       paintThumbBadges(button3, page);
       const tagButton = button3.createSpan({
         cls: "ink-thumb-tag-button",
-        attr: { role: "button", tabindex: "0", "aria-label": `Tag page ${index + 1}`, title: "Tag", "aria-disabled": String(this.readingMode) }
+        attr: { role: "button", tabindex: "0", "aria-label": `Tag page ${index + 1}`, title: "Tag", "aria-haspopup": "dialog" }
       });
+      (0, import_obsidian9.setIcon)(tagButton, "tag");
       tagButton.addEventListener("click", (event) => {
         event.stopPropagation();
         this.openThumbTagPopover(button3);
@@ -37908,11 +37950,10 @@ var PdfInkView = class extends InkWritingView {
       button3.toggleClass("is-selected", this.pageManagement && selected);
       button3.setAttribute("aria-current", String(active));
       button3.setAttribute("aria-pressed", String(this.pageManagement && selected));
-      button3.setAttribute("aria-disabled", String(!pages || this.editingLocked()));
+      button3.setAttribute("aria-disabled", String(!pages));
       const notebookPage = (_b2 = this.sidecar) == null ? void 0 : _b2.notebook.pages[index];
       if (notebookPage) {
         paintThumbBadges(button3, notebookPage);
-        button3.querySelector(":scope > .ink-thumb-tag-button").setAttribute("aria-disabled", String(this.editingLocked()));
       }
       const matches = notebookPage ? pageMatchesRailFilters(notebookPage, this.railFilters) : true;
       button3.toggleClass("is-filtered-out", !matches);
@@ -37985,9 +38026,9 @@ var PdfInkView = class extends InkWritingView {
         paintThumbBadges(button3, notebookPage);
         const tagButton = button3.createSpan({
           cls: "ink-thumb-tag-button",
-          attr: { role: "button", tabindex: "0", "aria-label": `Tag page ${index + 1}`, title: "Tag" }
+          attr: { role: "button", tabindex: "0", "aria-label": `Tag page ${index + 1}`, title: "Tag", "aria-haspopup": "dialog" }
         });
-        tagButton.setAttribute("aria-disabled", String(this.editingLocked()));
+        (0, import_obsidian13.setIcon)(tagButton, "tag");
         tagButton.addEventListener("click", (event) => {
           event.stopPropagation();
           if (pageId) this.openThumbTagPopover(tagButton);

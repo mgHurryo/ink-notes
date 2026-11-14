@@ -991,14 +991,13 @@ export class PdfInkView extends InkWritingView {
       button.toggleClass("is-selected", this.pageManagement && selected);
       button.setAttribute("aria-current", String(active));
       button.setAttribute("aria-pressed", String(this.pageManagement && selected));
-      button.setAttribute("aria-disabled", String(!pages || this.editingLocked()));
+      // Reading mode locks edits, not page navigation or the tag dialog.
+      button.setAttribute("aria-disabled", String(!pages));
       // Badges ride the persistent buttons; the notebook page mirrors the
       // note page at the same index (alignPageSequence keeps them 1:1).
       const notebookPage = this.sidecar?.notebook.pages[index];
       if (notebookPage) {
         paintThumbBadges(button, notebookPage);
-        button.querySelector<HTMLButtonElement>(":scope > .ink-thumb-tag-button")!
-          .setAttribute("aria-disabled", String(this.editingLocked()));
       }
       const matches = notebookPage ? pageMatchesRailFilters(notebookPage, this.railFilters) : true;
       button.toggleClass("is-filtered-out", !matches);
@@ -1084,9 +1083,9 @@ export class PdfInkView extends InkWritingView {
         // geometry pin did not survive real-device WebKit).
         const tagButton = button.createSpan({
           cls: "ink-thumb-tag-button",
-          attr: { role: "button", tabindex: "0", "aria-label": `Tag page ${index + 1}`, title: "Tag" },
+          attr: { role: "button", tabindex: "0", "aria-label": `Tag page ${index + 1}`, title: "Tag", "aria-haspopup": "dialog" },
         });
-        tagButton.setAttribute("aria-disabled", String(this.editingLocked()));
+        setIcon(tagButton, "tag");
         tagButton.addEventListener("click", (event) => {
           event.stopPropagation();
           if (pageId) this.openThumbTagPopover(tagButton);

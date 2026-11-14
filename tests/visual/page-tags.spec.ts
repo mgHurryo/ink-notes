@@ -5,14 +5,13 @@ async function tagNotebookPage(page: Page, thumb: string, flag: string, tag: str
   await page.getByRole("button", { name: thumb, exact: true }).click();
   const popover = page.locator(".ink-tag-popover");
   await expect(popover).toBeVisible();
-  // The popover must open ON the anchor the user tapped ("where it comes
-  // from, there it opens"): its left edge starts at/near the tapped control
-  // (inside the rail, NOT floating out beside the rail over the reading
-  // content), and it vertically overlaps the anchor thumbnail.
+  // The panel belongs beside the thumbnail rail and overlaps the tagged
+  // thumbnail vertically, even when the editor is an offset workspace pane.
   const anchor = page.locator(".ink-page-thumb").first();
+  const railBox = (await page.locator(".ink-page-rail").boundingBox())!;
   const anchorBox = (await anchor.boundingBox())!;
   const popBox = (await popover.boundingBox())!;
-  expect(popBox.x).toBeLessThan(anchorBox.x + anchorBox.width);
+  expect(popBox.x).toBeGreaterThanOrEqual(railBox.x + railBox.width + 6);
   expect(Math.min(popBox.y + popBox.height, anchorBox.y + anchorBox.height)
     - Math.max(popBox.y, anchorBox.y)).toBeGreaterThan(0);
   await page.getByRole("button", { name: flag, exact: true }).click();
@@ -76,6 +75,91 @@ test("notebook pages: tag from the rail, badges, stacked filters and undo", asyn
   await page.getByRole("button", { name: "Undo", exact: true }).click();
   await expect(page.locator(".ink-thumb-flag")).toHaveCount(0);
 });
+
+for (const editor of ["notebook", "pdf"] as const) {
+  for (const reading of [false, true]) {
+    test(`${editor}: tag entry stays visible and panel follows the rail in ${reading ? "reading" : "editing"} mode`, async ({ page, browserName }, testInfo) => {
+      await page.setViewportSize({ width: 1280, height: 900 });
+      await page.goto("/");
+      await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
+      await page.evaluate(async (kind) => {
+        const preview = (window as any).__inkNotesPreview;
+        if (kind === "pdf") await preview.openPdf();
+        const view = preview.view;
+        if (kind === "pdf") view.addBlankPage(1);
+        else view.addPage(1);
+        // Model an Obsidian pane below its tab bar and beside another pane.
+        Object.assign(document.querySelector<HTMLElement>("#host")!.style, {
+          position: "absolute", left: "180px", top: "64px", width: "calc(100% - 220px)",
+          height: "calc(100% - 96px)", transform: "translateZ(0)",
+        });
+      }, editor);
+      await page.getByRole("button", { name: "Pages", exact: true }).click();
+      if (reading) await page.getByRole("button", { name: "Reading mode", exact: true }).click();
+      const rail = page.locator(".ink-page-rail");
+      const thumb = page.locator(".ink-page-thumb").first();
+      const entry = page.getByRole("button", { name: "Tag page 1", exact: true });
+      const currentId = await page.locator(".ink-page-thumb.is-active").getAttribute("data-page-id");
+      await entry.scrollIntoViewIfNeeded();
+      if (browserName === "webkit") await entry.tap({ timeout: 2000 });
+      else await entry.click({ timeout: 2000 });
+      const panel = page.getByRole("dialog", { name: "Page tags", exact: true });
+      await expect(panel).toBeVisible();
+      await page.screenshot({ path: testInfo.outputPath("page-tags-panel.png") });
+      await expect(entry.locator("svg")).toBeVisible();
+      await expect(entry).toBeEnabled();
+      expect(await entry.evaluate((element) => getComputedStyle(element).opacity)).toBe("1");
+      await expect(page.locator(".ink-page-thumb.is-active")).toHaveAttribute("data-page-id", currentId!);
+
+      const expectAligned = async () => {
+        await expect.poll(async () => {
+          const railBox = (await rail.boundingBox())!;
+          const thumbBox = (await thumb.boundingBox())!;
+          const panelBox = (await panel.boundingBox())!;
+          return Math.abs(panelBox.x - (railBox.x + railBox.width + 8)) <= 1
+            && Math.min(panelBox.y + panelBox.height, thumbBox.y + thumbBox.height)
+              - Math.max(panelBox.y, thumbBox.y) > 0;
+        }).toBe(true);
+      };
+      await expectAligned();
+      await rail.evaluate((element: HTMLElement) => {
+        element.style.setProperty("--ink-rail-width", "240px");
+      });
+      await expect.poll(async () => {
+        const r = (await rail.boundingBox())!, p = (await panel.boundingBox())!;
+        return Math.abs(p.x - (r.x + r.width + 8));
+      }).toBeLessThanOrEqual(1);
+      if (reading) {
+        await expect(panel.getByRole("button", { name: "Red flag", exact: true })).toBeDisabled();
+        await expect(panel.getByRole("status")).toContainText("Reading mode");
+      } else {
+        await panel.getByRole("button", { name: "Red flag", exact: true }).click();
+        await expect(thumb.locator(".ink-thumb-flag.is-red")).toBeVisible();
+        await expectAligned();
+      }
+      // Narrowing the workspace must keep the complete panel inside it.
+      await page.setViewportSize({ width: 600, height: 560 });
+      await expect.poll(async () => {
+        const root = (await page.locator(editor === "pdf" ? ".ink-pdf-view" : ".ink-notes-view").boundingBox())!;
+        const p = (await panel.boundingBox())!;
+        return p.x >= root.x && p.y >= root.y && p.x + p.width <= root.x + root.width
+          && p.y + p.height <= root.y + root.height;
+      }).toBe(true);
+      await expectAligned();
+      await page.locator("#host").evaluate((element: HTMLElement) => Object.assign(element.style, {
+        left: "0", top: "0", width: "100%", height: "100%",
+      }));
+      await page.setViewportSize({ width: 360, height: 720 });
+      await expect.poll(async () => {
+        const r = (await rail.boundingBox())!, p = (await panel.boundingBox())!;
+        return Math.abs(p.x - (r.x + r.width + 8)) <= 1 && p.x + p.width <= 360;
+      }).toBe(true);
+      await page.screenshot({ path: testInfo.outputPath("page-tags-panel-narrow.png") });
+      await page.keyboard.press("Escape");
+      await expect(panel).toHaveCount(0);
+    });
+  }
+}
 
 test("pdf pages: tag through the sidecar view with badges and filters", async ({ page }) => {
   await page.goto("/");

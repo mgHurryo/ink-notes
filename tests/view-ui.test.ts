@@ -1497,8 +1497,8 @@ describe("page rail tagging and filters", () => {
     button("Reading mode").click();
     // Reading mode blocks page mutations but must not dead-end the entry: a
     // disabled control swallows both clicks with no feedback. The entry
-    // stays clickable, marked aria-disabled, and the popover opens read-only.
-    expect(button("Tag page 1").getAttribute("aria-disabled")).toBe("true");
+    // stays enabled, while the popover's mutation controls open read-only.
+    expect(button("Tag page 1").getAttribute("aria-disabled")).toBeNull();
     button("Tag page 1").dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, cancelable: true }));
     const popover = document.querySelector(".ink-tag-popover");
     expect(popover).not.toBeNull();

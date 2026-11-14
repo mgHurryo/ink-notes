@@ -907,8 +907,8 @@
   text-align: center;
 }
 
-/* Corner entry to the tagging popover: dimmed by default, full on
-   hover/focus; a real button so touch and Playwright can always reach it.
+/* Corner entry to the tagging popover stays visible in both themes and
+   reading mode; opening a read-only dialog is still an enabled action.
    The geometry is pinned for every engine (aspect-ratio + min sizes +
    appearance reset): WebKit otherwise paints its native button bezel,
    which reads as a rectangle next to Chromium's square. */
@@ -926,25 +926,19 @@
   flex: none;
   place-items: center;
   padding: 0;
-  border: none;
+  border: 1px solid var(--ink-border);
   border-radius: 4px;
   appearance: none;
   -webkit-appearance: none;
   color: var(--ink-text);
-  background: rgb(255 255 255 / 85%);
+  background: var(--ink-panel);
   box-shadow: 0 1px 3px rgb(0 0 0 / 20%);
-  opacity: 0.55;
+  opacity: 1;
 }
 .ink-thumb-tag-button { cursor: pointer; user-select: none; -webkit-user-select: none; }
 .ink-thumb-tag-button svg { width: 13px; height: 13px; }
-.ink-page-thumb:hover .ink-thumb-tag-button,
 .ink-thumb-tag-button:focus-visible,
-.ink-thumb-tag-button:active { opacity: 1; }
-/* Read-only surfaces keep the entry clickable (the popover explains); only
-   the dimmed look signals the state. */
-.ink-thumb-tag-button[aria-disabled="true"] { opacity: 0.3; }
-.ink-page-thumb:hover .ink-thumb-tag-button[aria-disabled="true"],
-.ink-thumb-tag-button[aria-disabled="true"]:active { opacity: 0.45; }
+.ink-thumb-tag-button:hover { border-color: var(--ink-accent); color: var(--ink-accent); }
 
 /* Filtered-out thumbnails leave the rail (display, not visibility: hidden
    thumbs would still occupy their grid row). */
@@ -952,13 +946,14 @@
 
 /* Shared tagging popover (notebook + PDF rails). */
 .ink-tag-popover {
-  position: fixed;
+  position: absolute;
   z-index: 60;
   display: flex;
   flex-direction: column;
   gap: 8px;
-  max-width: 232px;
-  max-height: 260px;
+  width: 232px;
+  max-width: calc(100% - 16px);
+  max-height: min(260px, calc(100% - 16px));
   padding: 10px;
   overflow: auto;
   border: 1px solid var(--ink-border);
@@ -979,7 +974,7 @@
   font-size: 12px;
   line-height: 1.4;
 }
-.ink-tag-flags { display: flex; gap: 6px; }
+.ink-tag-flags { display: flex; flex-wrap: wrap; gap: 6px; }
 .ink-flag-choice {
   display: grid;
   width: 30px;
