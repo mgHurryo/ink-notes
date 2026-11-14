@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.1.5-beta.46 - 2026-11-14
+
+- Restore visible page-tag controls and position the panel immediately beside the preview rail (#466). The panel uses editor-local coordinates, follows its thumbnail on scroll/resize and remains accessible in reading mode with editing locked.
+- Keep PDF and notebook content stable while resizing the preview rail (#467). Defer page relayout until release, then replace the old ink tile grid only when the complete new visible frame is ready. Retired canvas backing stores are released.
+- Bound reusable worker pen outlines to 8 MiB per session in addition to the existing 512-entry limit (#468). Oversized outlines still render completely without being retained; stroke geometry and resolution are unchanged.
+- Show the first PDF page before scanning remaining page geometry (#469). Existing and recovered fingerprint-checked sidecars reuse their stored geometry; new sidecars still wait for complete geometry before creation, and writing remains locked until notes are ready.
+- Preserve the existing two-finger scroll/pan and boundary page-switching behavior. No joystick mode is introduced.
+
+Physical WebKit long-session OOM reproduction and real-PDF startup timing remain unverified. The cache budget closes a specific retention risk; it does not establish that every source of memory pressure is resolved.
+
 ## 0.1.5-beta.45 - 2026-11-14
 
 Addresses the beta.44 device-retest feedback: rapid same-direction trackpad flicks, the PDF fit-zoom scrollbar oscillation, and the two iPad rail defects that survived beta.44's CSS pin.
