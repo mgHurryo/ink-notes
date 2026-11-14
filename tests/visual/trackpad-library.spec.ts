@@ -95,6 +95,41 @@ for (const mode of ["ink", "pdf"] as const) {
       await expect(page.locator(".ink-swipe-stage")).toHaveCount(0);
     });
 
+    test(`${mode}, ${axis}: recognized momentum cannot continue native page panning`, async ({ page }) => {
+      const { scroller, status } = await openFourPages(page, mode);
+      await page.evaluate(() => {
+        const scope = window as any, view = scope.__inkNotesPreview.view;
+        view.setZoom(2); view.zoomLocked = true;
+        const surface = view.inputScroller() as HTMLElement;
+        surface.scrollLeft = surface.scrollTop = 100;
+        scope.testMomentum = false;
+        scope.cancelledMomentum = [];
+        // Keep the browser's real default wheel action, supplying only the
+        // OS phase metadata so cancellation is tested against native scroll.
+        surface.addEventListener("wheel", event => {
+          Object.defineProperty(event, "momentum", { value: scope.testMomentum });
+        }, true);
+        window.addEventListener("wheel", event => {
+          if (scope.testMomentum) scope.cancelledMomentum.push(event.defaultPrevented);
+        });
+      });
+      const box = (await scroller.boundingBox())!;
+      await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+      const position = () => scroller.evaluate((el, axis) => axis === "x" ? el.scrollLeft : el.scrollTop, axis);
+      const send = (movement: number) => page.mouse.wheel(axis === "x" ? movement : 0, axis === "y" ? movement : 0);
+      await send(40);
+      await expect.poll(position).toBeGreaterThan(100);
+      const stopped = await position();
+      await page.evaluate(() => { (window as any).testMomentum = true; });
+      for (const movement of [30, 20, 10, 5]) await send(movement);
+      await expect.poll(() => page.evaluate(() => (window as any).cancelledMomentum)).toEqual([true, true, true, true]);
+      expect(await position()).toBe(stopped);
+      await page.evaluate(() => { (window as any).testMomentum = false; });
+      await send(40);
+      await expect.poll(position).toBeGreaterThan(stopped);
+      await expect(status).toHaveText("1 / 4");
+    });
+
     test(`${mode}, ${axis}: fast native phases reveal the preview rail and selection keeps it open`, async ({ page }, testInfo) => {
       const { status } = await openFourPages(page, mode);
       await page.evaluate(async (axis) => {

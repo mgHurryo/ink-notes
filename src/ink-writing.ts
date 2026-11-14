@@ -1694,6 +1694,12 @@ export abstract class InkWritingView extends FileView {
         return;
       }
     }
+    // Momentum belongs to the recognizer, but must not move this page after
+    // the user's deliberate input ends. Nested scrollers above keep ownership.
+    if (motion.isMomentum) {
+      event.preventDefault();
+      return;
+    }
     // At fit width, opening the rail can briefly overflow the horizontal
     // layout. That transient overflow must not consume a page swipe as a pan.
     const canPan = motion.axis === "y" || this.zoomLevel() > 1;
