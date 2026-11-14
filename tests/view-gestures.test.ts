@@ -526,10 +526,10 @@ describe("desktop wheel recognized gestures inside a settle window", () => {
   }
 
   function twoGestures(view: any): void {
-    feedWheel(view, 60, 0);
+    feedWheel(view, 96, 0);
     feedWheel(view, 30, 10, true);
-    feedWheel(view, 24, 20);
-    feedWheel(view, 24, 30);
+    feedWheel(view, 48, 20);
+    feedWheel(view, 48, 30);
   }
 
   it("queues each newly recognized gesture under its own id during a handoff", () => {
@@ -537,11 +537,11 @@ describe("desktop wheel recognized gestures inside a settle window", () => {
     try {
       view.beginPageSwipe(0, 10);
       view.flipSettling = true;
-      feedWheel(view, 60, 0);
+      feedWheel(view, 96, 0);
       const firstId = view.pageSwipeRequest.wheelGestureId;
       feedWheel(view, 30, 10, true);
-      feedWheel(view, 24, 20);
-      feedWheel(view, 24, 30);
+      feedWheel(view, 48, 20);
+      feedWheel(view, 48, 30);
       expect(view.pageSwipeRequest.target).toBe(2);
       expect(view.pageSwipeRequest.wheelGestureId).not.toBe(firstId);
       expect(view.swipeSettle).not.toHaveBeenCalled();

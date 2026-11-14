@@ -1986,6 +1986,7 @@ export class PdfInkView extends InkWritingView {
       if (Number(this.swipeStage.dataset.neighbor) === neighborIndex) return;
       this.destroySwipeStage();
     }
+    this.clipSwipePageToViewport(wrap, scroller);
     const count = this.sidecar?.notePages.length ?? this.pdfDoc?.numPages ?? 0;
     const insert = neighborIndex < 0 || neighborIndex >= count;
     if (insert && this.editingLocked()) return;
@@ -1993,6 +1994,8 @@ export class PdfInkView extends InkWritingView {
     const note = this.sidecar?.notePages[insert ? this.noteIndex : neighborIndex] ?? null;
     const display = this.rotatedSize(note);
     const { width, height, baseWidth, zoom } = this.swipePageSize(note);
+    const targetLeft = Math.max(PDF_PAGE_PADDING, (scroller.clientWidth - width) / 2);
+    const targetTop = Math.max(PDF_PAGE_PADDING, (scroller.clientHeight - height) / 2);
     this.swipeLayer = scroller.createDiv({ cls: "ink-swipe-layer" });
     this.swipeLayer.setCssStyles({ left: `${scroller.scrollLeft}px`, top: `${scroller.scrollTop}px`,
       width: `${scroller.clientWidth}px`, height: `${scroller.clientHeight}px`, right: "auto", bottom: "auto" });
@@ -2001,12 +2004,14 @@ export class PdfInkView extends InkWritingView {
     stage.setCssStyles({
       position: "absolute", margin: "0", overflow: "hidden", background: "#fff",
       borderRadius: "2px", boxShadow: "var(--ink-shadow-paper)",
-      left: `${Math.max(PDF_PAGE_PADDING, (scroller.clientWidth - width) / 2) - scroller.scrollLeft + side * pitch}px`,
-      top: `${Math.max(PDF_PAGE_PADDING, (scroller.clientHeight - height) / 2) - scroller.scrollTop}px`,
+      left: `${targetLeft + side * pitch}px`,
+      top: `${targetTop}px`,
       width: `${width}px`,
       height: `${height}px`,
       transform: "translateX(0px)",
     });
+    this.clipSwipeStageToDestination(stage, targetLeft, targetTop, width, height,
+      scroller.clientWidth, scroller.clientHeight);
     this.swipeStage = stage;
     if (insert) { this.showPageInsertPreview(stage, side); return; }
     // A rail thumbnail is only a first frame: copying it alone stretched a
@@ -2158,7 +2163,11 @@ export class PdfInkView extends InkWritingView {
   private swipeDragOffset = 0;
 
   private swipePitch(): number {
-    return Math.max(this.scroller?.clientWidth ?? 0, this.pageWrap?.offsetWidth ?? 0) + 16;
+    const scrollerWidth = this.scroller?.clientWidth ?? 0;
+    const currentPage = this.sidecar?.notePages[this.noteIndex] ?? null;
+    const { width } = this.swipePageSize(currentPage);
+    const currentLeft = Math.max(PDF_PAGE_PADDING, (scrollerWidth - width) / 2);
+    return Math.max(16, scrollerWidth + 16 - currentLeft);
   }
 
   private animateQueuedPageSwipe(direction: number): Promise<void> {
@@ -2178,6 +2187,7 @@ export class PdfInkView extends InkWritingView {
     this.swipeLayer?.remove();
     this.swipeStage?.remove();
     this.swipeLayer = this.swipeStage = null;
+    if (this.pageWrap?.style) this.pageWrap.style.clipPath = "";
     this.pageWrap?.setCssStyles({ transform: "", visibility: "" });
     this.swipeDragOffset = 0;
   }
@@ -2209,7 +2219,7 @@ export class PdfInkView extends InkWritingView {
       if (flip && stage) wrap.setCssStyles({ visibility: "hidden" });
       void this.navigatePageSwipe((index) => this.navigatePages(index - this.noteIndex),
         () => this.noteIndex, isCurrent, (direction) => this.animateQueuedPageSwipe(direction),
-        () => this.revealQueuedPage()).catch((error) => {
+        () => this.revealQueuedPage(), flip).catch((error) => {
         this.setStatus(`Could not switch pages: ${messageOf(error)}`, true);
       }).finally(() => {
         if (isCurrent()) {
@@ -2220,12 +2230,15 @@ export class PdfInkView extends InkWritingView {
     });
   }
 
+  protected discardSwipePresentation(): void { this.destroySwipeStage(); }
+
   private destroySwipeStage(): void {
     this.clearPageSwipeTarget();
     this.cancelPageSwipeAnimations();
     this.swipeLayer?.remove();
     this.swipeStage?.remove();
     this.swipeLayer = this.swipeStage = null;
+    if (this.pageWrap?.style) this.pageWrap.style.clipPath = "";
     if (this.pageWrap) {
       this.pageWrap.setCssStyles({ transform: "", visibility: "" });
     }

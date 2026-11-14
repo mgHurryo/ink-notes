@@ -61,11 +61,13 @@ describe.each(["x", "y"] as const)("shared %s-axis navigation policy", (axis) =>
     ...(momentum === undefined ? {} : { momentum }),
   });
 
-  it("uses the same 48px threshold and consumes movement inside the page before paging", () => {
+  it("uses the same 96px threshold and consumes movement inside the page before paging", () => {
     const gesture = new DesktopWheelGesture();
     expect(gesture.pageDelta(gesture.begin(delta(30), false, 0), true)).toBe(0);
-    expect(gesture.pageDelta(gesture.begin(delta(24), false, 10), false)).toBe(0);
-    expect(gesture.pageDelta(gesture.begin(delta(24), false, 20), false)).toBe(1);
+    expect(gesture.pageDelta(gesture.begin(delta(80), false, 10), false)).toBe(0);
+    expect(gesture.pageTravel).toBe(80);
+    expect(gesture.pageDelta(gesture.begin(delta(16), false, 20), false)).toBe(1);
+    expect(gesture.pageTravel).toBe(0);
     gesture.reset();
   });
 
@@ -75,25 +77,26 @@ describe.each(["x", "y"] as const)("shared %s-axis navigation policy", (axis) =>
     for (const [at, movement] of [[10, 60], [20, 160], [30, 8]]) {
       expect(gesture.pageDelta(gesture.begin(delta(movement, true), false, at), false)).toBe(0);
     }
-    expect(gesture.pageDelta(gesture.begin(delta(60, false), false, 40), false)).toBe(1);
+    expect(gesture.pageDelta(gesture.begin(delta(96, false), false, 40), false)).toBe(1);
     gesture.reset();
   });
 
   it("rearms a small native intentional swipe during an inertia tail", () => {
     const gesture = new DesktopWheelGesture();
-    expect(gesture.pageDelta(gesture.begin(delta(60, false), false, 0), false)).toBe(1);
+    expect(gesture.pageDelta(gesture.begin(delta(96, false), false, 0), false)).toBe(1);
     expect(gesture.pageDelta(gesture.begin(delta(30, true), false, 10), false)).toBe(0);
     const resumed = gesture.begin(delta(24, false), false, 20);
     expect(resumed.suppressed).toBe(false);
     expect(gesture.pageDelta(resumed, false)).toBe(0);
-    expect(gesture.pageDelta(gesture.begin(delta(24, false), false, 30), false)).toBe(1);
+    expect(gesture.pageDelta(gesture.begin(delta(48, false), false, 30), false)).toBe(0);
+    expect(gesture.pageDelta(gesture.begin(delta(48, false), false, 40), false)).toBe(1);
     gesture.reset();
   });
 
   it("permits immediate reversal without waiting for a timeout", () => {
     const gesture = new DesktopWheelGesture();
-    expect(gesture.pageDelta(gesture.begin(delta(60, false), false, 0), false)).toBe(1);
-    expect(gesture.pageDelta(gesture.begin(delta(-60, false), false, 10), false)).toBe(-1);
+    expect(gesture.pageDelta(gesture.begin(delta(96, false), false, 0), false)).toBe(1);
+    expect(gesture.pageDelta(gesture.begin(delta(-96, false), false, 10), false)).toBe(-1);
     gesture.reset();
   });
 
@@ -109,11 +112,22 @@ describe.each(["x", "y"] as const)("shared %s-axis navigation policy", (axis) =>
 
   it("releases gesture suppression when the library ends its stream", () => {
     const gesture = new DesktopWheelGesture();
-    gesture.pageDelta(gesture.begin(delta(60, false), false, 0), false);
+    gesture.pageDelta(gesture.begin(delta(96, false), false, 0), false);
     expect(gesture.pagingTail).toBe(true);
     vi.advanceTimersByTime(1100);
     expect(gesture.pagingTail).toBe(false);
-    expect(gesture.pageDelta(gesture.begin(delta(60, false), false, 1100), false)).toBe(1);
+    expect(gesture.pageDelta(gesture.begin(delta(96, false), false, 1100), false)).toBe(1);
+    gesture.reset();
+  });
+
+  it("reports the library's momentum and end phases for preview rebound", () => {
+    const onEnd = vi.fn();
+    const gesture = new DesktopWheelGesture(onEnd);
+    gesture.begin(delta(24), false, 0);
+    gesture.begin(delta(10, true), false, 10);
+    expect(onEnd).toHaveBeenCalled();
+    vi.advanceTimersByTime(1100);
+    expect(onEnd).toHaveBeenCalled();
     gesture.reset();
   });
 });

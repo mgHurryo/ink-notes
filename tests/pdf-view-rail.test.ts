@@ -1845,7 +1845,9 @@ describe("pdf page preview rail", () => {
     let release!: () => void;
     const navigation = vi.spyOn(view, "navigatePages").mockImplementation(() => new Promise<void>((resolve) => { release = resolve; }));
     host.swipeSettle(1);
-    expect(targets).toEqual(["translateX(-816px)", "translateX(-816px)"]);
+    expect(targets).toHaveLength(2);
+    expect(targets[0]).toBe(targets[1]);
+    expect(targets[0]).toMatch(/^translateX\(-[\d.]+px\)$/);
     host.swipeSettle(0);
     expect(animations).toHaveLength(2);
     animations[0].onfinish!();
