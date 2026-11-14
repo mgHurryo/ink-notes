@@ -1185,14 +1185,15 @@ export class InkView extends InkWritingView {
     if (!extent) return;
     const side = offset > 0 ? -1 : 1;
     const neighborIndex = this.pageIndex + side;
+    const page = this.pageElement;
     if (this.swipeStage) {
       if (Number(this.swipeStage.dataset.neighbor) === neighborIndex) return;
       this.destroySwipeStage();
     }
+    this.clipSwipePageToViewport(page, this.pageScroller);
     const insert = neighborIndex < 0 || neighborIndex >= this.notebook.pages.length;
     if (insert && this.readingMode) return;
     const neighbor = insert ? null : this.notebook.pages[neighborIndex];
-    const page = this.pageElement;
     const pitch = this.swipePitch();
     // Clip previews separately: offscreen pages must not enlarge scrollWidth.
     this.swipeLayer = this.pageScroller.createDiv({ cls: "ink-swipe-layer" });
@@ -1200,15 +1201,21 @@ export class InkView extends InkWritingView {
       width: `${this.pageScroller.clientWidth}px`, height: `${this.pageScroller.clientHeight}px`, right: "auto", bottom: "auto" });
     const stage = this.swipeLayer.createDiv({ cls: `ink-page ink-paper-${neighbor?.paper ?? "blank"} ink-swipe-stage` });
     const previewZoom = this.zoomLocked ? this.zoom : 1;
+    const targetLeft = extent.offsetLeft + page.offsetLeft;
+    const targetTop = extent.offsetTop + page.offsetTop;
+    const width = this.pageBaseWidth * previewZoom;
+    const height = this.pageBaseHeight * previewZoom;
     stage.dataset.neighbor = String(neighborIndex);
     stage.setCssStyles({
       position: "absolute", margin: "0", overflow: "hidden",
-      left: `${extent.offsetLeft + page.offsetLeft - this.pageScroller.scrollLeft + side * pitch}px`,
-      top: `${extent.offsetTop + page.offsetTop - this.pageScroller.scrollTop}px`,
-      width: `${this.pageBaseWidth * previewZoom}px`,
-      height: `${this.pageBaseHeight * previewZoom}px`,
+      left: `${targetLeft + side * pitch}px`,
+      top: `${targetTop}px`,
+      width: `${width}px`,
+      height: `${height}px`,
       transform: "translateX(0px)",
     });
+    this.clipSwipeStageToDestination(stage, targetLeft, targetTop, width, height,
+      this.pageScroller.clientWidth, this.pageScroller.clientHeight);
     stage.style.setProperty("--ink-page-scale", String(previewZoom));
     this.swipeStage = stage;
     if (insert) { this.showPageInsertPreview(stage, side); return; }
@@ -1248,7 +1255,8 @@ export class InkView extends InkWritingView {
   private swipeDragOffset = 0;
 
   private swipePitch(): number {
-    return Math.max(this.pageScroller.clientWidth, this.pageElement.offsetWidth) + 16;
+    const currentLeft = this.pageExtent.offsetLeft + this.pageElement.offsetLeft;
+    return Math.max(16, this.pageScroller.clientWidth + 16 - currentLeft);
   }
 
   private animateQueuedPageSwipe(direction: number): Promise<void> {
@@ -1268,6 +1276,7 @@ export class InkView extends InkWritingView {
     this.swipeLayer?.remove();
     this.swipeStage?.remove();
     this.swipeLayer = this.swipeStage = null;
+    if (this.pageElement?.style) this.pageElement.style.clipPath = "";
     this.pageExtent?.setCssStyles({ transform: "", visibility: "" });
     this.swipeDragOffset = 0;
   }
@@ -1302,7 +1311,7 @@ export class InkView extends InkWritingView {
         const page = this.notebook.pages[index];
         return page ? this.navigateToPage(page.id) : Promise.resolve();
       }, () => this.pageIndex, isCurrent, (direction) => this.animateQueuedPageSwipe(direction),
-      () => this.revealQueuedPage()).finally(() => {
+      () => this.revealQueuedPage(), flip).finally(() => {
         if (isCurrent()) {
           this.destroySwipeStage();
           this.resumePageSwipeDrag();
@@ -1311,12 +1320,15 @@ export class InkView extends InkWritingView {
     });
   }
 
+  protected discardSwipePresentation(): void { this.destroySwipeStage(); }
+
   private destroySwipeStage(): void {
     this.clearPageSwipeTarget();
     this.cancelPageSwipeAnimations();
     this.swipeLayer?.remove();
     this.swipeStage?.remove();
     this.swipeLayer = this.swipeStage = null;
+    if (this.pageElement?.style) this.pageElement.style.clipPath = "";
     if (this.pageExtent) {
       this.pageExtent.setCssStyles({ transform: "", visibility: "" });
     }

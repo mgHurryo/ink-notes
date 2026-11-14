@@ -961,6 +961,39 @@ export abstract class InkWritingView extends FileView {
   /** View hook: the drag ended. delta is -1/+1 to flip (animated slide to
    *  the neighbouring page) or 0 to spring back. */
   protected swipeSettle(_delta: number, _travel = 0, _scrollEdge?: "top" | "bottom"): void {}
+  /** Synchronously discard a temporary swipe when another input takes over. */
+  protected discardSwipePresentation(): void { this.swipeSettle(0); }
+
+  protected clipSwipePageToViewport(page: HTMLElement, scroller: HTMLElement): void {
+    const pageRect = page.getBoundingClientRect();
+    const scrollerRect = scroller.getBoundingClientRect();
+    const scrollerScaleX = scrollerRect.width / Math.max(1, scroller.offsetWidth);
+    const scrollerScaleY = scrollerRect.height / Math.max(1, scroller.offsetHeight);
+    const clipLeft = scrollerRect.left + scroller.clientLeft * scrollerScaleX;
+    const clipTop = scrollerRect.top + scroller.clientTop * scrollerScaleY;
+    const clipRight = clipLeft + scroller.clientWidth * scrollerScaleX;
+    const clipBottom = clipTop + scroller.clientHeight * scrollerScaleY;
+    const pageScaleX = pageRect.width / Math.max(1, page.offsetWidth);
+    const pageScaleY = pageRect.height / Math.max(1, page.offsetHeight);
+    const width = page.offsetWidth;
+    const height = page.offsetHeight;
+    const left = Math.min(width, Math.max(0, (clipLeft - pageRect.left) / pageScaleX));
+    const top = Math.min(height, Math.max(0, (clipTop - pageRect.top) / pageScaleY));
+    const right = Math.min(width - left, Math.max(0, (pageRect.right - clipRight) / pageScaleX));
+    const bottom = Math.min(height - top, Math.max(0, (pageRect.bottom - clipBottom) / pageScaleY));
+    page.style.clipPath = left || top || right || bottom
+      ? `inset(${top}px ${right}px ${bottom}px ${left}px)` : "";
+  }
+
+  protected clipSwipeStageToDestination(stage: HTMLElement, left: number, top: number,
+    width: number, height: number, viewportWidth: number, viewportHeight: number): void {
+    const clipLeft = Math.min(width, Math.max(0, -left));
+    const clipTop = Math.min(height, Math.max(0, -top));
+    const clipRight = Math.min(width - clipLeft, Math.max(0, left + width - viewportWidth));
+    const clipBottom = Math.min(height - clipTop, Math.max(0, top + height - viewportHeight));
+    stage.style.clipPath = clipLeft || clipTop || clipRight || clipBottom
+      ? `inset(${clipTop}px ${clipRight}px ${clipBottom}px ${clipLeft}px)` : "";
+  }
 
   protected pageInsertThreshold(): number {
     return Math.max(120, Math.min(240, this.inputScroller().clientWidth * 0.35));
@@ -1076,7 +1109,8 @@ export abstract class InkWritingView extends FileView {
   /** Drain the latest destination one page at a time so each transition can animate. */
   protected async navigatePageSwipe(navigate: (index: number) => Promise<void>,
     index: () => number, isCurrent: () => boolean,
-    animateStep?: (direction: number) => Promise<void>, afterStep?: () => void): Promise<void> {
+    animateStep?: (direction: number) => Promise<void>, afterStep?: () => void,
+    firstStepAnimated = true): Promise<void> {
     let firstStep = true;
     while (isCurrent() && this.pageSwipeRequest !== null) {
       const { target, scrollEdge } = this.pageSwipeRequest;
@@ -1085,7 +1119,7 @@ export abstract class InkWritingView extends FileView {
       const direction = Math.sign(target - current);
       const next = current + direction;
       this.pageSwipeRequest.activeTarget = next;
-      if (!firstStep && animateStep) await animateStep(direction);
+      if ((!firstStep || !firstStepAnimated) && animateStep) await animateStep(direction);
       if (!isCurrent()) return;
       await navigate(next);
       // A failed or superseded navigation must not retry indefinitely.
@@ -1384,7 +1418,9 @@ export abstract class InkWritingView extends FileView {
   private pageOptionsDismissRegistered = false;
   private desktopPan: { pointerId: number; x: number; y: number; startX: number; startY: number; mode: "pan" | "swipe" | null } | null = null;
   private desktopSpaceDown = false;
-  private desktopWheel = new DesktopWheelGesture();
+  private wheelEdgePreview = false;
+  private wheelEdgePreviewSettling = false;
+  private desktopWheel = new DesktopWheelGesture(() => this.finishWheelEdgePreview());
   /** Sliding-window page rate behind the fast-paging rail. */
   private wheelPacer = new WheelPagePacer();
   /** True while a fast paging burst holds the rail open. */
@@ -1548,7 +1584,7 @@ export abstract class InkWritingView extends FileView {
       this.pointerToolPenId = null;
       scroller.classList.remove("ink-pan-ready");
       this.endDesktopPan();
-      this.desktopWheel.reset();
+      this.resetDesktopWheel();
     };
     if (doc.defaultView) this.registerDomEvent(doc.defaultView, "blur", reset);
     this.register(reset);
@@ -1639,7 +1675,7 @@ export abstract class InkWritingView extends FileView {
   protected onWheel(event: WheelEvent): void {
     // A wheel burst may add destinations while the previous page is saving.
     if (event.defaultPrevented || event.altKey || this.nativeMenuOpen()) {
-      this.desktopWheel.reset();
+      this.resetDesktopWheel();
       return;
     }
     // Live pointer input occupying the surface only borrows the event; the
@@ -1666,13 +1702,13 @@ export abstract class InkWritingView extends FileView {
       // A flick tail crossing the field mid-flight keeps its suppression and
       // page budget; only a fresh gesture resets into the field's own control.
       if (this.desktopWheel.pagingTail) return;
-      this.desktopWheel.reset();
+      this.resetDesktopWheel();
       return;
     }
     const delta = normalizeWheel(event, scroller);
     if (!delta) return;
     if (event.ctrlKey || event.metaKey) {
-      this.desktopWheel.reset();
+      this.resetDesktopWheel();
       event.preventDefault();
       if (this.flipSettling || delta.y === 0) return;
       this.desktopZoom(Math.exp(-Math.max(-100, Math.min(100, delta.y)) * 0.004), { x: event.clientX, y: event.clientY });
@@ -1681,6 +1717,10 @@ export abstract class InkWritingView extends FileView {
     }
     this.refreshFastPagingRailQuietTimer();
     const motion = this.desktopWheel.begin(delta, event.shiftKey, event.timeStamp);
+    if (this.wheelEdgePreviewSettling) {
+      if (!this.flipSettling) this.clearWheelEdgePreviewState();
+      else if (!motion.isMomentum && motion.movement !== 0) this.cancelWheelEdgePreview();
+    }
     // Nested surfaces own only their scrollable axis, even at their edge.
     const ownerWindow = scroller.ownerDocument.defaultView!;
     for (let element = target; element && element !== scroller; element = element.parentElement) {
@@ -1690,7 +1730,7 @@ export abstract class InkWritingView extends FileView {
         : /(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight;
       if (nestedScroll) {
         if (this.desktopWheel.pagingTail) return;
-        this.desktopWheel.reset();
+        this.resetDesktopWheel();
         return;
       }
     }
@@ -1713,7 +1753,8 @@ export abstract class InkWritingView extends FileView {
       if (pages !== 0) {
         this.noteWheelPages(Math.abs(pages), motion.axis, event.timeStamp);
         this.navigateWheelPages(pages, motion.axis, motion.discrete, motion.gestureId);
-      }
+      } else if (!canScroll) this.updateWheelEdgePreview(motion);
+      else this.cancelWheelEdgePreview();
       return;
     }
     if (motion.suppressed) {
@@ -1725,6 +1766,7 @@ export abstract class InkWritingView extends FileView {
     if (canPan && !this.flipSettling
       && this.wheelCanScroll(scroller, motion.axis, motion.movement)) {
       this.desktopWheel.pageDelta(motion, true);
+      this.cancelWheelEdgePreview();
       return;
     }
     event.preventDefault();
@@ -1732,7 +1774,42 @@ export abstract class InkWritingView extends FileView {
     if (pages !== 0) {
       this.noteWheelPages(Math.abs(pages), motion.axis, event.timeStamp);
       this.navigateWheelPages(pages, motion.axis, motion.discrete, motion.gestureId);
-    }
+    } else this.updateWheelEdgePreview(motion);
+  }
+
+  private finishWheelEdgePreview(): void {
+    if (!this.wheelEdgePreview || this.flipSettling) return;
+    this.wheelEdgePreview = false;
+    this.wheelEdgePreviewSettling = true;
+    this.swipeSettle(0);
+  }
+
+  private updateWheelEdgePreview(motion: ReturnType<DesktopWheelGesture["begin"]>): void {
+    if (motion.discrete || motion.suppressed || motion.isMomentum || this.flipSettling) return;
+    const travel = this.desktopWheel.pageTravel;
+    if (travel === 0) return;
+    // Show a damped page edge while keeping the higher commit threshold. The
+    // recognizer remains the sole owner of gesture phases and accumulated travel.
+    const offset = -Math.sign(travel) * Math.min(72, 24 + Math.abs(travel) * 0.6);
+    this.swipeDrag(offset);
+    this.wheelEdgePreview = true;
+    this.wheelEdgePreviewSettling = false;
+  }
+
+  private clearWheelEdgePreviewState(): void {
+    this.wheelEdgePreview = false;
+    this.wheelEdgePreviewSettling = false;
+  }
+
+  private cancelWheelEdgePreview(): void {
+    if (!this.wheelEdgePreview && !this.wheelEdgePreviewSettling) return;
+    this.clearWheelEdgePreviewState();
+    this.discardSwipePresentation();
+  }
+
+  private resetDesktopWheel(): void {
+    this.desktopWheel.reset();
+    this.cancelWheelEdgePreview();
   }
 
   private wheelCanScroll(scroller: HTMLElement, axis: "x" | "y", movement: number): boolean {
@@ -1764,10 +1841,12 @@ export abstract class InkWritingView extends FileView {
   private navigateWheelPages(pages: number, axis: "x" | "y", discrete: boolean, gestureId: number): void {
     const direction = Math.sign(pages);
     const scrollEdge = axis === "y" ? (direction > 0 ? "top" : "bottom") : undefined;
+    const hasEdgePreview = this.wheelEdgePreview;
+    this.clearWheelEdgePreviewState();
     if (discrete ? this.queuePageSwipeDelta(pages, scrollEdge, true)
       : this.queueTrackpadPageSwipeDelta(pages, gestureId, scrollEdge)) return;
     if (this.flipSettling) return;
-    this.swipeDrag(-direction * 24);
+    if (!hasEdgePreview) this.swipeDrag(-direction * 24);
     this.swipeSettle(direction, 0, scrollEdge);
     if (Math.abs(pages) > 1) {
       if (discrete) this.queuePageSwipeDelta(pages - direction, scrollEdge, true);
@@ -1840,7 +1919,7 @@ export abstract class InkWritingView extends FileView {
 
   /** View teardown: drop the burst state and its pending collapse timer. */
   protected clearFastPagingRail(): void {
-    this.desktopWheel.reset();
+    this.resetDesktopWheel();
     if (this.fastPagingRailTimer !== undefined) window.clearTimeout(this.fastPagingRailTimer);
     this.fastPagingRailTimer = undefined;
     this.fastPagingRail = false;
@@ -1876,6 +1955,7 @@ export abstract class InkWritingView extends FileView {
   }
 
   protected onPointerDown(event: InkPointerSample, source: InteractionContext["source"] = "pointer"): void {
+    this.cancelWheelEdgePreview();
     this.cancelPasteHold();
     if (event.pointerType !== "touch") { this.hideSelectionActions(); this.pasteTarget = null; }
     this.devPointerEvents += 1;
@@ -2641,6 +2721,7 @@ export abstract class InkWritingView extends FileView {
   // ---------------------------------------------------------------- touch
 
   protected onTouchStart(event: TouchEvent): void {
+    this.cancelWheelEdgePreview();
     this.cancelPasteHold();
     if (this.state.tool === "pointer" && this.pointerToolPenId !== null) {
       // Pointer mode does not create a generic interaction for the pen. The
