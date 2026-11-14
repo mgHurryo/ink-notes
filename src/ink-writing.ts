@@ -1023,10 +1023,8 @@ export abstract class InkWritingView extends FileView {
     return request ? this.queuePageSwipeTarget(request.target + delta, scrollEdge, wheelQueued) : false;
   }
 
-  /** Trackpad inertia has no portable end event; coalesce each detected gesture
-   *  once. Every wheel-side exit that lifts the flip now mints a fresh gesture
-   *  id (the slow-scroll release included), so a same-id second queue must not
-   *  recur; returning true still collapses any repeat within one gesture. */
+  /** Coalesce each library-recognized trackpad gesture once while saving.
+   *  A new gesture gets a fresh id; repeated samples retain the same id. */
   protected queueTrackpadPageSwipeDelta(delta: number, gestureId: number, scrollEdge?: "top" | "bottom"): boolean {
     const request = this.pageSwipeRequest;
     if (!this.flipSettling || !request) return false;
@@ -1643,6 +1641,13 @@ export abstract class InkWritingView extends FileView {
     if (this.activePointerId !== null || this.desktopPan) {
       const target = event.target as HTMLElement | null;
       if (!target?.closest?.('input, textarea, select, [contenteditable], [role="dialog"]')) event.preventDefault();
+      // Keep the external recognizer current while the pen owns movement.
+      // Dropping these samples loses lift/momentum transitions and can make
+      // the remaining tail look like fresh input when writing finishes.
+      if (!event.ctrlKey && !event.metaKey) {
+        const delta = normalizeWheel(event, this.inputScroller());
+        if (delta) this.desktopWheel.begin(delta, event.shiftKey, event.timeStamp);
+      }
       return;
     }
     const scroller = this.inputScroller();
@@ -1679,13 +1684,15 @@ export abstract class InkWritingView extends FileView {
         return;
       }
     }
+    // At fit width, opening the rail can briefly overflow the horizontal
+    // layout. That transient overflow must not consume a page swipe as a pan.
+    const canPan = motion.axis === "y" || this.zoomLevel() > 1;
     // Uncancelable events may still scroll natively. Do not move the scroller
     // ourselves, but keep accumulating when the view cannot consume this axis
     // so a horizontal trackpad transaction can still turn a fit page.
     if (!event.cancelable) {
       if (this.desktopWheel.pagingTail) return;
-      const canScroll = (motion.axis === "y" || this.zoomLevel() > 1)
-        && this.wheelCanScroll(scroller, motion.axis, motion.movement);
+      const canScroll = canPan && this.wheelCanScroll(scroller, motion.axis, motion.movement);
       const pages = this.desktopWheel.pageDelta(motion, canScroll);
       if (pages !== 0) {
         this.noteWheelPages(Math.abs(pages), motion.axis, event.timeStamp);
@@ -1697,26 +1704,15 @@ export abstract class InkWritingView extends FileView {
       event.preventDefault();
       return;
     }
-    // Keep ordinary vertical panning on the browser's native scroll path.
-    // Cancelling every touchpad sample and synchronously writing scrollTop
-    // forced high-rate scrolling through the main-thread wheel handler. At a
-    // page edge (or while a page flip is settling) custom handling below still
-    // owns the gesture so navigation and queued flips remain deterministic.
-    if (!this.flipSettling && motion.axis === "y"
+    // Both axes use native panning inside the page. Custom handling owns only
+    // boundaries and page transitions, keeping high-rate input off JS scrolling.
+    if (canPan && !this.flipSettling
       && this.wheelCanScroll(scroller, motion.axis, motion.movement)) {
       this.desktopWheel.pageDelta(motion, true);
       return;
     }
     event.preventDefault();
-    let scrolled = false;
-    if (!this.flipSettling && (motion.axis === "y" || this.zoomLevel() > 1)) {
-      const property = motion.axis === "x" ? "scrollLeft" : "scrollTop";
-      const before = scroller[property];
-      scroller[property] += motion.movement;
-      // Use actual movement, including partial consumption at the boundary.
-      scrolled = Math.abs(scroller[property] - before) > 0.5;
-    }
-    const pages = this.desktopWheel.pageDelta(motion, scrolled);
+    const pages = this.desktopWheel.pageDelta(motion, false);
     if (pages !== 0) {
       this.noteWheelPages(Math.abs(pages), motion.axis, event.timeStamp);
       this.navigateWheelPages(pages, motion.axis, motion.discrete, motion.gestureId);
@@ -1726,10 +1722,27 @@ export abstract class InkWritingView extends FileView {
   private wheelCanScroll(scroller: HTMLElement, axis: "x" | "y", movement: number): boolean {
     const horizontal = axis === "x";
     const position = horizontal ? scroller.scrollLeft : scroller.scrollTop;
+    if (movement <= 0) return movement < 0 && position > 0.5;
+    const box = scroller.getBoundingClientRect();
+    const page = this.inputHost()?.parentElement?.getBoundingClientRect();
+    if (page && box.width > 0 && box.height > 0 && page.width > 0 && page.height > 0) {
+      // scrollWidth can include the reserved scrollbar gutter even though
+      // scrollLeft cannot reach it. Use the existing page/scrollport geometry
+      // to distinguish the real boundary from that unscrollable strip.
+      const style = scroller.ownerDocument.defaultView!.getComputedStyle(scroller);
+      const end = horizontal ? page.right : page.bottom;
+      const padding = parseFloat(horizontal ? style.paddingRight : style.paddingBottom) || 0;
+      // The stable vertical gutter extends the scroller's horizontal padding
+      // area. Compare the flow wrapper with that padding edge, not the narrower
+      // clientWidth. The ink host itself can be smaller than its flow wrapper.
+      const viewportEnd = horizontal ? box.right - (parseFloat(style.borderRightWidth) || 0)
+        : box.top + scroller.clientTop + scroller.clientHeight;
+      return end + padding > viewportEnd + 0.5;
+    }
     const maximum = Math.max(0, horizontal
       ? scroller.scrollWidth - scroller.clientWidth
       : scroller.scrollHeight - scroller.clientHeight);
-    return movement > 0 ? position < maximum - 0.5 : movement < 0 && position > 0.5;
+    return position < maximum - 0.5;
   }
 
   private navigateWheelPages(pages: number, axis: "x" | "y", discrete: boolean, gestureId: number): void {
@@ -1811,6 +1824,7 @@ export abstract class InkWritingView extends FileView {
 
   /** View teardown: drop the burst state and its pending collapse timer. */
   protected clearFastPagingRail(): void {
+    this.desktopWheel.reset();
     if (this.fastPagingRailTimer !== undefined) window.clearTimeout(this.fastPagingRailTimer);
     this.fastPagingRailTimer = undefined;
     this.fastPagingRail = false;

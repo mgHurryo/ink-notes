@@ -24930,387 +24930,523 @@ function defaultReadingMode(platform, device) {
   return platform.isPhone || !platform.isTablet;
 }
 
+// node_modules/wheel-gestures/dist/wheel-gestures.esm.js
+function _extends() {
+  _extends = Object.assign || function(target) {
+    for (var i = 1; i < arguments.length; i++) {
+      var source = arguments[i];
+      for (var key in source) {
+        if (Object.prototype.hasOwnProperty.call(source, key)) {
+          target[key] = source[key];
+        }
+      }
+    }
+    return target;
+  };
+  return _extends.apply(this, arguments);
+}
+var DECAY = 0.996;
+var projection = function projection2(velocityPxMs, decay) {
+  if (decay === void 0) {
+    decay = DECAY;
+  }
+  return velocityPxMs * decay / (1 - decay);
+};
+function lastOf(array) {
+  return array[array.length - 1];
+}
+function average(numbers) {
+  return numbers.reduce(function(a, b) {
+    return a + b;
+  }) / numbers.length;
+}
+var clamp2 = function clamp3(value, min, max) {
+  return Math.min(Math.max(min, value), max);
+};
+function addVectors(v1, v2) {
+  if (v1.length !== v2.length) {
+    throw new Error("vectors must be same length");
+  }
+  return v1.map(function(val, i) {
+    return val + v2[i];
+  });
+}
+function absMax(numbers) {
+  return Math.max.apply(Math, numbers.map(Math.abs));
+}
+function deepFreeze(o) {
+  Object.freeze(o);
+  Object.values(o).forEach(function(value) {
+    if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+      deepFreeze(value);
+    }
+  });
+  return o;
+}
+function EventBus() {
+  var listeners = {};
+  function on(type, listener) {
+    listeners[type] = (listeners[type] || []).concat(listener);
+    return function() {
+      return off(type, listener);
+    };
+  }
+  function off(type, listener) {
+    listeners[type] = (listeners[type] || []).filter(function(l) {
+      return l !== listener;
+    });
+  }
+  function dispatch(type, data) {
+    if (!(type in listeners)) return;
+    listeners[type].forEach(function(l) {
+      return l(data);
+    });
+  }
+  return deepFreeze({
+    on,
+    off,
+    dispatch
+  });
+}
+function WheelTargetObserver(eventListener) {
+  var targets = [];
+  var observe = function observe2(target) {
+    target.addEventListener("wheel", eventListener, {
+      passive: false
+    });
+    targets.push(target);
+    return function() {
+      return unobserve(target);
+    };
+  };
+  var unobserve = function unobserve2(target) {
+    target.removeEventListener("wheel", eventListener);
+    targets = targets.filter(function(t) {
+      return t !== target;
+    });
+  };
+  var disconnect = function disconnect2() {
+    targets.forEach(unobserve);
+  };
+  return deepFreeze({
+    observe,
+    unobserve,
+    disconnect
+  });
+}
+var LINE_HEIGHT = 16 * 1.125;
+var PAGE_HEIGHT = typeof window !== "undefined" && window.innerHeight || 800;
+var DELTA_MODE_UNIT = [1, LINE_HEIGHT, PAGE_HEIGHT];
+function normalizeWheel(e) {
+  var deltaX = e.deltaX * DELTA_MODE_UNIT[e.deltaMode];
+  var deltaY = e.deltaY * DELTA_MODE_UNIT[e.deltaMode];
+  var deltaZ = (e.deltaZ || 0) * DELTA_MODE_UNIT[e.deltaMode];
+  return {
+    timeStamp: e.timeStamp,
+    axisDelta: [deltaX, deltaY, deltaZ]
+  };
+}
+var reverseAll = [-1, -1, -1];
+function reverseAxisDeltaSign(wheel, reverseSign) {
+  if (!reverseSign) {
+    return wheel;
+  }
+  var multipliers = reverseSign === true ? reverseAll : reverseSign.map(function(shouldReverse) {
+    return shouldReverse ? -1 : 1;
+  });
+  return _extends({}, wheel, {
+    axisDelta: wheel.axisDelta.map(function(delta, i) {
+      return delta * multipliers[i];
+    })
+  });
+}
+var DELTA_MAX_ABS = 700;
+var clampAxisDelta = function clampAxisDelta2(wheel) {
+  return _extends({}, wheel, {
+    axisDelta: wheel.axisDelta.map(function(delta) {
+      return clamp2(delta, -DELTA_MAX_ABS, DELTA_MAX_ABS);
+    })
+  });
+};
+var __DEV__ = process.env.NODE_ENV !== "production";
+var ACC_FACTOR_MIN = 0.6;
+var ACC_FACTOR_MAX = 0.96;
+var WHEELEVENTS_TO_MERGE = 2;
+var WHEELEVENTS_TO_ANALAZE = 5;
+var configDefaults = /* @__PURE__ */ deepFreeze({
+  preventWheelAction: true,
+  reverseSign: [true, true, false]
+});
+var WILL_END_TIMEOUT_DEFAULT = 400;
+function createWheelGesturesState() {
+  return {
+    isStarted: false,
+    isStartPublished: false,
+    isMomentum: false,
+    startTime: 0,
+    lastAbsDelta: Infinity,
+    axisMovement: [0, 0, 0],
+    axisVelocity: [0, 0, 0],
+    accelerationFactors: [],
+    scrollPoints: [],
+    scrollPointsToMerge: [],
+    willEndTimeout: WILL_END_TIMEOUT_DEFAULT
+  };
+}
+function WheelGestures(optionsParam) {
+  if (optionsParam === void 0) {
+    optionsParam = {};
+  }
+  var _EventBus = EventBus(), on = _EventBus.on, off = _EventBus.off, dispatch = _EventBus.dispatch;
+  var config = configDefaults;
+  var state = createWheelGesturesState();
+  var currentEvent;
+  var negativeZeroFingerUpSpecialEvent = false;
+  var prevWheelEventState;
+  var feedWheel = function feedWheel2(wheelEvents) {
+    if (Array.isArray(wheelEvents)) {
+      wheelEvents.forEach(function(wheelEvent) {
+        return processWheelEventData(wheelEvent);
+      });
+    } else {
+      processWheelEventData(wheelEvents);
+    }
+  };
+  var updateOptions = function updateOptions2(newOptions) {
+    if (newOptions === void 0) {
+      newOptions = {};
+    }
+    if (Object.values(newOptions).some(function(option) {
+      return option === void 0 || option === null;
+    })) {
+      __DEV__ && console.error("updateOptions ignored! undefined & null options not allowed");
+      return config;
+    }
+    return config = deepFreeze(_extends({}, configDefaults, config, newOptions));
+  };
+  var publishWheel = function publishWheel2(additionalData) {
+    var wheelEventState = _extends({
+      event: currentEvent,
+      isStart: false,
+      isEnding: false,
+      isMomentumCancel: false,
+      isMomentum: state.isMomentum,
+      axisDelta: [0, 0, 0],
+      axisVelocity: state.axisVelocity,
+      axisMovement: state.axisMovement,
+      get axisMovementProjection() {
+        return addVectors(wheelEventState.axisMovement, wheelEventState.axisVelocity.map(function(velocity) {
+          return projection(velocity);
+        }));
+      }
+    }, additionalData);
+    dispatch("wheel", _extends({}, wheelEventState, {
+      previous: prevWheelEventState
+    }));
+    prevWheelEventState = wheelEventState;
+  };
+  var shouldPreventDefault = function shouldPreventDefault2(deltaMaxAbs, axisDelta) {
+    var _config = config, preventWheelAction = _config.preventWheelAction;
+    var deltaX = axisDelta[0], deltaY = axisDelta[1], deltaZ = axisDelta[2];
+    if (typeof preventWheelAction === "boolean") return preventWheelAction;
+    switch (preventWheelAction) {
+      case "x":
+        return Math.abs(deltaX) >= deltaMaxAbs;
+      case "y":
+        return Math.abs(deltaY) >= deltaMaxAbs;
+      case "z":
+        return Math.abs(deltaZ) >= deltaMaxAbs;
+      default:
+        __DEV__ && console.warn("unsupported preventWheelAction value: " + preventWheelAction, "warn");
+        return false;
+    }
+  };
+  var processWheelEventData = function processWheelEventData2(wheelEvent) {
+    var _clampAxisDelta = clampAxisDelta(reverseAxisDeltaSign(normalizeWheel(wheelEvent), config.reverseSign)), axisDelta = _clampAxisDelta.axisDelta, timeStamp = _clampAxisDelta.timeStamp;
+    var deltaMaxAbs = absMax(axisDelta);
+    var nativeMomentum = typeof wheelEvent.momentum === "boolean" ? wheelEvent.momentum : void 0;
+    if (wheelEvent.preventDefault && shouldPreventDefault(deltaMaxAbs, axisDelta)) {
+      wheelEvent.preventDefault();
+    }
+    if (!state.isStarted) {
+      start();
+    } else if (state.isMomentum && (nativeMomentum === false || nativeMomentum === void 0 && deltaMaxAbs > Math.max(2, state.lastAbsDelta * 2))) {
+      end(true);
+      start();
+    }
+    if (nativeMomentum === void 0 && deltaMaxAbs === 0 && Object.is && Object.is(wheelEvent.deltaX, -0)) {
+      negativeZeroFingerUpSpecialEvent = true;
+      return;
+    }
+    currentEvent = wheelEvent;
+    if (nativeMomentum !== void 0) {
+      state.isMomentum = nativeMomentum;
+      negativeZeroFingerUpSpecialEvent = false;
+    }
+    state.axisMovement = addVectors(state.axisMovement, axisDelta);
+    state.lastAbsDelta = deltaMaxAbs;
+    state.scrollPointsToMerge.push({
+      axisDelta,
+      timeStamp
+    });
+    mergeScrollPointsCalcVelocity();
+    publishWheel({
+      axisDelta,
+      isStart: !state.isStartPublished
+    });
+    state.isStartPublished = true;
+    willEnd();
+  };
+  var mergeScrollPointsCalcVelocity = function mergeScrollPointsCalcVelocity2() {
+    if (state.scrollPointsToMerge.length === WHEELEVENTS_TO_MERGE) {
+      state.scrollPoints.unshift({
+        axisDeltaSum: state.scrollPointsToMerge.map(function(b) {
+          return b.axisDelta;
+        }).reduce(addVectors),
+        timeStamp: average(state.scrollPointsToMerge.map(function(b) {
+          return b.timeStamp;
+        }))
+      });
+      updateVelocity();
+      state.scrollPointsToMerge.length = 0;
+      state.scrollPoints.length = 1;
+      if (!state.isMomentum && typeof currentEvent.momentum !== "boolean") {
+        detectMomentum();
+      }
+    } else if (!state.isStartPublished) {
+      updateStartVelocity();
+    }
+  };
+  var updateStartVelocity = function updateStartVelocity2() {
+    state.axisVelocity = lastOf(state.scrollPointsToMerge).axisDelta.map(function(d) {
+      return d / state.willEndTimeout;
+    });
+  };
+  var updateVelocity = function updateVelocity2() {
+    var _state$scrollPoints = state.scrollPoints, latestScrollPoint = _state$scrollPoints[0], prevScrollPoint = _state$scrollPoints[1];
+    if (!prevScrollPoint || !latestScrollPoint) {
+      return;
+    }
+    var deltaTime = latestScrollPoint.timeStamp - prevScrollPoint.timeStamp;
+    if (deltaTime <= 0) {
+      __DEV__ && console.warn("invalid deltaTime");
+      return;
+    }
+    var velocity = latestScrollPoint.axisDeltaSum.map(function(d) {
+      return d / deltaTime;
+    });
+    var accelerationFactor = velocity.map(function(v, i) {
+      return v / (state.axisVelocity[i] || 1);
+    });
+    state.axisVelocity = velocity;
+    state.accelerationFactors.push(accelerationFactor);
+    updateWillEndTimeout(deltaTime);
+  };
+  var updateWillEndTimeout = function updateWillEndTimeout2(deltaTime) {
+    var newTimeout = Math.ceil(deltaTime / 10) * 10 * 1.2;
+    if (!state.isMomentum) {
+      newTimeout = Math.max(100, newTimeout * 2);
+    }
+    state.willEndTimeout = Math.min(1e3, Math.round(newTimeout));
+  };
+  var accelerationFactorInMomentumRange = function accelerationFactorInMomentumRange2(accFactor) {
+    if (accFactor === 0) return true;
+    return accFactor <= ACC_FACTOR_MAX && accFactor >= ACC_FACTOR_MIN;
+  };
+  var detectMomentum = function detectMomentum2() {
+    if (state.accelerationFactors.length >= WHEELEVENTS_TO_ANALAZE) {
+      if (negativeZeroFingerUpSpecialEvent) {
+        negativeZeroFingerUpSpecialEvent = false;
+        if (absMax(state.axisVelocity) >= 0.2) {
+          recognizedMomentum();
+          return;
+        }
+      }
+      var recentAccelerationFactors = state.accelerationFactors.slice(WHEELEVENTS_TO_ANALAZE * -1);
+      var detectedMomentum = recentAccelerationFactors.every(function(accFac) {
+        var sameAccFac = !!accFac.reduce(function(f1, f2) {
+          return f1 && f1 < 1 && f1 === f2 ? 1 : 0;
+        });
+        var bothAreInRangeOrZero = accFac.filter(accelerationFactorInMomentumRange).length === accFac.length;
+        return sameAccFac || bothAreInRangeOrZero;
+      });
+      if (detectedMomentum) {
+        recognizedMomentum();
+      }
+      state.accelerationFactors = recentAccelerationFactors;
+    }
+  };
+  var recognizedMomentum = function recognizedMomentum2() {
+    state.isMomentum = true;
+  };
+  var start = function start2() {
+    state = createWheelGesturesState();
+    state.isStarted = true;
+    state.startTime = Date.now();
+    prevWheelEventState = void 0;
+    negativeZeroFingerUpSpecialEvent = false;
+  };
+  var willEnd = /* @__PURE__ */ (function() {
+    var willEndId;
+    return function() {
+      clearTimeout(willEndId);
+      willEndId = setTimeout(end, state.willEndTimeout);
+    };
+  })();
+  var end = function end2(isMomentumCancel) {
+    if (isMomentumCancel === void 0) {
+      isMomentumCancel = false;
+    }
+    if (!state.isStarted) return;
+    if (state.isMomentum && isMomentumCancel) {
+      publishWheel({
+        isEnding: true,
+        isMomentumCancel: true
+      });
+    } else {
+      publishWheel({
+        isEnding: true
+      });
+    }
+    state.isMomentum = false;
+    state.isStarted = false;
+  };
+  var _WheelTargetObserver = WheelTargetObserver(feedWheel), observe = _WheelTargetObserver.observe, unobserve = _WheelTargetObserver.unobserve, disconnect = _WheelTargetObserver.disconnect;
+  updateOptions(optionsParam);
+  return deepFreeze({
+    on,
+    off,
+    observe,
+    unobserve,
+    disconnect,
+    feedWheel,
+    updateOptions
+  });
+}
+
 // src/desktop-wheel.ts
-var GESTURE_IDLE_MS = 180;
-var RENEWED_FLICK_GAP_MS = 55;
-var RENEWED_FLICK_RELEASE_PX = 4;
-var RENEWED_FLICK_JUMP_PX = 24;
-var RENEWED_FLICK_JUMP_RATIO = 2.2;
-var RENEWED_FLICK_HOLD_RATIO = 0.6;
-var RENEWED_FLICK_RESET_RISE_RATIO = 1.2;
-var RENEWED_FLICK_HOT_REARM_RATIO = 1.25;
-var SLOW_SCROLL_EXIT_MS = 1200;
-var REF_DT_MS = 10;
-var RENEW_MIN_FLIPPED = 3;
-var SUSTAINED_SWIPE_MS = 120;
-var SUSTAINED_SWIPE_RETENTION = 0.78;
-var PAGE_TRAVEL_PX = 100;
-var HORIZONTAL_PAGE_TRAVEL_PX = 48;
-var MAX_TRACKPAD_PAGES_PER_GESTURE = 2;
-var X_PAGES_PER_CONTACT = 1;
-var AXIS_RETENTION_RATIO = 0.65;
-var ZERO_AXIS_PAUSES_TO_SWITCH = 2;
-function normalizeWheel(event, viewport) {
+var PAGE_TRAVEL_PX = 48;
+var NOTCH_IDLE_MS = 180;
+var MAX_NOTCH_PAGES = 2;
+function normalizeWheel2(event, viewport) {
   const { deltaX, deltaY, deltaMode } = event;
   if (![deltaX, deltaY].every(Number.isFinite) || ![0, 1, 2].includes(deltaMode)) return null;
   const x = deltaX * (deltaMode === 2 ? viewport.clientWidth : deltaMode === 1 ? 16 : 1);
   const y = deltaY * (deltaMode === 2 ? viewport.clientHeight : deltaMode === 1 ? 16 : 1);
-  return Number.isFinite(x) && Number.isFinite(y) && (x !== 0 || y !== 0) ? { x, y, mode: deltaMode } : null;
+  if (![x, y].every(Number.isFinite)) return null;
+  if (x === 0 && y === 0 && !Object.is(deltaX, -0) && typeof event.momentum !== "boolean") return null;
+  return {
+    x,
+    y,
+    mode: deltaMode,
+    ...typeof event.momentum === "boolean" ? { momentum: event.momentum } : {}
+  };
 }
 var DesktopWheelGesture = class {
   constructor() {
+    this.recognizer = null;
+    this.unsubscribe = null;
+    this.state = null;
     this.axis = null;
-    this.discrete = false;
-    this.mode = 0;
     this.lastAt = null;
-    this.lastDelta = 0;
-    /** Raw magnitude of the previous sample (unlike the decayed lastDelta
-     *  envelope), so a blocked renewal can demand one strictly ascending step:
-     *  momentum continuation only decays, a fresh flick rises over the settled
-     *  tail without needing an implausible single-step ratio. */
-    this.lastMagnitude = 0;
-    /** Whether the frozen envelope's last write came from a sample delivered at
-     *  reporting cadence (gap in [2, 55)ms). The renewal heuristics normalized
-     *  speeds to that reference window, so an envelope last written by a
-     *  same-tick stall flush or by a boundary delivery carries no tail-speed
-     *  evidence and must not veto a fresh swipe at the idle boundary (see the
-     *  renewed branch below). */
-    this.envelopeAtCadence = false;
+    this.lastMovement = 0;
+    this.discrete = false;
+    this.gestureId = 0;
     this.travel = 0;
     this.flipped = false;
     this.notchCredit = 0;
-    this.renewedTravel = 0;
-    this.renewedPeak = 0;
-    this.renewedIncreases = 0;
-    this.renewalBlocked = false;
-    /** One-sample reprieve for a settled-band stall merged sample whose clamped
-     *  speed outran the envelope: the sample is frozen uncounted while the next
-     *  sample's slope decides between a real renewed flick (reset) and the same
-     *  flick delivered late (keep the gesture and its suppression). */
-    this.stallProbation = false;
-    /** Which exit a frozen sample deferred its action to the next sample's
-     *  slope: "rearm" (jump re-arm), "reset" (quiet-gap reset) or "ramp" (the
-     *  ramp detector's flip, deferred the same way). Null on the settled-tail
-     *  probation above, whose judgment stays the strict rise. A stall merge
-     *  stamped at the delivery cadence (the event carries a short gap the
-     *  stall never had) is indistinguishable from a real re-swipe at the
-     *  single-sample level, so exits whose predicate fired on such a shape
-     *  must not act in-frame. */
-    this.stallDeferral = null;
-    /** Normalized speed and raw travel of the frozen sample: the mirror arm
-     *  judges the next sample against the speed, and on confirmation the travel
-     *  is restored so a real re-swipe flips on the same beat an in-frame exit
-     *  would have flipped it. */
-    this.stallDeferralSpeed = 0;
-    this.stallDeferralTravel = 0;
-    this.trackpadPages = 0;
-    /** Pages already flipped on the x axis during the inferred contact. It
-     *  survives ordinary renewals; only a confirmed rise from a settled tail
-     *  starts a new horizontal contact. */
-    this.contactXPages = 0;
-    this.zeroAxisPauses = 0;
-    this.gestureId = 0;
-    /** Consecutive samples seen while the gesture is flipped, counted from the
-     *  latest flip (pageDelta) or re-arm; guards the jump re-arm above. */
-    this.flippedRun = 0;
-    /** this.flipped as of the end of the previous begin(), so a pageDelta flip
-     *  that landed in between can restart flippedRun. */
-    this.flippedPreviously = false;
-    /** Duration and raw travel of the current run of swallowed slow samples
-     *  inside a flipped continuous gesture (see SLOW_SCROLL_EXIT_MS). */
-    this.slowScrollMs = 0;
-    this.slowScrollTravel = 0;
-    /** Sustained-swipe window (see SUSTAINED_SWIPE_MS): how long the envelope
-     *  has held at/above SUSTAINED_SWIPE_RETENTION of the window's frozen
-     *  start value across continuous >=12px samples, plus their signed travel
-     *  for the page hand-off. Zeroed by every gesture-boundary path. */
-    this.sustainMs = 0;
-    this.sustainEnvelope = 0;
-    this.sustainedTravel = 0;
-    /** True once a >=55ms gap marked a resumption while the gesture was
-     *  flipped; the window may run (and fire once) until the next boundary. */
-    this.sustainArmed = false;
+    this.notchPages = 0;
   }
-  beginRenewedGesture(reopenSettledHorizontalPage = false) {
-    this.gestureId += 1;
-    this.trackpadPages = 0;
-    if (reopenSettledHorizontalPage) this.contactXPages = 0;
-    this.flippedRun = 0;
-    this.slowScrollMs = this.slowScrollTravel = 0;
-    this.sustainMs = this.sustainEnvelope = this.sustainedTravel = 0;
-  }
-  /** Whether a flipped continuous gesture's tail is still mid-flight. Sample
-   *  sources that swallow a wheel event (nested scroll surfaces, text fields,
-   *  uncancelable events) must not reset() such a tail: reset() would clear
-   *  the flip suppression and the page budget and hand the tail's remaining
-   *  travel a fresh contact that pages again - one physical flick flipping a
-   *  second page, the same hazard the idle-boundary arm guards against.
-   *  Unlike that arm there is deliberately no stallProbation clause: tail
-   *  crossings deliver samples ~8-10ms apart, no real gap, so probation lives
-   *  or dies by the gesture's own contract (#345/#347/#352). */
   get pagingTail() {
-    return this.flipped && !this.discrete;
+    var _a, _b;
+    return !this.discrete && !((_a = this.state) == null ? void 0 : _a.isEnding) && (this.flipped || !!((_b = this.state) == null ? void 0 : _b.isMomentum));
   }
   reset() {
-    this.gestureId += 1;
+    var _a, _b;
+    (_a = this.unsubscribe) == null ? void 0 : _a.call(this);
+    (_b = this.recognizer) == null ? void 0 : _b.disconnect();
+    this.recognizer = null;
+    this.unsubscribe = null;
+    this.state = null;
     this.axis = null;
     this.lastAt = null;
-    this.lastDelta = this.lastMagnitude = this.travel = this.notchCredit = 0;
-    this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
-    this.renewalBlocked = false;
-    this.stallProbation = false;
-    this.stallDeferral = null;
-    this.stallDeferralSpeed = this.stallDeferralTravel = 0;
-    this.envelopeAtCadence = false;
-    this.trackpadPages = this.zeroAxisPauses = 0;
-    this.contactXPages = 0;
-    this.flippedRun = 0;
-    this.slowScrollMs = this.slowScrollTravel = 0;
-    this.sustainMs = this.sustainEnvelope = this.sustainedTravel = 0;
-    this.sustainArmed = false;
-    this.flipped = this.discrete = false;
-    this.mode = 0;
+    this.lastMovement = 0;
+    this.discrete = false;
+    this.newPageGesture();
+  }
+  newPageGesture() {
+    this.gestureId++;
+    this.travel = this.notchCredit = this.notchPages = 0;
+    this.flipped = false;
   }
   begin(delta, shift, at) {
-    let gap = this.lastAt === null ? 0 : at - this.lastAt;
-    if (gap < 0 || gap >= GESTURE_IDLE_MS && !(this.flipped && !this.discrete && !this.stallProbation)) {
-      this.reset();
-      gap = 0;
-    }
-    const horizontal = Math.abs(delta.x), vertical = Math.abs(delta.y);
-    const axis = shift ? "x" : this.axis === "x" && (horizontal === 0 && this.zeroAxisPauses < ZERO_AXIS_PAUSES_TO_SWITCH || horizontal >= vertical * AXIS_RETENTION_RATIO) ? "x" : this.axis === "y" && (vertical === 0 && this.zeroAxisPauses < ZERO_AXIS_PAUSES_TO_SWITCH || vertical >= horizontal * AXIS_RETENTION_RATIO) ? "y" : horizontal >= vertical ? "x" : "y";
+    var _a, _b, _c;
+    const gap = this.lastAt === null ? 0 : Math.max(0, at - this.lastAt);
+    const axis = shift ? "x" : Math.abs(delta.x) === Math.abs(delta.y) && this.axis ? this.axis : Math.abs(delta.x) >= Math.abs(delta.y) ? "x" : "y";
     const movement = axis === "x" ? delta.x || (shift ? delta.y : 0) : delta.y;
     const magnitude = Math.abs(movement);
-    const unclamped = this.flipped && !this.discrete && Math.abs(this.lastDelta) > RENEWED_FLICK_RELEASE_PX;
-    const normalized = magnitude * (REF_DT_MS / (unclamped ? Math.max(gap, 1) : Math.min(Math.max(gap, 1), REF_DT_MS * 5)));
-    const cadence = gap >= 2 && gap < RENEWED_FLICK_GAP_MS;
-    const pixelNotch = delta.x === 0 && (axis === "y" || shift) && magnitude >= 80 && (magnitude % 100 === 0 || magnitude % 120 === 0);
-    const discrete = delta.mode !== 0 || pixelNotch;
-    const reversed = this.lastDelta !== 0 && movement !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta);
-    const renewed = !this.discrete && this.flipped && gap >= RENEWED_FLICK_GAP_MS;
-    if (axis !== this.axis && this.flipped && !this.discrete && !discrete) {
-      if (this.stallProbation && this.stallDeferral === null) this.stallProbation = false;
-      this.travel = 0;
-      this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
-      this.slowScrollMs = this.slowScrollTravel = 0;
-      this.sustainMs = this.sustainEnvelope = this.sustainedTravel = 0;
-      this.sustainArmed = false;
-      if (normalized > 0) {
-        this.lastDelta = Math.sign(movement) * normalized;
-        this.lastMagnitude = normalized;
-        this.envelopeAtCadence = cadence;
-      }
-    } else if (axis !== this.axis || delta.mode !== this.mode || reversed) {
-      this.reset();
-      gap = 0;
-    } else if (this.stallProbation) {
-      if (!(movement === 0 && !this.discrete)) {
-        this.stallProbation = false;
-        const frozenSettled = Math.min(this.lastMagnitude, Math.abs(this.lastDelta)) <= RENEWED_FLICK_RELEASE_PX;
-        if (this.stallDeferral !== null) {
-          const deferral = this.stallDeferral;
-          this.stallDeferral = null;
-          if (deferral === "rearm") {
-            if (gap >= 2 && normalized >= this.stallDeferralSpeed * RENEWED_FLICK_HOLD_RATIO) {
-              const confirmedSettledRise = frozenSettled && normalized > this.stallDeferralSpeed;
-              this.beginRenewedGesture(confirmedSettledRise);
-              this.flipped = false;
-              this.travel = this.stallDeferralTravel;
-              this.renewalBlocked = true;
-              this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
-            }
-          } else if (deferral === "ramp") {
-            if (gap >= 2 && normalized >= this.stallDeferralSpeed * RENEWED_FLICK_HOLD_RATIO) {
-              this.beginRenewedGesture();
-              this.flipped = false;
-              this.travel = this.stallDeferralTravel;
-              this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
-            }
-          } else if (gap >= 2 && normalized >= this.stallDeferralSpeed * RENEWED_FLICK_RESET_RISE_RATIO) {
-            this.reset();
-            gap = 0;
-          }
-          this.stallDeferralSpeed = this.stallDeferralTravel = 0;
-        } else if (gap >= 2 && normalized > Math.abs(this.lastDelta) && normalized > this.lastMagnitude) {
-          if (normalized >= Math.abs(this.lastDelta) * (frozenSettled ? RENEWED_FLICK_RESET_RISE_RATIO : RENEWED_FLICK_JUMP_RATIO)) {
-            this.reset();
-            gap = 0;
-          } else if (!frozenSettled && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_HOT_REARM_RATIO && normalized >= RENEWED_FLICK_JUMP_PX / 2 && normalized < Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO) {
-            this.beginRenewedGesture();
-            this.flipped = false;
-            this.renewalBlocked = true;
-            this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
-          }
-        }
-      }
-    } else if (renewed) {
-      if (gap >= GESTURE_IDLE_MS && !this.envelopeAtCadence) {
-        this.reset();
-        gap = 0;
-      } else if (normalized > Math.abs(this.lastDelta)) {
-        if ((!unclamped || gap >= GESTURE_IDLE_MS) && gap > REF_DT_MS * 5 && magnitude * (REF_DT_MS / gap) <= Math.abs(this.lastDelta)) {
-          this.stallProbation = true;
-        } else if (normalized < Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO) {
-          this.stallProbation = true;
-          this.stallDeferral = "reset";
-          this.stallDeferralSpeed = normalized;
-          this.stallDeferralTravel = movement;
-        } else {
-          this.reset();
-          gap = 0;
-        }
-      } else if (gap >= GESTURE_IDLE_MS) {
-        this.stallProbation = true;
-      }
-    }
-    this.zeroAxisPauses = movement === 0 && axis === this.axis ? this.zeroAxisPauses + 1 : 0;
-    this.discrete = this.axis === null ? discrete : this.discrete && discrete;
-    this.axis = axis;
-    this.mode = delta.mode;
-    this.lastAt = at;
-    if (this.flipped && !this.flippedPreviously) this.flippedRun = 0;
-    const priorFlippedRun = this.flippedRun;
-    let renewedTravel;
-    if (this.flipped && !this.discrete) {
-      if (this.stallProbation || gap >= RENEWED_FLICK_GAP_MS || normalized >= RENEWED_FLICK_JUMP_PX / 2 || movement !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta)) {
-        this.slowScrollMs = this.slowScrollTravel = 0;
-      } else if (movement !== 0) {
-        this.slowScrollMs += gap;
-        this.slowScrollTravel += movement;
-        if (this.slowScrollMs >= SLOW_SCROLL_EXIT_MS) {
-          renewedTravel = this.slowScrollTravel;
-          this.flipped = false;
-          this.gestureId += 1;
-          this.slowScrollMs = this.slowScrollTravel = 0;
-        }
-      }
-    }
-    if (this.flipped && !this.discrete) {
-      const settledRise = Math.min(this.lastMagnitude, Math.abs(this.lastDelta)) <= RENEWED_FLICK_RELEASE_PX && normalized > this.lastMagnitude && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO;
-      const jump = normalized >= Math.max(
-        settledRise ? RENEWED_FLICK_JUMP_PX / 2 : RENEWED_FLICK_JUMP_PX,
-        Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO
-      );
-      if (this.renewalBlocked) {
-        if (normalized <= RENEWED_FLICK_RELEASE_PX) this.renewalBlocked = false;
-        else if (jump && normalized > this.lastMagnitude && priorFlippedRun >= RENEW_MIN_FLIPPED) {
-          this.stallProbation = true;
-          this.stallDeferral = "rearm";
-          this.stallDeferralSpeed = normalized;
-          this.stallDeferralTravel = movement;
-        }
-      } else if ((this.renewedPeak > 0 || gap >= RENEWED_FLICK_GAP_MS) && Math.min(this.lastMagnitude, Math.abs(this.lastDelta)) > RENEWED_FLICK_RELEASE_PX) {
-        if (gap >= RENEWED_FLICK_GAP_MS) {
-          this.renewedTravel = magnitude;
-          this.renewedPeak = normalized;
-          this.renewedIncreases = 0;
-        } else if (this.renewedPeak > 0) {
-          if (this.renewedIncreases === 0 && normalized >= Math.abs(this.lastDelta) * RENEWED_FLICK_JUMP_RATIO && normalized >= RENEWED_FLICK_JUMP_PX) {
-            this.stallProbation = true;
-            this.stallDeferral = "ramp";
-            this.stallDeferralSpeed = normalized;
-            this.stallDeferralTravel = movement;
-          } else if (normalized >= this.renewedPeak * 1.2) {
-            this.renewedPeak = normalized;
-            this.renewedTravel += magnitude;
-            this.renewedIncreases += 1;
-            if (this.renewedIncreases >= 2 && this.renewedTravel >= (axis === "x" ? HORIZONTAL_PAGE_TRAVEL_PX : PAGE_TRAVEL_PX)) {
-              renewedTravel = Math.sign(movement) * this.renewedTravel;
-              this.beginRenewedGesture();
-              this.flipped = false;
-              this.travel = 0;
-              this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
-            }
-          } else if (normalized < this.renewedPeak * 0.7) {
-            this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
-          }
-        }
-      } else if (jump && priorFlippedRun >= RENEW_MIN_FLIPPED) {
-        this.stallProbation = true;
-        this.stallDeferral = "rearm";
-        this.stallDeferralSpeed = normalized;
-        this.stallDeferralTravel = movement;
-      }
+    const reversed = axis === this.axis && movement * this.lastMovement < 0;
+    const notch = delta.x === 0 && magnitude >= 80 && (magnitude % 100 === 0 || magnitude % 120 === 0);
+    const discrete = delta.momentum !== true && (delta.mode !== 0 || notch && (delta.momentum === false || this.lastAt === null || gap >= NOTCH_IDLE_MS || this.discrete));
+    if (discrete) {
+      if (!this.discrete || gap >= NOTCH_IDLE_MS || reversed) this.newPageGesture();
+      (_a = this.unsubscribe) == null ? void 0 : _a.call(this);
+      (_b = this.recognizer) == null ? void 0 : _b.disconnect();
+      this.recognizer = null;
+      this.unsubscribe = null;
+      this.state = null;
     } else {
-      this.renewedTravel = this.renewedPeak = this.renewedIncreases = 0;
-    }
-    if (this.discrete || this.stallProbation || gap >= RENEWED_FLICK_GAP_MS || normalized < RENEWED_FLICK_JUMP_PX / 2 || movement !== 0 && Math.sign(movement) !== Math.sign(this.lastDelta)) {
-      this.sustainMs = this.sustainEnvelope = this.sustainedTravel = 0;
-      if (gap >= RENEWED_FLICK_GAP_MS) this.sustainArmed = true;
-    } else if (movement !== 0 && axis === "x" && this.sustainArmed) {
-      if (this.sustainMs === 0) {
-        this.sustainEnvelope = normalized;
-        this.sustainedTravel = 0;
+      if (!this.recognizer) {
+        this.recognizer = WheelGestures({ preventWheelAction: false, reverseSign: false });
+        this.unsubscribe = this.recognizer.on("wheel", (state2) => {
+          this.state = state2;
+          if (state2.isStart) this.newPageGesture();
+        });
       }
-      this.sustainMs += gap;
-      this.sustainedTravel += movement;
-      if (normalized < this.sustainEnvelope * SUSTAINED_SWIPE_RETENTION) {
-        this.sustainMs = this.sustainEnvelope = this.sustainedTravel = 0;
-      } else if (this.sustainMs >= SUSTAINED_SWIPE_MS) {
-        renewedTravel = this.sustainedTravel;
-        this.contactXPages = 0;
-        this.sustainMs = this.sustainEnvelope = this.sustainedTravel = 0;
-        this.sustainArmed = false;
-      }
+      this.recognizer.feedWheel({
+        deltaX: shift ? movement : delta.x,
+        deltaY: shift ? 0 : delta.y,
+        deltaMode: 0,
+        timeStamp: at,
+        ...delta.momentum === void 0 ? {} : { momentum: delta.momentum }
+      });
+      const state = this.state;
+      if (reversed && !(state == null ? void 0 : state.isMomentum)) this.newPageGesture();
     }
-    this.flippedRun = this.flipped ? priorFlippedRun + 1 : 0;
-    this.flippedPreviously = this.flipped;
-    const pausedTail = movement === 0 && this.flipped && !this.discrete;
-    this.lastDelta = pausedTail || this.stallProbation ? this.lastDelta : this.flipped && !this.discrete ? Math.sign(movement) * Math.min(Math.abs(this.lastDelta), normalized) : Math.sign(movement) * normalized;
-    if (!pausedTail && !this.stallProbation) {
-      this.lastMagnitude = normalized;
-      this.envelopeAtCadence = cadence;
-    }
+    if (axis !== this.axis) this.travel = 0;
+    this.axis = axis;
+    this.lastAt = at;
+    this.lastMovement = movement;
+    this.discrete = discrete;
     return {
       axis,
       movement,
-      discrete: this.discrete,
+      discrete,
       mode: delta.mode,
       gap,
       gestureId: this.gestureId,
-      suppressed: !this.discrete && this.flipped,
-      renewedTravel,
-      probation: this.stallProbation
+      suppressed: !discrete && this.flipped,
+      isMomentum: !discrete && !!((_c = this.state) == null ? void 0 : _c.isMomentum)
     };
   }
   pageDelta(motion, scrolled) {
     if (scrolled) {
       this.travel = this.notchCredit = 0;
-      this.renewalBlocked = false;
       return 0;
     }
-    if (motion.probation) return 0;
-    if (motion.suppressed) return 0;
-    if (motion.renewedTravel !== void 0) this.travel = motion.renewedTravel;
+    if (motion.gestureId !== this.gestureId || motion.movement === 0) return 0;
     if (motion.discrete) {
-      if (motion.axis === "x" && this.contactXPages >= X_PAGES_PER_CONTACT) return 0;
-      if (this.trackpadPages >= MAX_TRACKPAD_PAGES_PER_GESTURE) return 0;
       const notches = motion.mode === 1 ? Math.max(1, Math.round(Math.abs(motion.movement) / 48)) : 1;
-      const sensitivity = motion.mode === 0 && motion.gap > 0 && motion.gap < 80 ? 0.8 : 1;
-      this.notchCredit += notches * sensitivity;
-      const pages = Math.min(
-        Math.floor(this.notchCredit + 1e-8),
-        MAX_TRACKPAD_PAGES_PER_GESTURE - this.trackpadPages
-      );
+      this.notchCredit += notches * (motion.mode === 0 && motion.gap > 0 && motion.gap < 80 ? 0.8 : 1);
+      const pages = Math.min(Math.floor(this.notchCredit + 1e-8), MAX_NOTCH_PAGES - this.notchPages);
       this.notchCredit -= pages;
-      if (pages > 0) {
-        this.flipped = true;
-        this.trackpadPages += pages;
-        if (motion.axis === "x") this.contactXPages += pages;
-      }
+      this.notchPages += pages;
       return Math.sign(motion.movement) * pages;
     }
+    if (motion.suppressed || motion.isMomentum || this.flipped) return 0;
     this.travel += motion.movement;
-    const travelThreshold = motion.axis === "x" ? HORIZONTAL_PAGE_TRAVEL_PX : PAGE_TRAVEL_PX;
-    if (Math.abs(this.travel) < travelThreshold) return 0;
-    const budgetSpent = motion.axis === "x" ? this.contactXPages >= X_PAGES_PER_CONTACT : this.trackpadPages >= MAX_TRACKPAD_PAGES_PER_GESTURE;
-    if (budgetSpent) {
-      this.travel = 0;
-      return 0;
-    }
+    if (Math.abs(this.travel) < PAGE_TRAVEL_PX) return 0;
     this.flipped = true;
-    this.trackpadPages += 1;
-    if (motion.axis === "x") this.contactXPages += 1;
     this.travel = 0;
     return Math.sign(motion.movement);
   }
@@ -25322,19 +25458,13 @@ var WheelPagePacer = class {
     this.flips = [];
     this.engagedState = false;
   }
-  /** Records |pages| flips and returns whether enough of them fall inside
-   *  the trailing window to keep the fast-paging rail engaged. */
-  record(pages, axis, at) {
-    if (axis === "y" && pages > 0) {
-      for (let page = 0; page < pages; page += 1) this.flips.push(at);
-    }
+  record(pages, _axis, at) {
+    for (let page = 0; page < pages; page++) this.flips.push(at);
     const cutoff = at - FAST_PAGING_WINDOW_MS;
     while (this.flips.length > 0 && this.flips[0] < cutoff) this.flips.shift();
     this.engagedState = this.flips.length >= FAST_PAGING_PAGES;
     return this.engagedState;
   }
-  /** Clears the window for teardown or a collapse, so a later slow flip
-   *  cannot inherit a stale engagement. */
   end() {
     this.flips = [];
     this.engagedState = false;
@@ -25397,9 +25527,9 @@ function canStraighten(points, width, height) {
   for (let i = 1; i < points.length; i++) {
     const px = (points[i].x - first.x) * width, py = (points[i].y - first.y) * height;
     if (Math.abs(px * dy - py * dx) / chord > tolerance) return false;
-    const projection = (px * dx + py * dy) / chord;
-    if (projection < previousProjection - 4 || projection < -4 || projection > chord + 4) return false;
-    previousProjection = projection;
+    const projection3 = (px * dx + py * dy) / chord;
+    if (projection3 < previousProjection - 4 || projection3 < -4 || projection3 > chord + 4) return false;
+    previousProjection = projection3;
     travel += Math.hypot((points[i].x - points[i - 1].x) * width, (points[i].y - points[i - 1].y) * height);
   }
   return travel <= chord * 1.16;
@@ -29050,10 +29180,8 @@ var InkWritingView = class extends import_obsidian7.FileView {
     const request = this.pageSwipeRequest;
     return request ? this.queuePageSwipeTarget(request.target + delta, scrollEdge, wheelQueued) : false;
   }
-  /** Trackpad inertia has no portable end event; coalesce each detected gesture
-   *  once. Every wheel-side exit that lifts the flip now mints a fresh gesture
-   *  id (the slow-scroll release included), so a same-id second queue must not
-   *  recur; returning true still collapses any repeat within one gesture. */
+  /** Coalesce each library-recognized trackpad gesture once while saving.
+   *  A new gesture gets a fresh id; repeated samples retain the same id. */
   queueTrackpadPageSwipeDelta(delta, gestureId, scrollEdge) {
     const request = this.pageSwipeRequest;
     if (!this.flipSettling || !request) return false;
@@ -29739,6 +29867,10 @@ var InkWritingView = class extends import_obsidian7.FileView {
     if (this.activePointerId !== null || this.desktopPan) {
       const target2 = event.target;
       if (!((_a = target2 == null ? void 0 : target2.closest) == null ? void 0 : _a.call(target2, 'input, textarea, select, [contenteditable], [role="dialog"]'))) event.preventDefault();
+      if (!event.ctrlKey && !event.metaKey) {
+        const delta2 = normalizeWheel2(event, this.inputScroller());
+        if (delta2) this.desktopWheel.begin(delta2, event.shiftKey, event.timeStamp);
+      }
       return;
     }
     const scroller = this.inputScroller();
@@ -29748,7 +29880,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
       this.desktopWheel.reset();
       return;
     }
-    const delta = normalizeWheel(event, scroller);
+    const delta = normalizeWheel2(event, scroller);
     if (!delta) return;
     if (event.ctrlKey || event.metaKey) {
       this.desktopWheel.reset();
@@ -29771,9 +29903,10 @@ var InkWritingView = class extends import_obsidian7.FileView {
         return;
       }
     }
+    const canPan = motion.axis === "y" || this.zoomLevel() > 1;
     if (!event.cancelable) {
       if (this.desktopWheel.pagingTail) return;
-      const canScroll = (motion.axis === "y" || this.zoomLevel() > 1) && this.wheelCanScroll(scroller, motion.axis, motion.movement);
+      const canScroll = canPan && this.wheelCanScroll(scroller, motion.axis, motion.movement);
       const pages2 = this.desktopWheel.pageDelta(motion, canScroll);
       if (pages2 !== 0) {
         this.noteWheelPages(Math.abs(pages2), motion.axis, event.timeStamp);
@@ -29785,29 +29918,33 @@ var InkWritingView = class extends import_obsidian7.FileView {
       event.preventDefault();
       return;
     }
-    if (!this.flipSettling && motion.axis === "y" && this.wheelCanScroll(scroller, motion.axis, motion.movement)) {
+    if (canPan && !this.flipSettling && this.wheelCanScroll(scroller, motion.axis, motion.movement)) {
       this.desktopWheel.pageDelta(motion, true);
       return;
     }
     event.preventDefault();
-    let scrolled = false;
-    if (!this.flipSettling && (motion.axis === "y" || this.zoomLevel() > 1)) {
-      const property = motion.axis === "x" ? "scrollLeft" : "scrollTop";
-      const before = scroller[property];
-      scroller[property] += motion.movement;
-      scrolled = Math.abs(scroller[property] - before) > 0.5;
-    }
-    const pages = this.desktopWheel.pageDelta(motion, scrolled);
+    const pages = this.desktopWheel.pageDelta(motion, false);
     if (pages !== 0) {
       this.noteWheelPages(Math.abs(pages), motion.axis, event.timeStamp);
       this.navigateWheelPages(pages, motion.axis, motion.discrete, motion.gestureId);
     }
   }
   wheelCanScroll(scroller, axis, movement) {
+    var _a, _b;
     const horizontal = axis === "x";
     const position = horizontal ? scroller.scrollLeft : scroller.scrollTop;
+    if (movement <= 0) return movement < 0 && position > 0.5;
+    const box = scroller.getBoundingClientRect();
+    const page = (_b = (_a = this.inputHost()) == null ? void 0 : _a.parentElement) == null ? void 0 : _b.getBoundingClientRect();
+    if (page && box.width > 0 && box.height > 0 && page.width > 0 && page.height > 0) {
+      const style = scroller.ownerDocument.defaultView.getComputedStyle(scroller);
+      const end = horizontal ? page.right : page.bottom;
+      const padding = parseFloat(horizontal ? style.paddingRight : style.paddingBottom) || 0;
+      const viewportEnd = horizontal ? box.right - (parseFloat(style.borderRightWidth) || 0) : box.top + scroller.clientTop + scroller.clientHeight;
+      return end + padding > viewportEnd + 0.5;
+    }
     const maximum = Math.max(0, horizontal ? scroller.scrollWidth - scroller.clientWidth : scroller.scrollHeight - scroller.clientHeight);
-    return movement > 0 ? position < maximum - 0.5 : movement < 0 && position > 0.5;
+    return position < maximum - 0.5;
   }
   navigateWheelPages(pages, axis, discrete, gestureId) {
     const direction = Math.sign(pages);
@@ -29881,6 +30018,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
   }
   /** View teardown: drop the burst state and its pending collapse timer. */
   clearFastPagingRail() {
+    this.desktopWheel.reset();
     if (this.fastPagingRailTimer !== void 0) window.clearTimeout(this.fastPagingRailTimer);
     this.fastPagingRailTimer = void 0;
     this.fastPagingRail = false;
