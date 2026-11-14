@@ -1537,7 +1537,7 @@ describe("pdf page preview rail", () => {
     (view as unknown as { sourcePdfModified(): void }).sourcePdfModified();
     internal.refreshPageRail();
     const entry = document.querySelector<HTMLElement>('[aria-label="Tag page 1"]')!;
-    expect(entry.getAttribute("aria-disabled")).toBe("true");
+    expect(entry.getAttribute("aria-disabled")).toBeNull();
     entry.click();
     expect(document.querySelector(".ink-tag-popover")).not.toBeNull();
     expect(document.querySelector(".ink-tag-lock-reason")?.textContent).toContain("source PDF changed");

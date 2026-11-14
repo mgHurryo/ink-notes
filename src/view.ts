@@ -604,11 +604,10 @@ export class InkView extends InkWritingView {
       // beta.44 geometry pin did not survive real-device WebKit).
       const tagButton = button.createSpan({
         cls: "ink-thumb-tag-button",
-        attr: { role: "button", tabindex: "0", "aria-label": `Tag page ${index + 1}`, title: "Tag", "aria-disabled": String(this.readingMode) },
+        attr: { role: "button", tabindex: "0", "aria-label": `Tag page ${index + 1}`, title: "Tag", "aria-haspopup": "dialog" },
       });
-      // Read-only state stays visible via aria-disabled but never disables
-      // the entry: a disabled control swallows left AND right clicks with no
-      // feedback, which reads as broken. The popover opens read-only instead.
+      setIcon(tagButton, "tag");
+      // Opening the dialog stays enabled; only its editing controls lock.
       tagButton.addEventListener("click", (event) => {
         event.stopPropagation();
         this.openThumbTagPopover(button);
