@@ -503,7 +503,7 @@ export class InkView extends InkWritingView {
       // The page rail animates its width for 280ms. Resizing the backing
       // canvas on every intermediate width makes the rest of the editor miss
       // frames; the transition settle callback performs one final resize.
-      if (this.railRevealTimer !== undefined) return;
+      if (this.railRevealTimer !== undefined || this.root.querySelector(".ink-page-rail.is-resizing")) return;
       this.resizeCanvas();
       this.revealInlineEditor();
     });
@@ -626,7 +626,13 @@ export class InkView extends InkWritingView {
         ? this.togglePageSelection(page.id) : this.explicitNavigateToPage(page.id));
       this.scheduleThumbnail(canvas, page);
     });
-    mountRailResizer(rail, { onDragEnd: () => this.redrawPageThumbnails() });
+    mountRailResizer(rail, { onDragEnd: () => {
+      // Keep the current rasters intact while the grip moves; rebuilding the
+      // page at each intermediate width clears/re-indexes visible handwriting.
+      this.resizeCanvas();
+      this.revealInlineEditor();
+      this.redrawPageThumbnails();
+    } });
     this.scheduleSwipePreviewPaint();
     // Fast paging keeps the current page under the user's eye: center the
     // active thumb instead of the usual nearest-visibility nudge.

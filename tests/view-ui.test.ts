@@ -1165,21 +1165,12 @@ describe("page rail thumbnails and resizing", () => {
       button("Pages").click(); // 预览全部: the preview rail expands over the settle timer
       scrollerWidth = 624;     // the rail's width squeezes the page column
       vi.advanceTimersByTime(320);
-      console.log("DEBUG", {
-        cells: Array.from(layer.children).map((n) => (n as HTMLElement).dataset.cell ?? n.className),
-        logical: [(view as unknown as { canvasLogicalWidth: number }).canvasLogicalWidth,
-          (view as unknown as { canvasLogicalHeight: number }).canvasLogicalHeight],
-        base: [(view as unknown as { pageBaseWidth: number }).pageBaseWidth],
-        ghostNow: !!(internal.tiles as unknown as { ghost: unknown }).ghost,
-        states: Array.from((internal.tiles as unknown as { states: Map<unknown, { index: { width: number } }> }).states,
-          ([, s]) => s.index.width),
-      });
-      // The retired rasters stay on screen, scaled by the box ratio, until
-      // their fresh tiles replace them: the page never blanks and refills.
-      const ghost = layer.querySelector<HTMLElement>(".ink-tile-resize-ghost");
-      expect(ghost).not.toBeNull();
-      expect(ghost!.style.transform).toBe("scale(0.78)");
-      expect(painted.some((node) => ghost!.contains(node))).toBe(true);
+      // Fake timers finish the synchronous refill. The complete new frame
+      // replaces the old grid, without a second scaled copy left on screen.
+      expect((internal.tiles as unknown as { visibleCurrent(): boolean }).visibleCurrent()).toBe(true);
+      expect(layer.querySelector(".ink-tile-resize-ghost")).toBeNull();
+      expect(layer.querySelectorAll(":scope > [data-cell]").length).toBeGreaterThan(0);
+      expect(Array.from(layer.children).every((node) => (node as HTMLElement).style.visibility !== "hidden")).toBe(true);
       // Editor identity is untouched: same selection canvas, same scroll.
       expect(document.querySelector("canvas.ink-selection-canvas")).toBe(canvas);
       expect(scrollTop).toBe(96);
