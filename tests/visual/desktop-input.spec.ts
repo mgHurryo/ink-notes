@@ -322,21 +322,16 @@ test("horizontal wheel still pans zoomed content before turning at the edge", as
     view.setZoom(2);
     const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
     scroller.scrollLeft = 0;
-    const send = () => scroller.dispatchEvent(new WheelEvent("wheel", {
-      bubbles: true, cancelable: true, deltaX: 140,
-    }));
-    (window as any).zoomedHorizontalRange = scroller.scrollWidth - scroller.clientWidth;
-    send();
-    (window as any).zoomedHorizontalPan = scroller.scrollLeft;
-    (window as any).sendHorizontalAtEdge = () => {
-      scroller.scrollLeft = scroller.scrollWidth - scroller.clientWidth;
-      send();
-    };
   });
-  await expect.poll(() => page.evaluate(() => (window as any).zoomedHorizontalRange)).toBeGreaterThan(140);
-  await expect.poll(() => page.evaluate(() => (window as any).zoomedHorizontalPan)).toBeGreaterThan(0);
+  const scroller = page.locator(".ink-page-scroller");
+  const box = (await scroller.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.wheel(140, 0);
+  await expect.poll(() => scroller.evaluate((el) => el.scrollLeft)).toBeGreaterThan(0);
   await expect(page.locator(".ink-page-status")).toHaveText("1 / 2");
-  await page.evaluate(() => (window as any).sendHorizontalAtEdge());
+  await page.waitForTimeout(1100);
+  await scroller.evaluate((el) => { el.scrollLeft = el.scrollWidth - el.clientWidth; });
+  await page.mouse.wheel(140, 0);
   await expect(page.locator(".ink-page-status")).toHaveText("2 / 2");
 });
 
@@ -396,12 +391,13 @@ test("repeated horizontal trackpad swipes rearm and queued wheel pages each anim
     const scroller = document.querySelector<HTMLElement>(".ink-page-scroller")!;
     scroller.scrollLeft = scroller.scrollWidth - scroller.clientWidth;
     let timeStamp = 100;
-    const send = (deltaX: number, at: number) => {
+    const send = (deltaX: number, at: number, momentum = false) => {
       const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX });
       Object.defineProperty(event, "timeStamp", { configurable: true, value: at });
+      Object.defineProperty(event, "momentum", { value: momentum });
       scroller.dispatchEvent(event);
     };
-    for (const delta of [140, 90, 60, 30, 10, 4]) send(delta, timeStamp += 10);
+    for (const delta of [140, 90, 60, 30, 10, 4]) send(delta, timeStamp += 10, delta !== 140);
     send(140, timeStamp + 60);
   });
   await expect(page.locator(".ink-page-status")).toHaveText("3 / 8");
@@ -429,15 +425,15 @@ test("repeated horizontal trackpad swipes rearm and queued wheel pages each anim
   // The 100ms cadence stays one gesture (the idle boundary is 180ms), so the
   // discrete per-gesture page budget queues two page swipes; each still
   // animates, the first at its travel-derived duration, the follow-up at the
-  // 64ms floor.
+  // existing 120ms queued-page pace.
   await expect(page.locator(".ink-page-status")).toHaveText("5 / 8");
   await expect.poll(() => page.evaluate(() => (window as any).pageSwipeAnimationCount)).toBe(2);
   const durations = await page.evaluate(() => (window as any).pageSwipeAnimationDurations as number[]);
   expect(durations[0]).toBeGreaterThan(64);
-  expect(durations.slice(1)).toEqual([64]);
+  expect(durations.slice(1)).toEqual([120]);
 });
 
-test("separate renewed trackpad swipes each get a fresh two-page limit", async ({ page }) => {
+test("separate native trackpad gestures each receive a fresh page destination", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
   await expect.poll(() => page.locator("html").getAttribute("data-ink-ready")).toBe("true");
@@ -454,6 +450,7 @@ test("separate renewed trackpad swipes each get a fresh two-page limit", async (
     for (const [deltaX, timeStamp] of samples) {
       const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX });
       Object.defineProperty(event, "timeStamp", { configurable: true, value: timeStamp });
+      Object.defineProperty(event, "momentum", { value: deltaX !== 140 });
       scroller.dispatchEvent(event);
     }
   });
@@ -630,9 +627,14 @@ test("separate trackpad bursts reach every destination before the slow save barr
         await new Promise<void>(resolve => { scope.releaseDesktopBarrier = resolve; });
       }
     };
-    scope.sendPageWheel = () => document.querySelector(".ink-page-scroller")!.dispatchEvent(new WheelEvent("wheel", {
-      bubbles: true, cancelable: true, deltaX: 150, deltaY: 0,
-    }));
+    scope.sendPageWheel = () => {
+      // Model a complete native flick, including its inertia transition.
+      for (const [deltaX, momentum] of [[150, false], [10, true]] as const) {
+        const event = new WheelEvent("wheel", { bubbles: true, cancelable: true, deltaX });
+        Object.defineProperty(event, "momentum", { value: momentum });
+        document.querySelector(".ink-page-scroller")!.dispatchEvent(event);
+      }
+    };
     scope.sendPageWheel();
     document.getAnimations().forEach(animation => animation.finish());
   });
