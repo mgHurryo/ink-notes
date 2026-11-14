@@ -29932,6 +29932,10 @@ var InkWritingView = class extends import_obsidian7.FileView {
         return;
       }
     }
+    if (motion.isMomentum) {
+      event.preventDefault();
+      return;
+    }
     const canPan = motion.axis === "y" || this.zoomLevel() > 1;
     if (!event.cancelable) {
       if (this.desktopWheel.pagingTail) return;

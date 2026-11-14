@@ -247,6 +247,27 @@ export function gestureContract(create: () => Promise<any>): void {
         expect(settle).toHaveBeenCalledTimes(2);
       });
 
+      it(`${axis}: stops recognized momentum inside a zoomed page and resumes on deliberate input`, async () => {
+        const { editor, scroller, settle, wheel } = await desktopSetup();
+        vi.spyOn(editor, "zoomLevel").mockReturnValue(2);
+        let left = 100;
+        Object.defineProperties(scroller, {
+          scrollWidth: { configurable: true, value: 1400 },
+          scrollLeft: { configurable: true, get: () => left, set: (v: number) => { left = Math.max(0, Math.min(600, v)); } },
+        });
+        scroller.scrollTop = 100;
+        const send = (movement: number, momentum: boolean) =>
+          wheel(axis === "x" ? movement : 0, axis === "y" ? movement : 0, { momentum });
+        expect(send(30, false).defaultPrevented).toBe(false);
+        expect(axis === "x" ? scroller.scrollLeft : scroller.scrollTop).toBe(130);
+        expect(send(60, true).defaultPrevented).toBe(true);
+        expect(axis === "x" ? scroller.scrollLeft : scroller.scrollTop).toBe(130);
+        expect(send(30, false).defaultPrevented).toBe(false);
+        expect(axis === "x" ? scroller.scrollLeft : scroller.scrollTop).toBe(160);
+        expect(settle).not.toHaveBeenCalled();
+        editor.desktopWheel.reset();
+      });
+
       it(`${axis}: pans natively while zoomed and pages only on continued input at the boundary`, async () => {
         const { editor, scroller, settle, wheel } = await desktopSetup();
         vi.spyOn(editor, "zoomLevel").mockReturnValue(2);
