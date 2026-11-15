@@ -3,6 +3,7 @@ import { InkNotebook, InkPage, InkTool, PageFlag, createNotebook } from "./model
 import { canvasResolution, drawInkStroke, scaledStroke } from "./rendering";
 import { registerDocumentPointerEndEvents } from "./ink-input";
 import { InkWritingView, QUEUED_PAGE_SWIPE_DURATION_MS } from "./ink-writing";
+import { tierDensity, type RenderTier } from "./render-quality";
 import { reconcileNotebook } from "./notebook-reconciliation";
 import { clonePageValue } from "./worker-protocol";
 import type { SharedToolState } from "./tool-state";
@@ -144,6 +145,9 @@ export class PdfInkView extends InkWritingView {
   private pdfDoc: PdfJsDocument | null = null;
   private pdfRenderTask: PdfJsRenderTask | null = null;
   private pdfRenderGeneration = 0;
+  /** Adaptive tier the current/last page raster was rendered at; the
+   *  stationary pass re-rasterizes only when this lags the idle tier. */
+  private pdfRasterTier: RenderTier = "idle";
   private loadGeneration = 0;
   private resizeRenderTimer: number | undefined;
   /** Last scroller box seen by applyPaneResize, for its sub-3px hysteresis. */
@@ -315,6 +319,7 @@ export class PdfInkView extends InkWritingView {
     this.closePageOptionsMenu();
     this.closeTagPopover();
     this.clearFastPagingRail();
+    this.clearRenderQuality();
     this.finishPointerInput(false);
     this.clearSelection();
     this.closeLassoSettings();
@@ -1761,7 +1766,7 @@ export class PdfInkView extends InkWritingView {
       width: Math.max(1, Math.min(this.canvasLogicalWidth - x, (screenRect.right - pageRect.left) / this.zoom - x)),
       height: Math.max(1, Math.min(this.canvasLogicalHeight - y, (screenRect.bottom - pageRect.top) / this.zoom - y)),
     };
-    this.tiles?.update(this.viewport, this.desktopRenderDensity ?? (window.devicePixelRatio || 1) * this.zoom,
+    this.tiles?.update(this.viewport, this.desktopRenderDensity ?? this.renderDensityTarget(this.zoom),
       refine && this.desktopRenderDensity === undefined);
     if (refine && this.desktopRenderDensity === undefined) this.prewarmInkNeighbours();
     if (refine || this.hasInkPreview() || this.selectedStrokeIds.size > 0 || this.lassoPath.length > 0) {
@@ -1789,12 +1794,13 @@ export class PdfInkView extends InkWritingView {
       const height = Math.max(1, Math.round(size.baseWidth * display.height / display.width * 64) / 64);
       pages.push({ page, width, height,
         viewport: { x: 0, y: 0, width, height },
-        density: (window.devicePixelRatio || 1) * size.zoom });
+        density: this.renderDensityTarget(size.zoom) });
     }
     this.tiles.prewarmPages(pages);
   }
 
   private onViewportMotion(): void {
+    this.noteRenderActivity();
     this.updateViewport(false);
     if (this.desktopRenderDensity !== undefined) return;
     if (this.zoomTimer !== undefined) window.clearTimeout(this.zoomTimer);
@@ -1855,6 +1861,7 @@ export class PdfInkView extends InkWritingView {
   }
   protected desktopZoom(factor: number, target?: { x: number; y: number }): void {
     if (this.zoomLocked) return;
+    this.noteRenderActivity();
     if (this.desktopRenderDensity === undefined) {
       this.desktopRenderDensity = (window.devicePixelRatio || 1) * this.zoom;
       if (this.zoomTimer !== undefined) window.clearTimeout(this.zoomTimer);
@@ -1937,6 +1944,20 @@ export class PdfInkView extends InkWritingView {
 
   protected onRenderResize(): void {
     this.layoutPage();
+  }
+
+  protected onRenderSettledFullQuality(): void {
+    // A page-flip animation owns the shared swipe presentation and a zoom
+    // burst latches its raster density; refine after each settles. Retries
+    // on a local timer that is not user activity.
+    if (this.flipSettling || this.desktopRenderDensity !== undefined) {
+      globalThis.setTimeout(() => { if (this.viewReady) this.onRenderSettledFullQuality(); }, 200);
+      return;
+    }
+    this.updateViewport(true);
+    // Fast paging rasterized the page at the motion tier; the stationary
+    // pass sharpens it only when the raster lags the full budget.
+    if (this.pdfRasterTier !== "idle") void this.renderPdfPage();
   }
 
   protected onInputStarting(): void { this.finishDesktopZoom(); }
@@ -2307,8 +2328,14 @@ export class PdfInkView extends InkWritingView {
     const notePage = this.currentNotePage();
     // Layout's 100% is the pane-wide page box, not a PDF point. Rasterize at
     // its actual screen density instead of enlarging a point-sized bitmap.
+    // The adaptive tier bounds that density: motion caps at 1:1 CSS pixels
+    // (the legibility floor - the page's content stays readable at speed),
+    // and the stationary pass re-rasterizes at the full budget.
+    const rasterTier = this.renderQuality.tier(performance.now());
+    this.pdfRasterTier = rasterTier;
     const { width: targetWidth, height: targetHeight } = canvasResolution(
-      this.pageBaseWidth, this.pageBaseHeight, window.devicePixelRatio || 1, this.zoom,
+      this.pageBaseWidth, this.pageBaseHeight,
+      tierDensity(rasterTier, window.devicePixelRatio || 1, this.zoom), 1,
       Platform.isIosApp ? undefined : PDF_PAGE_RASTER_BUDGET);
     canvas.setCssStyles({ width: "100%", height: "100%" });
     if (!notePage || notePage.sourceIndex === undefined || !this.pdfDoc) {
@@ -2399,7 +2426,7 @@ export class PdfInkView extends InkWritingView {
       const page = this.sidecar?.notebook.pages[this.noteIndex];
       if (page && this.tiles) {
         this.tiles.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight, this.tileExclusion());
-        this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
+        this.tiles.update(this.viewport, this.renderDensityTarget(this.zoom), true);
       }
       this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
     }

@@ -47,6 +47,14 @@ interface PdfViewInternals {
   markSidecarChanged(): void;
   withPageUndo(change: () => boolean, label: string): void;
   restoreSidecarSnapshot(snapshot: string): void;
+  viewReady: boolean;
+  flipSettling: boolean;
+  updateViewport(refine: boolean): void;
+  renderPdfPage(): Promise<void> | void;
+  pdfRasterTier: "motion" | "base" | "idle";
+  noteRenderActivity(): void;
+  renderDensityTarget(zoom: number): number;
+  onRenderSettledFullQuality(): void;
   onPointerDown(event: PointerEvent): void;
   onPointerMove(event: PointerEvent): void;
   onPointerUp(event: PointerEvent, source?: string): void;
@@ -1230,5 +1238,63 @@ describe("zoom burst tile gesture latch", () => {
     internal.undo();
     frames.shift()!(0);
     expect(backend.renderTile).toHaveBeenCalledTimes(3);
+  });
+});
+
+describe("adaptive render quality wiring", () => {
+  beforeEach(() => { vi.useFakeTimers(); vi.stubGlobal("window", globalThis); });
+  afterEach(() => { vi.clearAllTimers(); vi.useRealTimers(); vi.unstubAllGlobals(); });
+
+  it("caps density right after input and restores the full target once stationary", () => {
+    const { internal } = setup();
+    internal.viewReady = true;
+    internal.noteRenderActivity();
+    // Motion tier: hard 1:1 CSS-pixel legibility floor.
+    expect(internal.renderDensityTarget(2)).toBe(1);
+    vi.advanceTimersByTime(600);
+    expect(internal.renderDensityTarget(2)).toBe(2);
+  });
+
+  it("re-rasterizes a motion-tier page and refines ink on the stationary pass", () => {
+    const { internal } = setup();
+    internal.viewReady = true;
+    // Fast paging rasterized the page at the cheap tier.
+    internal.pdfRasterTier = "motion";
+    internal.noteRenderActivity();
+    vi.advanceTimersByTime(600);
+    expect(internal.updateViewport).toHaveBeenLastCalledWith(true);
+    expect(internal.renderPdfPage).toHaveBeenCalled();
+    // The settled latch must not re-run the pass on stray timers.
+    const mocks = internal as unknown as Record<string, ReturnType<typeof vi.fn>>;
+    mocks.updateViewport.mockClear();
+    mocks.renderPdfPage.mockClear();
+    vi.advanceTimersByTime(1200);
+    expect(internal.updateViewport).not.toHaveBeenCalled();
+    expect(internal.renderPdfPage).not.toHaveBeenCalled();
+  });
+
+  it("leaves an idle-tier page raster untouched on the stationary pass", () => {
+    const { internal } = setup();
+    internal.viewReady = true;
+    internal.pdfRasterTier = "idle";
+    internal.noteRenderActivity();
+    vi.advanceTimersByTime(600);
+    expect(internal.updateViewport).toHaveBeenLastCalledWith(true);
+    expect(internal.renderPdfPage).not.toHaveBeenCalled();
+  });
+
+  it("defers the stationary pass while a flip settles", () => {
+    const { internal } = setup();
+    internal.viewReady = true;
+    internal.flipSettling = true;
+    internal.pdfRasterTier = "motion";
+    internal.noteRenderActivity();
+    vi.advanceTimersByTime(600);
+    expect(internal.updateViewport).not.toHaveBeenCalled();
+    expect(internal.renderPdfPage).not.toHaveBeenCalled();
+    internal.flipSettling = false;
+    vi.advanceTimersByTime(200);
+    expect(internal.updateViewport).toHaveBeenLastCalledWith(true);
+    expect(internal.renderPdfPage).toHaveBeenCalled();
   });
 });

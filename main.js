@@ -25537,6 +25537,38 @@ var WheelPagePacer = class {
   }
 };
 
+// src/render-quality.ts
+var RENDER_MOTION_MS = 150;
+var RENDER_IDLE_MS = 600;
+var RENDER_BASE_FACTOR = 0.75;
+var RenderQualityPolicy = class {
+  /** `desktop` comes from device facts once at construction, matching the
+   *  device-mode contract of keeping obsidian imports out of testable units. */
+  constructor(desktop = true) {
+    this.desktop = desktop;
+    this.lastActivity = Number.NEGATIVE_INFINITY;
+  }
+  /** Records an input or navigation signal (timestamps share one clock:
+   *  performance.now() and DOM event timeStamp are both performance ms). */
+  note(at) {
+    if (Number.isFinite(at)) this.lastActivity = Math.max(this.lastActivity, at);
+  }
+  tier(at) {
+    if (this.desktop && Number.isFinite(at)) {
+      const quiet = at - this.lastActivity;
+      if (quiet < RENDER_MOTION_MS) return "motion";
+      if (quiet < RENDER_IDLE_MS) return "base";
+    }
+    return "idle";
+  }
+};
+function tierDensity(tier, dpr, zoom) {
+  const target = dpr * zoom;
+  if (tier === "motion") return Math.min(1, target);
+  if (tier === "base") return target * RENDER_BASE_FACTOR;
+  return target;
+}
+
 // src/shapes.ts
 var SHAPES = [
   ["line", "Line", "minus"],
@@ -28649,6 +28681,14 @@ var InkWritingView = class extends import_obsidian7.FileView {
     this.flipSettling = false;
     this.pageSwipeAnimations = [];
     this.pageSwipeRequest = null;
+    // -------------------------------------------------- adaptive render quality
+    /** Three-tier desktop rendering resolution: cheap while the user moves,
+     *  full budget once the view has been stationary for RENDER_IDLE_MS. The
+     *  motion tier's 1:1 CSS-pixel ceiling is the legibility floor - pages
+     *  (PDF included) stay readable at speed and sharpen on the stationary
+     *  pass. Mobile devices keep today's full target everywhere. */
+    this.renderQualityInstance = null;
+    this.renderQualitySettled = false;
     // ------------------------------------------------------------------ input
     this.pageOptionsMenu = null;
     this.pageOptionsTriggerPressed = false;
@@ -29635,6 +29675,45 @@ var InkWritingView = class extends import_obsidian7.FileView {
   /** Called at the very end of finishPointerInput. */
   afterInputFullySettled() {
   }
+  /** Lazily built so Object.create-based test harnesses and partial mocks
+   *  never see an uninitialized policy. */
+  get renderQuality() {
+    if (!this.renderQualityInstance) {
+      this.renderQualityInstance = new RenderQualityPolicy(!import_obsidian7.Platform.isMobileApp);
+    }
+    return this.renderQualityInstance;
+  }
+  /** Every input, scroll, paging, zoom or pan signal flows through here so
+   *  the density target tracks the user's pace. Cheap: one clock read plus a
+   *  timer reset. */
+  noteRenderActivity() {
+    this.renderQuality.note(performance.now());
+    this.renderQualitySettled = false;
+    if (this.renderQualityTimer !== void 0) globalThis.clearTimeout(this.renderQualityTimer);
+    this.renderQualityTimer = globalThis.setTimeout(() => {
+      this.renderQualityTimer = void 0;
+      if (this.renderQualitySettled || !this.viewReady) return;
+      this.renderQualitySettled = true;
+      this.onRenderSettledFullQuality();
+    }, RENDER_IDLE_MS);
+  }
+  /** Backing density the tile/PDF raster paths should use right now. */
+  renderDensityTarget(zoom) {
+    return tierDensity(this.renderQuality.tier(performance.now()), window.devicePixelRatio || 1, zoom);
+  }
+  /** Diagnostics: the tier the render paths currently resolve to. */
+  currentRenderTier() {
+    return this.renderQuality.tier(performance.now());
+  }
+  /** Called once after the stationary window elapses with no fresh input. */
+  onRenderSettledFullQuality() {
+  }
+  /** Drops the pending stationary pass on teardown. */
+  clearRenderQuality() {
+    if (this.renderQualityTimer !== void 0) globalThis.clearTimeout(this.renderQualityTimer);
+    this.renderQualityTimer = void 0;
+    this.renderQualitySettled = false;
+  }
   /** A user action in the rail turns a temporary fast-paging reveal into an
    *  explicit open state, so the quiet timer cannot hide it unexpectedly. */
   claimFastPagingRail() {
@@ -29988,6 +30067,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
       this.resetDesktopWheel();
       return;
     }
+    this.noteRenderActivity();
     if (this.activePointerId !== null || this.desktopPan) {
       const target2 = event.target;
       if (!((_a = target2 == null ? void 0 : target2.closest) == null ? void 0 : _a.call(target2, 'input, textarea, select, [contenteditable], [role="dialog"]'))) event.preventDefault();
@@ -30238,6 +30318,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     }
     if (source === "pointer" && event.pointerType === "pen" && ((_c = this.interaction) == null ? void 0 : _c.source) === "stylus-touch") return;
     if (event.pointerType === "pen") this.finishFingerInput(true);
+    this.noteRenderActivity();
     this.onInputStarting();
     this.interactionGeneration += 1;
     if (this.activePointerId !== null) this.finishPointerInput(false);
@@ -30389,6 +30470,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
       }
       pan.x = event.clientX;
       pan.y = event.clientY;
+      this.noteRenderActivity();
       (_b = event.preventDefault) == null ? void 0 : _b.call(event);
       return;
     }
@@ -31540,7 +31622,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     const batch = [...this.pendingInkStrokes];
     this.committingInkStrokes = batch;
     this.tiles.patchStrokes(batch, [], page.strokes);
-    this.tiles.commitInk(batch, this.viewport, (window.devicePixelRatio || 1) * this.zoom, (committed) => {
+    this.tiles.commitInk(batch, this.viewport, this.renderDensityTarget(this.zoom), (committed) => {
       var _a, _b, _c, _d;
       if (this.committingInkStrokes !== batch) return;
       this.committingInkStrokes = null;
@@ -31611,7 +31693,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     this.discardPendingInkPreview();
     if (pending.length === 0) return;
     const cells = (_c = (_b = this.tiles) == null ? void 0 : _b.patchStrokes(pending, [], page.strokes)) != null ? _c : [];
-    (_d = this.tiles) == null ? void 0 : _d.previewInteractiveCells(cells, this.viewport, (window.devicePixelRatio || 1) * this.zoom);
+    (_d = this.tiles) == null ? void 0 : _d.previewInteractiveCells(cells, this.viewport, this.renderDensityTarget(this.zoom));
   }
   /** Live preview layer for the active stroke; view-owned canvases. */
   resizePreview() {
@@ -31748,7 +31830,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
       var _a2;
       return !((_a2 = this.stickyInput) == null ? void 0 : _a2.proxies.has(s.id));
     }), this.tileExclusion());
-    (_b = this.tiles) == null ? void 0 : _b.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
+    (_b = this.tiles) == null ? void 0 : _b.update(this.viewport, this.renderDensityTarget(this.zoom), true);
     this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
     this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
     this.drawPreview();
@@ -31756,7 +31838,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
   drawInteractiveStrokes(strokes, refine = false, progressive = false) {
     var _a;
     if (!this.ctx) return;
-    (_a = this.tiles) == null ? void 0 : _a.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine, void 0, progressive);
+    (_a = this.tiles) == null ? void 0 : _a.commitInteractive(this.viewport, this.renderDensityTarget(this.zoom), refine, void 0, progressive);
     this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
     this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
@@ -31775,7 +31857,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     }
     const cells = [...this.eraserPreviewCells];
     this.eraserPreviewCells.clear();
-    (_b = this.tiles) == null ? void 0 : _b.previewInteractiveCells(cells, this.viewport, (window.devicePixelRatio || 1) * this.zoom);
+    (_b = this.tiles) == null ? void 0 : _b.previewInteractiveCells(cells, this.viewport, this.renderDensityTarget(this.zoom));
     this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
     this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
@@ -31817,7 +31899,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     const base = this.tileExclusion();
     (_c = (_b = this.tiles) == null ? void 0 : _b.setWorkerExclusion) == null ? void 0 : _c.call(_b, base ? /* @__PURE__ */ new Set([...base, ...selected]) : selected);
     if (this.stickyInput) (_d = this.stickies) == null ? void 0 : _d.preview(this.stickyInput.notes.map((n) => ({ ...n, strokes: n.strokes.filter((s) => !selected.has(s.id)) })));
-    (_e = this.tiles) == null ? void 0 : _e.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, false);
+    (_e = this.tiles) == null ? void 0 : _e.commitInteractive(this.viewport, this.renderDensityTarget(this.zoom), false);
     const resolution = canvasResolution(
       this.canvasLogicalWidth,
       this.canvasLogicalHeight,
@@ -31867,7 +31949,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
   commitLassoPreview(page) {
     var _a, _b;
     (_a = this.tiles) == null ? void 0 : _a.patchStrokes(this.selectedStrokes(), [], page.strokes);
-    (_b = this.tiles) == null ? void 0 : _b.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true, () => {
+    (_b = this.tiles) == null ? void 0 : _b.commitInteractive(this.viewport, this.renderDensityTarget(this.zoom), true, () => {
       var _a2;
       this.hideLassoPreview();
       if (this.viewReady && page === this.currentPage()) {
@@ -32349,7 +32431,7 @@ var InkWritingView = class extends import_obsidian7.FileView {
     (_b = (_a = this.tiles) == null ? void 0 : _a.setBackend) == null ? void 0 : _b.call(_a, null);
     if (this.viewReady && this.tiles && this.currentNotebook().pages.length > 0) {
       this.tiles.sync(this.currentPage().strokes, this.tileExclusion());
-      this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
+      this.tiles.update(this.viewport, this.renderDensityTarget(this.zoom), true);
     }
     (_c = this.workerSession) == null ? void 0 : _c.dispose();
     this.workerSession = null;
@@ -34574,6 +34656,7 @@ var InkView = class extends InkWritingView {
     this.pageNavigationGeneration += 1;
     this.closeDevPanel();
     this.clearFastPagingRail();
+    this.clearRenderQuality();
     if (this.railRevealTimer !== void 0) window.clearTimeout(this.railRevealTimer);
     this.railRevealTimer = void 0;
     if (this.thumbnailRefreshFrame !== null) window.cancelAnimationFrame(this.thumbnailRefreshFrame);
@@ -35385,7 +35468,7 @@ var InkView = class extends InkWritingView {
       width: Math.max(1, Math.min(this.canvasLogicalWidth - x, (screen.right - page.left) / this.zoom - x)),
       height: Math.max(1, Math.min(this.canvasLogicalHeight - y, (screen.bottom - page.top) / this.zoom - y))
     };
-    this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * ((_a = this.pinchRenderZoom) != null ? _a : this.zoom), refine);
+    this.tiles.update(this.viewport, this.renderDensityTarget((_a = this.pinchRenderZoom) != null ? _a : this.zoom), refine);
     if (this.pinchRenderZoom === void 0 && (refine || this.hasInkPreview() || this.selectedStrokeIds.size > 0 || this.lassoPath.length > 0)) {
       this.resizeOverlay(this.canvas, this.ctx);
       this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
@@ -35398,6 +35481,7 @@ var InkView = class extends InkWritingView {
     if (refine) this.tiles.prewarm(this.notebook.pages.filter((_, index) => Math.abs(index - this.pageIndex) === 1));
   }
   onViewportMotion() {
+    this.noteRenderActivity();
     this.updateViewport(false);
     if (this.pinchRenderZoom !== void 0) return;
     if (this.zoomRenderTimer !== void 0) window.clearTimeout(this.zoomRenderTimer);
@@ -35467,6 +35551,15 @@ var InkView = class extends InkWritingView {
       void this.reloadFromDisk().catch((error) => new import_obsidian9.Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
     }
   }
+  onRenderSettledFullQuality() {
+    if (this.flipSettling || this.pinchRenderZoom !== void 0) {
+      globalThis.setTimeout(() => {
+        if (this.viewReady) this.onRenderSettledFullQuality();
+      }, 200);
+      return;
+    }
+    this.updateViewport(true);
+  }
   afterCommand(command) {
     super.afterCommand(command);
     if (!command.rebuild) this.refreshCurrentPageThumbnail();
@@ -35499,6 +35592,7 @@ var InkView = class extends InkWritingView {
   desktopZoom(factor, target) {
     var _a, _b;
     if (this.zoomLocked) return;
+    this.noteRenderActivity();
     if (this.pinchRenderZoom === void 0) {
       this.pinchRenderZoom = this.zoom;
       if (this.zoomRenderTimer !== void 0) window.clearTimeout(this.zoomRenderTimer);
@@ -35855,7 +35949,7 @@ var InkView = class extends InkWritingView {
     const rate = intervalStats(this.penSampleIntervals);
     const lines = [];
     lines.push(`Ink Notes dev \u2014 build ${this.devVersion()}`);
-    lines.push(`ENV pointer=${(_b = this.devLastPointerType) != null ? _b : "-"} coalesced=${this.hasPointerApi("getCoalescedEvents") ? "yes" : "no"} rawupdate=${"onpointerrawupdate" in window ? "yes" : "no"} predicted=${this.hasPointerApi("getPredictedEvents") ? "yes" : "no"} touch=${(_c = navigator.maxTouchPoints) != null ? _c : 0} dpr=${(window.devicePixelRatio || 1).toFixed(2)} zoom=${this.zoom.toFixed(2)} pinch=${(_e = (_d = this.pinchRenderZoom) == null ? void 0 : _d.toFixed(2)) != null ? _e : "-"} tileDensity=${(_h = (_g = (_f = this.tiles) == null ? void 0 : _f.currentDensity) == null ? void 0 : _g.toFixed(2)) != null ? _h : "-"} tileScale=${(_k = (_j = (_i = this.tiles) == null ? void 0 : _i.currentDisplayScale) == null ? void 0 : _j.toFixed(2)) != null ? _k : "-"}`);
+    lines.push(`ENV pointer=${(_b = this.devLastPointerType) != null ? _b : "-"} coalesced=${this.hasPointerApi("getCoalescedEvents") ? "yes" : "no"} rawupdate=${"onpointerrawupdate" in window ? "yes" : "no"} predicted=${this.hasPointerApi("getPredictedEvents") ? "yes" : "no"} touch=${(_c = navigator.maxTouchPoints) != null ? _c : 0} dpr=${(window.devicePixelRatio || 1).toFixed(2)} zoom=${this.zoom.toFixed(2)} pinch=${(_e = (_d = this.pinchRenderZoom) == null ? void 0 : _d.toFixed(2)) != null ? _e : "-"} tier=${this.currentRenderTier()} tileDensity=${(_h = (_g = (_f = this.tiles) == null ? void 0 : _f.currentDensity) == null ? void 0 : _g.toFixed(2)) != null ? _h : "-"} tileScale=${(_k = (_j = (_i = this.tiles) == null ? void 0 : _i.currentDisplayScale) == null ? void 0 : _j.toFixed(2)) != null ? _k : "-"}`);
     lines.push(`INPUT events=${this.devPointerEvents} rawupdates=${this.devRawUpdates} coalescedPts=${this.devCoalescedSamples} samplesFed=${this.devSamplesFed} predicted=${this.devPredictedSamples}`);
     lines.push(`RATE n=${rate.count}${rate.min !== null ? ` min=${rate.min.toFixed(1)}ms median=${(_l = rate.median) == null ? void 0 : _l.toFixed(1)}ms mean=${(_m = rate.mean) == null ? void 0 : _m.toFixed(1)}ms max=${(_n = rate.max) == null ? void 0 : _n.toFixed(1)}ms` : ""}${rate.mean !== null && rate.mean > 0 ? ` (~${(1e3 / rate.mean).toFixed(0)} Hz)` : ""}`);
     lines.push(`SPARSE threshold=${SPARSE_SAMPLE_INTERVAL_MS}ms flagged=${this.penInputSparse() ? "YES" : "no"}`);
@@ -37503,6 +37597,9 @@ var PdfInkView = class extends InkWritingView {
     this.pdfDoc = null;
     this.pdfRenderTask = null;
     this.pdfRenderGeneration = 0;
+    /** Adaptive tier the current/last page raster was rendered at; the
+     *  stationary pass re-rasterizes only when this lags the idle tier. */
+    this.pdfRasterTier = "idle";
     this.loadGeneration = 0;
     this.sidecar = null;
     this.sidecarRaw = "";
@@ -37641,6 +37738,7 @@ var PdfInkView = class extends InkWritingView {
     this.closePageOptionsMenu();
     this.closeTagPopover();
     this.clearFastPagingRail();
+    this.clearRenderQuality();
     this.finishPointerInput(false);
     this.clearSelection();
     this.closeLassoSettings();
@@ -38971,7 +39069,7 @@ var PdfInkView = class extends InkWritingView {
     };
     (_b = this.tiles) == null ? void 0 : _b.update(
       this.viewport,
-      (_a = this.desktopRenderDensity) != null ? _a : (window.devicePixelRatio || 1) * this.zoom,
+      (_a = this.desktopRenderDensity) != null ? _a : this.renderDensityTarget(this.zoom),
       refine && this.desktopRenderDensity === void 0
     );
     if (refine && this.desktopRenderDensity === void 0) this.prewarmInkNeighbours();
@@ -39002,12 +39100,13 @@ var PdfInkView = class extends InkWritingView {
         width,
         height,
         viewport: { x: 0, y: 0, width, height },
-        density: (window.devicePixelRatio || 1) * size.zoom
+        density: this.renderDensityTarget(size.zoom)
       });
     }
     this.tiles.prewarmPages(pages);
   }
   onViewportMotion() {
+    this.noteRenderActivity();
     this.updateViewport(false);
     if (this.desktopRenderDensity !== void 0) return;
     if (this.zoomTimer !== void 0) window.clearTimeout(this.zoomTimer);
@@ -39059,6 +39158,7 @@ var PdfInkView = class extends InkWritingView {
   desktopZoom(factor, target) {
     var _a;
     if (this.zoomLocked) return;
+    this.noteRenderActivity();
     if (this.desktopRenderDensity === void 0) {
       this.desktopRenderDensity = (window.devicePixelRatio || 1) * this.zoom;
       if (this.zoomTimer !== void 0) window.clearTimeout(this.zoomTimer);
@@ -39130,6 +39230,16 @@ var PdfInkView = class extends InkWritingView {
   }
   onRenderResize() {
     this.layoutPage();
+  }
+  onRenderSettledFullQuality() {
+    if (this.flipSettling || this.desktopRenderDensity !== void 0) {
+      globalThis.setTimeout(() => {
+        if (this.viewReady) this.onRenderSettledFullQuality();
+      }, 200);
+      return;
+    }
+    this.updateViewport(true);
+    if (this.pdfRasterTier !== "idle") void this.renderPdfPage();
   }
   onInputStarting() {
     this.finishDesktopZoom();
@@ -39553,11 +39663,13 @@ var PdfInkView = class extends InkWritingView {
     const generation = ++this.pdfRenderGeneration;
     this.cancelPdfRender();
     const notePage = this.currentNotePage();
+    const rasterTier = this.renderQuality.tier(performance.now());
+    this.pdfRasterTier = rasterTier;
     const { width: targetWidth, height: targetHeight } = canvasResolution(
       this.pageBaseWidth,
       this.pageBaseHeight,
-      window.devicePixelRatio || 1,
-      this.zoom,
+      tierDensity(rasterTier, window.devicePixelRatio || 1, this.zoom),
+      1,
       import_obsidian13.Platform.isIosApp ? void 0 : PDF_PAGE_RASTER_BUDGET
     );
     canvas.setCssStyles({ width: "100%", height: "100%" });
@@ -39644,7 +39756,7 @@ var PdfInkView = class extends InkWritingView {
       const page = (_a = this.sidecar) == null ? void 0 : _a.notebook.pages[this.noteIndex];
       if (page && this.tiles) {
         this.tiles.setPage(page, this.canvasLogicalWidth, this.canvasLogicalHeight, this.tileExclusion());
-        this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
+        this.tiles.update(this.viewport, this.renderDensityTarget(this.zoom), true);
       }
       this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
     }

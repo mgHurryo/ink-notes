@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 
-vi.mock("obsidian", () => ({ Modal: class {}, FileView: class {}, Scope: class {}, TFile: class {} }));
+vi.mock("obsidian", () => ({ Platform: { isDesktopApp: true, isMobileApp: false, isIosApp: false, isPhone: false, isTablet: false }, Modal: class {}, FileView: class {}, Scope: class {}, TFile: class {} }));
 vi.mock("../src/rendering", () => ({ canvasResolution: vi.fn(), drawInkStroke: vi.fn(), drawInkStrokeTail: vi.fn(), STROKE_WIDTH_REFERENCE: 980 }));
 import { InkView } from "../src/view";
 import { canvasResolution, drawInkStroke, drawInkStrokeTail } from "../src/rendering";
@@ -420,7 +420,6 @@ it("keeps pinch raster density fixed and defers refinement even when fingers pau
   expect(v.tiles.setDisplayScale).not.toHaveBeenCalled();
   expect(v.tiles.update).toHaveBeenLastCalledWith(expect.any(Object), 1, false);
   expect(window.clearTimeout).toHaveBeenCalledWith(42);
-  expect(window.setTimeout).not.toHaveBeenCalled();
   v.resizeCanvas = vi.fn();
   v.finishPinchRender();
   v.finishPinchRender();
@@ -538,4 +537,67 @@ it("reuses one cached outline path across frames of the same confirmed stroke", 
   expect(pathInstances).toHaveLength(3);
   expect(highlighterCtx.stroke).toHaveBeenCalledWith(pathInstances.at(-1));
   expect(highlighterCtx.fill).not.toHaveBeenCalled();
+});
+
+it("renders exposed tiles at the tier density: motion cap, base factor, idle full", () => {
+  vi.stubGlobal("setTimeout", vi.fn(() => 1));
+  vi.stubGlobal("clearTimeout", vi.fn());
+  const v = view();
+  v.zoom = 2;
+  v.pageIndex = 0;
+  v.notebook = { pages: [{}] };
+  v.pageElement = { getBoundingClientRect: () => ({ left: 0, top: 0, width: 1600, height: 2000 }) };
+  v.pageScroller = { clientWidth: 800, clientHeight: 600, scrollLeft: 0, scrollTop: 0,
+    getBoundingClientRect: () => ({ left: 0, top: 0, right: 800, bottom: 600 }) };
+  v.tiles.prewarm = vi.fn();
+  v.selectedStrokeIds = new Set();
+  v.lassoPath = [];
+  v.canvas = { width: 800, height: 1000, style: {}, setCssStyles };
+  v.ctx = { clearRect: vi.fn(), setTransform: vi.fn() };
+  v.drawSelection = vi.fn();
+  v.hasInkPreview = vi.fn(() => false);
+  v.refreshEraserCursor = vi.fn();
+  vi.mocked(canvasResolution).mockReturnValue({ width: 800, height: 1000 });
+
+  v.renderQuality.note(0);
+  v.updateViewport(true);
+  expect(v.tiles.update).toHaveBeenLastCalledWith(expect.any(Object), 2, true);
+
+  v.renderQuality.note(performance.now() - 300);
+  v.updateViewport(true);
+  expect(v.tiles.update).toHaveBeenLastCalledWith(expect.any(Object), 1.5, true);
+
+  v.renderQuality.note(performance.now());
+  v.updateViewport(false);
+  expect(v.tiles.update).toHaveBeenLastCalledWith(expect.any(Object), 1, false);
+});
+
+it("refines the full target once the stationary window elapses", () => {
+  const timers: (() => void)[] = [];
+  vi.stubGlobal("setTimeout", vi.fn((callback: () => void) => { timers.push(callback); return timers.length; }));
+  const v = view();
+  v.zoom = 2;
+  v.updateViewport = vi.fn();
+  v.noteRenderActivity();
+  timers.at(-1)!();
+  expect(v.updateViewport).toHaveBeenLastCalledWith(true);
+  // The settled latch must not re-run the refine on a stray timer.
+  v.updateViewport.mockClear();
+  timers.at(-1)!();
+  expect(v.updateViewport).not.toHaveBeenCalled();
+});
+
+it("defers the stationary refine behind a settling page flip", () => {
+  const timers: (() => void)[] = [];
+  vi.stubGlobal("setTimeout", vi.fn((callback: () => void) => { timers.push(callback); return timers.length; }));
+  const v = view();
+  v.flipSettling = true;
+  v.updateViewport = vi.fn();
+  v.noteRenderActivity();
+  timers.at(-1)!();
+  expect(v.updateViewport).not.toHaveBeenCalled();
+  expect(timers).toHaveLength(2);
+  v.flipSettling = false;
+  timers.at(-1)!();
+  expect(v.updateViewport).toHaveBeenLastCalledWith(true);
 });
