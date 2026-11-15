@@ -1296,7 +1296,7 @@ describe("adaptive render quality wiring", () => {
     expect(internal.renderPdfPage).toHaveBeenCalledTimes(1);
     // Fresh paging before the delayed raster: the idle check skips it.
     internal.pdfRasterTier = "motion";
-    internal.renderPdfPage.mockClear();
+    (internal as unknown as Record<string, ReturnType<typeof vi.fn>>).renderPdfPage.mockClear();
     internal.noteRenderActivity();
     vi.advanceTimersByTime(600);
     internal.noteRenderActivity();
