@@ -559,7 +559,9 @@ it("renders exposed tiles at the tier density: motion cap, base factor, idle ful
   v.refreshEraserCursor = vi.fn();
   vi.mocked(canvasResolution).mockReturnValue({ width: 800, height: 1000 });
 
-  v.renderQuality.note(0);
+  // Long-quiet baseline must be relative to the live clock: a fresh CI
+  // process can still be inside the first idle window at note(0).
+  v.renderQuality.note(performance.now() - 10_000);
   v.updateViewport(true);
   expect(v.tiles.update).toHaveBeenLastCalledWith(expect.any(Object), 2, true);
 
