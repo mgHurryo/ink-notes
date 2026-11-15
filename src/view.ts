@@ -1236,7 +1236,9 @@ export class InkView extends InkWritingView {
     this.swipeStage = stage;
     if (insert) { this.showPageInsertPreview(stage, side); return; }
     const canvas = stage.createEl("canvas", { cls: "ink-swipe-canvas" });
-    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, window.devicePixelRatio || 1, previewZoom, SWIPE_PREVIEW_RESIZE_BUDGET);
+    // The swipe preview follows the adaptive tier: paging at speed only
+    // needs the 1:1 legibility floor for the neighboring page raster.
+    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, this.renderDensityTarget(previewZoom), 1, SWIPE_PREVIEW_RESIZE_BUDGET);
     canvas.width = resolution.width;
     canvas.height = resolution.height;
     const ctx = canvas.getContext("2d");

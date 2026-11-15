@@ -35709,7 +35709,7 @@ var InkView = class extends InkWritingView {
       return;
     }
     const canvas = stage.createEl("canvas", { cls: "ink-swipe-canvas" });
-    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, window.devicePixelRatio || 1, previewZoom, SWIPE_PREVIEW_RESIZE_BUDGET);
+    const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight, this.renderDensityTarget(previewZoom), 1, SWIPE_PREVIEW_RESIZE_BUDGET);
     canvas.width = resolution.width;
     canvas.height = resolution.height;
     const ctx = canvas.getContext("2d");
@@ -37563,6 +37563,7 @@ var PDF_ZOOM_STEP = 1.2;
 var PDF_PAGE_PADDING = 24;
 var SELECTION_OVERLAY_BUDGET = 4e6;
 var PDF_PAGE_RASTER_BUDGET = 64e6;
+var PDF_IDLE_RERASTER_DELAY_MS = 250;
 var SOURCE_PAGE_GEOMETRY_CONCURRENCY = 4;
 var SWIPE_PREVIEW_BUDGET = 16e6;
 var PDF_NEIGHBOUR_CACHE_BUDGET = SWIPE_PREVIEW_BUDGET * 2;
@@ -37739,6 +37740,8 @@ var PdfInkView = class extends InkWritingView {
     this.closeTagPopover();
     this.clearFastPagingRail();
     this.clearRenderQuality();
+    if (this.pdfIdleRerasterTimer !== void 0) globalThis.clearTimeout(this.pdfIdleRerasterTimer);
+    this.pdfIdleRerasterTimer = void 0;
     this.finishPointerInput(false);
     this.clearSelection();
     this.closeLassoSettings();
@@ -38384,6 +38387,12 @@ var PdfInkView = class extends InkWritingView {
     this.renderPageRailActions();
     (_f = this.railFilterButtons.ink) == null ? void 0 : _f.setAttribute("aria-pressed", String(this.railFilters.ink));
     (_g = this.railFilterButtons.tagged) == null ? void 0 : _g.setAttribute("aria-pressed", String(this.railFilters.tagged));
+    if (this.isFastPagingRailOpen()) {
+      this.thumbButtons.forEach((button3, index) => button3.toggleClass("is-active", index === this.noteIndex));
+      if (this.railCount) this.railCount.textContent = `${this.noteIndex + 1} / ${count}`;
+      this.followWheelPageThumb();
+      return;
+    }
     let visibleCount = 0;
     this.thumbButtons.forEach((button3, index) => {
       var _a2, _b2;
@@ -38445,6 +38454,7 @@ var PdfInkView = class extends InkWritingView {
     this.fastPagingRailBorrowed = false;
     (_a = this.root) == null ? void 0 : _a.addClass("ink-rail-hidden");
     this.scheduleRailResizeSettle();
+    this.refreshPageRail();
   }
   rebuildRailButtons(count) {
     var _a, _b, _c, _d;
@@ -39239,7 +39249,15 @@ var PdfInkView = class extends InkWritingView {
       return;
     }
     this.updateViewport(true);
-    if (this.pdfRasterTier !== "idle") void this.renderPdfPage();
+    if (this.pdfRasterTier !== "idle") {
+      if (this.pdfIdleRerasterTimer !== void 0) globalThis.clearTimeout(this.pdfIdleRerasterTimer);
+      this.pdfIdleRerasterTimer = globalThis.setTimeout(() => {
+        this.pdfIdleRerasterTimer = void 0;
+        if (!this.viewReady || this.flipSettling) return;
+        if (this.renderQuality.tier(performance.now()) !== "idle") return;
+        if (this.pdfRasterTier !== "idle") void this.renderPdfPage();
+      }, PDF_IDLE_RERASTER_DELAY_MS);
+    }
   }
   onInputStarting() {
     this.finishDesktopZoom();
@@ -39351,7 +39369,7 @@ var PdfInkView = class extends InkWritingView {
     const ink = stage.createEl("canvas", { cls: "ink-swipe-canvas" });
     const logicalWidth = Math.max(1, Math.round(baseWidth * 64) / 64);
     const logicalHeight = Math.max(1, Math.round(baseWidth * display.height / display.width * 64) / 64);
-    const resolution = canvasResolution(logicalWidth, logicalHeight, window.devicePixelRatio || 1, zoom, SWIPE_PREVIEW_BUDGET);
+    const resolution = canvasResolution(logicalWidth, logicalHeight, this.renderDensityTarget(zoom), 1, SWIPE_PREVIEW_BUDGET);
     ink.width = resolution.width;
     ink.height = resolution.height;
     const ctx = ink.getContext("2d");
@@ -39364,7 +39382,7 @@ var PdfInkView = class extends InkWritingView {
           width: logicalWidth,
           height: logicalHeight,
           viewport: { x: 0, y: 0, width: logicalWidth, height: logicalHeight },
-          density: (window.devicePixelRatio || 1) * zoom
+          density: this.renderDensityTarget(zoom)
         };
         const paint = (drawInk) => paintPageImages(
           this.imageLibrary,
@@ -39400,7 +39418,7 @@ var PdfInkView = class extends InkWritingView {
     const resolution = canvasResolution(
       parseFloat(stage.style.width),
       parseFloat(stage.style.height),
-      window.devicePixelRatio || 1,
+      this.renderDensityTarget(1),
       1,
       SWIPE_PREVIEW_BUDGET
     );
@@ -39472,7 +39490,7 @@ var PdfInkView = class extends InkWritingView {
       const resolution = canvasResolution(
         size.width,
         size.height,
-        window.devicePixelRatio || 1,
+        this.renderDensityTarget(1),
         1,
         SWIPE_PREVIEW_BUDGET
       );
