@@ -25328,6 +25328,12 @@ function WheelGestures(optionsParam) {
 var PAGE_TRAVEL_PX = 96;
 var NOTCH_IDLE_MS = 180;
 var MAX_NOTCH_PAGES = 2;
+var MOMENTUM_RESUME_WINDOW_MS = 1200;
+var MOMENTUM_RESUME_MIN_END_PX_MS = 0.3;
+var MOMENTUM_RESUME_ACCEL = 1.5;
+var MOMENTUM_RESUME_FLOOR_PX_MS = 0.8;
+var MOMENTUM_RESUME_START_FACTOR = 3.5;
+var MOMENTUM_RESUME_CADENCE_GAP_MS = 60;
 function normalizeWheel2(event, viewport) {
   const { deltaX, deltaY, deltaMode } = event;
   if (![deltaX, deltaY].every(Number.isFinite) || ![0, 1, 2].includes(deltaMode)) return null;
@@ -25357,13 +25363,24 @@ var DesktopWheelGesture = class {
     this.flipped = false;
     this.notchCredit = 0;
     this.notchPages = 0;
+    // Momentum-resume bookkeeping: how the previous continuous gesture ended,
+    // and whether the current one is its tail continuation across a restart.
+    this.prevVelocity = { x: 0, y: 0 };
+    this.endAt = null;
+    this.endAxis = null;
+    this.endSign = 0;
+    this.endFlipped = false;
+    this.endVelocity = 0;
+    this.nativeMomentumSeen = false;
+    this.continuation = false;
+    this.continuationStart = false;
   }
   get pageTravel() {
     return this.travel;
   }
   get pagingTail() {
     var _a, _b;
-    return !this.discrete && !((_a = this.state) == null ? void 0 : _a.isEnding) && (this.flipped || !!((_b = this.state) == null ? void 0 : _b.isMomentum));
+    return !this.discrete && !((_a = this.state) == null ? void 0 : _a.isEnding) && (this.flipped || !!((_b = this.state) == null ? void 0 : _b.isMomentum) || this.continuation);
   }
   reset() {
     var _a, _b;
@@ -25376,12 +25393,21 @@ var DesktopWheelGesture = class {
     this.lastAt = null;
     this.lastMovement = 0;
     this.discrete = false;
+    this.prevVelocity = { x: 0, y: 0 };
+    this.endAt = null;
+    this.endAxis = null;
+    this.endSign = 0;
+    this.endFlipped = false;
+    this.endVelocity = 0;
+    this.nativeMomentumSeen = false;
     this.newPageGesture();
   }
   newPageGesture() {
     this.gestureId++;
     this.travel = this.notchCredit = this.notchPages = 0;
     this.flipped = false;
+    this.continuation = false;
+    this.continuationStart = false;
   }
   begin(delta, shift, at) {
     var _a, _b, _c;
@@ -25394,6 +25420,7 @@ var DesktopWheelGesture = class {
     const discrete = delta.momentum !== true && (delta.mode !== 0 || notch && (delta.momentum === false || this.lastAt === null || gap >= NOTCH_IDLE_MS || this.discrete));
     if (discrete) {
       if (!this.discrete || gap >= NOTCH_IDLE_MS || reversed) this.newPageGesture();
+      this.continuation = false;
       (_a = this.unsubscribe) == null ? void 0 : _a.call(this);
       (_b = this.recognizer) == null ? void 0 : _b.disconnect();
       this.recognizer = null;
@@ -25405,7 +25432,14 @@ var DesktopWheelGesture = class {
         this.unsubscribe = this.recognizer.on("wheel", (state2) => {
           var _a2;
           this.state = state2;
-          if (state2.isStart) this.newPageGesture();
+          if (state2.isEnding) {
+            this.endAt = this.lastAt;
+            this.endAxis = this.axis;
+            this.endSign = Math.sign(this.lastMovement);
+            this.endFlipped = this.flipped;
+            this.endVelocity = this.axis ? Math.abs(state2.axisVelocity[this.axis === "x" ? 0 : 1]) : 0;
+            this.continuation = false;
+          }
           if (state2.isMomentum || state2.isEnding) (_a2 = this.onGestureEnd) == null ? void 0 : _a2.call(this);
         });
       }
@@ -25417,7 +25451,30 @@ var DesktopWheelGesture = class {
         ...delta.momentum === void 0 ? {} : { momentum: delta.momentum }
       });
       const state = this.state;
-      if (reversed && !(state == null ? void 0 : state.isMomentum)) this.newPageGesture();
+      if (state == null ? void 0 : state.isStart) {
+        const resumed = !this.nativeMomentumSeen && this.endFlipped && this.endAxis === axis && this.endSign !== 0 && Math.sign(movement) === this.endSign && this.endAt !== null && at - this.endAt <= MOMENTUM_RESUME_WINDOW_MS && this.endVelocity >= MOMENTUM_RESUME_MIN_END_PX_MS;
+        if (resumed) {
+          this.continuation = true;
+          this.continuationStart = true;
+        } else {
+          this.newPageGesture();
+        }
+        this.nativeMomentumSeen = delta.momentum !== void 0;
+      } else if (delta.momentum !== void 0) {
+        this.nativeMomentumSeen = true;
+      }
+      if (reversed && (!(state == null ? void 0 : state.isMomentum) || this.continuation)) this.newPageGesture();
+      if (gap > 0 && gap <= MOMENTUM_RESUME_CADENCE_GAP_MS && !(state == null ? void 0 : state.isStart)) {
+        const vel = magnitude / gap;
+        if (this.continuation && vel >= Math.max(
+          MOMENTUM_RESUME_FLOOR_PX_MS,
+          this.prevVelocity[axis] * (this.continuationStart ? MOMENTUM_RESUME_START_FACTOR : MOMENTUM_RESUME_ACCEL)
+        )) {
+          this.newPageGesture();
+        }
+        this.continuationStart = false;
+        this.prevVelocity[axis] = vel;
+      }
     }
     if (axis !== this.axis) this.travel = 0;
     this.axis = axis;
@@ -25432,7 +25489,7 @@ var DesktopWheelGesture = class {
       gap,
       gestureId: this.gestureId,
       suppressed: !discrete && this.flipped,
-      isMomentum: !discrete && !!((_c = this.state) == null ? void 0 : _c.isMomentum)
+      isMomentum: !discrete && (!!((_c = this.state) == null ? void 0 : _c.isMomentum) || this.continuation)
     };
   }
   pageDelta(motion, scrolled) {

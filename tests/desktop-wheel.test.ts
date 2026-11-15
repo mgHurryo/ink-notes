@@ -55,6 +55,91 @@ describe("recorded trackpad navigation through wheel-gestures", () => {
   }
 });
 
+describe("chromium inertia tails split by frame jank", () => {
+  // Chrome marks neither phases nor momentum on wheel events, so the
+  // recognizer's silence timeout (>=100ms) splits a fling tail into "fresh"
+  // gestures. The recorded tails still carry 1100-2300px past the flip, so
+  // each mid-tail split used to re-arm the flip lock and turn another page.
+  it("keeps one mid-tail silence from turning a second page", () => {
+    expect(replayWithJank("win-chrome-right-ptp", [10], 120)).toHaveLength(1);
+  });
+
+  it("keeps two mid-tail silences from turning three pages", () => {
+    expect(replayWithJank("win-chrome-fast-right-ptp", [8, 30], 120)).toHaveLength(1);
+  });
+
+  it("re-arms when deliberate input accelerates inside the resume window", () => {
+    const gesture = new DesktopWheelGesture();
+    // The jank split leaves the resumed tail mid-flight, still classified as
+    // inertia; a fresh flick arriving while it flows must unlock immediately.
+    const { flips, lastAt } = feedInto(gesture, "win-chrome-right-ptp", [10], 14);
+    expect(flips).toHaveLength(1);
+    expect(gesture.pageDelta(gesture.begin({ x: -24, y: 0, mode: 0 }, false, lastAt + 20), false)).toBe(0);
+    expect(gesture.pageDelta(gesture.begin({ x: -90, y: 0, mode: 0 }, false, lastAt + 36), false)).toBe(0);
+    expect(gesture.pageDelta(gesture.begin({ x: -150, y: 0, mode: 0 }, false, lastAt + 52), false)).toBe(-1);
+    gesture.reset();
+  });
+
+  it("holds steady slow input inside the resume window until it speeds up", () => {
+    const gesture = new DesktopWheelGesture();
+    const { lastAt } = feedInto(gesture, "win-chrome-right-ptp", [10], 14);
+    // A careful slow drag in the tail's direction reads as inertia until it
+    // accelerates past the momentum floor.
+    for (const [index, movement] of [[0, -10], [1, -10], [2, -10]] as const) {
+      expect(gesture.pageDelta(gesture.begin({ x: movement, y: 0, mode: 0 }, false, lastAt + 20 + index * 16), false)).toBe(0);
+    }
+    expect(gesture.pageDelta(gesture.begin({ x: -40, y: 0, mode: 0 }, false, lastAt + 68), false)).toBe(0);
+    expect(gesture.pageDelta(gesture.begin({ x: -60, y: 0, mode: 0 }, false, lastAt + 84), false)).toBe(-1);
+    gesture.reset();
+  });
+
+  it("expires the resume window after a long quiet tail", () => {
+    const gesture = new DesktopWheelGesture();
+    const { flips, lastAt } = feedInto(gesture, "win-chrome-right-ptp", [10], 14);
+    expect(flips).toHaveLength(1);
+    vi.advanceTimersByTime(1300);
+    expect(gesture.pageDelta(gesture.begin({ x: -30, y: 0, mode: 0 }, false, lastAt + 1300), false)).toBe(0);
+    expect(gesture.pageDelta(gesture.begin({ x: -90, y: 0, mode: 0 }, false, lastAt + 1316), false)).toBe(-1);
+    gesture.reset();
+  });
+});
+
+/** Replays a recording with injected frame-jank silences: every event after
+ *  each `splitAfter` index arrives `gapMs` later, which exceeds the
+ *  recognizer's silence timeout and restarts the gesture mid-tail. Feeding
+ *  stops after `stopAfter` events so a resumed tail can stay mid-flight. */
+function feedInto(gesture: DesktopWheelGesture, name: string,
+  splitAfter: number[] = [], stopAfter = Infinity, gapMs = 120): { flips: number[]; lastAt: number } {
+  const recording = JSON.parse(readFileSync(new URL(`./fixtures/wheel-gestures/${name}.json`, import.meta.url), "utf8")) as { wheelEvents: WheelEventData[] };
+  const shifted = recording.wheelEvents.map((raw, index) => {
+    const count = splitAfter.filter((after) => index > after).length;
+    return count === 0 ? raw : { ...raw, timeStamp: raw.timeStamp + count * gapMs };
+  });
+  const flips: number[] = [];
+  let clock = 0;
+  let lastAt = 0;
+  const first = shifted[0].timeStamp;
+  for (const [index, raw] of shifted.entries()) {
+    if (index > stopAfter) break;
+    const at = raw.timeStamp - first;
+    vi.advanceTimersByTime(at - clock);
+    clock = at;
+    lastAt = at;
+    const delta = normalizeWheel(raw, pane);
+    if (!delta) continue;
+    const pages = gesture.pageDelta(gesture.begin(delta, false, at), false);
+    if (pages) flips.push(pages);
+  }
+  return { flips, lastAt };
+}
+
+function replayWithJank(name: string, splitAfter: number[], gapMs: number): number[] {
+  const gesture = new DesktopWheelGesture();
+  const { flips } = feedInto(gesture, name, splitAfter, Infinity, gapMs);
+  gesture.reset();
+  return flips;
+}
+
 describe.each(["x", "y"] as const)("shared %s-axis navigation policy", (axis) => {
   const delta = (movement: number, momentum?: boolean): WheelDelta => ({
     x: axis === "x" ? movement : 0, y: axis === "y" ? movement : 0, mode: 0,

@@ -4,6 +4,28 @@ import { WheelGestures, type WheelEventState } from "wheel-gestures";
 const PAGE_TRAVEL_PX = 96;
 const NOTCH_IDLE_MS = 180;
 const MAX_NOTCH_PAGES = 2;
+// Chromium marks neither phases nor momentum on trackpad wheel events, so the
+// recognizer's silence timeout (>=100ms) splits one fling tail into several
+// "fresh" gestures. The recorded Windows tails still carry 1100-2300px past
+// the flip, so every split used to re-arm the flip lock and turn another page.
+// A flagless restart that resumes the same direction inside this window is
+// therefore classified as the same physical inertia until the stream
+// re-accelerates into deliberate input.
+const MOMENTUM_RESUME_WINDOW_MS = 1200;
+/** The tail's remaining travel is its cut velocity times Chromium's ~325ms
+ *  fling decay constant; below this velocity the remainder cannot reach the
+ *  page threshold again, so classifying the restart stops mattering. */
+const MOMENTUM_RESUME_MIN_END_PX_MS = 0.3;
+/** Steady-cadence samples inside a resumed tail unlock only on
+ *  re-acceleration; quantized low-velocity noise must never unlock. */
+const MOMENTUM_RESUME_ACCEL = 1.5;
+const MOMENTUM_RESUME_FLOOR_PX_MS = 0.8;
+/** First steady-cadence sample after the restart: a fling legally starts
+ *  above the last contact sample, so the acceleration allowance is wider. */
+const MOMENTUM_RESUME_START_FACTOR = 3.5;
+/** Velocity samples only count at gesture cadence: the restart gap itself
+ *  averages one event's delta over the whole silence and reads as ~zero. */
+const MOMENTUM_RESUME_CADENCE_GAP_MS = 60;
 
 export interface WheelDelta {
   x: number;
@@ -58,13 +80,25 @@ export class DesktopWheelGesture {
   private flipped = false;
   private notchCredit = 0;
   private notchPages = 0;
+  // Momentum-resume bookkeeping: how the previous continuous gesture ended,
+  // and whether the current one is its tail continuation across a restart.
+  private prevVelocity: Record<"x" | "y", number> = { x: 0, y: 0 };
+  private endAt: number | null = null;
+  private endAxis: "x" | "y" | null = null;
+  private endSign = 0;
+  private endFlipped = false;
+  private endVelocity = 0;
+  private nativeMomentumSeen = false;
+  private continuation = false;
+  private continuationStart = false;
 
   constructor(private readonly onGestureEnd?: () => void) {}
 
   get pageTravel(): number { return this.travel; }
 
   get pagingTail(): boolean {
-    return !this.discrete && !this.state?.isEnding && (this.flipped || !!this.state?.isMomentum);
+    return !this.discrete && !this.state?.isEnding
+      && (this.flipped || !!this.state?.isMomentum || this.continuation);
   }
 
   reset(): void {
@@ -77,6 +111,13 @@ export class DesktopWheelGesture {
     this.lastAt = null;
     this.lastMovement = 0;
     this.discrete = false;
+    this.prevVelocity = { x: 0, y: 0 };
+    this.endAt = null;
+    this.endAxis = null;
+    this.endSign = 0;
+    this.endFlipped = false;
+    this.endVelocity = 0;
+    this.nativeMomentumSeen = false;
     this.newPageGesture();
   }
 
@@ -84,6 +125,8 @@ export class DesktopWheelGesture {
     this.gestureId++;
     this.travel = this.notchCredit = this.notchPages = 0;
     this.flipped = false;
+    this.continuation = false;
+    this.continuationStart = false;
   }
 
   begin(delta: WheelDelta, shift: boolean, at: number): WheelMotion {
@@ -101,6 +144,8 @@ export class DesktopWheelGesture {
       && (delta.momentum === false || this.lastAt === null || gap >= NOTCH_IDLE_MS || this.discrete)));
     if (discrete) {
       if (!this.discrete || gap >= NOTCH_IDLE_MS || reversed) this.newPageGesture();
+      // Mouse notches are deliberate input; any tail classification ends here.
+      this.continuation = false;
       this.unsubscribe?.();
       this.recognizer?.disconnect();
       this.recognizer = null;
@@ -111,7 +156,17 @@ export class DesktopWheelGesture {
         this.recognizer = WheelGestures({ preventWheelAction: false, reverseSign: false });
         this.unsubscribe = this.recognizer.on("wheel", (state) => {
           this.state = state;
-          if (state.isStart) this.newPageGesture();
+          // The restart itself is resolved after feedWheel below, where the
+          // resuming event's movement is available for the continuation check.
+          if (state.isEnding) {
+            this.endAt = this.lastAt;
+            this.endAxis = this.axis;
+            this.endSign = Math.sign(this.lastMovement);
+            this.endFlipped = this.flipped;
+            this.endVelocity = this.axis
+              ? Math.abs(state.axisVelocity[this.axis === "x" ? 0 : 1]) : 0;
+            this.continuation = false;
+          }
           if (state.isMomentum || state.isEnding) this.onGestureEnd?.();
         });
       }
@@ -121,7 +176,35 @@ export class DesktopWheelGesture {
         ...(delta.momentum === undefined ? {} : { momentum: delta.momentum }),
       });
       const state = this.state as WheelEventState | null;
-      if (reversed && !state?.isMomentum) this.newPageGesture();
+      if (state?.isStart) {
+        // Native momentum platforms (WebKit) re-arm on re-engagement by
+        // themselves; only flagless streams need the continuation heuristic.
+        const resumed = !this.nativeMomentumSeen && this.endFlipped && this.endAxis === axis
+          && this.endSign !== 0 && Math.sign(movement) === this.endSign
+          && this.endAt !== null && at - this.endAt <= MOMENTUM_RESUME_WINDOW_MS
+          && this.endVelocity >= MOMENTUM_RESUME_MIN_END_PX_MS;
+        if (resumed) {
+          this.continuation = true;
+          this.continuationStart = true;
+        } else {
+          this.newPageGesture();
+        }
+        this.nativeMomentumSeen = delta.momentum !== undefined;
+      } else if (delta.momentum !== undefined) {
+        this.nativeMomentumSeen = true;
+      }
+      if (reversed && (!state?.isMomentum || this.continuation)) this.newPageGesture();
+      if (gap > 0 && gap <= MOMENTUM_RESUME_CADENCE_GAP_MS && !state?.isStart) {
+        const vel = magnitude / gap;
+        if (this.continuation && vel >= Math.max(MOMENTUM_RESUME_FLOOR_PX_MS,
+          this.prevVelocity[axis] * (this.continuationStart
+            ? MOMENTUM_RESUME_START_FACTOR : MOMENTUM_RESUME_ACCEL))) {
+          // The stream re-accelerated: deliberate input, not inertia.
+          this.newPageGesture();
+        }
+        this.continuationStart = false;
+        this.prevVelocity[axis] = vel;
+      }
     }
     if (axis !== this.axis) this.travel = 0;
     this.axis = axis;
@@ -129,7 +212,8 @@ export class DesktopWheelGesture {
     this.lastMovement = movement;
     this.discrete = discrete;
     return { axis, movement, discrete, mode: delta.mode, gap, gestureId: this.gestureId,
-      suppressed: !discrete && this.flipped, isMomentum: !discrete && !!this.state?.isMomentum };
+      suppressed: !discrete && this.flipped,
+      isMomentum: !discrete && (!!this.state?.isMomentum || this.continuation) };
   }
 
   pageDelta(motion: WheelMotion, scrolled: boolean): number {
