@@ -175,6 +175,7 @@ export class InkView extends InkWritingView {
     this.pageNavigationGeneration += 1;
     this.closeDevPanel();
     this.clearFastPagingRail();
+    this.clearRenderQuality();
     if (this.railRevealTimer !== undefined) window.clearTimeout(this.railRevealTimer);
     this.railRevealTimer = undefined;
     if (this.thumbnailRefreshFrame !== null) window.cancelAnimationFrame(this.thumbnailRefreshFrame);
@@ -1001,7 +1002,7 @@ export class InkView extends InkWritingView {
     this.viewport = { x, y,
       width: Math.max(1, Math.min(this.canvasLogicalWidth - x, (screen.right - page.left) / this.zoom - x)),
       height: Math.max(1, Math.min(this.canvasLogicalHeight - y, (screen.bottom - page.top) / this.zoom - y)) };
-    this.tiles!.update(this.viewport, (window.devicePixelRatio || 1) * (this.pinchRenderZoom ?? this.zoom), refine);
+    this.tiles!.update(this.viewport, this.renderDensityTarget(this.pinchRenderZoom ?? this.zoom), refine);
     if (this.pinchRenderZoom === undefined && (refine || this.hasInkPreview()
       || this.selectedStrokeIds.size > 0 || this.lassoPath.length > 0)) {
       this.resizeOverlay(this.canvas, this.ctx);
@@ -1016,6 +1017,7 @@ export class InkView extends InkWritingView {
 
 
   private onViewportMotion(): void {
+    this.noteRenderActivity();
     this.updateViewport(false);
     if (this.pinchRenderZoom !== undefined) return;
     if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
@@ -1087,6 +1089,19 @@ export class InkView extends InkWritingView {
       void this.reloadFromDisk().catch((error) => new Notice(`Ink Notes could not reload: ${error instanceof Error ? error.message : String(error)}`));
     }
   }
+  protected onRenderSettledFullQuality(): void {
+    // A page-flip animation uses the shared swipe presentation and a paused
+    // pinch keeps its raster density latched; refining either mid-gesture
+    // would fight the frozen presentation. Retry on a short local timer that
+    // does not count as fresh user activity.
+    if (this.flipSettling || this.pinchRenderZoom !== undefined) {
+      globalThis.setTimeout(() => { if (this.viewReady) this.onRenderSettledFullQuality(); }, 200);
+      return;
+    }
+    // Only cells without an exact-density raster get jobs, so a stationary
+    // pass after motion re-renders just the cheap-tier tiles it produced.
+    this.updateViewport(true);
+  }
   protected afterCommand(command: EditCommand): void {
     super.afterCommand(command);
     // Rebuild commands already re-rendered the rail through renderAll();
@@ -1111,6 +1126,7 @@ export class InkView extends InkWritingView {
   }
   protected desktopZoom(factor: number, target?: { x: number; y: number }): void {
     if (this.zoomLocked) return;
+    this.noteRenderActivity();
     if (this.pinchRenderZoom === undefined) {
       this.pinchRenderZoom = this.zoom;
       if (this.zoomRenderTimer !== undefined) window.clearTimeout(this.zoomRenderTimer);
@@ -1438,7 +1454,7 @@ export class InkView extends InkWritingView {
     const rate = intervalStats(this.penSampleIntervals);
     const lines: string[] = [];
     lines.push(`Ink Notes dev — build ${this.devVersion()}`);
-    lines.push(`ENV pointer=${this.devLastPointerType ?? "-"} coalesced=${this.hasPointerApi("getCoalescedEvents") ? "yes" : "no"} rawupdate=${"onpointerrawupdate" in window ? "yes" : "no"} predicted=${this.hasPointerApi("getPredictedEvents") ? "yes" : "no"} touch=${navigator.maxTouchPoints ?? 0} dpr=${(window.devicePixelRatio || 1).toFixed(2)} zoom=${this.zoom.toFixed(2)} pinch=${this.pinchRenderZoom?.toFixed(2) ?? "-"} tileDensity=${this.tiles?.currentDensity?.toFixed(2) ?? "-"} tileScale=${this.tiles?.currentDisplayScale?.toFixed(2) ?? "-"}`);
+    lines.push(`ENV pointer=${this.devLastPointerType ?? "-"} coalesced=${this.hasPointerApi("getCoalescedEvents") ? "yes" : "no"} rawupdate=${"onpointerrawupdate" in window ? "yes" : "no"} predicted=${this.hasPointerApi("getPredictedEvents") ? "yes" : "no"} touch=${navigator.maxTouchPoints ?? 0} dpr=${(window.devicePixelRatio || 1).toFixed(2)} zoom=${this.zoom.toFixed(2)} pinch=${this.pinchRenderZoom?.toFixed(2) ?? "-"} tier=${this.currentRenderTier()} tileDensity=${this.tiles?.currentDensity?.toFixed(2) ?? "-"} tileScale=${this.tiles?.currentDisplayScale?.toFixed(2) ?? "-"}`);
     lines.push(`INPUT events=${this.devPointerEvents} rawupdates=${this.devRawUpdates} coalescedPts=${this.devCoalescedSamples} samplesFed=${this.devSamplesFed} predicted=${this.devPredictedSamples}`);
     lines.push(`RATE n=${rate.count}${rate.min !== null ? ` min=${rate.min.toFixed(1)}ms median=${rate.median?.toFixed(1)}ms mean=${rate.mean?.toFixed(1)}ms max=${rate.max?.toFixed(1)}ms` : ""}${rate.mean !== null && rate.mean > 0 ? ` (~${(1000 / rate.mean).toFixed(0)} Hz)` : ""}`);
     lines.push(`SPARSE threshold=${SPARSE_SAMPLE_INTERVAL_MS}ms flagged=${this.penInputSparse() ? "YES" : "no"}`);

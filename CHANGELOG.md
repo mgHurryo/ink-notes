@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.1.5-beta.49 - 2026-11-15
+
+- Keep Chrome trackpad flicks to one page turn (#481): Chrome marks neither phases nor momentum on wheel events, so the recognizer's 100ms silence timeout could split a fling tail (1100-2300px past the flip on the recorded Windows traces) into "fresh" gestures that re-armed the one-page lock mid-flick. A restart that resumes the same direction within 1200ms of a page-turning gesture is now classified as the same inertia until the stream re-accelerates past a quantization-safe floor; WebKit's native momentum re-arm path, mouse notches and both-axis contracts are unchanged. Locked by jank-injection replays of the recorded traces; Windows on-device flick validation pending.
+- Adapt desktop rendering resolution to input pace (#482): three tiers - motion caps tile and PDF raster density at min(1, dpr x zoom) (a 1:1 CSS-pixel legibility floor, so fast-flipped PDF pages stay readable), the transitional base tier renders at 0.75x, and after 600ms of total quiet a stationary pass incrementally refines the full dpr x zoom target and re-rasterizes a lagging PDF page. Mobile devices keep today's full target; page flips, paused pinches and zoom bursts defer the stationary pass.
+
+On-device validation of the Windows flick behavior and of the legibility/sharpening timing remains pending.
+
 ## 0.1.5-beta.48 - 2026-11-15
 
 - Prevent the beta.47 plugin startup failure on iPad (#477): replace the runtime `process.env.NODE_ENV` lookup from the bundled gesture dependency with a build-time production constant. The bundle no longer requires Node's `process` global.

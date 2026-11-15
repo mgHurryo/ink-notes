@@ -29,3 +29,5 @@ export function loadPdfJs(): Promise<unknown> {
 }
 
 export class Modal {}
+
+export const Platform = { isDesktopApp: true, isMobileApp: false, isIosApp: false, isPhone: false, isTablet: false };
