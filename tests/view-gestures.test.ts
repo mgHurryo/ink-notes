@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-vi.mock("obsidian", () => ({ Modal: class {}, FileView: class {} }));
+vi.mock("obsidian", () => ({ Platform: { isDesktopApp: true, isMobileApp: false, isIosApp: false, isPhone: false, isTablet: false }, Modal: class {}, FileView: class {} }));
 
 import { InkView } from "../src/view";
 import { DesktopWheelGesture, WheelPagePacer } from "../src/desktop-wheel";

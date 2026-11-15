@@ -17,6 +17,7 @@
 import { FileView, Menu, Notice, Platform, setIcon, type ViewStateResult } from "obsidian";
 import { defaultReadingMode } from "./device-mode";
 import { DesktopWheelGesture, WheelPagePacer, normalizeWheel } from "./desktop-wheel";
+import { RenderQualityPolicy, RENDER_IDLE_MS, tierDensity } from "./render-quality";
 import { canStraighten, shapePoints, SHAPES, STRAIGHT_LINE_MIN_LENGTH_PX, type ShapeKind } from "./shapes";
 import { ImageLibraryModal, ImageLibraryStore, placedImage } from "./image-library";
 import { PageImageLayer } from "./page-images";
@@ -1411,6 +1412,60 @@ export abstract class InkWritingView extends FileView {
   /** Called at the very end of finishPointerInput. */
   protected afterInputFullySettled(): void {}
 
+  // -------------------------------------------------- adaptive render quality
+
+  /** Three-tier desktop rendering resolution: cheap while the user moves,
+   *  full budget once the view has been stationary for RENDER_IDLE_MS. The
+   *  motion tier's 1:1 CSS-pixel ceiling is the legibility floor - pages
+   *  (PDF included) stay readable at speed and sharpen on the stationary
+   *  pass. Mobile devices keep today's full target everywhere. */
+  private renderQualityInstance: RenderQualityPolicy | null = null;
+  /** Lazily built so Object.create-based test harnesses and partial mocks
+   *  never see an uninitialized policy. */
+  protected get renderQuality(): RenderQualityPolicy {
+    if (!this.renderQualityInstance) {
+      this.renderQualityInstance = new RenderQualityPolicy(!Platform.isMobileApp);
+    }
+    return this.renderQualityInstance;
+  }
+  private renderQualityTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
+  private renderQualitySettled = false;
+
+  /** Every input, scroll, paging, zoom or pan signal flows through here so
+   *  the density target tracks the user's pace. Cheap: one clock read plus a
+   *  timer reset. */
+  protected noteRenderActivity(): void {
+    this.renderQuality.note(performance.now());
+    this.renderQualitySettled = false;
+    if (this.renderQualityTimer !== undefined) globalThis.clearTimeout(this.renderQualityTimer);
+    this.renderQualityTimer = globalThis.setTimeout(() => {
+      this.renderQualityTimer = undefined;
+      if (this.renderQualitySettled || !this.viewReady) return;
+      this.renderQualitySettled = true;
+      this.onRenderSettledFullQuality();
+    }, RENDER_IDLE_MS);
+  }
+
+  /** Backing density the tile/PDF raster paths should use right now. */
+  protected renderDensityTarget(zoom: number): number {
+    return tierDensity(this.renderQuality.tier(performance.now()), window.devicePixelRatio || 1, zoom);
+  }
+
+  /** Diagnostics: the tier the render paths currently resolve to. */
+  protected currentRenderTier(): string {
+    return this.renderQuality.tier(performance.now());
+  }
+
+  /** Called once after the stationary window elapses with no fresh input. */
+  protected onRenderSettledFullQuality(): void {}
+
+  /** Drops the pending stationary pass on teardown. */
+  protected clearRenderQuality(): void {
+    if (this.renderQualityTimer !== undefined) globalThis.clearTimeout(this.renderQualityTimer);
+    this.renderQualityTimer = undefined;
+    this.renderQualitySettled = false;
+  }
+
   // ------------------------------------------------------------------ input
 
   private pageOptionsMenu: { menu: Menu; trigger: HTMLElement | null } | null = null;
@@ -1678,6 +1733,9 @@ export abstract class InkWritingView extends FileView {
       this.resetDesktopWheel();
       return;
     }
+    // Every wheel sample - paging, panning and pinch - counts as motion for
+    // the adaptive render tiers, including the burst's tail.
+    this.noteRenderActivity();
     // Live pointer input occupying the surface only borrows the event; the
     // wheel gesture itself survives so flip suppression and the page budget
     // keep counting across the stroke and the tail decays on its own clock.
@@ -1982,6 +2040,7 @@ export abstract class InkWritingView extends FileView {
     // so observing one Touch stream must not disable pen input for the view.
     if (source === "pointer" && event.pointerType === "pen" && this.interaction?.source === "stylus-touch") return;
     if (event.pointerType === "pen") this.finishFingerInput(true);
+    this.noteRenderActivity();
     this.onInputStarting();
     this.interactionGeneration += 1;
     if (this.activePointerId !== null) this.finishPointerInput(false);
@@ -2140,6 +2199,7 @@ export abstract class InkWritingView extends FileView {
       }
       pan.x = event.clientX;
       pan.y = event.clientY;
+      this.noteRenderActivity();
       event.preventDefault?.();
       return;
     }
@@ -3352,7 +3412,7 @@ export abstract class InkWritingView extends FileView {
     const batch = [...this.pendingInkStrokes];
     this.committingInkStrokes = batch;
     this.tiles.patchStrokes(batch, [], page.strokes);
-    this.tiles.commitInk(batch, this.viewport, (window.devicePixelRatio || 1) * this.zoom, (committed) => {
+    this.tiles.commitInk(batch, this.viewport, this.renderDensityTarget(this.zoom), (committed) => {
       if (this.committingInkStrokes !== batch) return;
       this.committingInkStrokes = null;
       if (!committed) {
@@ -3430,7 +3490,7 @@ export abstract class InkWritingView extends FileView {
     const cells = this.tiles?.patchStrokes(pending, [], page.strokes) ?? [];
     // A tool switch must not make recently completed ink disappear or become
     // impossible for the eraser to hit while its background commit is pending.
-    this.tiles?.previewInteractiveCells(cells, this.viewport, (window.devicePixelRatio || 1) * this.zoom);
+    this.tiles?.previewInteractiveCells(cells, this.viewport, this.renderDensityTarget(this.zoom));
   }
 
   /** Live preview layer for the active stroke; view-owned canvases. */
@@ -3568,7 +3628,7 @@ export abstract class InkWritingView extends FileView {
   protected drawStrokes(strokes: InkStroke[]): void {
     if (!this.ctx) return;
     this.tiles?.sync(strokes.filter((s) => !this.stickyInput?.proxies.has(s.id)), this.tileExclusion());
-    this.tiles?.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
+    this.tiles?.update(this.viewport, this.renderDensityTarget(this.zoom), true);
     this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
     this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
     this.drawPreview();
@@ -3576,7 +3636,7 @@ export abstract class InkWritingView extends FileView {
 
   protected drawInteractiveStrokes(strokes: InkStroke[], refine = false, progressive = false): void {
     if (!this.ctx) return;
-    this.tiles?.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, refine, undefined, progressive);
+    this.tiles?.commitInteractive(this.viewport, this.renderDensityTarget(this.zoom), refine, undefined, progressive);
     this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
     this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
@@ -3590,7 +3650,7 @@ export abstract class InkWritingView extends FileView {
     }
     const cells = [...this.eraserPreviewCells];
     this.eraserPreviewCells.clear();
-    this.tiles?.previewInteractiveCells(cells, this.viewport, (window.devicePixelRatio || 1) * this.zoom);
+    this.tiles?.previewInteractiveCells(cells, this.viewport, this.renderDensityTarget(this.zoom));
     this.ctx.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
     this.drawSelection(this.canvasLogicalWidth, this.canvasLogicalHeight);
   }
@@ -3633,7 +3693,7 @@ export abstract class InkWritingView extends FileView {
     const base = this.tileExclusion();
     this.tiles?.setWorkerExclusion?.(base ? new Set([...base, ...selected]) : selected);
     if (this.stickyInput) this.stickies?.preview(this.stickyInput.notes.map((n) => ({ ...n, strokes: n.strokes.filter((s) => !selected.has(s.id)) })));
-    this.tiles?.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, false);
+    this.tiles?.commitInteractive(this.viewport, this.renderDensityTarget(this.zoom), false);
     const resolution = canvasResolution(this.canvasLogicalWidth, this.canvasLogicalHeight,
       window.devicePixelRatio || 1, this.zoom, 4_000_000);
     this.lassoCanvas.width = resolution.width;
@@ -3676,7 +3736,7 @@ export abstract class InkWritingView extends FileView {
     this.tiles?.patchStrokes(this.selectedStrokes(), [], page.strokes);
     // Keep the transformed vector preview visible until the replacement tiles
     // are complete, then swap the affected frame atomically.
-    this.tiles?.commitInteractive(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true, () => {
+    this.tiles?.commitInteractive(this.viewport, this.renderDensityTarget(this.zoom), true, () => {
       this.hideLassoPreview();
       if (this.viewReady && page === this.currentPage()) {
         this.ctx?.clearRect(this.viewport.x, this.viewport.y, this.viewport.width, this.viewport.height);
@@ -4169,7 +4229,7 @@ export abstract class InkWritingView extends FileView {
     this.tiles?.setBackend?.(null);
     if (this.viewReady && this.tiles && this.currentNotebook().pages.length > 0) {
       this.tiles.sync(this.currentPage().strokes, this.tileExclusion());
-      this.tiles.update(this.viewport, (window.devicePixelRatio || 1) * this.zoom, true);
+      this.tiles.update(this.viewport, this.renderDensityTarget(this.zoom), true);
     }
     this.workerSession?.dispose();
     this.workerSession = null;
