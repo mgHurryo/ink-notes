@@ -53,6 +53,9 @@ const SELECTION_OVERLAY_BUDGET = 4_000_000;
  *  side. iOS keeps the default - its WebKit canvas allocation past 16M is
  *  unverified, and zoom 1 there never hits 16M anyway. */
 const PDF_PAGE_RASTER_BUDGET = 64_000_000;
+/** The stationary PDF re-raster waits this far behind the tile refine so the
+ *  two heaviest settle jobs never land in the same instant. */
+const PDF_IDLE_RERASTER_DELAY_MS = 250;
 /** Keep page-tree metadata reads concurrent without retaining a burst of
  *  page proxies for large documents. */
 const SOURCE_PAGE_GEOMETRY_CONCURRENCY = 4;
@@ -148,6 +151,7 @@ export class PdfInkView extends InkWritingView {
   /** Adaptive tier the current/last page raster was rendered at; the
    *  stationary pass re-rasterizes only when this lags the idle tier. */
   private pdfRasterTier: RenderTier = "idle";
+  private pdfIdleRerasterTimer: ReturnType<typeof globalThis.setTimeout> | undefined;
   private loadGeneration = 0;
   private resizeRenderTimer: number | undefined;
   /** Last scroller box seen by applyPaneResize, for its sub-3px hysteresis. */
@@ -320,6 +324,8 @@ export class PdfInkView extends InkWritingView {
     this.closeTagPopover();
     this.clearFastPagingRail();
     this.clearRenderQuality();
+    if (this.pdfIdleRerasterTimer !== undefined) globalThis.clearTimeout(this.pdfIdleRerasterTimer);
+    this.pdfIdleRerasterTimer = undefined;
     this.finishPointerInput(false);
     this.clearSelection();
     this.closeLassoSettings();
@@ -1018,6 +1024,17 @@ export class PdfInkView extends InkWritingView {
     // page management; they hide thumbnails without touching the model.
     this.railFilterButtons.ink?.setAttribute("aria-pressed", String(this.railFilters.ink));
     this.railFilterButtons.tagged?.setAttribute("aria-pressed", String(this.railFilters.tagged));
+    if (this.isFastPagingRailOpen()) {
+      // Paging burst: only the active marker and the readout move per flip.
+      // Badges and filters cannot change mid-flip, and the full per-button
+      // loop (four setAttribute calls, badge paint, filter predicate per
+      // page) is the kind of per-flip DOM churn the flip animation competes
+      // with; the collapse hand-back runs the full refresh.
+      this.thumbButtons.forEach((button, index) => button.toggleClass("is-active", index === this.noteIndex));
+      if (this.railCount) this.railCount.textContent = `${this.noteIndex + 1} / ${count}`;
+      this.followWheelPageThumb();
+      return;
+    }
     let visibleCount = 0;
     this.thumbButtons.forEach((button, index) => {
       const pageId = pages?.[index]?.id;
@@ -1085,6 +1102,9 @@ export class PdfInkView extends InkWritingView {
     this.fastPagingRailBorrowed = false;
     this.root?.addClass("ink-rail-hidden");
     this.scheduleRailResizeSettle();
+    // The burst took the light per-flip rail path; restore badges, filters
+    // and the full button state once the burst hands the rail back.
+    this.refreshPageRail();
   }
 
   private rebuildRailButtons(count: number): void {
@@ -1956,8 +1976,20 @@ export class PdfInkView extends InkWritingView {
     }
     this.updateViewport(true);
     // Fast paging rasterized the page at the motion tier; the stationary
-    // pass sharpens it only when the raster lags the full budget.
-    if (this.pdfRasterTier !== "idle") void this.renderPdfPage();
+    // pass sharpens it only when the raster lags the full budget. The
+    // full-budget re-raster is the heaviest stationary job, so it waits a
+    // beat behind the tile refine and only runs while the view is still
+    // idle - stacking both in one instant is the hitch felt right after a
+    // paging burst stops.
+    if (this.pdfRasterTier !== "idle") {
+      if (this.pdfIdleRerasterTimer !== undefined) globalThis.clearTimeout(this.pdfIdleRerasterTimer);
+      this.pdfIdleRerasterTimer = globalThis.setTimeout(() => {
+        this.pdfIdleRerasterTimer = undefined;
+        if (!this.viewReady || this.flipSettling) return;
+        if (this.renderQuality.tier(performance.now()) !== "idle") return;
+        if (this.pdfRasterTier !== "idle") void this.renderPdfPage();
+      }, PDF_IDLE_RERASTER_DELAY_MS);
+    }
   }
 
   protected onInputStarting(): void { this.finishDesktopZoom(); }
@@ -2052,7 +2084,7 @@ export class PdfInkView extends InkWritingView {
     const ink = stage.createEl("canvas", { cls: "ink-swipe-canvas" });
     const logicalWidth = Math.max(1, Math.round(baseWidth * 64) / 64);
     const logicalHeight = Math.max(1, Math.round(baseWidth * display.height / display.width * 64) / 64);
-    const resolution = canvasResolution(logicalWidth, logicalHeight, window.devicePixelRatio || 1, zoom, SWIPE_PREVIEW_BUDGET);
+    const resolution = canvasResolution(logicalWidth, logicalHeight, this.renderDensityTarget(zoom), 1, SWIPE_PREVIEW_BUDGET);
     ink.width = resolution.width; ink.height = resolution.height;
     const ctx = ink.getContext("2d");
     if (ctx) {
@@ -2061,7 +2093,7 @@ export class PdfInkView extends InkWritingView {
       if (page) {
         const preview = { page, width: logicalWidth, height: logicalHeight,
           viewport: { x: 0, y: 0, width: logicalWidth, height: logicalHeight },
-          density: (window.devicePixelRatio || 1) * zoom };
+          density: this.renderDensityTarget(zoom) };
         const paint = (drawInk: boolean) => paintPageImages(this.imageLibrary, ink, page,
           (context) => context.clearRect(0, 0, ink.width, ink.height), (context) => {
             context.setTransform(ink.width / logicalWidth, 0, 0, ink.height / logicalHeight, 0, 0);
@@ -2091,7 +2123,7 @@ export class PdfInkView extends InkWritingView {
     if (!notePage || notePage.sourceIndex === undefined || !this.pdfDoc) return;
     // The prewarm cache makes the flip instant when it holds the page.
     const resolution = canvasResolution(parseFloat(stage.style.width), parseFloat(stage.style.height),
-      window.devicePixelRatio || 1, 1, SWIPE_PREVIEW_BUDGET);
+      this.renderDensityTarget(1), 1, SWIPE_PREVIEW_BUDGET);
     const pending = this.pendingNeighbourRenders.get(index);
     if (pending?.token === this.prewarmToken) await pending.promise;
     if (!stage.isConnected) return;
@@ -2159,7 +2191,10 @@ export class PdfInkView extends InkWritingView {
       page = await this.pdfDoc.getPage(notePage.sourceIndex + 1);
       if (token !== this.prewarmToken || this.neighbourCache.has(index)) return this.neighbourCache.get(index) ?? null;
       const size = this.swipePageSize(notePage);
-      const resolution = canvasResolution(size.width, size.height, window.devicePixelRatio || 1, 1,
+      // Preview rasters follow the adaptive tier: paging at speed only needs
+      // the 1:1 legibility floor, and the landed page reuses a cached
+      // same-density neighbour instead of re-rendering.
+      const resolution = canvasResolution(size.width, size.height, this.renderDensityTarget(1), 1,
         SWIPE_PREVIEW_BUDGET);
       const scale = resolution.width / page.getViewport({ scale: 1 }).width;
       buffer = document.createElement("canvas");

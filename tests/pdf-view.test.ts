@@ -1261,9 +1261,9 @@ describe("adaptive render quality wiring", () => {
     // Fast paging rasterized the page at the cheap tier.
     internal.pdfRasterTier = "motion";
     internal.noteRenderActivity();
-    vi.advanceTimersByTime(600);
+    vi.advanceTimersByTime(850);
     expect(internal.updateViewport).toHaveBeenLastCalledWith(true);
-    expect(internal.renderPdfPage).toHaveBeenCalled();
+    expect(internal.renderPdfPage).toHaveBeenCalledTimes(1);
     // The settled latch must not re-run the pass on stray timers.
     const mocks = internal as unknown as Record<string, ReturnType<typeof vi.fn>>;
     mocks.updateViewport.mockClear();
@@ -1283,6 +1283,27 @@ describe("adaptive render quality wiring", () => {
     expect(internal.renderPdfPage).not.toHaveBeenCalled();
   });
 
+  it("delays the pdf re-raster behind the tile refine and skips it when paging resumes", () => {
+    const { internal } = setup();
+    internal.viewReady = true;
+    internal.pdfRasterTier = "motion";
+    internal.noteRenderActivity();
+    vi.advanceTimersByTime(600);
+    expect(internal.updateViewport).toHaveBeenLastCalledWith(true);
+    // The heaviest settle job waits behind the tile refine.
+    expect(internal.renderPdfPage).not.toHaveBeenCalled();
+    vi.advanceTimersByTime(250);
+    expect(internal.renderPdfPage).toHaveBeenCalledTimes(1);
+    // Fresh paging before the delayed raster: the idle check skips it.
+    internal.pdfRasterTier = "motion";
+    internal.renderPdfPage.mockClear();
+    internal.noteRenderActivity();
+    vi.advanceTimersByTime(600);
+    internal.noteRenderActivity();
+    vi.advanceTimersByTime(300);
+    expect(internal.renderPdfPage).not.toHaveBeenCalled();
+  });
+
   it("defers the stationary pass while a flip settles", () => {
     const { internal } = setup();
     internal.viewReady = true;
@@ -1293,7 +1314,7 @@ describe("adaptive render quality wiring", () => {
     expect(internal.updateViewport).not.toHaveBeenCalled();
     expect(internal.renderPdfPage).not.toHaveBeenCalled();
     internal.flipSettling = false;
-    vi.advanceTimersByTime(200);
+    vi.advanceTimersByTime(450);
     expect(internal.updateViewport).toHaveBeenLastCalledWith(true);
     expect(internal.renderPdfPage).toHaveBeenCalled();
   });
